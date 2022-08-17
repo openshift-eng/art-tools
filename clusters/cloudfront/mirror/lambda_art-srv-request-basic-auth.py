@@ -23,17 +23,27 @@ s3_client = boto3.client("s3", region_name=S3_REGION_NAME)
 
 def unauthorized():
     return {
-        'statusCode': 401,
+        'status': 401,
         'statusDescription': 'Unauthorized',
-        'headers': {'www-authenticate': {'value': 'Basic'}},
+        'headers': {
+            'www-authenticate': [{
+                'key': 'WWW-Authenticate',
+                'value': 'Basic'
+            }],
+        }
     }
 
 
 def redirect(uri: str, code: int = 302, description="Found"):
     return {
-        'statusCode': code,
+        'status': code,
         'statusDescription': description,
-        'headers': {"location": {"value": str(uri)}}
+        'headers': {
+            "location": [{
+                'key': 'Location',
+                "value": str(uri)
+            }],
+        }
     }
 
 
