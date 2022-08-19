@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from urllib.parse import quote, unquote_plus
 
 import boto3
+from botocore.client import Config
 
 # Dicts of usernames and passwords. THE ACTUAL VALUE MUST NOT BE COMMITTED TO GIT.
 # ENTERPRISE_SERVICE_ACCOUNTS = {}
@@ -19,7 +20,10 @@ S3_BUCKET_NAME = "art-srv-enterprise"
 S3_REGION_NAME = 'us-east-1'
 
 
-s3_client = boto3.client("s3", region_name=S3_REGION_NAME)
+# Ensure s3v4 signature is used regardless of the region the lambda is executing in.
+BOTO3_CLIENT_CONFIG = Config(signature_version='s3v4')
+s3_client = boto3.client(
+    "s3", region_name=S3_REGION_NAME, config=BOTO3_CLIENT_CONFIG)
 
 
 def unauthorized():
