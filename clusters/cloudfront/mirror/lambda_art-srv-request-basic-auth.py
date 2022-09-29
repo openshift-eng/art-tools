@@ -22,8 +22,10 @@ S3_REGION_NAME = 'us-east-1'
 
 # Ensure s3v4 signature is used regardless of the region the lambda is executing in.
 BOTO3_CLIENT_CONFIG = Config(signature_version='s3v4')
-s3_client = boto3.client(
-    "s3", region_name=S3_REGION_NAME, config=BOTO3_CLIENT_CONFIG)
+# According to https://docs.aws.amazon.com/codeguru/detector-library/python/lambda-client-reuse/
+# s3 clients can and should be reused. This allows the client to be cached in an execution
+# environment and reused if possible. Initialize these lazily so we can handle ANY s3 errors easily.
+s3_client = None
 
 
 def unauthorized():
@@ -87,6 +89,7 @@ def find_region(ip) -> Optional[str]:
 
 
 def lambda_handler(event: Dict, context: Dict):
+    global s3_client
     request: Dict = event['Records'][0]['cf']['request']
     uri: str = request['uri']
     headers: Dict[str, List[Dict[str, str]]] = request['headers']
@@ -161,6 +164,8 @@ def lambda_handler(event: Dict, context: Dict):
     if uri.endswith("/"):
         uri += 'index.html'
     elif find_region(request_ip):
+        if s3_client is None:
+            s3_client = boto3.client("s3", region_name=S3_REGION_NAME, config=BOTO3_CLIENT_CONFIG)
         url = s3_client.generate_presigned_url(
             ClientMethod='get_object',
             Params={
@@ -170,7 +175,7 @@ def lambda_handler(event: Dict, context: Dict):
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )
         # Redirect the request to S3 bucket for cost management
-        return redirect(url, code=307, description='CostManagementRedirect')
+        return redirect(url, code=307, description='S3Redirect')
 
     # Some clients may send in URL with literal '+' and other chars that need to be escaped
     # in order for the the URL to resolve via an S3 HTTP request. decoding and then
