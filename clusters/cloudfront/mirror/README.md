@@ -11,11 +11,15 @@ CloudFront provides worldwide distribution, but it is not a drop in replacement.
 - Provide for client certificate authentication like the legacy mirror.openshift.com/enterprise.
 
 ### /enterprise authentication
+To add a new service account, add a username / password pair to AWS Secrets Manager entry `art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS`.
+
 CloudFront does not support client certificate based authentication (used by the legacy mirror.openshift.com/enterprise). Client certificate based auth could have been preserved with a small deployment (e.g. of nginx) to proxy requests, but this introduced an unnecessary bottleneck and would have created a new operational concern for the ART team.
 
-Instead, the new infrastructure will be secured with basic auth (username & password) for authentication. This is enforced by a CloudFront function setup as a View Request hook. The View Request checks basic authentication whenever a /enterprise path is requested. See ENTERPRISE_SERVICE_ACCOUNTS in cloudfront_function_art-srv-request-basic-auth.js, but note that the username/password has been removed from the code.
+Instead, the new infrastructure will be secured with basic auth (username & password) for authentication. This is enforced by a CloudFront function setup as a View Request hook. The View Request checks basic authentication whenever a /enterprise path is requested. See ENTERPRISE_SERVICE_ACCOUNTS in cloudfront_function_art-srv-request-basic-auth.js which is populated at runtime from AWS Secrets Manager entry `art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS`. The AWS secret has key value pairs which are username and passwords which will authenticate successfully to access /enterprise.
 
 ### /pockets authentication
+To add a new service account, add a username / password pair to AWS Secrets Manager entry `art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS`.
+
 Like, /enterprise, /pockets requires authenticated access. It provides a private method to share a related set of artifacts to customers or internal services. For example, if we have a new product named 'awesomeshift' and someone needs extremely early access to it, then a new pocket directory structure can be established in S3 under `/pockets/awesomeshift/`.
 
 Anything uploaded under '/pockets/awesomeshift/' should be available to a user authorized to access that pocket. Authorization to a given pocket is indicated in the username established in the POCKET_SERVICE_ACCOUNTS dict of the lambda function (note that the username/password has been removed from the code checked into git). Usernames must be established in the form: `<pocket_name>+<random_id>` (where each new consumer gets a username with a new random_id so that passwords are trivial to rotate if leaked by that consumer). If a user provides a username `awesomeshift+A78fd` and a valid password found in POCKET_SERVICE_ACCOUNTS, the user will be authorized to read content from `/pockets/awesomeshift/*` on the mirror. They will not be granted access to any other pocket.  
