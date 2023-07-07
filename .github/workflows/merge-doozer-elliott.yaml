@@ -28,7 +28,7 @@ jobs:
           export FILTER_BRANCH_SQUELCH_WARNING=1
           
           # doozer
-          git clone "https://github.com/ashwindasr/doozer"
+          git clone "https://github.com/openshift-eng/doozer"
           cd doozer || exit
           # Create a root directory called doozer and move all files and folders into that.
           # Command adds prefix doozer/ to the path of each file in the index (staging area) of every commit in the branch's history.
@@ -42,7 +42,7 @@ jobs:
           cd ..
           
           # elliott
-          git clone "https://github.com/ashwindasr/elliott"
+          git clone "https://github.com/openshift-eng/elliott"
           cd elliott || exit
           # Create a root directory called doozer and move all files and folders into that
           git filter-branch --index-filter \
