@@ -57,8 +57,8 @@ jobs:
           git remote add --fetch elliott-temp working-dir/elliott/
           
           # Merge the commit histories
-          git merge doozer-temp/master --allow-unrelated-histories -m "merge doozer to art-tools"
-          git merge elliott-temp/master --allow-unrelated-histories -m "merge elliott to art-tools"
+          git merge doozer-temp/master --allow-unrelated-histories
+          git merge elliott-temp/master --allow-unrelated-histories
           
           rm -rf working-dir
           
