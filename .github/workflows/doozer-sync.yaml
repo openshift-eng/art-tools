@@ -6,9 +6,6 @@ on:
   schedule:
     - cron: "0 */1 * * *"
   workflow_dispatch: {}
-  push:
-    branches:
-      - doozer 
 
 jobs:
   forward-commits:
