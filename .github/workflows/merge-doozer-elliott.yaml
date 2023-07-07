@@ -61,4 +61,6 @@ jobs:
           git merge elliott-temp/master --allow-unrelated-histories -m "merge elliott to art-tools"
           
           rm -rf working-dir
+          
+          git push origin doozer-elliott-merged
 
