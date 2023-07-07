@@ -7,7 +7,7 @@ on:
   push: {}
 
 jobs:
-  forward-commits:
+  merge-doozer-elliott:
     runs-on: ubuntu-latest
 
     steps:
@@ -28,8 +28,7 @@ jobs:
           export FILTER_BRANCH_SQUELCH_WARNING=1
           
           # doozer
-          git clone -b doozer "https://github.com/ashwindasr/art-tools"
-          mv art-tools doozer
+          git clone "https://github.com/ashwindasr/elliott"
           cd doozer || exit
           # Create a root directory called doozer and move all files and folders into that.
           # Command adds prefix doozer/ to the path of each file in the index (staging area) of every commit in the branch's history.
@@ -43,8 +42,7 @@ jobs:
           cd ..
           
           # elliott
-          git clone -b elliott "https://github.com/ashwindasr/art-tools"
-          mv art-tools elliott
+          git clone "https://github.com/ashwindasr/elliott"
           cd elliott || exit
           # Create a root directory called doozer and move all files and folders into that
           git filter-branch --index-filter \
