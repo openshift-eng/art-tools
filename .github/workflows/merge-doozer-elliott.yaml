@@ -1,0 +1,61 @@
+# elliott is synced from openshift-eng/elliott to ashwindasr/art-tools#elliott every 6 hrs
+
+name: merge doozer elliott
+
+on:
+  workflow_dispatch: {}
+  push: {}
+
+jobs:
+  forward-commits:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Merge
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          git checkout doozer-elliott-merged
+         
+          mkdir working-dir
+          
+          cd working-dir || exit
+          
+          # doozer
+          git clone "https://github.com/ashwindasr/doozer"
+          cd doozer || exit
+
+          git filter-branch --index-filter \
+            'git ls-files -s | sed "s-\t\"*-&doozer/-" |
+             GIT_INDEX_FILE=$GIT_INDEX_FILE.new \
+             git update-index --index-info &&
+             mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' HEAD
+          cd ..
+          
+          # elliott
+          git clone "https://github.com/ashwindasr/elliott"
+          cd elliott || exit
+          # Create a root directory called doozer and move all files and folders into that
+          git filter-branch --index-filter \
+            'git ls-files -s | sed "s-\t\"*-&elliott/-" |
+             GIT_INDEX_FILE=$GIT_INDEX_FILE.new \
+             git update-index --index-info &&
+             mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' HEAD
+          cd ..
+          
+          # Replace this with remote repo clone
+          git init art-tools
+          cd art-tools || exit
+          
+          # Pull data from the other git repos
+          git remote add --fetch doozer ../doozer/
+          git remote add --fetch elliott ../elliott/
+          
+          # Merge the commit histories
+          git merge doozer/master --allow-unrelated-histories
+          git merge elliott/master --allow-unrelated-histories
+
