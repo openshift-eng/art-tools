@@ -22,13 +22,19 @@ jobs:
           git config --global user.email "actions@github.com"
                    
           mkdir working-dir
-          
+
           cd working-dir || exit
           
+          export FILTER_BRANCH_SQUELCH_WARNING=1
+          
           # doozer
-          git clone "https://github.com/ashwindasr/doozer"
+          git clone -b doozer "https://github.com/ashwindasr/art-tools"
+          mv art-tools doozer
           cd doozer || exit
-
+          # Create a root directory called doozer and move all files and folders into that.
+          # Command adds prefix doozer/ to the path of each file in the index (staging area) of every commit in the branch's history.
+          # The modified index is then updated and saved back to replace the original index.
+          # This process effectively renames all the files in the branch's history by adding the doozer/ prefix to their paths.
           git filter-branch --index-filter \
             'git ls-files -s | sed "s-\t\"*-&doozer/-" |
              GIT_INDEX_FILE=$GIT_INDEX_FILE.new \
@@ -37,7 +43,8 @@ jobs:
           cd ..
           
           # elliott
-          git clone "https://github.com/ashwindasr/elliott"
+          git clone -b elliott "https://github.com/ashwindasr/art-tools"
+          mv art-tools elliott
           cd elliott || exit
           # Create a root directory called doozer and move all files and folders into that
           git filter-branch --index-filter \
@@ -47,15 +54,13 @@ jobs:
              mv "$GIT_INDEX_FILE.new" "$GIT_INDEX_FILE"' HEAD
           cd ..
           
-          # Replace this with remote repo clone
-          git init art-tools
-          cd art-tools || exit
-          
           # Pull data from the other git repos
-          git remote add --fetch doozer ../doozer/
-          git remote add --fetch elliott ../elliott/
+          git remote add --fetch doozer-temp working-dir/doozer/
+          git remote add --fetch elliott-temp working-dir/elliott/
           
           # Merge the commit histories
-          git merge doozer/master --allow-unrelated-histories
-          git merge elliott/master --allow-unrelated-histories
+          git merge doozer-temp/master --allow-unrelated-histories -m "merge doozer to art-tools"
+          git merge elliott-temp/master --allow-unrelated-histories -m "merge elliott to art-tools"
+          
+          rm -rf working-dir
 
