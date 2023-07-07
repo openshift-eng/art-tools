@@ -13,14 +13,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v2
+        with:
+          ref: refs/heads/doozer-elliott-merged
 
       - name: Merge
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          
-          git checkout doozer-elliott-merged
-         
+                   
           mkdir working-dir
           
           cd working-dir || exit
