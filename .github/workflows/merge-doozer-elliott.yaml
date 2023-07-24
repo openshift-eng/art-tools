@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          ref: refs/heads/doozer-elliott-merged
+          ref: refs/heads/merged-tools
 
       - name: Merge
         run: |
@@ -62,5 +62,5 @@ jobs:
           
           rm -rf working-dir
           
-          git push origin doozer-elliott-merged
+          git push origin merged-tools
 
