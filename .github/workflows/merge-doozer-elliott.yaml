@@ -65,5 +65,5 @@ jobs:
           
           rm -rf working-dir
           
-          git push origin merged-tools
+          git push origin merged-tools -f
 
