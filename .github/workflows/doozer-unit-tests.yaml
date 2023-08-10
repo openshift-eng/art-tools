@@ -1,11 +1,12 @@
-name: Unit tests
+name: doozer-unit-tests
 
 on:
   pull_request:
-    branches: [ master ]
+    paths:
+      - 'doozer/**'
 
 jobs:
-  test:
+  tests:
     runs-on: ubuntu-latest
     container: fedora:37
     steps:
@@ -15,8 +16,8 @@ jobs:
         with:
           python-version: '3.8'
       - name: Install packages
-        run: dnf install -y gcc krb5-devel
+        run: cd doozer && dnf install -y gcc krb5-devel
       - name: Create venv and install dependencies
-        run: make venv
+        run: cd doozer && make venv
       - name: Run tests
-        run: make test
+        run: cd doozer && make test
