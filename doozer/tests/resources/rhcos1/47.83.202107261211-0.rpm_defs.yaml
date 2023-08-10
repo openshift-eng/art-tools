@@ -1,0 +1,50 @@
+# For each RPM NVRA in the rhcos OS metadata, iterate through them,
+# getRPM(nvra). Keys are nvra and values are output of getRPM
+dbus-1.12.8-12.el8_3.s390x:
+  arch: s390x
+  build_id: 1458974
+  buildroot_id: 6912643
+  buildtime: 1610628774
+  epoch: 1
+  external_repo_id: 0
+  external_repo_name: INTERNAL
+  extra: null
+  id: 9110744
+  metadata_only: false
+  name: dbus
+  payloadhash: 087050d52d7d1119c6ca08a61bc7589f
+  release: 12.el8_3
+  size: 40604
+  version: 1.12.8
+util-linux-2.32.1-24.el8.s390x:
+  arch: s390x
+  build_id: 1238207
+  buildroot_id: 6129072
+  buildtime: 1593157326
+  epoch: null
+  external_repo_id: 0
+  external_repo_name: INTERNAL
+  extra: null
+  id: 8220245
+  metadata_only: false
+  name: util-linux
+  payloadhash: 9b023d6b1f943c22701bca88772806a8
+  release: 24.el8
+  size: 2490916
+  version: 2.32.1
+tzdata-2021a-1.el8.noarch:
+  arch: noarch
+  build_id: 1473607
+  buildroot_id: 6962315
+  buildtime: 1611592265
+  epoch: null
+  external_repo_id: 0
+  external_repo_name: INTERNAL
+  extra: null
+  id: 9169364
+  metadata_only: false
+  name: tzdata
+  payloadhash: a928d660b5bd64a91bd6bfc055c865e5
+  release: 1.el8
+  size: 482936
+  version: 2021a
