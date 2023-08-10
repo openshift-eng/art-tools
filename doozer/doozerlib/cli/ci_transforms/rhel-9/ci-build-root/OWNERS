@@ -1,10 +1,10 @@
 approvers:
 - jupierce
-- sttts
 - mfojtik
-- soltysh
+# - sttts
+# - soltysh
 reviewers:
 - jupierce
-- sttts
 - mfojtik
-- soltysh
+# - sttts
+# - soltysh
