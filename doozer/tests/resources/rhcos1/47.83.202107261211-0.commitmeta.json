@@ -1,0 +1,634 @@
+{
+  "coreos-assembler.config-gitrev" : "v3.1-1271-g5bfbd563962484067a4f47c26c96def706976511",
+  "coreos-assembler.config-dirty" : "false",
+  "rpmostree.advisories" : [
+    [
+      "RHSA-2019:3706",
+      1,
+      2,
+      [
+        "lua-libs-5.3.4-11.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1670019",
+            "CVE-2019-6706 lua: use-after-free in lua_upvaluejoin in lapi.c resulting in denial of service"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2021:0150",
+      1,
+      3,
+      [
+        "dnsmasq-2.79-13.el8_3.1.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1881875",
+            "CVE-2020-25681 dnsmasq: heap-based buffer overflow in sort_rrset() when DNSSEC is enabled"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1882014",
+            "CVE-2020-25682 dnsmasq: buffer overflow in extract_name() due to missing length check when DNSSEC is enabled"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1882018",
+            "CVE-2020-25683 dnsmasq: heap-based buffer overflow with large memcpy in get_rdata() when DNSSEC is enabled"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1889686",
+            "CVE-2020-25684 dnsmasq: loose address/port check in reply_query() makes forging replies easier for an off-path attacker"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1889688",
+            "CVE-2020-25685 dnsmasq: loose query name check in reply_query() makes forging replies easier for an off-path attacker"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1890125",
+            "CVE-2020-25686 dnsmasq: multiple queries forwarded for the same name makes forging replies easier for an off-path attacker"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1891568",
+            "CVE-2020-25687 dnsmasq: heap-based buffer overflow with large memcpy in sort_rrset() when DNSSEC is enabled"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4490",
+      1,
+      2,
+      [
+        "gnupg2-2.2.20-2.el8.s390x",
+        "gnupg2-smime-2.2.20-2.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1726146",
+            "CVE-2019-13050 GnuPG: interaction between the sks-keyserver code and GnuPG allows for a Certificate Spamming Attack which leads to persistent DoS"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4482",
+      1,
+      2,
+      [
+        "libgcrypt-1.8.5-4.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1764018",
+            "CVE-2019-13627 libgcrypt: ECDSA timing attack allowing private key leak"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2021:1197",
+      1,
+      3,
+      [
+        "libldb-2.1.3-3.el8_3.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1941402",
+            "CVE-2021-20277 samba: Out of bounds read in AD DC LDAP server"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:0902",
+      1,
+      3,
+      [
+        "libicu-60.3-2.el8_1.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1807349",
+            "CVE-2020-10531 ICU: Integer overflow in UnicodeString::doAppend()"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4469",
+      1,
+      1,
+      [
+        "cups-libs-1:2.2.6-38.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1823964",
+            "CVE-2020-3898 cups: heap based buffer overflow in libcups's ppdFindOption() in ppd-mark.c"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4442",
+      1,
+      2,
+      [
+        "sqlite-libs-3.26.0-11.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1708301",
+            "CVE-2019-5018 sqlite: Use-after-free in window function leading to remote code execution"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1768986",
+            "CVE-2019-16168 sqlite: Division by zero in whereLoopAddBtreeIndex in sqlite3.c"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1791313",
+            "CVE-2019-20218 sqlite: selectExpander in select.c proceeds with WITH stack unwinding even after a parsing error"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1801181",
+            "CVE-2020-6405 sqlite: Out-of-bounds read in SELECT with ON/USING clause"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1809315",
+            "CVE-2020-9327 sqlite: NULL pointer dereference and segmentation fault because of generated column optimizations"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1841562",
+            "CVE-2020-13630 sqlite: Use-after-free in fts3EvalNextRow in ext/fts3/fts3.c"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1841568",
+            "CVE-2020-13631 sqlite: Virtual table can be renamed into the name of one of its shadow tables"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1841574",
+            "CVE-2020-13632 sqlite: NULL pointer dereference in ext/fts3/fts3_snippet.c via a crafted matchinfo() query"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4453",
+      1,
+      2,
+      [
+        "vim-minimal-2:8.0.1763-15.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1842658",
+            "CVE-2019-20807 vim: users can execute arbitrary OS commands via scripting interfaces in the rvim restricted mode"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4827",
+      1,
+      2,
+      [
+        "oniguruma-6.8.2-2.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1728965",
+            "CVE-2019-13225 oniguruma: NULL pointer dereference in match_at() in regexec.c"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2021:0218",
+      1,
+      3,
+      [
+        "sudo-1.8.29-6.el8_3.1.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1917684",
+            "CVE-2021-3156 sudo: Heap buffer overflow in argument parsing"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4547",
+      1,
+      1,
+      [
+        "libpcap-14:1.9.1-4.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1760618",
+            "CVE-2019-15165 libpcap: Resource exhaustion during PHB header length validation"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4539",
+      1,
+      2,
+      [
+        "pcre2-10.32-2.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1735494",
+            "CVE-2019-20454 pcre: Out of bounds read in JIT mode when \\X is used in non-UTF mode"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2021:0670",
+      1,
+      3,
+      [
+        "bind-export-libs-32:9.11.20-5.el8_3.1.s390x",
+        "bind-libs-lite-32:9.11.20-5.el8_3.1.s390x",
+        "python3-bind-32:9.11.20-5.el8_3.1.noarch",
+        "bind-utils-32:9.11.20-5.el8_3.1.s390x",
+        "bind-license-32:9.11.20-5.el8_3.1.noarch",
+        "bind-libs-32:9.11.20-5.el8_3.1.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1928486",
+            "CVE-2020-8625 bind: Buffer overflow in the SPNEGO implementation affecting GSSAPI security policy negotiation"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4432",
+      1,
+      2,
+      [
+        "platform-python-pip-9.0.3-18.el8.noarch",
+        "python3-pip-wheel-9.0.3-18.el8.noarch"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1868135",
+            "CVE-2019-20916 python-pip: directory traversal in _download_http_url() function in src/pip/_internal/download.py"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4497",
+      1,
+      2,
+      [
+        "cyrus-sasl-lib-2.1.27-5.el8.s390x",
+        "cyrus-sasl-gssapi-2.1.27-5.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1791854",
+            "CVE-2019-19906 cyrus-sasl: denial of service in _sasl_add_string function"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4443",
+      1,
+      2,
+      [
+        "bsdtar-3.3.2-9.el8.s390x",
+        "libarchive-3.3.2-9.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1801635",
+            "CVE-2019-19221 libarchive: out-of-bounds read in archive_wstring_append_from_mbs in archive_string.c"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:2755",
+      1,
+      3,
+      [
+        "libnghttp2-1.33.0-3.el8_2.1.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1844929",
+            "CVE-2020-11080 nghttp2: overly large SETTINGS frames can lead to DoS"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4542",
+      1,
+      2,
+      [
+        "cryptsetup-reencrypt-2.3.3-2.el8.s390x",
+        "cryptsetup-2.3.3-2.el8.s390x",
+        "cryptsetup-libs-2.3.3-2.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1874712",
+            "CVE-2020-14382 cryptsetup: Out-of-bounds write when validating segments"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2021:1024",
+      1,
+      3,
+      [
+        "openssl-1:1.1.1g-15.el8_3.s390x",
+        "openssl-libs-1:1.1.1g-15.el8_3.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1941547",
+            "CVE-2021-3450 openssl: CA certificate check bypass with X509_V_FLAG_X509_STRICT"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1941554",
+            "CVE-2021-3449 openssl: NULL pointer dereference in signature_algorithms processing"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4545",
+      1,
+      2,
+      [
+        "libssh-0.9.4-2.el8.s390x",
+        "libssh-config-0.9.4-2.el8.noarch"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1772523",
+            "CVE-2019-14889 libssh: unsanitized location in scp could lead to unwanted command execution"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1801998",
+            "CVE-2020-1730 libssh: denial of service when handling AES-CTR (or DES) ciphers"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:5479",
+      1,
+      3,
+      [
+        "linux-firmware-20200619-101.git3890db36.el8_3.noarch"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1893914",
+            "CVE-2020-12321 hardware: buffer overflow in bluetooth firmware"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2021:1206",
+      1,
+      3,
+      [
+        "gnutls-3.6.14-8.el8_3.s390x",
+        "nettle-3.4.1-4.el8_3.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1942533",
+            "CVE-2021-20305 nettle: Out of bounds memory access in signature verification"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4479",
+      1,
+      2,
+      [
+        "libxml2-2.9.7-8.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1788856",
+            "CVE-2019-19956 libxml2: memory leak in xmlParseBalancedChunkMemoryRecover in parser.c"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1799734",
+            "CVE-2019-20388 libxml2: memory leak in xmlSchemaPreRun in xmlschemas.c"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1799786",
+            "CVE-2020-7595 libxml2: infinite loop in xmlStringLenDecodeEntities in some end-of-file situations"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4433",
+      1,
+      2,
+      [
+        "python3-libs-3.6.8-31.el8.s390x",
+        "platform-python-3.6.8-31.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1763229",
+            "CVE-2019-16935 python: XSS vulnerability in the documentation XML-RPC server in server_title field"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1809065",
+            "CVE-2020-8492 python: wrong backtracking in urllib.request.AbstractBasicAuthHandler allows for a ReDoS"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1854926",
+            "CVE-2020-14422 python: DoS via inefficiency in IPv{4,6}Interface classes"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1856481",
+            "CVE-2019-20907 python: infinite loop in the tarfile module via crafted TAR archive"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:1766",
+      1,
+      2,
+      [
+        "mozjs60-60.9.0-4.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1661555",
+            "CVE-2018-20337 LibRaw: stack-based buffer overflow in the parse_makernote function of dcraw_common.cpp"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1672825",
+            "CVE-2019-3825 gdm: lock screen bypass when timed login is enabled"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1728562",
+            "CVE-2019-12447 gvfs: mishandling of file ownership in daemon/gvfsbackendadmin.c"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1728564",
+            "CVE-2019-12448 gvfs: race condition in daemon/gvfsbackendadmin.c due to admin backend not implementing query_info_on_read/write"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1728567",
+            "CVE-2019-12449 gvfs: mishandling of file's user and group ownership in daemon/gvfsbackendadmin.c due to unavailability of root privileges"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4508",
+      1,
+      2,
+      [
+        "libsolv-0.7.11-1.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1797072",
+            "CVE-2019-20387 libsolv: out-of-bounds read in repodata_schema2id in repodata.c"
+          ]
+        ]
+      }
+    ],
+    [
+      "RHSA-2020:4484",
+      1,
+      2,
+      [
+        "expat-2.2.5-4.el8.s390x"
+      ],
+      {
+        "cve_references" : [
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1723723",
+            "CVE-2018-20843 expat: large number of colons in input makes parser consume high amount of resources, leading to DoS"
+          ],
+          [
+            "https://bugzilla.redhat.com/show_bug.cgi?id=1752592",
+            "CVE-2019-15903 expat: heap-based buffer over-read via crafted XML input"
+          ]
+        ]
+      }
+    ]
+  ],
+  "rpmostree.inputhash" : "af519780458814872775f2f1a10440bddf3b782eb18a43c446a2a297cd1f1233",
+  "coreos-assembler.basearch" : "s390x",
+  "rpmostree.rpmdb.pkglist" : [
+    [
+      "dbus",
+      "1",
+      "1.12.8",
+      "12.el8_3",
+      "s390x"
+    ],
+    [
+      "tzdata",
+      "0",
+      "2021a",
+      "1.el8",
+      "noarch"
+    ],
+    [
+      "util-linux",
+      "0",
+      "2.32.1",
+      "24.el8",
+      "s390x"
+    ]
+  ],
+  "version" : "47.83.202107261211-0",
+  "ostree.bootable" : true,
+  "rpmostree.initramfs-args" : [
+    "--add=ignition",
+    "--no-hostonly",
+    "--add-drivers",
+    "mptspi vmw_pvscsi",
+    "--omit-drivers",
+    "nouveau",
+    "--omit",
+    "nfs",
+    "--add",
+    "iscsi",
+    "ignition",
+    "--add",
+    "ifcfg",
+    "--add",
+    "fips",
+    "--omit",
+    "network-legacy"
+  ],
+  "ostree.linux" : "4.18.0-240.23.2.el8_3.s390x",
+  "rpmostree.rpmmd-repos" : [
+    {
+      "id" : "rhel-8-server-ose",
+      "timestamp" : 1627299495
+    },
+    {
+      "id" : "rhel-8-fast-datapath",
+      "timestamp" : 1624285258
+    },
+    {
+      "id" : "rhel-8-baseos",
+      "timestamp" : 1624472799
+    },
+    {
+      "id" : "rhel-8-appstream",
+      "timestamp" : 1623791431
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+# For each RPM NVRA in the rhcos OS metadata, iterate through them,
+# getRPM(nvra).. and then getBuild(rpm['build_id']). Keys are
+# build['id'] and values are the build dicts.
+1238207:
+  build_id: 1238207
+  cg_id: null
+  cg_name: null
+  completion_time: '2020-06-26 07:47:14.932102'
+  completion_ts: 1593157634.9321
+  creation_event_id: 32677779
+  creation_time: '2020-06-26 07:40:15.724109'
+  creation_ts: 1593157215.72411
+  epoch: null
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/util-linux#c7ef56e7205e7334ed56d6bf1d163c18794235e7
+  id: 1238207
+  name: util-linux
+  nvr: util-linux-2.32.1-24.el8
+  owner_id: 148
+  owner_name: kzak
+  package_id: 1197
+  package_name: util-linux
+  release: 24.el8
+  source: git://pkgs.devel.redhat.com/rpms/util-linux#c7ef56e7205e7334ed56d6bf1d163c18794235e7
+  start_time: '2020-06-26 07:40:15.719336'
+  start_ts: 1593157215.71934
+  state: 1
+  task_id: 29705750
+  version: 2.32.1
+  volume_id: 9
+  volume_name: rhel-8
+1458974:
+  build_id: 1458974
+  cg_id: null
+  cg_name: null
+  completion_time: '2021-01-14 12:56:03.666204'
+  completion_ts: 1610628963.6662
+  creation_event_id: 36718485
+  creation_time: '2021-01-14 12:50:02.429379'
+  creation_ts: 1610628602.42938
+  epoch: 1
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/dbus#ceb28f578b07b4785897cedbe04c0972cb59a92f
+  id: 1458974
+  name: dbus
+  nvr: dbus-1.12.8-12.el8_3
+  owner_id: 2473
+  owner_name: dking
+  package_id: 333
+  package_name: dbus
+  release: 12.el8_3
+  source: git://pkgs.devel.redhat.com/rpms/dbus#ceb28f578b07b4785897cedbe04c0972cb59a92f
+  start_time: '2021-01-14 12:50:02.384884'
+  start_ts: 1610628602.38488
+  state: 1
+  task_id: 34273867
+  version: 1.12.8
+  volume_id: 9
+  volume_name: rhel-8
+1473607:
+  build_id: 1473607
+  cg_id: null
+  cg_name: null
+  completion_time: '2021-01-25 16:31:55.129287'
+  completion_ts: 1611592315.12929
+  creation_event_id: 36903833
+  creation_time: '2021-01-25 16:28:55.385468'
+  creation_ts: 1611592135.38547
+  epoch: null
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/tzdata#6c957bbd5068cc19b01658b1e8a8f664c929f96b
+  id: 1473607
+  name: tzdata
+  nvr: tzdata-2021a-1.el8
+  owner_id: 1849
+  owner_name: pfrankli
+  package_id: 1228
+  package_name: tzdata
+  release: 1.el8
+  source: git://pkgs.devel.redhat.com/rpms/tzdata#6c957bbd5068cc19b01658b1e8a8f664c929f96b
+  start_time: '2021-01-25 16:28:55.359733'
+  start_ts: 1611592135.35973
+  state: 1
+  task_id: 34499125
+  version: 2021a
+  volume_id: 9
+  volume_name: rhel-8

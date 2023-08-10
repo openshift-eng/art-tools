@@ -1,0 +1,117 @@
+# List of all builds associated with packages used by underlying archive ima
+745934:
+  build_id: 745934
+  cg_id: null
+  cg_name: null
+  completion_time: '2018-08-12 07:55:13.376681'
+  completion_ts: 1534060513.37668
+  creation_event_id: 21094083
+  creation_time: '2018-08-12 07:48:16.919100'
+  creation_ts: 1534060096.9191
+  epoch: null
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/grep?#c300a00f9d91514feb8a5eef8d06800c4be6a03b
+  id: 745934
+  name: grep
+  nvr: grep-3.1-6.el8
+  owner_id: 1665
+  owner_name: tdawson
+  package_id: 797
+  package_name: grep
+  release: 6.el8
+  source: git://pkgs.devel.redhat.com/rpms/grep#c300a00f9d91514feb8a5eef8d06800c4be6a03b
+  start_time: '2018-08-12 07:48:16.919100'
+  start_ts: 1534060096.9191
+  state: 1
+  task_id: 17778576
+  version: '3.1'
+  volume_id: 9
+  volume_name: rhel-8
+746599:
+  build_id: 746599
+  cg_id: null
+  cg_name: null
+  completion_time: '2018-08-12 13:39:05.607625'
+  completion_ts: 1534081145.60763
+  creation_event_id: 21103702
+  creation_time: '2018-08-12 12:16:28.131995'
+  creation_ts: 1534076188.13199
+  epoch: null
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/hostname?#921430a8e173de21d01d6878929253a6d3c09291
+  id: 746599
+  name: hostname
+  nvr: hostname-3.20-6.el8
+  owner_id: 1665
+  owner_name: tdawson
+  package_id: 33899
+  package_name: hostname
+  release: 6.el8
+  source: git://pkgs.devel.redhat.com/rpms/hostname#921430a8e173de21d01d6878929253a6d3c09291
+  start_time: '2018-08-12 12:16:28.131995'
+  start_ts: 1534076188.13199
+  state: 1
+  task_id: 17785068
+  version: '3.20'
+  volume_id: 9
+  volume_name: rhel-8
+746857:
+  build_id: 746857
+  cg_id: null
+  cg_name: null
+  completion_time: '2018-08-12 12:44:56.534532'
+  completion_ts: 1534077896.53453
+  creation_event_id: 21105692
+  creation_time: '2018-08-12 12:43:15.087719'
+  creation_ts: 1534077795.08772
+  epoch: null
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/python-chardet?#bc10a725de0ebf632b9cd67735bb46c1c31df1ba
+  id: 746857
+  name: python-chardet
+  nvr: python-chardet-3.0.4-7.el8
+  owner_id: 1665
+  owner_name: tdawson
+  package_id: 16728
+  package_name: python-chardet
+  release: 7.el8
+  source: git://pkgs.devel.redhat.com/rpms/python-chardet#bc10a725de0ebf632b9cd67735bb46c1c31df1ba
+  start_time: '2018-08-12 12:43:15.087719'
+  start_ts: 1534077795.08772
+  state: 1
+  task_id: 17786731
+  version: 3.0.4
+  volume_id: 9
+  volume_name: rhel-8
+1473607:
+  build_id: 1473607
+  cg_id: null
+  cg_name: null
+  completion_time: '2021-01-25 16:31:55.129287'
+  completion_ts: 1611592315.12929
+  creation_event_id: 36903833
+  creation_time: '2021-01-25 16:28:55.385468'
+  creation_ts: 1611592135.38547
+  epoch: null
+  extra:
+    source:
+      original_url: git://pkgs.devel.redhat.com/rpms/tzdata#6c957bbd5068cc19b01658b1e8a8f664c929f96b
+  id: 1473607
+  name: tzdata
+  nvr: tzdata-2021a-1.el8
+  owner_id: 1849
+  owner_name: pfrankli
+  package_id: 1228
+  package_name: tzdata
+  release: 1.el8
+  source: git://pkgs.devel.redhat.com/rpms/tzdata#6c957bbd5068cc19b01658b1e8a8f664c929f96b
+  start_time: '2021-01-25 16:28:55.359733'
+  start_ts: 1611592135.35973
+  state: 1
+  task_id: 34499125
+  version: 2021a
+  volume_id: 9
+  volume_name: rhel-8
