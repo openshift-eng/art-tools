@@ -10,7 +10,7 @@ import datetime
 
 try:
     import mysql.connector as mysql_connector
-except:
+except Exception:
     # Allow this module to be missing
     pass
 
@@ -248,7 +248,7 @@ class DB(object):
         """
 
         for attr_column in attr_payload:
-            if not (attr_column in self._table_column_cache[table_name]):
+            if attr_column not in self._table_column_cache[table_name]:
                 break
         else:
             # if the loop runs without breaking all the columns in payload are already present in

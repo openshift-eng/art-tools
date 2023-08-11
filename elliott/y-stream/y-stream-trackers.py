@@ -42,7 +42,7 @@ def _get_flaw_cve(flaw):
 def parse_version(v):
     try:
         return version.parse(v)
-    except:
+    except Exception:
         return v
 
 

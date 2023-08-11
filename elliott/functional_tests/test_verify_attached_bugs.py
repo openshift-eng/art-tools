@@ -118,7 +118,9 @@ class VerifyBugs(unittest.TestCase):
         bugs = bv.bug_tracker.get_bugs([1875258, 1878798, 1881212, 1869790, 1840719])
         bug_blocking_map = bv._get_blocking_bugs_for(bugs)
         id_bug_map = {b.id: b for b in bug_blocking_map}
-        bbf = lambda bugid: bug_blocking_map[id_bug_map[bugid]]
+
+        def bbf(bugid):
+            return bug_blocking_map[id_bug_map[bugid]]
 
         self.assertTrue(bbf(1875258), "CVE tracker with blocking bug")
         self.assertTrue(any(bug.id == 1875259 for bug in bbf(1875258)), "1875259 blocks 1875258")
@@ -143,16 +145,12 @@ class VerifyBugs(unittest.TestCase):
             )
 
     def test_verify_attached_bugs_ok(self):
-        out = subprocess.check_output(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.5", "verify-attached-bugs", "60085", "60089"]
-        )
+        out = subprocess.check_output(constants.ELLIOTT_CMD + ["--group", "openshift-4.5", "verify-attached-bugs", "60085", "60089"])
         self.assertIn("All bugs were verified", out.decode("utf-8"))
 
     def test_verify_attached_bugs_wrong(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
             capture_output=True,
             encoding='utf-8',
         )

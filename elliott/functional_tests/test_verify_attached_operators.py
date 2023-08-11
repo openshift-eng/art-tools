@@ -38,8 +38,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
     def test_verify_attached_operators_ok(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.12", "verify-attached-operators", "110351"],
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.12", "verify-attached-operators", "110351"],
             capture_output=True,
             encoding='utf-8',
         )
@@ -47,8 +46,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
     def test_verify_attached_operators_wrong(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.8", "verify-attached-operators", "--omit-shipped", "--omit-attached", "81215"],
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.8", "verify-attached-operators", "--omit-shipped", "--omit-attached", "81215"],
             # 4.9.0 GA metadata advisory; will be missing operands from other advisories
             capture_output=True,
             encoding='utf-8',

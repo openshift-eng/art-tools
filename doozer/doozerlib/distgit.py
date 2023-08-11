@@ -1254,7 +1254,7 @@ class ImageDistGitRepo(DistGitRepo):
 
                             Record.set('brew.image_shas', ','.join(image_shas))
 
-                    except:
+                    except Exception:
                         Record.set('incomplete', True)
                         traceback.print_exc()
                         self.logger.error(f'Unable to extract brew task information for {task_id}')
@@ -1996,7 +1996,7 @@ class ImageDistGitRepo(DistGitRepo):
                 name = ref['name']
                 name = map_image_name(name, image_map)
                 spec = ref['from']['name']
-            except:
+            except Exception:
                 raise DoozerFatalError('Error loading image-references data for {}'.format(self.metadata.distgit_key))
 
             try:

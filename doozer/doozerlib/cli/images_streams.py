@@ -24,7 +24,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.util import get_docker_config_json, convert_remote_git_to_ssh, \
     split_git_url, remove_prefix, green_print, \
     yellow_print, red_print, convert_remote_git_to_https, \
-    what_is_in_master, extract_version_fields, convert_remote_git_to_https
+    what_is_in_master, extract_version_fields
 
 
 @cli.group("images:streams", short_help="Manage ART equivalent images in upstream CI.")
@@ -824,7 +824,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
                     exectools.cmd_assert(f'oc image info {upstream_image}', retries=3)
-                except:
+                except Exception:
                     yellow_print(f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.')
                     if not ignore_missing_images:
                         raise

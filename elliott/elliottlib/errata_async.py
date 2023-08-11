@@ -215,11 +215,9 @@ class AsyncErrataUtils:
         """ Given 2 cve_package_exclusions dicts, return the difference.
         :return: (extra_exclusions, missing_exclusions)
         """
-        extra_exclusions = {cve: {pkg: exclusions[pkg] for pkg in exclusions.keys()
-                                  - expected_exclusions.get(cve, {}).keys()}
+        extra_exclusions = {cve: {pkg: exclusions[pkg] for pkg in exclusions.keys() - expected_exclusions.get(cve, {}).keys()}
                             for cve, exclusions in current_exclusions.items()}
-        missing_exclusions = {cve: {pkg: exclusions[pkg] for pkg in exclusions.keys()
-                                    - current_exclusions.get(cve, {}).keys()}
+        missing_exclusions = {cve: {pkg: exclusions[pkg] for pkg in exclusions.keys() - current_exclusions.get(cve, {}).keys()}
                               for cve, exclusions in expected_exclusions.items()}
         return extra_exclusions, missing_exclusions
 

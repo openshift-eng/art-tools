@@ -1,4 +1,5 @@
-import json, yaml
+import json
+import yaml
 import unittest
 import os
 from unittest.mock import MagicMock, patch

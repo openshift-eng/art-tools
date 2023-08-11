@@ -8,7 +8,6 @@ import shutil
 import yaml
 import sys
 import subprocess
-import urllib.request, urllib.parse, urllib.error
 from typing import Dict, cast
 import tempfile
 import traceback
@@ -74,7 +73,7 @@ class RemoteRequired(click.Option):
         super(RemoteRequired, self).__init__(*args, **kwargs)
 
     def handle_parse_result(self, ctx, opts, args):
-        if not ctx.obj.local and not (self.name in opts):
+        if not ctx.obj.local and self.name not in opts:
             self.required = True
 
         return super(RemoteRequired, self).handle_parse_result(
@@ -672,15 +671,18 @@ def images_merge(runtime, target, push, allow_overwrite):
         runtime.push_distgits()
 
 
-def _taskinfo_has_timestamp(task_info, key_name):
+def _taskinfo_has_timestamp(task_info, key_names):
     """
     Tests to see if a named timestamp exists in a koji taskinfo
     dict.
     :param task_info: The taskinfo dict to check
-    :param key_name: The name of the timestamp key
-    :return: Returns True if the timestamp is found and is a Number
+    :param key_names: List of the name of the timestamp key
+    :return: Returns True if all the named  timestamp is found and is a Number
     """
-    return isinstance(task_info.get(key_name, None), Number)
+    for key_name in key_names:
+        if not isinstance(task_info.get(key_name, None), Number):
+            return False
+    return True
 
 
 def print_build_metrics(runtime):
@@ -694,12 +696,7 @@ def print_build_metrics(runtime):
         info = watch_task_info[task_id]
         runtime.logger.debug("Watch task info:\n {}\n\n".format(info))
         # Error unless all true
-        if not ('id' in info
-                and koji.TASK_STATES[info['state']] == 'CLOSED'
-                and _taskinfo_has_timestamp(info, 'create_ts')
-                and _taskinfo_has_timestamp(info, 'start_ts')
-                and _taskinfo_has_timestamp(info, 'completion_ts')
-                ):
+        if not ('id' in info and koji.TASK_STATES[info['state']] == 'CLOSED' and _taskinfo_has_timestamp(info, ['create_ts', 'start_ts', 'completion_ts'])):
             runtime.logger.error(
                 "Discarding incomplete/error task info: {}".format(info))
             del watch_task_info[task_id]
@@ -901,7 +898,7 @@ def images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, scra
     if not runtime.local:  # not needed for local builds
         try:
             print_build_metrics(runtime)
-        except:
+        except Exception:
             # Never kill a build because of bad logic in metrics
             traceback.print_exc()
             runtime.logger.error("Error trying to show build metrics")
@@ -1142,7 +1139,8 @@ def images_print(runtime, short, show_non_release, show_base, output, label, pat
 
     count = 0
     if short:
-        echo_verbose = lambda _: None
+        def echo_verbose(_):
+            return None
     else:
         echo_verbose = click.echo
 

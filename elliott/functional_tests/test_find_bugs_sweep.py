@@ -6,8 +6,7 @@ from functional_tests import constants
 class FindBugsSweepTestCase(unittest.TestCase):
     def test_sweep_bugs(self):
         out = subprocess.check_output(
-            constants.ELLIOTT_CMD
-            + [
+            constants.ELLIOTT_CMD + [
                 "--group=openshift-4.11", "--assembly=rc.7", "find-bugs:sweep", "--check-builds",
                 "--into-default-advisories", "--noop"
             ]

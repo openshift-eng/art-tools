@@ -1,0 +1,15 @@
+repos:
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  # Ruff version.
+  rev: v0.0.270
+  hooks:
+    - id: ruff
+      # E501: line too long
+      # F401: imported but unused in current file
+      args: [--ignore=E501, --ignore=F401]
+- repo: https://github.com/PyCQA/flake8
+  rev: 6.1.0
+  hooks:
+    - id: flake8
+      args: 
+      - --ignore=E501,F401

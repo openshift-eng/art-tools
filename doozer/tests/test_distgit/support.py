@@ -1,20 +1,19 @@
+import io
+import logging
+import tempfile
+import shutil
 from unittest import IsolatedAsyncioTestCase
 from future import standard_library
-
 from doozerlib.assembly import AssemblyTypes
-
-standard_library.install_aliases()
+from doozerlib import model
 
 try:
     from importlib import reload
 except ImportError:
     pass
-import io
-import logging
-import tempfile
-import shutil
 
-from doozerlib import model
+
+standard_library.install_aliases()
 
 
 class MockDistgit(object):

@@ -1,5 +1,5 @@
 from future import standard_library
-standard_library.install_aliases()
+
 from contextlib import contextmanager
 from collections import namedtuple
 
@@ -43,6 +43,7 @@ from doozerlib import brew
 from doozerlib.assembly import assembly_group_config, assembly_basis_event, assembly_type, AssemblyTypes, assembly_streams_config
 from doozerlib.build_status_detector import BuildStatusDetector
 
+standard_library.install_aliases()
 # Values corresponds to schema for group.yml: freeze_automation. When
 # 'yes', doozer itself will inhibit build/rebase related activity
 # (exiting with an error if someone tries). Other values can
@@ -1192,7 +1193,7 @@ class Runtime(object):
 
                     try:
                         os.rename(tmp_repo_dir, repo_dir)
-                    except:
+                    except Exception:
                         # There are two categories of failure
                         # 1. Another doozer instance already created the directory, in which case we are good to go.
                         # 2. Something unexpected is preventing the rename.

@@ -84,7 +84,7 @@ def watch_task(session, log_f, task_id, terminate_event):
             if watcher.is_done():
                 return None if watcher.is_success() else watcher.get_failure()
             log_f("Task state: " + koji.TASK_STATES[watcher.info['state']])
-        except:
+        except Exception:
             except_count += 1
             # possible for watcher.update() to except during connection issue, try again
             log_f('watcher.update() exception. Trying again in 60s.\n{}'.format(traceback.format_exc()))
@@ -142,7 +142,7 @@ def watch_tasks(session, log_f, task_ids, terminate_event):
                     errors[task_id] = None if watcher.is_success() else watcher.get_failure()
                     tasks_to_poll.remove(task_id)
                 log_f(f"Task {task_id} state: {koji.TASK_STATES[watcher.info['state']]}")
-            except:
+            except Exception:
                 except_counts[task_id] += 1
                 # possible for watcher.update() to except during connection issue, try again
                 log_f('watcher.update() exception. Trying again in 60s.\n{}'.format(traceback.format_exc()))

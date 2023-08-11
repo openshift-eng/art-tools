@@ -2,7 +2,7 @@
 # and released under LGPL v3 <https://www.gnu.org/licenses/lgpl-3.0.en.html>
 
 from future import standard_library
-standard_library.install_aliases()
+
 import yaml
 import logging
 import urllib.parse
@@ -13,7 +13,7 @@ from . import exectools
 from .pushd import Dir
 from doozerlib import constants
 
-
+standard_library.install_aliases()
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]
 
 
@@ -137,7 +137,7 @@ class GitData(object):
                             exectools.cmd_assert('git branch --contains {}'.format(remote))
                             self.logger.info('{} is already cloned and latest'.format(self.data_path))
                             clone_data = False
-                        except:
+                        except Exception:
                             if not synced:
                                 msg = ('Local data is out of sync with remote and you have unpushed commits: {}\n'
                                        'You must either clear your local data\n'
