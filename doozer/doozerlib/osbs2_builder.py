@@ -135,6 +135,9 @@ class OSBS2Builder:
 
         if build_info:
             logger.info("Successfully built image %s; task: %s ; nvr: %s ; build record: %s ", image.name, task_url, build_info["nvr"], build_url)
+
+            # Trigger SAST Scanning with OpenScanHub
+            exectools.fire_and_forget(self._runtime.working_dir, f"osh-cli mock-build --config=cspodman --brew-build {build_info['nvr']}")
         else:
             logger.info("Successfully built image %s without a build record; task: %s", image.name, task_url)
 
