@@ -19,7 +19,7 @@ from dockerfile_parse import DockerfileParser
 from doozerlib.model import Model, Missing
 from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
-from doozerlib import brew, state, exectools, constants
+from doozerlib import exectools, constants
 from doozerlib.image import ImageMetadata
 from doozerlib.util import get_docker_config_json, convert_remote_git_to_ssh, \
     split_git_url, remove_prefix, green_print, \
@@ -738,7 +738,7 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
             'project': {'key': project},
             'issuetype': {'name': 'Bug'},
             'versions': [{'name': release_version}],  # Affects Version/s
-            'customfield_12323140': [{'name': Model(runtime.gitdata.load_data(key='bug').data).jira_config.target_release[-1]}],  # customfield_12323140 is Target Version in jira
+            'customfield_12323140': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12323140 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
             'description': description
@@ -748,6 +748,10 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
             issue = jira_client.create_issue(
                 fields
             )
+            # check depend issues and set depend to a higher version issue if ture
+            depend_issues = search_issues(f"project={project} AND summary ~ 'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'")
+            if depend_issues:
+                jira_client.create_issue_link("Depend", issue.key, depend_issues[0].key)
             new_issues[distgit_key] = issue
             print(f'A JIRA issue has been opened for {pr.html_url}: {issue.key}')
             connect_issue_with_pr(pr, issue.key)
