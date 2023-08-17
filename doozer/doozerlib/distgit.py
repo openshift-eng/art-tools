@@ -1057,7 +1057,7 @@ class ImageDistGitRepo(DistGitRepo):
                     if build_info:
                         record["nvrs"] = build_info["nvr"]
                     if not dry_run:
-                        self.update_build_db(True, task_id=task_id, scratch=scratch)
+                        self.update_build_db(True, task_id=task_id, build_info=build_info, scratch=scratch)
                         if comment_on_pr:
                             try:
                                 comment_on_pr_obj = CommentOnPr(distgit_dir=self.distgit_dir,
@@ -1084,7 +1084,7 @@ class ImageDistGitRepo(DistGitRepo):
                 except OSBS2BuildError as build_err:
                     record["task_id"], record["task_url"] = build_err.task_id, build_err.task_url
                     if not dry_run:
-                        self.update_build_db(False, task_id=build_err.task_id, scratch=scratch)
+                        self.update_build_db(False, task_id=build_err.task_id, build_info=None, scratch=scratch)
                     raise
             record["message"] = "Success"
             record["status"] = 0
@@ -1170,7 +1170,7 @@ class ImageDistGitRepo(DistGitRepo):
             self.logger.info("Successfully built image: {}".format(target_image))
         return True
 
-    def update_build_db(self, success_flag, task_id=None, scratch=False):
+    def update_build_db(self, success_flag, task_id=None, build_info=None, scratch=False):
 
         if scratch:
             return
@@ -1232,6 +1232,8 @@ class ImageDistGitRepo(DistGitRepo):
                             """
                             Record.set('brew.faultCode', task_result.get('faultCode', 0))
                             build_ids = task_result.get('koji_builds', [])
+                            if not build_ids and build_info:  # task failed but build success, use build_info directly
+                                build_ids = [build_info['id']]
                             Record.set('brew.build_ids', ','.join(build_ids))  # comma delimited list if > 1
                             image_shas = []
                             for idx, build_id in enumerate(build_ids):
