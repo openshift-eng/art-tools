@@ -477,7 +477,7 @@ class ImageMetadata(Metadata):
         if from_stream:
             referred_streams.add(from_stream)
         if referred_streams:
-            message["streams"] = {stream: streams[stream].get('image') for stream in referred_streams}
+            message["streams"] = {stream: streams[stream] for stream in referred_streams}
 
         # Avoid non serializable objects. Known to occur for PosixPath objects in content.source.modifications.
         default = lambda o: f"<<non-serializable: {type(o).__qualname__}>>"
