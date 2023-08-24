@@ -38,14 +38,16 @@ fi
 # Create a PR with this commit hash if it doesn't exist
 echo "Create new pr to update submodule"
 B64_PAT=$(printf "%s""pat:$GITHUB_TOKEN" | base64)
+git clone -b master "https://github.com/$GITHUB_REPOSITORY"
+cd ./aos-cd-jobs
 git config --local http.https://github.com.extraheader "AUTHORIZATION: basic $B64_PAT"
 git config --local user.email $(echo "$user_response" | jq -r ".email")
 git config --local user.name $(echo "$user_response" | jq -r ".login")
 
-git clone -b master "https://github.com/$GITHUB_REPOSITORY"
 git checkout -b $BRANCH
 git submodule update --init --recursive --remote -- $MOD_NAME
 git commit -am "Update [$MOD_NAME] submodule to [$MOD_ORG/$MOD_NAME@$MOD_BRANCH]"
 git push --set-upstream origin $BRANCH
-params={"title":"Automated submodule update [$MOD_NAME]","body":"Update [$MOD_NAME] submodule to [$MOD_ORG/$MOD_NAME@$MOD_BRANCH]","head":"$BRANCH","base":"master"}
-curl -L -X POST -H "${AUTH_HEADER}" -H "$API_HEADER" "$URI/repos/$GITHUB_REPOSITORY/pulls" -d $params
+
+curl -L -X POST -H "${AUTH_HEADER}" -H "$API_HEADER" "$URI/repos/$GITHUB_REPOSITORY/pulls" \
+     -d "{\"title\":\"Automated submodule update [$MOD_NAME]\",\"body\":\"Update [$MOD_NAME] submodule to [$MOD_ORG/$MOD_NAME@$MOD_BRANCH]\",\"head\":\"$BRANCH\",\"base\":\"master\"}"
