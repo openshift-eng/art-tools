@@ -1,4 +1,4 @@
-FROM registry.fedoraproject.org/fedora:37
+FROM registry.fedoraproject.org/fedora:38
 LABEL name="doozer-dev" \
   description="Doozer development container image" \
   maintainer="OpenShift Automated Release Tooling (ART) Team <aos-team-art@redhat.com>"
