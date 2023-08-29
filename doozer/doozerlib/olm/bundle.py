@@ -557,14 +557,27 @@ class OLMBundle(object):
         return files
 
     @property
-    def redhat_delivery_tags(self):
-        versions = '=v{MAJOR}.{MINOR}'.format(**self.runtime.group_config.vars)
+    def operator_index_mode(self):
+        mode = self.runtime.group_config.operator_index_mode or 'ga'  # default when missing
+        if mode in {'pre-release', 'ga', 'ga-plus'}:
+            # pre-release: label for pre-release operator index (unsupported)
+            # ga: label for only this release's operator index
+            # ga-plus: label for this release's operator index and future release indexes as well
+            return mode
+        self.runtime.logger.warning(f'{mode} is not a valid group_config.operator_index_mode')
+        return 'ga'
 
-        return {
-            # 'com.redhat.delivery.backport': 'true',
+    @property
+    def redhat_delivery_tags(self):
+        versions = 'v{MAJOR}.{MINOR}' if self.operator_index_mode == 'ga-plus' else '=v{MAJOR}.{MINOR}'
+
+        labels = {
             'com.redhat.delivery.operator.bundle': 'true',
-            'com.redhat.openshift.versions': versions,
+            'com.redhat.openshift.versions': versions.format(**self.runtime.group_config.vars),
         }
+        if self.operator_index_mode == 'pre-release':
+            labels['com.redhat.prerelease'] = 'true'
+        return labels
 
     @property
     def operator_framework_tags(self):
