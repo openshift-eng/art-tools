@@ -18,6 +18,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                     "ship_ok_tag": "my-ship-ok-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
                     "target_tag": "my-target-tag",
+                    "enforce_same_version": True
                 }
             ]
         }))
@@ -67,6 +68,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                     "ship_ok_tag": "my-ship-ok-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
                     "target_tag": "my-target-tag",
+                    "enforce_same_version": True
                 }
             ]
         }))
