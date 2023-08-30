@@ -11,6 +11,7 @@ from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_delivery import RPMDeliveries
 from doozerlib.runtime import Runtime
+from doozerlib.util import split_el_suffix_in_release
 
 
 class TagRPMsCli:
@@ -156,17 +157,27 @@ class TagRPMsCli:
             if not entry.enforce_same_version:
                 continue
 
-            builds_to_tags_validated = {}
             for tag, nvr_dict in builds_to_tag.items():
                 if not nvr_dict:
                     continue
-                version = {b['version'] for b in nvr_dict.values()}
-                if len(version) > 1:
-                    logger.warning("Found multiple versions for nvrs when enforce_same_version is set to True. "
-                                   f"Please check nvrs={nvr_dict.keys()}, versions={version}")
+
+                package_names = {b['name'] for b in nvr_dict.values()}
+                if package_names != {'kernel', 'kernel-rt'}:
+                    raise ValueError(f"Unexpected packages found with enforce_same_version: {package_names}")
+                if len(nvr_dict) != 2:
+                    raise ValueError(f"More than 2 kernel builds found {nvr_dict.keys()}")
+
+                kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
+                kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+
+                # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
+                kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
+                kernel_rt_version = f"{kernel_rt_build['version']}-{kernel_rt_build['release']}"
+                if kernel_version not in kernel_rt_version:
+                    raise ValueError(f"kernel version {kernel_version} is not in kernel-rt version "
+                                     f"{kernel_rt_version}. To override this check, set enforce_same_version: False")
                 else:
-                    builds_to_tags_validated[tag] = nvr_dict
-            builds_to_tag = builds_to_tags_validated
+                    logger.info(f"kernel version {kernel_version} is in kernel-rt version {kernel_rt_version}")
 
         # untag builds from target tags
         tag_build_tuples = []
