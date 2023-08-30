@@ -70,8 +70,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
-    async def test_run(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock, tag_builds: AsyncMock,
-                       get_builds_tags: Mock):
+    async def test_run_inconsistent_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
+                                            tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
             "rpm_deliveries": [
                 {
@@ -80,6 +80,71 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
+                    "enforce_same_version": True
+                }
+            ]
+        })
+        runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
+        koji_api = runtime.build_retrying_koji_client.return_value
+
+        def _get_tagged_builds(session: koji.ClientSession,
+                               tag_component_tuples: Iterable[Tuple[str, Optional[str]]],
+                               build_type: Optional[str],
+                               event: Optional[int] = None,
+                               latest: int = 0,
+                               inherit: bool = False) -> List[List[Dict]]:
+            results = {
+                ("test-stop-ship-tag", "foo"): [{"nvr": "foo-1.0.0-1", "version": "1.0.0"}],
+                ("test-stop-ship-tag", "bar"): [{"nvr": "bar-1.0.0-1", "version": "1.0.0"}],
+                ("test-integration-tag", "foo"): [
+                    {"nvr": "foo-1.0.0-1", "version": "1.0.0"},
+                    {"nvr": "foo-1.0.1-1", "version": "1.0.1"},
+                ],
+                ("test-integration-tag", "bar"): [
+                    {"nvr": "bar-1.0.0-1", "version": "1.0.0"},
+                    {"nvr": "bar-1.0.1-1", "version": "1.0.1"},
+                    {"nvr": "bar-1.0.2-1", "version": "1.0.2"},
+                ],
+            }
+            return [results[tc] for tc in tag_component_tuples]
+        get_tagged_builds.side_effect = _get_tagged_builds
+        get_builds_tags.side_effect = lambda nvr_list, _: [
+            {
+                "foo-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"}],
+                "bar-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"},
+                                {"name": "test-target-tag"}],
+            }[nvr] for nvr in nvr_list
+        ]
+        koji_api.queryHistory.side_effect = lambda tables, build, tag: {
+            "tag_listing": {
+                "foo-1.0.1-1": [],
+                "bar-1.0.1-1": [{"active": False}],
+                "bar-1.0.2-1": [],
+            }[build]
+        }
+        cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
+        await cli.run()
+        untag_builds.assert_awaited_once_with(ANY, [('test-target-tag', 'bar-1.0.0-1')])
+        tag_builds.assert_awaited_once_with(
+            ANY,
+            [],
+            ANY)
+
+    @patch("doozerlib.brew.get_builds_tags")
+    @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
+    @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
+    @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
+    async def test_run_inconsistent_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
+                                            tag_builds: AsyncMock, get_builds_tags: Mock):
+        group_config = Model({
+            "rpm_deliveries": [
+                {
+                    "packages": ["foo", "bar"],
+                    "integration_tag": "test-integration-tag",
+                    "stop_ship_tag": "test-stop-ship-tag",
+                    "ship_ok_tag": "test-ship-ok-tag",
+                    "target_tag": "test-target-tag",
+                    "enforce_same_version": False,
                 }
             ]
         })
@@ -127,5 +192,69 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         tag_builds.assert_awaited_once_with(
             ANY,
             [('test-target-tag', 'bar-1.0.2-1'),
+             ('test-target-tag', 'foo-1.0.1-1')],
+            ANY)
+
+    @patch("doozerlib.brew.get_builds_tags")
+    @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
+    @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
+    @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
+    async def test_run_consistent_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
+                                          tag_builds: AsyncMock, get_builds_tags: Mock):
+        group_config = Model({
+            "rpm_deliveries": [
+                {
+                    "packages": ["foo", "bar"],
+                    "integration_tag": "test-integration-tag",
+                    "stop_ship_tag": "test-stop-ship-tag",
+                    "ship_ok_tag": "test-ship-ok-tag",
+                    "target_tag": "test-target-tag",
+                    "enforce_same_version": True,
+                }
+            ]
+        })
+        runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
+        koji_api = runtime.build_retrying_koji_client.return_value
+
+        def _get_tagged_builds(session: koji.ClientSession,
+                               tag_component_tuples: Iterable[Tuple[str, Optional[str]]],
+                               build_type: Optional[str],
+                               event: Optional[int] = None,
+                               latest: int = 0,
+                               inherit: bool = False) -> List[List[Dict]]:
+            results = {
+                ("test-stop-ship-tag", "foo"): [{"nvr": "foo-1.0.0-1", "version": "1.0.0"}],
+                ("test-stop-ship-tag", "bar"): [{"nvr": "bar-1.0.0-1", "version": "1.0.0"}],
+                ("test-integration-tag", "foo"): [
+                    {"nvr": "foo-1.0.0-1", "version": "1.0.0"},
+                    {"nvr": "foo-1.0.1-1", "version": "1.0.1"},
+                ],
+                ("test-integration-tag", "bar"): [
+                    {"nvr": "bar-1.0.0-1", "version": "1.0.0"},
+                    {"nvr": "bar-1.0.1-1", "version": "1.0.1"},
+                ],
+            }
+            return [results[tc] for tc in tag_component_tuples]
+        get_tagged_builds.side_effect = _get_tagged_builds
+        get_builds_tags.side_effect = lambda nvr_list, _: [
+            {
+                "foo-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"}],
+                "bar-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"},
+                                {"name": "test-target-tag"}],
+            }[nvr] for nvr in nvr_list
+        ]
+        koji_api.queryHistory.side_effect = lambda tables, build, tag: {
+            "tag_listing": {
+                "foo-1.0.1-1": [],
+                "bar-1.0.0-1": [{"active": False}],
+                "bar-1.0.1-1": [],
+            }[build]
+        }
+        cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
+        await cli.run()
+        untag_builds.assert_awaited_once_with(ANY, [('test-target-tag', 'bar-1.0.0-1')])
+        tag_builds.assert_awaited_once_with(
+            ANY,
+            [('test-target-tag', 'bar-1.0.1-1'),
              ('test-target-tag', 'foo-1.0.1-1')],
             ANY)
