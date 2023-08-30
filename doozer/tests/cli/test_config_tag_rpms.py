@@ -70,7 +70,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
-    async def test_run_inconsistent_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
+    async def test_run_enforce_version_fail(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                             tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
             "rpm_deliveries": [
@@ -125,17 +125,13 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         await cli.run()
         untag_builds.assert_awaited_once_with(ANY, [('test-target-tag', 'bar-1.0.0-1')])
-        tag_builds.assert_awaited_once_with(
-            ANY,
-            [],
-            ANY)
 
     @patch("doozerlib.brew.get_builds_tags")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
-    async def test_run_inconsistent_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
-                                            tag_builds: AsyncMock, get_builds_tags: Mock):
+    async def test_run_no_enforce_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
+                                          tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
             "rpm_deliveries": [
                 {
@@ -199,8 +195,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.tag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
-    async def test_run_consistent_version(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
-                                          tag_builds: AsyncMock, get_builds_tags: Mock):
+    async def test_run_enforce_version_pass(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
+                                            tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
             "rpm_deliveries": [
                 {

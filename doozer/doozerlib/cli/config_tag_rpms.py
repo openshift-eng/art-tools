@@ -156,6 +156,7 @@ class TagRPMsCli:
             if not entry.enforce_same_version:
                 continue
 
+            builds_to_tags_validated = {}
             for tag, nvr_dict in builds_to_tag.items():
                 if not nvr_dict:
                     continue
@@ -163,6 +164,9 @@ class TagRPMsCli:
                 if len(version) > 1:
                     logger.warning("Found multiple versions for nvrs when enforce_same_version is set to True. "
                                    f"Please check nvrs={nvr_dict.keys()}, versions={version}")
+                else:
+                    builds_to_tags_validated[tag] = nvr_dict
+            builds_to_tag = builds_to_tags_validated
 
         # untag builds from target tags
         tag_build_tuples = []
