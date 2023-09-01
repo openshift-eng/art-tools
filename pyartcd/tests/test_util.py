@@ -167,3 +167,13 @@ class TestUtil(IsolatedAsyncioTestCase):
 
         signing_mode = await util.get_signing_mode(group, assembly, None)
         self.assertEqual(signing_mode, 'signed')
+
+    def test_get_rpm_if_pinned(self):
+        rpms = {'el8': 'foo-1.0.0-1.el8', 'el9': 'foo-1.0.0-1.el9'}
+        releases_config = {'releases': {'4.11.0': {
+                           'assembly': {'members': {'rpms': [{'distgit_key': 'foo',
+                                        'metadata': {'is': rpms}
+                           }]}}}}}
+        self.assertEqual(util.get_rpm_if_pinned(releases_config, '4.11.0', 'foo'), rpms)
+        self.assertEqual(util.get_rpm_if_pinned(releases_config, '4.11.1', 'foo'), dict())
+        self.assertEqual(util.get_rpm_if_pinned(releases_config, '4.11.0', 'bar'), dict())

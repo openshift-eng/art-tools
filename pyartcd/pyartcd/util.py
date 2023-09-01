@@ -158,9 +158,9 @@ def get_release_name_for_assembly(group_name: str, releases_config: Dict, assemb
     return doozerutil.get_release_name_for_assembly(group_name, model.Model(releases_config), assembly_name)
 
 
-def is_rpm_pinned(releases_config: Dict, assembly_name: str, rpm_name: str):
+def get_rpm_if_pinned(releases_config: Dict, assembly_name: str, rpm_name: str) -> dict:
     pinned_rpms = assembly._assembly_config_struct(model.Model(releases_config), assembly_name, 'members', {'rpms': []})['rpms']
-    return any(rpm['distgit_key'] == rpm_name for rpm in pinned_rpms)
+    return next((rpm['metadata']['is'] for rpm in pinned_rpms if rpm['distgit_key'] == rpm_name), dict())
 
 
 async def kinit():
