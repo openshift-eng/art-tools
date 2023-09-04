@@ -94,7 +94,7 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None,
     :param timeout: Kill the process if it does not terminate after timeout seconds.
     :return: (stdout,stderr) if exit code is zero
     """
-
+    result, stdout, stderr = -1, '', ''
     for try_num in range(0, retries):
         if try_num > 0:
             logger.debug(
@@ -112,10 +112,9 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None,
 
     logger.debug("cmd_assert: Final result = {} in {} tries.".format(result, try_num))
 
-    assertion.success(
-        result,
-        "Error running [{}] {}: {} See debug log for more details.".
-        format(pushd.Dir.getcwd(), cmd, stderr))
+    if result != SUCCESS:
+        msg = f"Process {cmd} exited with code {result}:\ncwd={pushd.Dir.getcwd()}\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
+        raise ChildProcessError(msg, (result, stdout, stderr))
 
     return stdout, stderr
 
