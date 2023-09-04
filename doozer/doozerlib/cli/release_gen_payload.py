@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import aiofiles
 import click
+from doozerlib import rpm_utils
 import yaml
 from doozerlib import rhcos
 import openshift as oc
@@ -482,13 +483,21 @@ class GenPayloadCli:
         self.logger.debug("detecting images with group RPMs installed that are not the latest builds...")
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
             if build_inspector:
+                exempted_packages = set()
+                image_meta = build_inspector.get_image_meta()
+                if image_meta and image_meta.config.scan_sources.exempted_packages:
+                    exempted_packages = set(image_meta.config.scan_sources.exempted_packages)
                 for arch, non_latest_rpms in (await build_inspector.find_non_latest_rpms()).items():
                     # This could indicate an issue with scan-sources or that an image is no longer successfully building
                     # It could also mean that images are pinning content, which may be expected, so allow permits.
-                    for installed_nvr, newest_nvr, repo in non_latest_rpms:
+                    for installed_nevra, newest_nevra, repo in non_latest_rpms:
+                        nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
+                        if rpm_utils.parse_nvr(nevr)['name'] in exempted_packages:
+                            self.logger.warning("Package %s is exempted from package change detection", installed_nevra)
+                            continue
                         self.assembly_issues.append(AssemblyIssue(
-                            f"Found outdated RPM ({installed_nvr}) installed in {build_inspector.get_nvr()} ({arch})"
-                            f" when {newest_nvr} was available in repo {repo}",
+                            f"Found outdated RPM ({installed_nevra}) installed in {build_inspector.get_nvr()} ({arch})"
+                            f" when {newest_nevra} was available in repo {repo}",
                             component=dgk, code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD
                         ))
 

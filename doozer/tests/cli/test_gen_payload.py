@@ -186,7 +186,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_detect_non_latest_rpms(self):
         gpcli = rgp_cli.GenPayloadCli()
         bbii = AsyncMock(BrewBuildImageInspector)
-        bbii.find_non_latest_rpms.return_value = {"x86_64": [("installed", "newest", "repo_name")], "s390x": []}
+        bbii.find_non_latest_rpms.return_value = {"x86_64": [("foo-0:1.2.0-1.el9.x86_64", "foo-0:1.2.1-1.el9.x86_64", "repo_name")], "s390x": []}
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images=dict(spam=bbii))
         await gpcli.detect_non_latest_rpms(ai)
         self.assertEqual(gpcli.assembly_issues[0].code, AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD)
