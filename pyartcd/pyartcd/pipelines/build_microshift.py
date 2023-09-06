@@ -143,6 +143,9 @@ class BuildMicroShiftPipeline:
                 if assembly_basis.brew_event:
                     pr = await self._create_or_update_pull_request(nvrs)
 
+                # Kick off SAST scan
+                jenkins.start_scan_osh(nvrs=nvrs)
+
             # Sends a slack message
             message = f"microshift for assembly {self.assembly} has been successfully built."
             if pr:
