@@ -1414,7 +1414,8 @@ class PayloadGenerator:
 
             # check that each specified package in the member is consistent with the RHCOS build
             for pkg in consistent_pkgs:
-                issues.append(PayloadGenerator.validate_pkg_consistency_req(payload_tag, pkg, bbii, rhcos_rpm_vrs))
+                issues.append(PayloadGenerator.validate_pkg_consistency_req(payload_tag, pkg, bbii, rhcos_rpm_vrs,
+                                                                            str(primary_rhcos_build)))
 
         return [issue for issue in issues if issue]
 
@@ -1422,10 +1423,12 @@ class PayloadGenerator:
     def validate_pkg_consistency_req(
             payload_tag: str, pkg: str,
             bbii: BrewBuildImageInspector,
-            rhcos_rpm_vrs: Dict[str, str]) -> Optional[AssemblyIssue]:
+            rhcos_rpm_vrs: Dict[str, str],
+            rhcos_build_id: str) -> Optional[AssemblyIssue]:
         """check that the specified package in the member is consistent with the RHCOS build"""
         logger = bbii.runtime.logger
-        logger.debug(f"Checking consistency of {pkg} for {payload_tag} against RHCOS")
+        payload_tag_nvr: str = bbii.get_nvr()
+        logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
         member_nvrs: Dict[str, Dict] = bbii.get_all_installed_package_build_dicts()  # by name
         try:
             build = member_nvrs[pkg]
@@ -1441,16 +1444,16 @@ class PayloadGenerator:
 
         # find package RPM names in the RHCOS build and check that they have the same version
         required_vr = "-".join([build["version"], build["release"]])
-        logger.debug(f"{payload_tag} {pkg} has RPMs {rpm_names} at version {required_vr}")
+        logger.debug(f"{payload_tag_nvr} {pkg} has RPMs {rpm_names} at version {required_vr}")
         for name in rpm_names:
             vr = rhcos_rpm_vrs.get(name)
             if vr:
                 logger.debug(f"RHCOS RPM {name} version is {vr}")
             if vr and vr != required_vr:
                 return AssemblyIssue(
-                    f"RHCOS and '{payload_tag}' should both use the same build of "
-                    f"package '{pkg}', but RHCOS has installed {name}-{vr} and "
-                    f"'{payload_tag}' has installed from {build['nvr']}",
+                    f"RHCOS and '{payload_tag}' should use the same build of "
+                    f"package '{pkg}', but {rhcos_build_id} has {name}-{vr} and "
+                    f"{payload_tag_nvr} has {build['nvr']}",
                     payload_tag, AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT)
                 # no need to check other RPMs from this package build, one is enough
 
