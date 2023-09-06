@@ -326,6 +326,7 @@ class Metadata(object):
             return resp.text
 
         content = retry(
+            reraise=True,  # reraise the original exception in case of error
             stop=stop_after_attempt(3),  # wait for 10 seconds * 3 = 30 seconds
             wait=wait_fixed(10),  # wait for 10 seconds between retries
             retry=retry_if_exception_type(),
@@ -664,15 +665,15 @@ class Metadata(object):
         self.logger.debug(f'scan-sources coordinate: latest_build: {latest_build}')
         self.logger.debug(f'scan-sources coordinate: latest_build_creation_datetime: {latest_build_creation}')
 
-        # If downstream has been locked to a commitish, only check the atom feed at that moment.
-        distgit_commitish = self.runtime.downstream_commitish_overrides.get(self.distgit_key, None)
-        atom_entries = self.cgit_atom_feed(commit_hash=distgit_commitish, branch=self.branch())
-        if not atom_entries:
-            raise IOError(f'No atom feed entries exist for {component_name} in {self.branch()}. Does branch exist?')
-
         dgr = self.distgit_repo(autoclone=False)  # For scan-sources speed, we need to avoid cloning
         if not dgr.has_source():
             # This is a distgit only artifact (no upstream source)
+
+            # If downstream has been locked to a commitish, only check the atom feed at that moment.
+            distgit_commitish = self.runtime.downstream_commitish_overrides.get(self.distgit_key, None)
+            atom_entries = self.cgit_atom_feed(commit_hash=distgit_commitish, branch=self.branch())
+            if not atom_entries:
+                raise IOError(f'No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?')
 
             latest_entry = atom_entries[0]  # Most recent commit's information
             dg_commit = latest_entry.id

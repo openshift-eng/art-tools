@@ -100,7 +100,7 @@ class DistGitRepo(object):
     def __init__(self, metadata, autoclone=True):
         self.metadata = metadata
         self.config: Model = metadata.config
-        self.runtime: "doozerlib.runtime.Runtime" = metadata.runtime
+        self.runtime: "doozerlib.Runtime" = metadata.runtime
         self.name: str = self.metadata.name
         self.distgit_dir: str = None
         self.dg_path: pathlib.Path = None
@@ -108,7 +108,7 @@ class DistGitRepo(object):
         self.push_status = False
 
         self.branch: str = self.runtime.branch
-        self.sha: str = None
+        self.sha: Optional[str] = None
 
         self.source_sha: str = None
         self.source_full_sha: str = None
@@ -215,8 +215,18 @@ class DistGitRepo(object):
                         if not distgit_commitish and rhpkg_clone_depth > 0:
                             gitargs.extend(["--depth", str(rhpkg_clone_depth)])
 
-                        self.runtime.git_clone(self.metadata.distgit_remote_url(), self.distgit_dir, gitargs=gitargs,
-                                               set_env=constants.GIT_NO_PROMPTS, timeout=timeout)
+                        try:
+                            self.runtime.git_clone(self.metadata.distgit_remote_url(), self.distgit_dir, gitargs=gitargs,
+                                                   set_env=constants.GIT_NO_PROMPTS, timeout=timeout)
+                        except ChildProcessError as err:
+                            # Create branch on demand
+                            if len(err.args) > 1 and self.has_source() and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch):
+                                _, _, clone_error = err.args[1]
+                                if f"Remote branch {distgit_branch} not found" in clone_error:
+                                    self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
+                                    exectools.cmd_assert(f"git init {self.distgit_dir}")
+                                    exectools.cmd_assert(f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}')
+                                    exectools.cmd_assert(f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}')
                     else:
                         # Use rhpkg -- presently no idea how to cache.
                         cmd_list = ["timeout", timeout]
@@ -240,7 +250,13 @@ class DistGitRepo(object):
                     if distgit_commitish:
                         with Dir(self.distgit_dir):
                             exectools.cmd_assert(f'git checkout {distgit_commitish}')
-        self.sha, _ = exectools.cmd_assert(["git", "-C", self.distgit_dir, "rev-parse", "HEAD"], strip=True)
+        rc, out, err = exectools.cmd_gather(["git", "-C", self.distgit_dir, "rev-parse", "HEAD"], strip=True)
+        if rc == 0:
+            self.sha = out
+        elif "unknown revision" in err:
+            self.sha = None
+        else:
+            raise IOError(f"Couldn't determine commit hash for distgit repo {self.name}: {err}")
 
     def merge_branch(self, target, allow_overwrite=False):
         self.logger.info('Switching to branch: {}'.format(target))

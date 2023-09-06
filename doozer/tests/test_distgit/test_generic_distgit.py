@@ -87,9 +87,9 @@ class TestGenericDistGit(TestDistgit):
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
         (flexmock(distgit.exectools)
-         .should_receive("cmd_assert")
+         .should_receive("cmd_gather")
          .with_args(expected_cmd, strip=True)
-         .and_return("abcdefg", "")
+         .and_return(0, "abcdefg", "")
          .once())
 
         distgit.DistGitRepo(metadata, autoclone=False).clone("my-root-dir", "my-branch")
@@ -154,9 +154,9 @@ class TestGenericDistGit(TestDistgit):
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
         (flexmock(distgit.exectools)
-         .should_receive("cmd_assert")
+         .should_receive("cmd_gather")
          .with_args(expected_cmd, strip=True)
-         .and_return("abcdefg", "")
+         .and_return(0, "abcdefg", "")
          .once())
 
         metadata = flexmock(config=MockConfig(content="_irrelevant_"),
@@ -197,9 +197,9 @@ class TestGenericDistGit(TestDistgit):
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
         (flexmock(distgit.exectools)
-         .should_receive("cmd_assert")
+         .should_receive("cmd_gather")
          .with_args(expected_cmd, strip=True)
-         .and_return("abcdefg", "")
+         .and_return(0, "abcdefg", "")
          .once())
 
         expected_warning = ("Warning: images:rebase was skipped and "
@@ -252,9 +252,9 @@ class TestGenericDistGit(TestDistgit):
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
         (flexmock(distgit.exectools)
-         .should_receive("cmd_assert")
+         .should_receive("cmd_gather")
          .with_args(expected_cmd, strip=True)
-         .and_return("abcdefg", "")
+         .and_return(0, "abcdefg", "")
          .once())
 
         metadata = flexmock(config=MockConfig(content="_irrelevant_"),
