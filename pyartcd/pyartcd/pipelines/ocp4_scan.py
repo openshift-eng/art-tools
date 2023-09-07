@@ -142,12 +142,12 @@ async def ocp4_scan(runtime: Runtime, version: str):
         # Skip the build if already locked
         if await lock_manager.is_locked(lock_name):
             runtime.logger.info('Looks like there is another build ongoing for %s -- skipping for this run', version)
-            await lock_manager.destroy()
-            return
-
-        async with await lock_manager.lock(lock_name):
-            await Ocp4ScanPipeline(runtime, version).run()
+        else:
+            async with await lock_manager.lock(lock_name):
+                await Ocp4ScanPipeline(runtime, version).run()
 
     except LockError as e:
         runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
         raise
+    finally:
+        await lock_manager.destroy()
