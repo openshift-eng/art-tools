@@ -1,6 +1,6 @@
 import unittest
 import os
-from mock import mock
+from unittest import mock
 from pyartcd import jenkins
 from pyartcd.jenkins import Jobs
 
