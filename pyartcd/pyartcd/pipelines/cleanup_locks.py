@@ -1,22 +1,38 @@
-import click
+from aioredlock import Lock
 
-from pyartcd import redis
+from pyartcd import redis, jenkins, constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.locks import LockManager
 from pyartcd.runtime import Runtime
 
 
 @cli.command('cleanup-locks')
-@click.option('--locks', required=True, help='Locks to be released on Redis')
 @pass_runtime
 @click_coroutine
-async def cleanup_locks(runtime: Runtime, locks: str):
-    locks_to_release = filter(lambda arg: arg, locks.split(','))
+async def cleanup_locks(runtime: Runtime):
+    lock_manager = LockManager([redis.redis_url()])
+    active_locks = await lock_manager.get_locks()
 
-    for lock_name in locks_to_release:
-        runtime.logger.warning('Deleting lock %s', lock_name)
-        res = await redis.delete_key(lock_name)
+    try:
+        for lock_name in active_locks:
+            # Lock ID is a build URL minus Jenkins server base URL
+            build_path = await lock_manager.get_lock_id(lock_name)
+            build_url = f'{constants.JENKINS_UI_URL}/{build_path}'
+            runtime.logger.info('Found build %s associated with lock %s', build_url, lock_name)
 
-        if res:
-            runtime.logger.info('Lock %s deleted', lock_name)
-        else:
-            runtime.logger.warning('Lock %s could not be found', lock_name)
+            try:
+                if not jenkins.is_build_running(build_path):
+                    runtime.logger.warning('Deleting lock %s that was created by %s that\'s not currently running',
+                                           lock_name,
+                                           build_url.replace(constants.JENKINS_SERVER_URL, constants.JENKINS_UI_URL))
+                    lock = Lock(lock_manager=lock_manager, resource=lock_name, id=build_path)
+                    await lock_manager.unlock(lock)
+
+                else:
+                    runtime.logger.info('Build %s is still running: won\'t delete lock %s', build_path, lock_name)
+
+            except ValueError:
+                runtime.logger.warning('Could not get build from lock %s: skipping', lock_name)
+
+    finally:
+        await lock_manager.destroy()

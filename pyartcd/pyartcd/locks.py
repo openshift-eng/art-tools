@@ -104,9 +104,9 @@ class LockManager(Aioredlock):
             retry_delay_min=lock_policy['retry_delay_min']
         )
 
-    async def lock(self, resource, *args):
+    async def lock(self, resource, *args, **kwargs):
         self.logger.info('Trying to acquire lock %s', resource)
-        lock = await super().lock(resource, *args)
+        lock = await super().lock(resource, *args, **kwargs)
         self.logger.info('Acquired resource %s', lock.resource)
         return lock
 
@@ -114,3 +114,23 @@ class LockManager(Aioredlock):
         self.logger.info('Releasing lock "%s"', lock.resource)
         await super().unlock(lock)
         self.logger.info('Lock released')
+
+    async def get_lock_id(self, resource) -> str:
+        self.logger.debug('Retrieving identifier for lock %s', resource)
+        return await redis.get_value(resource)
+
+    async def get_locks(self, version: str = None):
+        """
+        All locks stored in Redis follow the pattern <lock-name>-lock-<ocp-version>
+        If version is provided, return all the locks acquired for that version.
+        Otherwise, just return all locks currently acquired in Redis
+        """
+
+        if version:
+            pattern = f'*-lock-{version}'
+            self.logger.info('Retrieving active locks for OCP %s', version)
+        else:
+            pattern = '*-lock-*'
+            self.logger.info('Retrieving all active locks')
+
+        return await redis.get_keys(pattern)

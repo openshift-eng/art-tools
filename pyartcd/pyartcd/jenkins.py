@@ -5,6 +5,7 @@ import time
 from enum import Enum
 from typing import Optional
 
+import requests
 from jenkinsapi.jenkins import Jenkins
 from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
@@ -136,6 +137,21 @@ def set_build_description(build: Build, description: str):
         data="",
         valid=[200]
     )
+
+
+def is_build_running(build_path: str) -> bool:
+    init_jenkins()
+
+    response = requests.get(f'{constants.JENKINS_SERVER_URL}/{build_path}/api/json')
+    if response.status_code != 200:
+        logger.error('Could not fetch data for build %s', build_path)
+        raise ValueError
+
+    build_data = response.json()
+    logger.info('Build %s %s in progress',
+                f'{constants.JENKINS_UI_URL}/{build_path}',
+                'is' if build_data['inProgress'] else 'is not')
+    return build_data['inProgress']
 
 
 @check_env_vars

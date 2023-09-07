@@ -56,7 +56,7 @@ class RpmMirror:
 class Ocp4Pipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
                  pin_builds: bool, build_rpms: str, rpm_list: str, build_images: str, image_list: str,
-                 skip_plashets: bool, mail_list_failure: str):
+                 skip_plashets: bool, mail_list_failure: str, lock_identifier: str = None):
 
         self.runtime = runtime
         self.assembly = assembly
@@ -80,6 +80,9 @@ class Ocp4Pipeline:
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.success_nvrs = []
+
+        # If BUILD_URL env var is not set, the lock identifier will be None, and we'll get an auto-generated value
+        self.lock_identifier = lock_identifier
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -549,7 +552,7 @@ class Ocp4Pipeline:
         lock_name = lock.value.format(version=self.version.stream)
 
         try:
-            async with await lock_manager.lock(lock_name):
+            async with await lock_manager.lock(resource=lock_name, lock_identifier=self.lock_identifier):
                 # Build compose
                 plashets_built = await plashets.build_plashets(
                     stream=self.version.stream,
@@ -728,7 +731,7 @@ class Ocp4Pipeline:
 
             try:
                 # Try to acquire mass-rebuild lock for build version
-                async with await lock_manager.lock(lock_name):
+                async with await lock_manager.lock(resource=lock_name, lock_identifier=self.lock_identifier):
                     await self._rebase_images()
                     await self._build_images()
 
@@ -787,7 +790,7 @@ class Ocp4Pipeline:
 
         # Sync plashets to mirror
         try:
-            async with await lock_manager.lock(lock_name):
+            async with await lock_manager.lock(resource=lock_name, lock_identifier=self.lock_identifier):
                 s3_path = f'{s3_base_dir}/latest/'
                 await sync_repo_to_s3_mirror(
                     local_dir=self.rpm_mirror.local_plashet_path,
@@ -940,6 +943,11 @@ class Ocp4Pipeline:
 async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str, pin_builds: bool,
                build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
                mail_list_failure: str, ignore_locks: bool):
+
+    lock_identifier = jenkins.get_build_path()
+    if not lock_identifier:
+        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
     pipeline = Ocp4Pipeline(
         runtime=runtime,
         assembly=assembly,
@@ -953,6 +961,7 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         image_list=image_list,
         skip_plashets=skip_plashets,
         mail_list_failure=mail_list_failure,
+        lock_identifier=lock_identifier
     )
 
     if ignore_locks:
@@ -965,7 +974,7 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         lock_name = lock.value.format(version=version)
 
         try:
-            async with await lock_manager.lock(lock_name):
+            async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
                 await pipeline.run()
 
         except LockError as e:
