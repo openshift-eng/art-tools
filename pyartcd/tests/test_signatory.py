@@ -3,7 +3,7 @@ import base64
 from datetime import datetime, timezone
 from io import BytesIO
 import json
-from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from pyartcd.signatory import AsyncSignatory
 

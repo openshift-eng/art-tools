@@ -1,10 +1,9 @@
 import logging
 import sys
 import unittest
-import asyncio
 
-from mock import MagicMock, AsyncMock, patch
-from pyartcd.pipelines.check_bugs import CheckBugsPipeline, is_prerelease
+from unittest.mock import MagicMock
+from pyartcd.pipelines.check_bugs import CheckBugsPipeline
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.level = logging.DEBUG
