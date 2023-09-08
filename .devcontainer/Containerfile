@@ -4,10 +4,8 @@ LABEL name="art-tools-dev" \
   maintainer="OpenShift Automated Release Tooling (ART) Team <aos-team-art@redhat.com>"
 
 # Trust the Red Hat IT Root CAs and set up rcm-tools repo
-RUN curl -fLo /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem \
-              https://certs.corp.redhat.com/certs/2022-IT-Root-CA.pem \
- && curl -fLo /etc/pki/ca-trust/source/anchors/2015-IT-Root-CA.pem \
-              https://certs.corp.redhat.com/certs/2015-IT-Root-CA.pem \
+RUN curl -fLo /etc/pki/ca-trust/source/anchors/IT-Root-CAs.pem \
+              https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem \
  && update-ca-trust extract \
  && curl -o /etc/yum.repos.d/rcm-tools-fedora.repo \
          https://download.devel.redhat.com/rel-eng/RCMTOOLS/rcm-tools-fedora.repo
