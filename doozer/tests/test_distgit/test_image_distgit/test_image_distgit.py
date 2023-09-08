@@ -176,7 +176,7 @@ class TestImageDistGit(TestDistgit):
 
         flexmock(distgit.exectools)\
             .should_receive("cmd_assert")\
-            .with_args("timeout 999 rhpkg push", retries=3)\
+            .with_args("timeout 999 git push --set-upstream origin _irrelevant_", retries=3)\
             .ordered()
 
         flexmock(distgit.exectools)\
