@@ -85,7 +85,7 @@ def get_failed_builds(record_log: dict, full_record: bool = False) -> dict:
 
         else:
             # build may have succeeded later. If so, remove.
-            if failed_map.get(distgit, None):
+            if distgit in failed_map:
                 del failed_map[distgit]
 
     return failed_map
@@ -126,7 +126,8 @@ def get_successful_builds(record_log: dict, full_record: bool = False) -> dict:
 
 def get_successful_rpms(record_log: dict, full_record: bool = False) -> dict:
     """
-    Returns a map of distgit => task_url OR full record.log dict entry IFF the distgit's build succeeded
+    Returns a map of successfully built rpms
+    distgit => task_url
     """
 
     rpms = record_log.get("build_rpm", [])
@@ -138,3 +139,24 @@ def get_successful_rpms(record_log: dict, full_record: bool = False) -> dict:
             success_map[distgit] = rpm if full_record else rpm["task_url"]
 
     return success_map
+
+
+def get_failed_rpms(record_log: dict, full_record: bool = False) -> dict:
+    """
+    Returns a map of failed rpms
+    distgit => task_url
+    """
+
+    rpms = record_log.get("build_rpm", [])
+    failed_map = {}
+
+    for rpm in rpms:
+        distgit = rpm["distgit_key"]
+        if rpm["status"] != "0":
+            failed_map[distgit] = rpm if full_record else rpm["task_url"]
+        else:
+            # build may have succeeded later. If so, remove.
+            if distgit in failed_map:
+                del failed_map[distgit]
+
+    return failed_map
