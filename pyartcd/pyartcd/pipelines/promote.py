@@ -198,7 +198,7 @@ class PromotePipeline:
             image_advisory = impetus_advisories.get("image", 0)
             errata_url = ""
 
-            if assembly_type == assembly.AssemblyTypes.STANDARD:
+            if assembly_type in [assembly.AssemblyTypes.STANDARD, assembly.AssemblyTypes.CANDIDATE]:
                 if image_advisory <= 0:
                     err = VerificationError(f"No associated image advisory for {self.assembly} is defined.")
                     justification = self._reraise_if_not_permitted(err, "NO_ERRATA", permits)
