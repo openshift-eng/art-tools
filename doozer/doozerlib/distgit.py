@@ -384,8 +384,7 @@ class DistGitRepo(object):
                 # timeout value counterproductive. Limit to 5 simultaneous pushes.
                 with self.runtime.get_named_semaphore('rhpkg::push', count=5):
                     timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
-                    exectools.cmd_assert("timeout {} rhpkg push".format(timeout), retries=3)
-                    # rhpkg will create but not push tags :(
+                    exectools.cmd_assert(f"timeout {timeout} git push --set-upstream origin {self.branch}", retries=3)
                     # Many builds require a tag associated with a commit to be a semver
                     # and they will only fail at runtime when parsing that tag
                     # if it is not a valid semver. This means we must have a valid
