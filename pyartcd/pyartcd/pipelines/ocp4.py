@@ -472,8 +472,7 @@ class Ocp4Pipeline:
         try:
             await exectools.cmd_assert_async(cmd)
         except ChildProcessError:
-            self.runtime.logger.error('Failed building RPMs')
-            raise
+            self._handle_rpm_build_failures()
 
         try:
             with open(f'{self._doozer_working}/record.log', 'r') as file:
@@ -489,6 +488,19 @@ class Ocp4Pipeline:
                 self.success_nvrs += successful_rpm_nvrs
         except Exception as e:
             self.runtime.logger.error(f"Failed to get successfully build RPM NVRs: {e}")
+
+    def _handle_rpm_build_failures(self):
+        with open(f'{self._doozer_working}/record.log', 'r') as file:
+            record_log: dict = record_util.parse_record_log(file)
+
+        failed_map = record_util.get_failed_rpms(record_log)
+        if not failed_map:
+            # failed so badly we don't know what failed; give up
+            raise
+        failed_rpms = list(failed_map.keys())
+        jenkins.update_description(f'Failed rpms: {", ".join(failed_rpms)}<br/>')
+
+        self.runtime.logger.warning('Failed rpms: %s', ', '.join(failed_rpms))
 
     async def _is_compose_build_permitted(self) -> bool:
         """
