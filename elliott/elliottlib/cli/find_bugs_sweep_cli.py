@@ -39,7 +39,7 @@ class FindBugsMode:
 
 
 class FindBugsSweep(FindBugsMode):
-    def __init__(self, cve_only: bool):
+    def __init__(self, cve_only: bool = False):
         super().__init__(status={'MODIFIED', 'ON_QA', 'VERIFIED'}, cve_only=cve_only)
 
 
