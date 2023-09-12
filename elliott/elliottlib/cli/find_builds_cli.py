@@ -430,7 +430,7 @@ def _ensure_accepted_tags(builds: List[Dict], brew_session: koji.ClientSession, 
 async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str], brew_session: koji.ClientSession, include_shipped: bool, member_only: bool):
     assembly = runtime.assembly
     if runtime.assembly_basis_event:
-        LOGGER.warning(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
+        LOGGER.info(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
         # If an assembly has a basis event, its latest rpms can only be sourced from
         # "is:" or the stream assembly.
         assembly = 'stream'

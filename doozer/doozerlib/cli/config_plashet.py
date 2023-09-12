@@ -531,7 +531,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
 
         if runtime.assembly_basis_event:
             # If an assembly has a basis event, it will only query for artifacts from the "stream" assembly.
-            logger.warning(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
+            logger.info(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
             assembly = 'stream'
 
         # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only collect the rpm builds specific to that assembly.
