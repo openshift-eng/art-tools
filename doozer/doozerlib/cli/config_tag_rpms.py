@@ -154,18 +154,21 @@ class TagRPMsCli:
                     builds_to_tag[entry.target_tag][build["nvr"]] = build
                     break
 
-            if not entry.enforce_same_version:
-                continue
-
+            # Check if kernel and kernel-rt are of the same version
             for tag, nvr_dict in builds_to_tag.items():
                 if not nvr_dict:
                     continue
 
                 package_names = {b['name'] for b in nvr_dict.values()}
-                if package_names != {'kernel', 'kernel-rt'}:
-                    raise ValueError(f"Unexpected packages found with enforce_same_version: {package_names}")
-                if len(nvr_dict) != 2:
-                    raise ValueError(f"More than 2 kernel builds found {nvr_dict.keys()}")
+                are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
+                if not are_these_kernel_packages:
+                    continue
+
+                expected = {'kernel', 'kernel-rt'}
+                if package_names != expected:
+                    raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
+                if len(nvr_dict) != len(expected):
+                    raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
 
                 kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
                 kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
@@ -174,10 +177,9 @@ class TagRPMsCli:
                 kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
                 kernel_rt_version = f"{kernel_rt_build['version']}-{kernel_rt_build['release']}"
                 if kernel_version not in kernel_rt_version:
-                    raise ValueError(f"kernel version {kernel_version} is not in kernel-rt version "
-                                     f"{kernel_rt_version}. To override this check, set enforce_same_version: False")
+                    raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
                 else:
-                    logger.info(f"kernel version {kernel_version} is in kernel-rt version {kernel_rt_version}")
+                    logger.info(f"Version match for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
 
         # untag builds from target tags
         tag_build_tuples = []

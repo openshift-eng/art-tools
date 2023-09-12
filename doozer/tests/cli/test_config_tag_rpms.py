@@ -80,7 +80,6 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
-                    "enforce_same_version": True
                 }
             ]
         })
@@ -140,7 +139,6 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
-                    "enforce_same_version": False,
                 }
             ]
         })
@@ -205,7 +203,6 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
-                    "enforce_same_version": True,
                 }
             ]
         })

@@ -11,7 +11,6 @@ class RPMDelivery(BaseModel):
     ship_ok_tag: str = Field(min_length=1)
     stop_ship_tag: str = Field(min_length=1)
     target_tag: Optional[str] = Field(min_length=1)
-    enforce_same_version: bool
 
 
 class RPMDeliveries(BaseModel):
