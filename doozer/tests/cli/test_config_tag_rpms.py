@@ -71,7 +71,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
     async def test_run_non_kernel_packages(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
-                                            tag_builds: AsyncMock, get_builds_tags: Mock):
+                                           tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
             "rpm_deliveries": [
                 {
@@ -145,18 +145,17 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
 
-
         kernel_build = {
-            'nvr' : 'kernel-5.14.0-284.28.1.el9_2',
-            'version' : '5.14.0',
-            'name' : 'kernel',
-            'release' : '284.28.1.el9_2'
+            'nvr': 'kernel-5.14.0-284.28.1.el9_2',
+            'version': '5.14.0',
+            'name': 'kernel',
+            'release': '284.28.1.el9_2'
         }
         kernel_rt_build = {
-            'nvr' : 'kernel-rt-5.14.0-284.28.1.rt14.313.el9_2',
-            'version' : '5.14.0',
-            'name' : 'kernel-rt',
-            'release' : '284.28.1.rt14.313.el9_2'
+            'nvr': 'kernel-rt-5.14.0-284.28.1.rt14.313.el9_2',
+            'version': '5.14.0',
+            'name': 'kernel-rt',
+            'release': '284.28.1.rt14.313.el9_2'
         }
 
         def _get_tagged_builds(session: koji.ClientSession,
