@@ -77,7 +77,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         jira_client = MagicMock(spec=JIRA)
         bugs = [
             MagicMock(spec=Bug, id=1, weburl="https://example.com/1",
-                      groups=["private"], priority="high",
+                      groups=["private"], priority="high", keywords=[],
                       summary="fake summary 1", description="fake description 1"),
         ]
         conf = KernelBugSweepConfig.TargetJiraConfig(
@@ -100,7 +100,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "security": {'name': 'Red Hat Employee'},
             "priority": {"name": "Major"},
             "summary": "kernel[-rt]: fake summary 1 [rhocp-4.14.z]",
-            "description": "Cloned from https://example.com/1 by OpenShift ART Team:\n----\nfake description 1",
+            "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
             f"{JIRABugTracker.FIELD_TARGET_VERSION}": [{"name": "4.14.z"}],
@@ -117,7 +117,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         jira_client = MagicMock(spec=JIRA)
         bugs = [
             MagicMock(spec=Bug, id=1, weburl="https://example.com/1",
-                      groups=["private"], priority="high",
+                      groups=["private"], priority="high", keywords=[],
                       summary="fake summary 1", description="fake description 1"),
         ]
         conf = KernelBugSweepConfig.TargetJiraConfig(
@@ -143,7 +143,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "security": {'name': 'Red Hat Employee'},
             "priority": {"name": "Major"},
             "summary": "kernel[-rt]: fake summary 1 [rhocp-4.14.z]",
-            "description": "Cloned from https://example.com/1 by OpenShift ART Team:\n----\nfake description 1",
+            "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
             f"{JIRABugTracker.FIELD_TARGET_VERSION}": [{"name": "4.14.z"}],
@@ -172,7 +172,7 @@ TRACKER-1	2	N/A	Verified	test bug 2
     def test_new_jira_fields_from_bug(self):
         bug = MagicMock(spec=Bug, id=12345, cf_zstream_target_release="8.6.0",
                         weburl="https://example.com/12345",
-                        groups=[], priority="high",
+                        groups=[], priority="high", keywords=[],
                         summary="fake summary 12345", description="fake description 12345")
         tracker = MagicMock(spec=Issue, key="TRACKER-1", fields=MagicMock(
             summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
@@ -192,7 +192,7 @@ TRACKER-1	2	N/A	Verified	test bug 2
             "security": None,
             "priority": {"name": "Major"},
             "summary": "kernel[-rt]: fake summary 12345 [rhocp-4.12.z]",
-            "description": "Cloned from https://example.com/12345 by OpenShift ART Team:\n----\nfake description 12345",
+            "description": "Cloned from https://example.com/12345 by OpenShift ART Team.\n\n----\nfake description 12345",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.12"}],
             f"{JIRABugTracker.FIELD_TARGET_VERSION}": [{"name": "4.12.z"}],

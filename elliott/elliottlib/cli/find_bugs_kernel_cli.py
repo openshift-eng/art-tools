@@ -9,7 +9,7 @@ from bugzilla.bug import Bug
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt
 
-from elliottlib import Runtime, brew, early_kernel
+from elliottlib import Runtime, constants, early_kernel
 from elliottlib.assembly import AssemblyTypes
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.config_model import KernelBugSweepConfig
@@ -227,7 +227,7 @@ class FindBugsKernelCli:
         summary = f"{bug.summary} [rhocp-{ocp_target_version}]"
         if not summary.startswith("kernel"):  # ensure bug summary start with "kernel"
             summary = "kernel[-rt]: " + summary
-        description = f"Cloned from {bug.weburl} by OpenShift ART Team:\n----\n{bug.description}"
+        hint = f"Cloned from {bug.weburl} by OpenShift ART Team.\n"
         priority_mapping = {
             "urgent": "Critical",
             "high": "Major",
@@ -242,7 +242,7 @@ class FindBugsKernelCli:
             "security": {'name': 'Red Hat Employee'} if 'private' in bug_groups or 'redhat' in bug_groups else None,
             "priority": {'name': priority_mapping.get(bug.priority, "Undefined")},
             "summary": summary,
-            "description": description,
+            "description": bug.description,
             "issuetype": {"name": "Bug"},
             "versions": [{"name": ocp_target_version[:ocp_target_version.rindex(".")]}],
             f"{JIRABugTracker.FIELD_TARGET_VERSION}": [{
@@ -253,26 +253,30 @@ class FindBugsKernelCli:
         if kmaint_tracker:
             fields["labels"].append(f"art:kmaint:{kmaint_tracker}")
 
-        # TODO: The following lines are commented out because we haven't reached to agreement
-        # on how to handle kernel CVEs in OCP at this moment.
-        # Without the following lines, kernel CVEs will be copied as normal (non-CVE) bugs.
+        is_cve_tracker = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(bug.keywords))
+        if is_cve_tracker:
+            # TODO: The following lines are commented out because we haven't reached to agreement
+            # on how to handle kernel CVEs in OCP at this moment.
+            # Without the following lines, kernel CVEs will be copied as normal (non-CVE) bugs.
+            # Find flaw bugs associated with the CVE tracker
+            #
+            # cve_flaws = []
+            # for flaw_id, flaw_bug in zip(bug.blocks, bug.bugzilla.getbugs(bug.blocks)):
+            #     if not flaw_bug:
+            #         raise IOError(f"Error getting flaw bug {flaw_id}. Permission issue?")
+            #     if not BugzillaBug(flaw_bug).is_flaw_bug():
+            #         continue  # this is not a flaw bug
+            #     cve_flaws.append(flaw_bug)
+            # labels = {"Security", "SecurityTracking"}
+            # cve_names = re.findall(r"(CVE-\d+-\d+)", bug.summary)
+            # labels |= set(cve_names)
+            # labels |= {f"pscomponent:{component}" for component in bug.components}
+            # labels |= {f"flaw:bz#{flaw.id}" for flaw in cve_flaws}
+            # fields["labels"] += sorted(labels)
 
-        # is_cve_tracker = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(bug.keywords))
-        # if is_cve_tracker:
-        #     # Find flaw bugs associated with the CVE tracker
-        #     cve_flaws = []
-        #     for flaw_id, flaw_bug in zip(bug.blocks, bug.bugzilla.getbugs(bug.blocks)):
-        #         if not flaw_bug:
-        #             raise IOError(f"Error getting flaw bug {flaw_id}. Permission issue?")
-        #         if not BugzillaBug(flaw_bug).is_flaw_bug():
-        #             continue  # this is not a flaw bug
-        #         cve_flaws.append(flaw_bug)
-        #     labels = {"Security", "SecurityTracking"}
-        #     cve_names = re.findall(r"(CVE-\d+-\d+)", bug.summary)
-        #     labels |= set(cve_names)
-        #     labels |= {f"pscomponent:{component}" for component in bug.components}
-        #     labels |= {f"flaw:bz#{flaw.id}" for flaw in cve_flaws}
-        #     fields["labels"] += sorted(labels)
+            hint += "Please note that this bug is cloned as a non-CVE bug intentionally due to limitations in interoperability in internal processes.\n"
+
+        fields["description"] = f"{hint}\n----\n{bug.description}"
         return fields
 
 
