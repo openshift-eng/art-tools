@@ -42,6 +42,7 @@ from doozerlib.cli.config_plashet import config_plashet
 from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
+from doozerlib.cli.scan_osh import scan_osh
 
 from doozerlib import coverity
 from doozerlib.exceptions import DoozerFatalError

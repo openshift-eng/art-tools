@@ -263,6 +263,9 @@ class Runtime(object):
 
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
+    def get_errata_config(self, **kwargs):
+        return self.gitdata.load_data(key='erratatool', **kwargs).data
+
     def _get_replace_vars(self, group_config: Model):
         replace_vars = group_config.vars or Model()
         # If assembly mode is enabled, `runtime_assembly` will become the assembly name.

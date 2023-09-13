@@ -834,7 +834,7 @@ class Ocp4Pipeline:
 
     def _trigger_osh_scans(self):
         try:
-            jenkins.start_scan_osh(nvrs=self.success_nvrs)
+            jenkins.start_scan_osh(nvrs=self.success_nvrs, version=self.version.stream)
         except Exception as e:
             self.runtime.logger.error(f"Failed to trigger scan-osh job: {e}")
 
