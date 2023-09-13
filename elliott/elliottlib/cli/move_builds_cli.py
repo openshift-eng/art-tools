@@ -2,7 +2,7 @@ import sys
 import click
 
 from elliottlib import errata, logutil
-from elliottlib.cli.common import cli
+from elliottlib.cli.common import cli, move_builds
 from elliottlib.util import ensure_erratatool_auth
 
 LOGGER = logutil.getLogger(__name__)
@@ -66,16 +66,4 @@ def move_builds_cli(runtime, from_advisory, to_advisory, kind, only, noop):
         LOGGER.info(f"[DRY-RUN] Would've moved {len(build_nvrs)} builds from {from_advisory} to {to_advisory}")
         sys.exit(0)
 
-    # remove builds
-    from_erratum = errata.Advisory(errata_id=from_advisory)
-    from_erratum.ensure_state('NEW_FILES')
-    from_erratum.remove_builds(build_nvrs)
-    # we do not attempt to move advisory to old state since without builds ET doesn't allow advisory to move to QE
-
-    # add builds
-    to_erratum = errata.Advisory(errata_id=to_advisory)
-    old_state = to_erratum.errata_state
-    to_erratum.ensure_state('NEW_FILES')
-    to_erratum.attach_builds(attached_builds, kind)
-    if old_state != 'NEW_FILES':
-        to_erratum.ensure_state(old_state)
+    move_builds(attached_builds, kind, from_advisory, to_advisory)

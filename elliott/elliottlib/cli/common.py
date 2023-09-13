@@ -4,7 +4,7 @@ from functools import update_wrapper
 
 import click
 
-from elliottlib import Runtime, constants, dotconfig, version
+from elliottlib import Runtime, constants, dotconfig, version, errata
 from elliottlib.cli import cli_opts
 from elliottlib.util import green_prefix, red_prefix, yellow_print
 
@@ -110,3 +110,19 @@ def click_coroutine(f):
     def wrapper(*args, **kwargs):
         return asyncio.get_event_loop().run_until_complete(f(*args, **kwargs))
     return update_wrapper(wrapper, f)
+
+
+def move_builds(attached_builds, kind, from_advisory, to_advisory):
+    # remove builds
+    from_erratum = errata.Advisory(errata_id=from_advisory)
+    from_erratum.ensure_state('NEW_FILES')
+    from_erratum.remove_builds(list(b.nvr for b in attached_builds))
+    # will not attempt moving advisory to old state; if empty, ET will not allow
+
+    # add builds
+    to_erratum = errata.Advisory(errata_id=to_advisory)
+    old_state = to_erratum.errata_state
+    to_erratum.ensure_state('NEW_FILES')
+    to_erratum.attach_builds(attached_builds, kind)
+    if old_state != 'NEW_FILES':
+        to_erratum.ensure_state(old_state)

@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, List, Dict
 import click
 from io import BytesIO
 import koji
@@ -11,7 +11,8 @@ from zipfile import ZipFile
 from errata_tool import Erratum
 
 from elliottlib import brew, constants, exectools, errata
-from elliottlib.cli.common import cli, pass_runtime
+from elliottlib.cli.find_builds_cli import find_builds_cli
+from elliottlib.cli.common import cli, pass_runtime, move_builds
 from elliottlib.exceptions import ElliottFatalError, BrewBuildException
 from elliottlib.runtime import Runtime
 from elliottlib.util import red_print, green_print
@@ -26,14 +27,18 @@ from elliottlib.util import red_print, green_print
               required=False,
               is_flag=True,
               help='Do not query images shipping in other advisories to satisfy bundle references')
+@click.option("--gather-dependencies",
+              required=False,
+              is_flag=True,
+              help='Attach unshipped dependencies to advisory, removing them from any other advisory')
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=True)
 @pass_runtime
-def verify_attached_operators_cli(runtime: Runtime, omit_shipped: bool, omit_attached: bool, advisories: Tuple[int, ...]):
+@click.pass_context
+def verify_attached_operators_cli(ctx: click.Context, runtime: Runtime, omit_shipped: bool,
+                                  omit_attached: bool, gather_dependencies: bool,
+                                  advisories: Tuple[int, ...]):
     """
     Verify attached operator bundle references are shipping or already shipped.
-
-    NOTE: this will fail for obsolete releases prior to 4.6;
-    that is when the bundle format was introduced.
 
     Args are a list of advisory IDs that may contain operator bundle builds
     and any container builds shipping alongside.
@@ -54,7 +59,18 @@ def verify_attached_operators_cli(runtime: Runtime, omit_shipped: bool, omit_att
     --omit-shipped has no real effect if --omit-attached is not also specified.
     If only --omit-attached is specified, then builds shipped previously are still considered to
     fulfill bundle references, as are those attached to advisories specified in the args.
+
+    --gather-dependencies can be specified to attach unshipped dependencies to the bundle advisory,
+    removing them from any other advisory. This is intended only for operator pre-releases; during
+    ordinary z-streams it may risk stealing dependencies from advisories intended to ship earlier.
     """
+
+    if gather_dependencies and omit_shipped:
+        red_print("--gather-dependencies is incompatible with --omit-shipped")
+        exit(1)  # it could cause us to attempt to attach already-shipped content
+    if gather_dependencies and len(advisories) != 1:
+        red_print("--gather-dependencies requires specifying exactly one metadata advisory as a destination")
+        exit(1)
 
     runtime.initialize(mode="images")
     brew_session = koji.ClientSession(runtime.group_config.urls.brewhub or constants.BREW_HUB)
@@ -70,16 +86,17 @@ def verify_attached_operators_cli(runtime: Runtime, omit_shipped: bool, omit_att
     if not omit_shipped:
         image_builds.extend(_get_shipped_images(runtime, brew_session))
     available_shasums = _extract_available_image_shasums(image_builds)
-    missing = _missing_references(runtime, bundles, available_shasums, omit_attached)
+    problems, unshipped_builds_by_advisory = _missing_references(
+        runtime, bundles, available_shasums, omit_attached, gather_dependencies)
 
     invalid = _validate_csvs(bundles)
 
-    if missing:
-        missing_str = "\n              ".join(missing)
+    if problems:
+        problem_str = "\n              ".join(problems)
         red_print(f"""
-            Some references were missing:
-              {missing_str}
-            Ensure all bundle references are shipped or shipping to correct repos.
+            Some references had problems (see notes above):
+              {problem_str}
+            Ensure all bundle references are configured with the necessary repos.
         """)
     if invalid:
         invalid_str = "\n              ".join(invalid)
@@ -88,7 +105,7 @@ def verify_attached_operators_cli(runtime: Runtime, omit_shipped: bool, omit_att
               {invalid_str}
             Check art.yaml substitutions for failing matches.
         """)
-    if invalid or missing:
+    if invalid or problems or not _handle_missing_builds(ctx, gather_dependencies, advisories, unshipped_builds_by_advisory):
         raise ElliottFatalError("Please resolve the errors above before shipping bundles.")
 
     green_print("All operator bundles were valid and references were found.")
@@ -192,7 +209,7 @@ def _extract_available_image_shasums(image_builds):
     return image_digests
 
 
-def _missing_references(runtime, bundles, available_shasums, omit_attached):
+def _missing_references(runtime, bundles, available_shasums, omit_attached, gather_dependencies):
     # check that bundle references are all either shipped or shipping,
     # and that they will/did ship to the right repo on the registry
     references = [
@@ -201,51 +218,89 @@ def _missing_references(runtime, bundles, available_shasums, omit_attached):
         for ref in build['csv']['spec']['relatedImages']
     ]
     green_print(f"Found {len(bundles)} bundles with {len(references)} references")
-    missing = set()
-    missing_builds_by_advisory = {}
+    problems = set()
+    unshipped_builds_by_advisory = {}
     for image_pullspec, build in references:
         # validate an image reference from a bundle is shipp(ed/ing) to the right repo
         repo, digest = image_pullspec.rsplit("@", 1)  # split off the @sha256:...
         _, repo = repo.split("/", 1)  # pick off the registry
         ref = image_pullspec.rsplit('/', 1)[1]  # just need the name@digest
+        nvr = _nvr_for_operand_pullspec(runtime, ref)  # convert ref to nvr
+        context = f"Bundle {build['nvr']} reference {nvr}:\n   "
 
         try:
-            ref = _nvr_for_operand_pullspec(runtime, ref)  # convert ref to nvr
-            context = f"Bundle {build['nvr']} reference {ref}:\n   "
-            attached_advisories = _get_attached_advisory_ids(ref)
-            cdn_repos = _get_cdn_repos(attached_advisories, ref)
-            if digest not in available_shasums and not attached_advisories:
-                red_print(f"{context} not shipped or attached to any advisory.")
-            elif not cdn_repos:
-                red_print(f"{context} does not have any CDN repos on advisory it is attached to")
-            elif repo not in cdn_repos:
-                red_print(f"{context} needs CDN repo '{repo}' but advisory only has {cdn_repos}")
-            elif digest in available_shasums:
-                green_print(f"{context} shipped/shipping as {image_pullspec}")
-                continue  # do not count it as missing
-            elif omit_attached:
-                # not already shipped (or cmdline omitted shipped), nor in a listed advisory;
-                # if we passed above gates, it is attached to some other advisory;
-                # but cmdline option says to count that as missing.
-                red_print(f"{context} only found in omitted advisory {attached_advisories}")
-                for a in attached_advisories:
-                    if a in missing_builds_by_advisory:
-                        missing_builds_by_advisory[a].append(ref)
-                    else:
-                        missing_builds_by_advisory[a] = [ref]
-            else:
-                green_print(f"{context} attached to separate advisory {attached_advisories}")
-                continue  # do not count it as missing
+            attached_advisories = _get_attached_advisory_ids(nvr)
         except BrewBuildException as ex:
-            # advisory lookup for brew build failed, fall through to count as missing
+            # advisory lookup for brew build failed, count as a problem
             red_print(f"{context} failed to look up in errata-tool: {ex}")
-        missing.add(ref)  # ref is nvr if lookup worked, part of pullspec if not
-    if missing_builds_by_advisory:
-        print('To fix missing builds in other advisories:')
-        for a in missing_builds_by_advisory:
-            builds_args = ",".join([b for b in missing_builds_by_advisory[a]])
-            print(f'elliott move-builds -k image --from {a} --to <target_advisory> --only {builds_args}')
-    return missing
+            problems.add(nvr)
+            continue
+
+        cdn_repos = _get_cdn_repos(attached_advisories, nvr)
+
+        if digest not in available_shasums and not attached_advisories:
+            red_print(f"{context} not shipped or attached to any advisory.")
+            unshipped_builds_by_advisory.setdefault(None, []).append(nvr)
+        elif not cdn_repos:
+            red_print(f"{context} does not have any CDN repos on advisory it is attached to")
+            problems.add(nvr)
+        elif repo not in cdn_repos:
+            red_print(f"{context} needs CDN repo '{repo}' but advisory only has {cdn_repos}")
+            problems.add(nvr)
+        elif digest in available_shasums:
+            green_print(f"{context} shipped/shipping as {image_pullspec}")
+        elif gather_dependencies or omit_attached:
+            # not already shipped (or cmdline omitted shipped), nor in a listed advisory;
+            # if we passed above gates, it is attached to some other advisory;
+            # but cmdline option says to count that as missing.
+            red_print(f"{context} only attached to separate advisory {attached_advisories}")
+            for advisory in attached_advisories:
+                unshipped_builds_by_advisory.setdefault(advisory, []).append(nvr)
+        else:
+            green_print(f"{context} attached to separate advisory {attached_advisories}")
+
+    return problems, unshipped_builds_by_advisory
+
+
+def _handle_missing_builds(
+        ctx: click.Context,
+        gather_dependencies: bool,
+        advisories: Tuple[int, ...],
+        builds_by_advisory: Dict[int, List]
+) -> bool:
+
+    missing = set(builds_by_advisory.keys()) - set(advisories)
+    if not missing:
+        return True  # all found in the given advisories; nothing to do
+
+    if gather_dependencies:
+        # attach everything to our one advisory
+        target = advisories[0]
+        print(f"Automatically attaching builds not already attached to {target}:")
+        for adv in missing:
+            missing_nvrs = builds_by_advisory[adv]
+            if adv:
+                print(f"  {missing_nvrs} --from {adv}\n")
+                attached_builds = [b for b in errata.get_brew_builds(adv) if b.nvr in missing_nvrs]
+                move_builds(attached_builds, "image", adv, target)
+            else:
+                print(f"  {missing_nvrs} --attach {target}\n")
+                # attaching builds from scratch is complicated; call out to existing cli
+                ctx.invoke(find_builds_cli, advisory=target, default_advisory_type=None,
+                           builds=missing_nvrs, kind="image", from_diff=None, as_json=False,
+                           remove=False, clean=False, no_cdn_repos=True, payload=False,
+                           non_payload=False, include_shipped=False, member_only=False)
+        return True
+    else:
+        print("To manually attach builds not already in the specified advisories:")
+        for adv in missing:
+            if adv:
+                builds_args = ",".join(b for b in builds_by_advisory[adv])
+                print(f"  elliott move-builds -k image --only {builds_args} --from {adv} --to <target_advisory>\n")
+            else:
+                builds_args = " ".join(f"-b {b}" for b in builds_by_advisory[adv])
+                print(f"  elliott find-builds -k image {builds_args} --attach <target_advisory>\n")
+        return False
 
 
 def _nvr_for_operand_pullspec(runtime, spec):
