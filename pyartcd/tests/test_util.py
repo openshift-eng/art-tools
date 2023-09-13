@@ -139,3 +139,31 @@ class TestUtil(IsolatedAsyncioTestCase):
         get_freeze_automation_mock.return_value = 'unknown'
         res = await util.is_build_permitted(version='4.15')
         self.assertTrue(res)
+
+    @patch("pyartcd.util.load_group_config")
+    async def test_get_signing_mode(self, load_group_config_mock: AsyncMock):
+        group_config = {'software_lifecycle': {'phase': 'release'}}
+        signing_mode = await util.get_signing_mode(group_config=group_config)
+        self.assertEqual(signing_mode, 'signed')
+
+        group_config = {'software_lifecycle': {'phase': 'eol'}}
+        signing_mode = await util.get_signing_mode(group_config=group_config)
+        self.assertEqual(signing_mode, 'signed')
+
+        group_config = {'software_lifecycle': {'phase': 'pre-release'}}
+        signing_mode = await util.get_signing_mode(group_config=group_config)
+        self.assertEqual(signing_mode, 'unsigned')
+
+        load_group_config_mock.return_value = {'software_lifecycle': {'phase': 'release'}}
+        group = 'bogus'
+        assembly = 'bogus'
+
+        with self.assertRaises(AssertionError) as _:
+            await util.get_signing_mode(group_config=None)
+        with self.assertRaises(AssertionError) as _:
+            await util.get_signing_mode(group=group, group_config=None)
+        with self.assertRaises(AssertionError) as _:
+            await util.get_signing_mode(assembly=assembly, group_config=None)
+
+        signing_mode = await util.get_signing_mode(group, assembly, None)
+        self.assertEqual(signing_mode, 'signed')

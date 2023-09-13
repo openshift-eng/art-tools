@@ -630,3 +630,18 @@ async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=Fa
         logger.warning("[DRY RUN] Would have run %s", cmd)
         return
     await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
+
+
+async def get_signing_mode(group: str = None, assembly: str = None, group_config: dict = None) -> str:
+    """
+    If any arch is GA, use signed mode for everything
+    This also includes EOL ones, that might be triggered manually
+    Versions that are still in pre-release state will not be signed
+    """
+
+    if not group_config:
+        assert group, 'Group must be specified in order to load group config'
+        assert assembly, 'Assembly must be specified in order to load group config'
+        group_config = await load_group_config(group=group, assembly=assembly)
+
+    return 'unsigned' if group_config['software_lifecycle']['phase'] == 'pre-release' else 'signed'
