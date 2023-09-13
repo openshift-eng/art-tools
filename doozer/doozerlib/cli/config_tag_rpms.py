@@ -11,6 +11,7 @@ from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_delivery import RPMDeliveries
 from doozerlib.runtime import Runtime
+from doozerlib.util import split_el_suffix_in_release
 
 
 class TagRPMsCli:
@@ -101,7 +102,7 @@ class TagRPMsCli:
         koji_api = self._runtime.build_retrying_koji_client()
         koji_api.gssapi_login()
         MAX_BUILDS = 10  # getting 10 latest builds per package should be more than enough
-        builds_to_tag: Dict[str, Set[str]] = {}  # target_tag_name -> set of NVRs
+        builds_to_tag: Dict[str, Dict[str]] = {}  # target_tag_name -> dict of NVRs {nvr_string: build_object}
         builds_to_untag: Dict[str, Set[str]] = {}  # target_tag_name -> set of NVRs
         for entry in rpm_deliveries:
             # For each package, look at builds in stop-ship tag and integration tag,
@@ -110,7 +111,7 @@ class TagRPMsCli:
                 logger.warning("RPM delivery config for package(s) %s doesn't define a target tag. Skipping...",
                                ", ".join(entry.packages))
                 continue
-            builds_to_tag.setdefault(entry.target_tag, set())
+            builds_to_tag.setdefault(entry.target_tag, dict())
             builds_to_untag.setdefault(entry.target_tag, set())
             # Get all builds in stop-ship tag
             logger.info("Getting tagged builds in stop-ship tag %s...", entry.stop_ship_tag)
@@ -150,8 +151,36 @@ class TagRPMsCli:
                         logger.warning("Build %s is already tagged into %s", build["nvr"], entry.target_tag)
                         break
                     logger.info("Build %s is acceptable for %s", build["nvr"], entry.target_tag)
-                    builds_to_tag[entry.target_tag].add(build["nvr"])
+                    builds_to_tag[entry.target_tag][build["nvr"]] = build
                     break
+
+            # Check if kernel and kernel-rt are of the same version
+            for tag, nvr_dict in builds_to_tag.items():
+                if not nvr_dict:
+                    continue
+
+                package_names = {b['name'] for b in nvr_dict.values()}
+                are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
+                if not are_these_kernel_packages:
+                    continue
+
+                expected = {'kernel', 'kernel-rt'}
+                if package_names != expected:
+                    raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
+                if len(nvr_dict) != len(expected):
+                    raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
+
+                kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
+                kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+
+                # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
+                kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
+                kernel_rt_version = (f"{kernel_rt_build['version']}-"
+                                     f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}")
+                if kernel_version not in kernel_rt_version:
+                    raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
+                else:
+                    logger.info(f"Version match for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
 
         # untag builds from target tags
         tag_build_tuples = []
@@ -173,10 +202,10 @@ class TagRPMsCli:
 
         # tag builds into target tags
         tag_build_tuples = []
-        for tag, nvrs in builds_to_tag.items():
-            if not nvrs:
+        for tag, nvr_dict in builds_to_tag.items():
+            if not nvr_dict:
                 continue
-            nvrs = sorted(nvrs)
+            nvrs = sorted(nvr_dict.keys())
             logger.info("About to tag the following build(s) into tag %s: %s", tag, ", ".join(nvrs))
             tag_build_tuples += [(tag, nvr) for nvr in nvrs]
             report["tagged"].setdefault(tag, []).extend(nvrs)
@@ -218,7 +247,8 @@ async def config_tag_rpms(runtime: Runtime, dry_run: bool, as_json: bool):
               target_tag: rhaos-4.11-rhel-8-candidate
 
     Doozer will try to find latest acceptable builds of kernel and kernel-rt from Brew tag
-    early-kernel-integration-8.6, then tag them into Brew tag rhaos-4.11-rhel-8-candidate.
+    early-kernel-integration-8.6, make sure that they are of the same version,
+    then tag them into Brew tag rhaos-4.11-rhel-8-candidate.
     Additionally, all builds in tag early-kernel-stop-ship will be untagged from rhaos-4.11-rhel-8-candidate.
     """
     runtime.initialize(config_only=True)
