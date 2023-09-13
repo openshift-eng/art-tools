@@ -667,10 +667,10 @@ class Ocp4Pipeline:
     async def _build_images(self):
         self.runtime.logger.info('Building images')
 
-        # If any arch is GA, use signed for everything. See _build_compose() for details.
-        group_config = await util.load_group_config(
-            group=f'openshift-{self.version.stream}', assembly=self.assembly)
-        signing_mode = 'signed' if group_config['software_lifecycle']['phase'] == 'release' else 'unsigned'
+        signing_mode = await util.get_signing_mode(
+            group=f'openshift-{self.version.stream}',
+            assembly=self.assembly
+        )
 
         # Doozer command
         cmd = self._doozer_base_command.copy()
