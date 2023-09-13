@@ -157,9 +157,7 @@ class BuildMicroShiftPipeline:
             diff = set(nvrs) - set(pinned_nvrs.values())
             if diff:
                 self._logger.info("Creating PR to pin microshift build: %s", diff)
-                assembly_basis = get_assembly_basis(releases_config, self.assembly)
-                if assembly_basis.brew_event:
-                    pr = await self._create_or_update_pull_request(nvrs)
+                pr = await self._create_or_update_pull_request(nvrs)
 
                 message = (f"PR to pin microshift build to the {self.assembly} assembly has been merged:"
                            f" {pr.html_url}")
