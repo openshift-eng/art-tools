@@ -6,9 +6,8 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union, Iterable
 
-import aiofiles
 import yaml
 from doozerlib import assembly, model
 from doozerlib import util as doozerutil
@@ -645,3 +644,25 @@ async def get_signing_mode(group: str = None, assembly: str = None, group_config
         group_config = await load_group_config(group=group, assembly=assembly)
 
     return 'unsigned' if group_config['software_lifecycle']['phase'] == 'pre-release' else 'signed'
+
+
+def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
+    """
+    Parse nightly tags and return a dict of arch:nightly_pullspecs
+    """
+    arch_nightlies = {}
+    for nightly in nightly_tags:
+        if "s390x" in nightly:
+            arch = "s390x"
+        elif "ppc64le" in nightly:
+            arch = "ppc64le"
+        elif "arm64" in nightly:
+            arch = "aarch64"
+        else:
+            arch = "x86_64"
+        if ":" not in nightly:
+            # prepend pullspec URL to nightly name
+            arch_suffix = doozerutil.go_suffix_for_arch(arch)
+            nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
+        arch_nightlies[arch] = nightly
+    return arch_nightlies
