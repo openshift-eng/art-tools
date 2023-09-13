@@ -17,11 +17,6 @@ def get_next_minor(version: str) -> str:
     return '.'.join([major, str(int(minor) + 1)])
 
 
-async def is_prerelease(version: str) -> bool:
-    group_config = await util.load_group_config(group=f'openshift-{version}', assembly='stream')
-    return group_config['software_lifecycle']['phase'] == 'pre-release'
-
-
 class CheckBugsPipeline:
     def __init__(self, runtime: Runtime, channel: str, versions: list) -> None:
         self.runtime = runtime
@@ -116,6 +111,20 @@ class CheckBugsPipeline:
         self.logger.info('Command returned: %s', out)
         return {version: out}
 
+    async def _is_build_permitted(self, version: str) -> bool:
+        """
+        Only include 'release' state group, exclude 'eol' and 'pre-release'
+        """
+
+        group_config = await util.load_group_config(group=f'openshift-{version}', assembly='stream')
+        phase = group_config['software_lifecycle']['phase']
+
+        if phase != 'release':
+            self.logger.info('Release %s is in state "%s"', version, phase)
+            return False
+
+        return True
+
     async def _find_regressions(self, version: str):
         # Do nothing for 3.11
         if version == '3.11':
@@ -123,9 +132,9 @@ class CheckBugsPipeline:
 
         # Check pre-release
         next_minor = get_next_minor(version)
-        if await is_prerelease(next_minor):
+        if not await self._is_build_permitted(next_minor):
             self.logger.info(
-                'Version %s is in pre-release state: skipping regression checks for %s',
+                'Skipping regression checks for %s',
                 next_minor, version
             )
             return None
