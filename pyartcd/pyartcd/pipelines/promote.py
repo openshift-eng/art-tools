@@ -323,7 +323,7 @@ class PromotePipeline:
                 if jira_issue_key and not self.dry_run:
                     parent_jira = self._jira_client.get_issue(jira_issue_key)
                     title = "[Wed] Promote the tested nightly"
-                    subtask = next((s.key for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+                    subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
                     if not subtask:
                         raise ValueError("Promote release subtask not found in release_jira: %s", jira_issue_key)
 
@@ -1393,7 +1393,7 @@ class PromotePipeline:
         self._logger.info("Checking notify QE release subtask")
         parent_jira = self._jira_client.get_issue(jira_issue_key)
         title = "Notify QE of release advisories"
-        subtask = next((s.key for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+        subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
         if not subtask:
             raise ValueError("Notify QE release subtask not found in release_jira: %s", jira_issue_key)
 
