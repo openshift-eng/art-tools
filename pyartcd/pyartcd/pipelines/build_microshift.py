@@ -17,6 +17,7 @@ from doozerlib.util import (brew_arch_for_go_arch,
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
 from semver import VersionInfo
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from pyartcd import constants, exectools, oc, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -48,6 +49,8 @@ class BuildMicroShiftPipeline:
         self.force = force
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
+        self.slack_client = None
+        self.slack_thread = None
 
         # determines OCP version
         match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
@@ -71,7 +74,6 @@ class BuildMicroShiftPipeline:
         # Make sure our api.ci token is fresh
         await oc.registry_login(self.runtime)
 
-        slack_client = None
         assembly_type = AssemblyTypes.STREAM
         major, minor = util.isolate_major_minor_in_group(self.group)
 
@@ -109,22 +111,28 @@ class BuildMicroShiftPipeline:
                     raise ValueError(f"Specifying payloads for assembly type {assembly_type.value} is not allowed.")
                 release_name = util.get_release_name_for_assembly(self.group, releases_config, self.assembly)
 
-            # For named releases, check if the build already exists
-            nvrs = []
+            # Start slack thread for named assemblies
+            if assembly_type is not AssemblyTypes.STREAM:
+                await self.slack_say(f":construction: Microshift prep for assembly {self.assembly} :construction:")
+
+            # For named assemblies, check if builds are pinned or already exist
+            nvrs, pinned_nvrs = [], []
             pr = None
 
             if assembly_type is not AssemblyTypes.STREAM and not self.force:
+                pinned_nvrs = util.get_rpm_if_pinned(releases_config, self.assembly, 'microshift')
+                if pinned_nvrs:
+                    message = (f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to "
+                               "rebuild.")
+                    self._logger.info(message)
+                    await self.slack_say(message)
+                    return
                 nvrs = await self._find_builds()
 
             if nvrs:
                 self._logger.info("Builds already exist: %s", nvrs)
             else:
-                # Rebases and builds microshift
-                if assembly_type is not AssemblyTypes.STREAM:
-                    slack_client = self.runtime.new_slack_client()
-                    slack_client.bind_channel(self.group)
-                    slack_response = await slack_client.say(f":construction: Build microshift for assembly {self.assembly} :construction:")
-                    slack_thread = slack_response["message"]["ts"]
+                # Rebase and build microshift
                 version, release = self.generate_microshift_version_release(release_name)
 
                 try:
@@ -138,40 +146,57 @@ class BuildMicroShiftPipeline:
                             self._logger.error(slack_err)
                     raise build_err
 
-                # Create a PR to pin microshift build
-                assembly_basis = get_assembly_basis(releases_config, self.assembly)
-                if assembly_basis.brew_event:
-                    pr = await self._create_or_update_pull_request(nvrs)
+                # Nothing to do for stream builds after this
+                if assembly_type is AssemblyTypes.STREAM:
+                    return
 
-            # Sends a slack message
-            message = f"microshift for assembly {self.assembly} has been successfully built."
-            if pr:
-                message += f"\nA PR to update the assembly definition has been merged: {pr.html_url}"
+                message = f"microshift for assembly {self.assembly} has been successfully built."
+                await self.slack_say(message)
+
+            # Check if we need create a PR to pin the build
+            diff = set(nvrs) - set(pinned_nvrs.values())
+            if diff:
+                self._logger.info("Creating PR to pin microshift build: %s", diff)
+                pr = await self._create_or_update_pull_request(nvrs)
+
+                message = (f"PR to pin microshift build to the {self.assembly} assembly has been merged:"
+                           f" {pr.html_url}")
+                await self.slack_say(message)
+
             if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                 version = f'{major}.{minor}'
                 jenkins.start_microshift_sync(version=version, assembly=self.assembly)
-                message += f"\nmicroshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
-                           f"This will publish the microshift build to mirror"
-            if slack_client:
-                await slack_client.say(message, slack_thread)
-            # prepare microshift advisory in a new slack thread
-            if pr and slack_client:
-                slack_response = await slack_client.say(f"Start preparing microshift advisory for assembly {self.assembly}.")
-                slack_thread = slack_response["message"]["ts"]
-                await self._attach_builds()
-                await self._sweep_bugs()
-                await self._attach_cve_flaws()
-                await self._verify_microshift_bugs()
-                await self._change_advisory_status()
-                await slack_client.say("Complete preparing microshift advisory.", slack_thread)
+                message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
+                          f"This will publish the microshift build to mirror"
+                await self.slack_say(message)
+
+            # prepare microshift advisory
+            await self.slack_say(f"Start preparing microshift advisory for assembly {self.assembly}..")
+            await self._attach_builds()
+            await self._sweep_bugs()
+            await self._attach_cve_flaws()
+            await self._verify_microshift_bugs()
+            await self._change_advisory_status()
+            await self.slack_say("Completed preparing microshift advisory.")
         except Exception as err:
-            error_message = f"Error building microshift: {err}\n {traceback.format_exc()}"
-            if assembly_type != AssemblyTypes.STREAM:
-                error_message += "\n@release-artists"
+            slack_message = f"Error building microshift: {err}"
+            error_message = slack_message + f"\n {traceback.format_exc()}"
             self._logger.error(error_message)
-            if slack_client:
-                await slack_client.say(error_message, slack_thread)
+            if assembly_type != AssemblyTypes.STREAM:
+                slack_message += "\n@release-artists"
+            await self.slack_say(slack_message)
             raise
+
+    async def slack_say(self, message: str):
+        if not self.slack_client:
+            self.slack_client = self.runtime.new_slack_client()
+            self.slack_client.bind_channel(self.group)
+
+        if not self.slack_thread:
+            slack_response = await self.slack_client.say(message)
+            self.slack_thread = slack_response["message"]["ts"]
+        else:
+            await self.slack_client.say(message, self.slack_thread)
 
     async def _attach_builds(self):
         """ attach the microshift builds to advisory
@@ -224,6 +249,8 @@ class BuildMicroShiftPipeline:
         ]
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
+    # Advisory can have several pending checks, so retry it a few times
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(600))
     async def _change_advisory_status(self):
         """ move advisory status to QE
         """
