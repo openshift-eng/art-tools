@@ -1435,7 +1435,7 @@ class PromotePipeline:
         email_dir = self._working_dir.absolute() / "email"
         mail = MailService.from_config(self.runtime.config)
         mail.send_mail(
-            self.runtime.config["email"][f"prepare_release_notification_recipients_ocp{release_version[0]}"],
+            self.runtime.config["email"][f"qe_notification_recipients_ocp{release_version[0]}"],
             subject, content, archive_dir=email_dir, dry_run=self.dry_run)
 
 
