@@ -5,25 +5,27 @@ import os
 import re
 import sys
 import traceback
-from collections import OrderedDict
-from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union
-from urllib.parse import quote
-
+import requests
 import aiohttp
 import click
 import tarfile
 import hashlib
 import shutil
-import urllib.parse
+from collections import OrderedDict
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Union
+from urllib.parse import quote
+from ruamel.yaml import YAML
+from semver import VersionInfo
+from tenacity import (RetryCallState, RetryError, retry,
+                      retry_if_exception_type, retry_if_result,
+                      stop_after_attempt, wait_fixed)
 
-from pyartcd.locks import Lock
-from pyartcd.signatory import AsyncSignatory
-import requests
-# from pyartcd.cincinnati import CincinnatiAPI
 from doozerlib import assembly
 from doozerlib.util import (brew_arch_for_go_arch, brew_suffix_for_arch,
                             go_arch_for_brew_arch, go_suffix_for_arch)
+from pyartcd.locks import Lock
+from pyartcd.signatory import AsyncSignatory
 from pyartcd.util import nightlies_with_pullspecs
 from pyartcd import constants, exectools, locks, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -34,11 +36,7 @@ from pyartcd.s3 import sync_dir_to_s3_mirror
 from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
     extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
 from pyartcd.runtime import Runtime
-from ruamel.yaml import YAML
-from semver import VersionInfo
-from tenacity import (RetryCallState, RetryError, retry,
-                      retry_if_exception_type, retry_if_result,
-                      stop_after_attempt, wait_fixed)
+
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
