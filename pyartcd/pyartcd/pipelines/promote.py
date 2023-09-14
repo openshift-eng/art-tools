@@ -318,14 +318,14 @@ class PromotePipeline:
                     self._logger.info("Advisory image list sent.")
 
                 # update jira promote task status
-                release_jira = group_config.get("release_jira")
-                if release_jira and not self.dry_run:
-                    self._logger.info("Updating promote release subtask")
-                    parent_jira = self._jira_client.get_issue(release_jira)
+                self._logger.info("Updating promote release subtask")
+                jira_issue_key = group_config.get("release_jira")
+                if jira_issue_key and not self.dry_run:
+                    parent_jira = self._jira_client.get_issue(jira_issue_key)
                     title = "[Wed] Promote the tested nightly"
                     subtask = next((s.key for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
                     if not subtask:
-                        raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
+                        raise ValueError("Promote release subtask not found in release_jira: %s", jira_issue_key)
 
                     if subtask.fields.status.name != "Closed":
                         self._jira_client.add_comment(
