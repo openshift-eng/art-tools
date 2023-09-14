@@ -116,7 +116,8 @@ class BuildMicroShiftPipeline:
                 await self.slack_say(f":construction: Microshift prep for assembly {self.assembly} :construction:")
 
             # For named assemblies, check if builds are pinned or already exist
-            nvrs, pinned_nvrs = [], []
+            nvrs = []
+            pinned_nvrs = dict()
             pr = None
 
             if assembly_type is not AssemblyTypes.STREAM and not self.force:
@@ -126,8 +127,9 @@ class BuildMicroShiftPipeline:
                                "rebuild.")
                     self._logger.info(message)
                     await self.slack_say(message)
-                    return
-                nvrs = await self._find_builds()
+                    nvrs = pinned_nvrs.values()
+                else:
+                    nvrs = await self._find_builds()
 
             if nvrs:
                 self._logger.info("Builds already exist: %s", nvrs)
@@ -153,7 +155,7 @@ class BuildMicroShiftPipeline:
                 message = f"microshift for assembly {self.assembly} has been successfully built."
                 await self.slack_say(message)
 
-            # Check if we need create a PR to pin the build
+            # Check if we need create a PR to pin eligible builds
             diff = set(nvrs) - set(pinned_nvrs.values())
             if diff:
                 self._logger.info("Creating PR to pin microshift build: %s", diff)
