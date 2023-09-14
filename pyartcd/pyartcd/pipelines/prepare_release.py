@@ -4,34 +4,33 @@ import os
 import re
 import shutil
 import subprocess
-from io import StringIO
-from pathlib import Path
-from subprocess import PIPE, CalledProcessError
-from typing import Dict, Iterable, List, Optional, Tuple
-
 import aiofiles
 import click
 import jinja2
 import semver
+from io import StringIO
+from pathlib import Path
+from subprocess import PIPE, CalledProcessError
+from typing import Dict, List, Optional, Tuple
+from jira.resources import Issue
+from ruamel.yaml import YAML
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from doozerlib.assembly import AssemblyTypes
-from doozerlib.util import go_suffix_for_arch
 from elliottlib.assembly import assembly_group_config
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.model import Model
-from jira.resources import Issue
-from pyartcd import exectools, constants
+from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
 from pyartcd.slack import SlackClient
-from pyartcd.mail import MailService
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_basis, get_assembly_type,
                           get_release_name_for_assembly,
                           is_greenwave_all_pass_on_advisory,
                           nightlies_with_pullspecs)
-from ruamel.yaml import YAML
-from tenacity import retry, stop_after_attempt, wait_fixed
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,7 +94,6 @@ class PrepareReleasePipeline:
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self.doozer_working_dir = self.working_dir / "doozer-working"
         self._jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=jira_token)
-        self.mail = MailService.from_config(self.runtime.config)
         # sets environment variables for Elliott and Doozer
         self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self._doozer_env_vars = os.environ.copy()

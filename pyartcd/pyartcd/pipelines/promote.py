@@ -263,25 +263,8 @@ class PromotePipeline:
             # we can start microshift build
             await self._build_microshift(releases_config)
 
-            # Send notification to QE if it hasn't been done yet
-            # check jira task status
-            self._logger.info("Checking notify QE release subtask")
-            jira_issue_key = group_config.get("release_jira")
-            nightlies = group_config.get("reference_releases", {})
-            nightlies_w_pullspecs = nightlies_with_pullspecs(nightlies.values())
-            parent_jira = None
-            if jira_issue_key:
-                parent_jira = self._jira_client.get_issue(jira_issue_key)
-                title = "Notify QE of release advisories"
-                subtask = next(s.key for s in parent_jira.fields.subtasks if title in s.fields.summary)
-                if subtask.fields.status.name != "Closed":
-                    self._logger.info("Sending a notification to QE and multi-arch QE...")
-                    jira_issue_link = "https://jira.example.com/browse/FOO-1" if self.dry_run else parent_jira.permalink()
-                    self.send_notification_email(release_name, impetus_advisories, jira_issue_link,
-                                                 nightlies_w_pullspecs)
-                    if not self.dry_run:
-                        self._jira_client.assign_to_me(subtask)
-                        self._jira_client.close_task(subtask)
+            # Send notification to QE
+            self.send_notification_email(group_config, release_name, impetus_advisories)
 
             if not tag_stable:
                 self._logger.warning("Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr)
@@ -335,16 +318,22 @@ class PromotePipeline:
                     self._logger.info("Advisory image list sent.")
 
                 # update jira promote task status
-                if parent_jira and not self.dry_run:
+                release_jira = group_config.get("release_jira")
+                if release_jira and not self.dry_run:
                     self._logger.info("Updating promote release subtask")
+                    parent_jira = self._jira_client.get_issue(release_jira)
                     title = "[Wed] Promote the tested nightly"
-                    subtask = next(s.key for s in parent_jira.fields.subtasks if title in s.fields.summary)
-                    self._jira_client.add_comment(
-                        subtask,
-                        "promote release job : {}".format(os.environ.get("BUILD_URL"))
-                    )
-                    self._jira_client.assign_to_me(subtask)
-                    self._jira_client.close_task(subtask)
+                    subtask = next((s.key for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+                    if not subtask:
+                        raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
+
+                    if subtask.fields.status.name != "Closed":
+                        self._jira_client.add_comment(
+                            subtask,
+                            "promote release job : {}".format(os.environ.get("BUILD_URL"))
+                        )
+                        self._jira_client.assign_to_me(subtask)
+                        self._jira_client.close_task(subtask)
 
                 # extract client binaries
                 client_type = "ocp"
@@ -1391,8 +1380,38 @@ class PromotePipeline:
         subject = f"OCP {release_name} Image List"
         return await exectools.to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
 
+    def send_notification_email(self, group_config, release_name, impetus_advisories):
+        """
+        Send a notification email to QEs if it hasn't been done yet
+        check release jira subtask for task status
+        """
+
+        jira_issue_key = group_config.get("release_jira")
+        if not jira_issue_key:
+            return
+
+        self._logger.info("Checking notify QE release subtask")
+        parent_jira = self._jira_client.get_issue(jira_issue_key)
+        title = "Notify QE of release advisories"
+        subtask = next((s.key for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+        if not subtask:
+            raise ValueError("Notify QE release subtask not found in release_jira: %s", jira_issue_key)
+
+        if subtask.fields.status.name == "Closed":
+            return
+
+        self._logger.info("Sending a notification to QE and multi-arch QE...")
+        jira_issue_link = "https://jira.example.com/browse/FOO-1" if self.dry_run else parent_jira.permalink()
+        nightlies = group_config.get("reference_releases", {})
+        nightlies_w_pullspecs = nightlies_with_pullspecs(nightlies.values())
+        self._send_notification_email(release_name, impetus_advisories, jira_issue_link,
+                                      nightlies_w_pullspecs)
+        if not self.dry_run:
+            self._jira_client.assign_to_me(subtask)
+            self._jira_client.close_task(subtask)
+
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def send_notification_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
+    def _send_notification_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
         subject = f"OCP {release_name} advisories and nightlies"
         content = f"This is the current set of advisories for {release_name}:\n"
         for impetus, advisory in advisories.items():
