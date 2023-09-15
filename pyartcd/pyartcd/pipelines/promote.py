@@ -322,7 +322,7 @@ class PromotePipeline:
                 self._logger.info("Updating promote release subtask")
                 if release_jira and not self.runtime.dry_run:
                     parent_jira = self._jira_client.get_issue(release_jira)
-                    title = "[Wed] Promote the tested nightly"
+                    title = "Promote the tested nightly"
                     subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
                     if not subtask:
                         raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
