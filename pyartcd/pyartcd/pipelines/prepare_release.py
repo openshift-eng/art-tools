@@ -129,7 +129,7 @@ class PrepareReleasePipeline:
             raise ValueError(f"Assembly {self.assembly} is not explicitly defined in releases.yml for group {self.group_name}.")
         group_config = assembly_group_config(Model(releases_config), self.assembly, Model(group_config)).primitive()
         nightlies = get_assembly_basis(releases_config, self.assembly).get("reference_releases", {}).values()
-        self.candidate_nightlies = self.parse_nighties(nightlies)
+        self.candidate_nightlies = nightlies_with_pullspecs(nightlies)
 
         if release_config and assembly_type != AssemblyTypes.STANDARD:
             _LOGGER.warning("No need to check Blocker Bugs for assembly %s", self.assembly)
