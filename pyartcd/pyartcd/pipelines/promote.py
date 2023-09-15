@@ -179,20 +179,21 @@ class PromotePipeline:
                     justifications.append(justification)
                 logger.info("No blocker bugs found.")
 
-            # Attempt to move all advisories to QE
-            tasks = []
-            for impetus, advisory in impetus_advisories.items():
-                if not advisory:
-                    continue
-                logger.info("Moving advisory %s to QE...", advisory)
-                if not self.runtime.dry_run:
-                    tasks.append(self.change_advisory_state(advisory, "QE"))
-                else:
-                    logger.warning("[DRY RUN] Would have moved advisory %s to QE", advisory)
-            try:
-                await asyncio.gather(*tasks)
-            except ChildProcessError as err:
-                logger.warn("Error moving advisory %s to QE: %s", advisory, err)
+            if assembly_type == assembly.AssemblyTypes.STANDARD:
+                # Attempt to move all advisories to QE
+                tasks = []
+                for impetus, advisory in impetus_advisories.items():
+                    if not advisory:
+                        continue
+                    logger.info("Moving advisory %s to QE...", advisory)
+                    if not self.runtime.dry_run:
+                        tasks.append(self.change_advisory_state(advisory, "QE"))
+                    else:
+                        logger.warning("[DRY RUN] Would have moved advisory %s to QE", advisory)
+                try:
+                    await asyncio.gather(*tasks)
+                except ChildProcessError as err:
+                    logger.warn("Error moving advisory %s to QE: %s", advisory, err)
 
             # Ensure the image advisory is in QE (or later) state.
             image_advisory = impetus_advisories.get("image", 0)
@@ -207,9 +208,10 @@ class PromotePipeline:
                     logger.info("Verifying associated image advisory %s...", image_advisory)
                     image_advisory_info = await self.get_advisory_info(image_advisory)
                     try:
-                        self.verify_image_advisory(image_advisory_info)
-                        live_id = self.get_live_id(image_advisory_info)
-                        assert live_id
+                        self.verify_advisory_live_id(image_advisory_info)
+                        if assembly_type != assembly.AssemblyTypes.CANDIDATE:
+                            self.verify_advisory_status(image_advisory_info)
+                        live_id = self.get_live_id(image_advisory_info) or 'live-id'
                         errata_url = f"https://access.redhat.com/errata/{live_id}"  # don't quote
                     except VerificationError as err:
                         logger.warn("%s", err)
@@ -840,15 +842,14 @@ class PromotePipeline:
         live_id = advisory_info["fulladvisory"].rsplit("-", 1)[0]  # RHBA-2019:2681-02 => RHBA-2019:2681
         return live_id
 
-    def verify_image_advisory(self, advisory_info: Dict):
-        issues = []
+    def verify_advisory_status(self, advisory_info: Dict):
+        if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
+            raise VerificationError(f"Advisory {advisory_info['id']} should not be in {advisory_info['status']} state.")
+
+    def verify_advisory_live_id(self, advisory_info: Dict):
         live_id = self.get_live_id(advisory_info)
         if not live_id:
-            issues.append(f"Advisory {advisory_info['id']} doesn't have a live ID.")
-        if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
-            issues.append(f"Advisory {advisory_info['id']} cannot be in {advisory_info['status']} state.")
-        if issues:
-            raise VerificationError(f"Advisory {advisory_info['id']} has the following issues:\n" + '\n'.join(issues))
+            raise VerificationError(f"Advisory {advisory_info['id']} doesn't have a live ID.")
 
     async def verify_attached_bugs(self, advisories: Iterable[int], no_verify_blocking_bugs: bool):
         advisories = list(advisories)
