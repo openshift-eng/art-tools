@@ -321,7 +321,7 @@ class Nightly:
         for tag, commit in self.commit_for_tag.items():
             other_commit = other.commit_for_tag.get(tag)
             if commit and other_commit and commit != other_commit:
-                logger.debug(f"different because {tag}@{commit} != {tag}@{other_commit}")
+                logger.warning(f"{self.name} differs from {other.name} because {tag}@{commit} != {tag}@{other_commit}")
                 return False
             # ^^ missing entries automatically match
 
@@ -381,7 +381,7 @@ class Nightly:
                     # so just rely on source commit equivalence (already verified)
                     # and ignore the slim possibility that the RPMs installed differ.
                     continue
-                logger.debug(f"different because {tag} NVR {self_nvr} != {other_nvr}")
+                logger.warning(f"{self.name} differs from {other.name} because {tag} NVR {self_nvr} != {other_nvr}")
                 return False
 
         return self.deeper_nightly_rhcos(other)
@@ -399,7 +399,7 @@ class Nightly:
         logger.debug(f"comparing {self.rhcos_inspector} and {other.rhcos_inspector}")
         for rpm_name, vr in self._rhcos_rpms.items():
             if rpm_name in other._rhcos_rpms and vr != other._rhcos_rpms[rpm_name]:
-                logger.debug(f"different '{rpm_name}' version-release {vr} != {other._rhcos_rpms[rpm_name]}")
+                logger.warning(f"{self.name} differs from {other.name} because '{rpm_name}' version-release {vr} != {other._rhcos_rpms[rpm_name]}")
                 return False
 
         return True
