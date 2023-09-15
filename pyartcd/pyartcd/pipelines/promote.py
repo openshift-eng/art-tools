@@ -263,9 +263,9 @@ class PromotePipeline:
             # we can start microshift build
             await self._build_microshift(releases_config)
 
-            # Send notification to QE
+            # Send notification to QE if it hasn't been sent yet
             release_jira = group_config.get("release_jira", '')
-            self.send_notification_email(release_jira, release_name, impetus_advisories, reference_releases.values())
+            self.handle_qe_notification(release_jira, release_name, impetus_advisories, reference_releases.values())
 
             if not tag_stable:
                 self._logger.warning("Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr)
@@ -1380,8 +1380,8 @@ class PromotePipeline:
         subject = f"OCP {release_name} Image List"
         return await exectools.to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
 
-    def send_notification_email(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
-                                nightlies: List[str]):
+    def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
+                               nightlies: List[str]):
         """
         Send a notification email to QEs if it hasn't been done yet
         check release jira subtask for task status
@@ -1405,8 +1405,8 @@ class PromotePipeline:
         self._logger.info("Sending a notification to QE and multi-arch QE...")
         jira_issue_link = parent_jira.permalink()
         nightlies_w_pullspecs = nightlies_with_pullspecs(nightlies)
-        self._send_notification_email(release_name, impetus_advisories, jira_issue_link,
-                                      nightlies_w_pullspecs)
+        self._send_release_email(release_name, impetus_advisories, jira_issue_link,
+                                 nightlies_w_pullspecs)
         if not self.runtime.dry_run:
             self._jira_client.assign_to_me(subtask)
             self._jira_client.close_task(subtask)
@@ -1415,7 +1415,7 @@ class PromotePipeline:
             self._logger.info("Would've closed subtask %s", subtask.key)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def _send_notification_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
+    def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
         subject = f"OCP {release_name} advisories and nightlies"
         content = f"This is the current set of advisories for {release_name}:\n"
         for impetus, advisory in advisories.items():
