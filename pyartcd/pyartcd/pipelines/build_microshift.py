@@ -127,7 +127,7 @@ class BuildMicroShiftPipeline:
                                "rebuild.")
                     self._logger.info(message)
                     await self.slack_say(message)
-                    nvrs = pinned_nvrs.values()
+                    nvrs = list(pinned_nvrs.values())
                 else:
                     nvrs = await self._find_builds()
 
