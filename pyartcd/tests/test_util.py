@@ -18,6 +18,18 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(util.isolate_el_version_in_branch('rhaos-4.9-rhel-777'), 777)
         self.assertEqual(util.isolate_el_version_in_branch('rhaos-4.9'), None)
 
+    def test_nightlies_with_pullspecs(self):
+        nightly_tags = ['4.14.0-0.nightly-arm64-2023-09-15-082316', '4.14.0-0.nightly-ppc64le-2023-09-15-125921',
+                        '4.14.0-0.nightly-s390x-2023-09-15-114441', '4.14.0-0.nightly-2023-09-15-055234']
+
+        expected = {
+            'aarch64': 'registry.ci.openshift.org/ocp-arm64/release-arm64:4.14.0-0.nightly-arm64-2023-09-15-082316',
+            'ppc64le': 'registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.14.0-0.nightly-ppc64le-2023-09-15-125921',
+            's390x': 'registry.ci.openshift.org/ocp-s390x/release-s390x:4.14.0-0.nightly-s390x-2023-09-15-114441',
+            'x86_64': 'registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-09-15-055234'
+        }
+        self.assertEqual(util.nightlies_with_pullspecs(nightly_tags), expected)
+
     @patch("tempfile.mkdtemp")
     @patch("shutil.rmtree")
     @patch("pyartcd.exectools.cmd_gather_async")

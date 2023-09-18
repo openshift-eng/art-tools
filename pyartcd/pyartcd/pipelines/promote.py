@@ -5,38 +5,38 @@ import os
 import re
 import sys
 import traceback
-from collections import OrderedDict
-from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union
-from urllib.parse import quote
-
+import requests
 import aiohttp
 import click
 import tarfile
 import hashlib
 import shutil
-import urllib.parse
-
-from pyartcd.locks import Lock
-from pyartcd.signatory import AsyncSignatory
-import requests
-# from pyartcd.cincinnati import CincinnatiAPI
-from doozerlib import assembly
-from doozerlib.util import (brew_arch_for_go_arch, brew_suffix_for_arch,
-                            go_arch_for_brew_arch, go_suffix_for_arch)
-from pyartcd import constants, exectools, locks, util, jenkins
-from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.exceptions import VerificationError
-from pyartcd.jira import JIRAClient
-from pyartcd.s3 import sync_dir_to_s3_mirror
-from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
-    extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
-from pyartcd.runtime import Runtime
+from collections import OrderedDict
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Union
+from urllib.parse import quote
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import (RetryCallState, RetryError, retry,
                       retry_if_exception_type, retry_if_result,
                       stop_after_attempt, wait_fixed)
+
+from doozerlib import assembly
+from doozerlib.util import (brew_arch_for_go_arch, brew_suffix_for_arch,
+                            go_arch_for_brew_arch, go_suffix_for_arch)
+from pyartcd.locks import Lock
+from pyartcd.signatory import AsyncSignatory
+from pyartcd.util import nightlies_with_pullspecs
+from pyartcd import constants, exectools, locks, util, jenkins
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.exceptions import VerificationError
+from pyartcd.jira import JIRAClient
+from pyartcd.mail import MailService
+from pyartcd.s3 import sync_dir_to_s3_mirror
+from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
+    extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
+from pyartcd.runtime import Runtime
+
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
@@ -263,6 +263,10 @@ class PromotePipeline:
             # we can start microshift build
             await self._build_microshift(releases_config)
 
+            # Send notification to QE if it hasn't been sent yet
+            release_jira = group_config.get("release_jira", '')
+            self.handle_qe_notification(release_jira, release_name, impetus_advisories, reference_releases.values())
+
             if not tag_stable:
                 self._logger.warning("Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr)
                 await self._slack_client.say(f"Release {release_name} is ready. It will not appear on the release controllers. Please tell the user to manually pull the release images: {pullspecs_repr}", slack_thread)
@@ -316,16 +320,20 @@ class PromotePipeline:
 
                 # update jira promote task status
                 self._logger.info("Updating promote release subtask")
-                jira_issue_key = group_config.get("release_jira")
-                if jira_issue_key:
-                    parent_jira = self._jira_client.get_issue(jira_issue_key)
-                    subtask = self._jira_client.get_issue(parent_jira.fields.subtasks[3].key)
-                    self._jira_client.add_comment(
-                        subtask,
-                        "promote release job : {}".format(os.environ.get("BUILD_URL"))
-                    )
-                    self._jira_client.assign_to_me(subtask)
-                    self._jira_client.close_task(subtask)
+                if release_jira and not self.runtime.dry_run:
+                    parent_jira = self._jira_client.get_issue(release_jira)
+                    title = "Promote the tested nightly"
+                    subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+                    if not subtask:
+                        raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
+
+                    if subtask.fields.status.name != "Closed":
+                        self._jira_client.add_comment(
+                            subtask,
+                            "promote release job : {}".format(os.environ.get("BUILD_URL"))
+                        )
+                        self._jira_client.assign_to_me(subtask)
+                        self._jira_client.close_task(subtask)
 
                 # extract client binaries
                 client_type = "ocp"
@@ -1367,6 +1375,68 @@ class PromotePipeline:
         content = await self.get_advisory_image_list(advisory)
         subject = f"OCP {release_name} Image List"
         return await exectools.to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
+
+    def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
+                               nightlies: List[str]):
+        """
+        Send a notification email to QEs if it hasn't been done yet
+        check release jira subtask for task status
+        """
+
+        if not release_jira:
+            return
+
+        self._logger.info("Checking notify QE release subtask in release_jira: %s", release_jira)
+        parent_jira = self._jira_client.get_issue(release_jira)
+        title = "Notify QE of release advisories"
+        subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+        if not subtask:
+            raise ValueError("Notify QE release subtask not found in release_jira: %s", release_jira)
+
+        self._logger.info("Found subtask in release_jira: %s with status %s", subtask.key, subtask.fields.status.name)
+
+        if subtask.fields.status.name == "Closed":
+            return
+
+        self._logger.info("Sending a notification to QE and multi-arch QE...")
+        jira_issue_link = parent_jira.permalink()
+        nightlies_w_pullspecs = nightlies_with_pullspecs(nightlies)
+        self._send_release_email(release_name, impetus_advisories, jira_issue_link,
+                                 nightlies_w_pullspecs)
+        if not self.runtime.dry_run:
+            self._jira_client.assign_to_me(subtask)
+            self._jira_client.close_task(subtask)
+            self._logger.info("Closed subtask %s", subtask.key)
+        else:
+            self._logger.info("Would've closed subtask %s", subtask.key)
+
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+    def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
+        subject = f"OCP {release_name} advisories and nightlies"
+        content = f"This is the current set of advisories for {release_name}:\n"
+        for impetus, advisory in advisories.items():
+            content += (
+                f"- {impetus}: https://errata.devel.redhat.com/advisory/{advisory}\n"
+            )
+        if 'microshift' in advisories.keys():
+            content += ("\n Note: Microshift advisory gets populated with build and bugs after the release payload has "
+                        "been promoted on Release Controller. It will take a few hours for it to be ready and on QE.")
+        if nightlies:
+            content += "\nNightlies:\n"
+            for arch, pullspec in nightlies.items():
+                content += f"- {arch}: {pullspec}\n"
+        elif self.assembly != "stream":
+            content += "\nThis release is NOT directly based on existing nightlies.\n"
+            content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
+                       f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
+        content += f"\nJIRA ticket: {jira_link}\n"
+        content += "\nThanks.\n"
+        release_version = tuple(map(int, release_name.split(".", 2)))
+        email_dir = self._working_dir.absolute() / "email"
+        mail = MailService.from_config(self.runtime.config)
+        mail.send_mail(
+            self.runtime.config["email"][f"qe_notification_recipients_ocp{release_version[0]}"],
+            subject, content, archive_dir=email_dir, dry_run=self.runtime.dry_run)
 
 
 @cli.command("promote")

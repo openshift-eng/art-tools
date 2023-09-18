@@ -4,33 +4,33 @@ import os
 import re
 import shutil
 import subprocess
-from io import StringIO
-from pathlib import Path
-from subprocess import PIPE, CalledProcessError
-from typing import Dict, Iterable, List, Optional, Tuple
-
 import aiofiles
 import click
 import jinja2
 import semver
+from io import StringIO
+from pathlib import Path
+from subprocess import PIPE, CalledProcessError
+from typing import Dict, List, Optional, Tuple
+from jira.resources import Issue
+from ruamel.yaml import YAML
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from doozerlib.assembly import AssemblyTypes
-from doozerlib.util import go_suffix_for_arch
 from elliottlib.assembly import assembly_group_config
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.model import Model
-from jira.resources import Issue
-from pyartcd import exectools, constants
+from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
 from pyartcd.slack import SlackClient
-from pyartcd.mail import MailService
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_basis, get_assembly_type,
                           get_release_name_for_assembly,
-                          is_greenwave_all_pass_on_advisory)
-from ruamel.yaml import YAML
-from tenacity import retry, stop_after_attempt, wait_fixed
+                          is_greenwave_all_pass_on_advisory,
+                          nightlies_with_pullspecs)
+
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class PrepareReleasePipeline:
                 raise ValueError("No nightly needed for OCP3 releases")
             if self.release_version[0] >= 4 and not nightlies:
                 raise ValueError("You need to specify at least one nightly.")
-            self.candidate_nightlies = self.parse_nighties(nightlies)
+            self.candidate_nightlies = nightlies_with_pullspecs(nightlies)
         else:
             if name:
                 raise ValueError("Release name cannot be set for a non-stream assembly.")
@@ -94,7 +94,6 @@ class PrepareReleasePipeline:
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self.doozer_working_dir = self.working_dir / "doozer-working"
         self._jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=jira_token)
-        self.mail = MailService.from_config(self.runtime.config)
         # sets environment variables for Elliott and Doozer
         self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self._doozer_env_vars = os.environ.copy()
@@ -130,7 +129,7 @@ class PrepareReleasePipeline:
             raise ValueError(f"Assembly {self.assembly} is not explicitly defined in releases.yml for group {self.group_name}.")
         group_config = assembly_group_config(Model(releases_config), self.assembly, Model(group_config)).primitive()
         nightlies = get_assembly_basis(releases_config, self.assembly).get("reference_releases", {}).values()
-        self.candidate_nightlies = self.parse_nighties(nightlies)
+        self.candidate_nightlies = nightlies_with_pullspecs(nightlies)
 
         if release_config and assembly_type != AssemblyTypes.STANDARD:
             _LOGGER.warning("No need to check Blocker Bugs for assembly %s", self.assembly)
@@ -194,7 +193,7 @@ class PrepareReleasePipeline:
                 _LOGGER.warning("[DRY RUN ]Would have updated Jira ticket status")
 
         _LOGGER.info("Updating ocp-build-data...")
-        build_data_changed = await self.update_build_data(advisories, jira_issue_key)
+        await self.update_build_data(advisories, jira_issue_key)
 
         _LOGGER.info("Sweep builds into the the advisories...")
         for impetus, advisory in advisories.items():
@@ -223,14 +222,6 @@ class PrepareReleasePipeline:
             _LOGGER.info("Verify the swept builds match the nightlies...")
             for _, payload in self.candidate_nightlies.items():
                 self.verify_payload(payload, advisories["image"])
-
-        if build_data_changed or self.candidate_nightlies:
-            _LOGGER.info("Sending a notification to QE and multi-arch QE...")
-            if self.dry_run:
-                jira_issue_link = "https://jira.example.com/browse/FOO-1"
-            else:
-                jira_issue_link = jira_issue.permalink()
-            self.send_notification_email(advisories, jira_issue_link)
 
         # Move advisories to QE
         self._slack_client.bind_channel(self.release_name)
@@ -273,25 +264,6 @@ class PrepareReleasePipeline:
         yaml.preserve_quotes = True
         yaml.width = 4096
         return yaml.load(content)
-
-    @classmethod
-    def parse_nighties(cls, nighty_tags: Iterable[str]) -> Dict[str, str]:
-        arch_nightlies = {}
-        for nightly in nighty_tags:
-            if "s390x" in nightly:
-                arch = "s390x"
-            elif "ppc64le" in nightly:
-                arch = "ppc64le"
-            elif "arm64" in nightly:
-                arch = "aarch64"
-            else:
-                arch = "x86_64"
-            if ":" not in nightly:
-                # prepend pullspec URL to nightly name
-                arch_suffix = go_suffix_for_arch(arch)
-                nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
-            arch_nightlies[arch] = nightly
-        return arch_nightlies
 
     def check_blockers(self):
         # Note: --assembly option should always be "stream". We are checking blocker bugs for this release branch regardless of the sweep cutoff timestamp.
@@ -699,29 +671,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             cmd.append(f"{advisory}")
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
-
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def send_notification_email(self, advisories: Dict[str, int], jira_link: str):
-        subject = f"OCP {self.release_name} advisories and nightlies"
-        content = f"This is the current set of advisories for {self.release_name}:\n"
-        for impetus, advisory in advisories.items():
-            content += (
-                f"- {impetus}: https://errata.devel.redhat.com/advisory/{advisory}\n"
-            )
-        if 'microshift' in advisories.keys():
-            content += "\n Note: Microshift advisory is not populated with build until after the release has been promoted on Release Controller. It will take a few hours for it to be ready and on QE."
-        if self.candidate_nightlies:
-            content += "\nNightlies:\n"
-            for arch, pullspec in self.candidate_nightlies.items():
-                content += f"- {arch}: {pullspec}\n"
-        elif self.assembly != "stream":
-            content += "\nThis release is NOT directly based on existing nightlies.\n"
-            content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
-                       f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group_name}/releases.yml\n"
-        content += f"\nJIRA ticket: {jira_link}\n"
-        content += "\nThanks.\n"
-        email_dir = self.working_dir / "email"
-        self.mail.send_mail(self.runtime.config["email"][f"prepare_release_notification_recipients_ocp{self.release_version[0]}"], subject, content, archive_dir=email_dir, dry_run=self.dry_run)
 
 
 @cli.command("prepare-release")
