@@ -208,10 +208,11 @@ class PromotePipeline:
                     logger.info("Verifying associated image advisory %s...", image_advisory)
                     image_advisory_info = await self.get_advisory_info(image_advisory)
                     try:
-                        self.verify_advisory_live_id(image_advisory_info)
+                        live_id = self.get_live_id(image_advisory_info)
+                        if not live_id:
+                            raise VerificationError(f"Advisory {image_advisory_info['id']} doesn't have a live ID.")
                         if assembly_type != assembly.AssemblyTypes.CANDIDATE:
                             self.verify_advisory_status(image_advisory_info)
-                        live_id = self.get_live_id(image_advisory_info) or 'live-id'
                         errata_url = f"https://access.redhat.com/errata/{live_id}"  # don't quote
                     except VerificationError as err:
                         logger.warn("%s", err)
@@ -845,11 +846,6 @@ class PromotePipeline:
     def verify_advisory_status(self, advisory_info: Dict):
         if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
             raise VerificationError(f"Advisory {advisory_info['id']} should not be in {advisory_info['status']} state.")
-
-    def verify_advisory_live_id(self, advisory_info: Dict):
-        live_id = self.get_live_id(advisory_info)
-        if not live_id:
-            raise VerificationError(f"Advisory {advisory_info['id']} doesn't have a live ID.")
 
     async def verify_attached_bugs(self, advisories: Iterable[int], no_verify_blocking_bugs: bool):
         advisories = list(advisories)
