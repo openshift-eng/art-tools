@@ -15,8 +15,8 @@ from pyartcd import constants
 
 logger = logging.getLogger(__name__)
 
-current_build_url = None
-current_job_name = None
+current_build_url: Optional[str] = None
+current_job_name: Optional[str] = None
 jenkins_client: Optional[Jenkins] = None
 
 
@@ -52,6 +52,30 @@ def init_jenkins():
     logger.info('Connected to Jenkins %s', jenkins_client.version)
 
 
+def get_build_url():
+    url = os.environ.get("BUILD_URL")
+    if not url:
+        return None
+    return f"{url.rstrip('/')}"
+
+
+def get_build_path():
+    url = get_build_url()
+    return '/'.join(url.split('/')[3:]) if url else None
+
+
+def get_build_id() -> str:
+    return os.environ.get("BUILD_ID")
+
+
+def get_build_id_from_url(build_url: str) -> int:
+    return int(list(filter(None, build_url.split('/')))[-1])
+
+
+def get_job_name():
+    return os.environ.get("JOB_NAME")
+
+
 def check_env_vars(func):
     """
     Enforces that BUILD_URL and JOB_NAME are set
@@ -60,8 +84,8 @@ def check_env_vars(func):
     @functools.wraps(func)
     def wrapped(*args, **kwargs):
         global current_build_url, current_job_name
-        current_build_url = current_build_url or os.environ.get('BUILD_URL', None)
-        current_job_name = current_job_name or os.environ.get('JOB_NAME', None)
+        current_build_url = current_build_url or get_build_url()
+        current_job_name = current_job_name or get_job_name()
 
         if not current_build_url or not current_job_name:
             logger.error('Env vars BUILD_URL and JOB_NAME must be defined!')
@@ -94,16 +118,12 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
 
     # Update the description of the new build with the details of the caller job
     triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL)
-    triggered_build = Build(url=triggered_build_url, buildno=get_build_number(triggered_build_url), job=job)
+    triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
     description = f'Started by upstream project <b>{current_job_name}</b> ' \
-                  f'build number <a href="{current_build_url}">{get_build_number(current_build_url)}</a><br><br>'
+                  f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
     set_build_description(triggered_build, description)
 
     return triggered_build
-
-
-def get_build_number(build_url: str) -> int:
-    return int(list(filter(None, build_url.split('/')))[-1])
 
 
 def set_build_description(build: Build, description: str):

@@ -7,7 +7,7 @@ from typing import Dict
 
 import click
 from ghapi.all import GhApi
-from pyartcd import exectools
+from pyartcd import exectools, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
@@ -74,7 +74,7 @@ class ReviewCVPPipeline:
                 warnings.extend(await self._resolve_content_set_failures(build_data_path, failed_optional))
 
                 title = f"Automated CVP content_set_check fix for {self.group}"
-                body = f"Created by build {self.runtime.get_job_run_url()}"
+                body = f"Created by build {jenkins.get_build_url()}"
                 pushed = await build_data.commit_push(f"{title}\n{body}")
                 if pushed:
                     match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
@@ -100,7 +100,7 @@ class ReviewCVPPipeline:
                 self._logger.info(messages[-1])
 
         messages.append("")
-        messages.append(f"""Check <{self.runtime.get_job_run_url()}/consoleFull|build logs> and <{self.runtime.get_job_run_url()}/artifact/artcd_working/cvp-test-results.yaml/*view*/|cvp-test-results.yaml> for detailed CVP test results.""")
+        messages.append(f"""Check <{jenkins.get_build_url()}/consoleFull|build logs> and <{jenkins.get_build_url()}/artifact/artcd_working/cvp-test-results.yaml/*view*/|cvp-test-results.yaml> for detailed CVP test results.""")
         self._logger.info(messages[-1])
 
         messages.append("""For more information about content_set_check, see https://docs.engineering.redhat.com/x/a05iEQ.

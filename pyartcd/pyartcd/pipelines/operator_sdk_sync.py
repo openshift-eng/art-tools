@@ -5,7 +5,7 @@ import requests
 import click
 import koji
 from errata_tool import Erratum
-from pyartcd import constants, util
+from pyartcd import constants, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.util import brew_arch_for_go_arch
@@ -45,7 +45,7 @@ class OperatorSDKPipeline:
                 'openshift-enterprise-operator-sdk-container')]
             if not sdk_build:
                 self._logger.info("No SDK build to ship, update subtask 8 then close ...")
-                self._jira_client.complete_subtask(self.parent_jira_key, 7, f"No SDK build to ship, operator_sdk_sync job: {self.runtime.get_job_run_url()}")
+                self._jira_client.complete_subtask(self.parent_jira_key, 7, f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}")
                 return
             build = koji.ClientSession(constants.BREW_SERVER).getBuild(sdk_build[0])
         elif self.nvr:
@@ -58,7 +58,7 @@ class OperatorSDKPipeline:
         for arch in self.arches.split(','):
             self._extract_binaries(arch, sdkVersion, build['extra']['image']['index']['pull'][0])
         if self.assembly:
-            self._jira_client.complete_subtask(self.parent_jira_key, 7, f"operator_sdk_sync job: {self.runtime.get_job_run_url()}")
+            self._jira_client.complete_subtask(self.parent_jira_key, 7, f"operator_sdk_sync job: {jenkins.get_build_url()}")
 
     def _get_sdkversion(self, build):
         build_log_res = requests.get(f"{constants.BREW_DOWNLOAD_SERVER}/packages/{build['name']}/{build['version']}/{build['release']}/data/logs/x86_64.log")

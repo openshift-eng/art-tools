@@ -404,7 +404,7 @@ class BuildMicroShiftPipeline:
         yaml.dump(releases_yaml, releases_yaml_path)
         # Create a PR
         title = f"Pin microshift build for {self.group} {self.assembly}"
-        body = f"Created by job run {self.runtime.get_job_run_url()}"
+        body = f"Created by job run {jenkins.get_build_url()}"
         match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
         if not match:
             raise ValueError(f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")
