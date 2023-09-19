@@ -1147,6 +1147,9 @@ open_prs: {open_prs}
             # At this point, we have a fork branch in the proper state
             pr_body = f"""{first_commit_line}
 __TLDR__:
+Product builds replace base and builder images as configured. This PR is to ensure
+that CI builds use the same base images as the product builds.
+
 Component owners, please ensure that this PR merges as it impacts the fidelity
 of your CI signal. Patch-manager / leads, this PR is a no-op from a product
 perspective -- feel free to manually apply any labels (e.g. jira/valid-bug) to help the
@@ -1191,6 +1194,13 @@ build_root:
 ```
 """
 
+            pr_body += """
+__Change behavior of future PRs__:
+* In case you just want to follow the base images that ART suggests, you can configure additional labels to be
+  set up automatically. This means that such a PR would *merge without human intervention* (and awareness!) in the future.
+  To do so, open a PR to set the `autolabel` field in the image configuration. [Example](https://github.com/openshift-eng/ocp-build-data/pull/1778)
+* You can set a commit prefix, like `UPSTREAM: <carry>: `. [An example](https://github.com/openshift-eng/ocp-build-data/blob/6831b59dddc5b63282076d3abe04593ad1945148/images/ose-cluster-api.yml#L11).
+"""
             pr_body += """
 If you have any questions about this pull request, please reach out to `@release-artists` in the `#forum-ocp-art` coreos slack channel.
 """
