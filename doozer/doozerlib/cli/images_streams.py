@@ -1198,7 +1198,7 @@ build_root:
 __Change behavior of future PRs__:
 * In case you just want to follow the base images that ART suggests, you can configure additional labels to be
   set up automatically. This means that such a PR would *merge without human intervention* (and awareness!) in the future.
-  To do so, open a PR to set the `autolabel` field in the image configuration. [Example](https://github.com/openshift-eng/ocp-build-data/pull/1778)
+  To do so, open a PR to set the `auto_label` attribute in the image configuration. [Example](https://github.com/openshift-eng/ocp-build-data/pull/1778)
 * You can set a commit prefix, like `UPSTREAM: <carry>: `. [An example](https://github.com/openshift-eng/ocp-build-data/blob/6831b59dddc5b63282076d3abe04593ad1945148/images/ose-cluster-api.yml#L11).
 """
             pr_body += """
