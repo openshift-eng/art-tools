@@ -128,9 +128,8 @@ class LockManager(Aioredlock):
 
         if version:
             pattern = f'*-lock-{version}'
-            self.logger.info('Retrieving active locks for OCP %s', version)
         else:
             pattern = '*-lock-*'
-            self.logger.info('Retrieving all active locks')
 
+        self.logger.info('Retrieving locks matching pattern "%s"', pattern)
         return await redis.get_keys(pattern)

@@ -25,7 +25,7 @@ async def cleanup_locks(runtime: Runtime):
                     runtime.logger.warning('Deleting lock %s that was created by %s that\'s not currently running',
                                            lock_name,
                                            build_url.replace(constants.JENKINS_SERVER_URL, constants.JENKINS_UI_URL))
-                    lock = Lock(lock_manager=lock_manager, resource=lock_name, id=build_path)
+                    lock = lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
                     await lock_manager.unlock(lock)
 
                 else:

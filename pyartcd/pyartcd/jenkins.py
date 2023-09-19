@@ -70,6 +70,12 @@ def get_build_id() -> str:
 
 
 def get_build_id_from_url(build_url: str) -> int:
+    """
+    Examples:
+    - https://buildvm.hosts.prod.psi.bos.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870/ => 46870
+    - https://buildvm.hosts.prod.psi.bos.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870 => 46870
+    """
+
     return int(list(filter(None, build_url.split('/')))[-1])
 
 
@@ -140,6 +146,17 @@ def set_build_description(build: Build, description: str):
 
 
 def is_build_running(build_path: str) -> bool:
+    """
+    Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
+    E.g. https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46902/api/json
+
+    The resulting JSON has a field called "inProgress" that is true if the build is still ongoing
+
+    Build paths examples are:
+    - job/aos-cd-builds/job/build%252Focp4/46902
+    - job/hack/job/dpaolell/job/ocp4/238/
+    """
+
     init_jenkins()
 
     response = requests.get(f'{constants.JENKINS_SERVER_URL}/{build_path}/api/json')
