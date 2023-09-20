@@ -35,7 +35,7 @@ class BuildSyncPipeline:
         self.skip_multiarch_payload = skip_multiarch_payload
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
-        self.fail_count_name = f'{version}-assembly.{assembly}.count'
+        self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
 
     async def run(self):
         # Make sure we're logged into the OC registry
