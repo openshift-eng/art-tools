@@ -34,7 +34,7 @@ async def cleanup_locks(runtime: Runtime):
                     runtime.logger.info('Build %s is still running: won\'t delete lock %s', build_path, lock_name)
 
             except ValueError:
-                runtime.logger.warning('Could not get build from lock %s: skipping', lock_name)
+                runtime.logger.warning('Could not get build from lock %s with id %s: skipping', lock_name, build_path)
 
     finally:
         await lock_manager.destroy()
