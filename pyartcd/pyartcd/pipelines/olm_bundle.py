@@ -3,7 +3,7 @@ import os
 import click
 from aioredlock import LockError
 
-from pyartcd import constants, exectools
+from pyartcd import constants, exectools, jenkins
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd import locks
 from pyartcd.locks import Lock
@@ -58,11 +58,16 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
     # Create a Lock manager instance
     lock = Lock.OLM_BUNDLE
     lock_manager = locks.LockManager.from_lock(lock)
+
+    # Get lock name and identifier
     lock_name = lock.value.format(version=version)
+    lock_identifier = jenkins.get_build_path()
+    if not lock_identifier:
+        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
     try:
         # Try to acquire olm-bundle lock for build version
-        async with await lock_manager.lock(lock_name):
+        async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
             # Build bundles
             runtime.logger.info('Running command: %s', cmd)
             await exectools.cmd_assert_async(cmd)

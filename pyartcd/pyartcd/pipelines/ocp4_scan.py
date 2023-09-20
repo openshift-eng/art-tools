@@ -27,7 +27,7 @@ class Ocp4ScanPipeline:
 
     async def run(self):
         # Check if automation is frozen for current group
-        if not await util.is_build_permitted(self.version, doozer_working=self._doozer_working):
+        if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
             self.logger.info('Skipping this build as it\'s not permitted')
             return
 
@@ -92,7 +92,8 @@ class Ocp4ScanPipeline:
         """
 
         # Run doozer scan-sources
-        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} --group=openshift-{self.version} ' \
+        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} ' \
+              f'--group=openshift-{self.version} ' \
               f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]}'
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
@@ -117,7 +118,8 @@ class Ocp4ScanPipeline:
         Check for RHCOS inconsistencies by calling doozer inspect:stream INCONSISTENT_RHCOS_RPMS
         """
 
-        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} --group openshift-{self.version} ' \
+        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} ' \
+              f'--group openshift-{self.version} ' \
               f'inspect:stream INCONSISTENT_RHCOS_RPMS --strict'
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
@@ -136,14 +138,19 @@ async def ocp4_scan(runtime: Runtime, version: str):
     # Create a Lock manager instance
     lock = Lock.BUILD
     lock_manager = locks.LockManager.from_lock(lock)
+
+    # Get lock name and identifier
     lock_name = lock.value.format(version=version)
+    lock_identifier = jenkins.get_build_path()
+    if not lock_identifier:
+        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
     try:
         # Skip the build if already locked
         if await lock_manager.is_locked(lock_name):
             runtime.logger.info('Looks like there is another build ongoing for %s -- skipping for this run', version)
         else:
-            async with await lock_manager.lock(lock_name):
+            async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
                 await Ocp4ScanPipeline(runtime, version).run()
 
     except LockError as e:

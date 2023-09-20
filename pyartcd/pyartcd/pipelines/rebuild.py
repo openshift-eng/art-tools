@@ -15,7 +15,7 @@ import click
 import yaml
 from aioredlock import LockError
 from doozerlib.assembly import AssemblyTypes
-from pyartcd import constants, exectools, locks
+from pyartcd import constants, exectools, locks, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
@@ -601,10 +601,16 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
         # Create a Lock manager instance
         lock = locks.Lock.BUILD
         lock_manager = locks.LockManager.from_lock(lock)
+
+        # Get lock name and identifier
         lock_name = lock.value.format(version=version)
+        lock_identifier = jenkins.get_build_path()
+        if not lock_identifier:
+            runtime.logger.warning('Env var BUILD_URL has not been defined: '
+                                   'a random identifier will be used for the locks')
 
         try:
-            async with await lock_manager.lock(lock_name):
+            async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
                 await pipeline.run()
 
         except LockError as e:
