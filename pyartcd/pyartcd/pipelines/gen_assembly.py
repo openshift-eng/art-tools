@@ -8,7 +8,7 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 
 import click
 from ghapi.all import GhApi
-from pyartcd import exectools, constants
+from pyartcd import exectools, constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
@@ -183,7 +183,7 @@ class GenAssemblyPipeline:
         yaml.dump(releases_yaml, releases_yaml_path)
         # Create a PR
         title = f"Add assembly {self.assembly}"
-        body = f"Created by job run {self.runtime.get_job_run_url()}"
+        body = f"Created by job run {jenkins.get_build_url()}"
         match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
         if not match:
             raise ValueError(f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")

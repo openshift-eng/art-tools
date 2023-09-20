@@ -66,3 +66,27 @@ class TestJenkinsStartBuild(unittest.TestCase):
         mock_job.invoke.assert_called_once_with(build_params=params)
         mock_queue_item.poll.assert_called_once()
         mock_build.assert_called_once_with(url=triggered_url, buildno=1, job=mock_job)
+
+    def test_get_build_url_and_path(self):
+        # No BUILD_URL env var defined
+        self.assertEqual(jenkins.get_build_url(), None)
+        self.assertEqual(jenkins.get_build_path(), None)
+
+        # Trailing slash will be removed
+        os.environ['BUILD_URL'] = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/' \
+                                  'job/aos-cd-builds/job/build%252Focp4/46870/'
+        self.assertEqual(jenkins.get_build_url(), 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/'
+                                                  'job/aos-cd-builds/job/build%252Focp4/46870')
+
+        # Build path
+        build_path = jenkins.get_build_path()
+        self.assertEqual(build_path, 'job/aos-cd-builds/job/build%252Focp4/46870')
+
+    def test_get_build_id_from_url(self):
+        build_url = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/' \
+                    'job/aos-cd-builds/job/build%252Focp4/46870/'
+        self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)
+
+        build_url = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/' \
+                    'job/aos-cd-builds/job/build%252Focp4/46870'
+        self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)

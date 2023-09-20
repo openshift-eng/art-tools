@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 import tomli
 
+from pyartcd import jenkins
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.slack import SlackClient
@@ -50,21 +51,9 @@ class Runtime:
             if not token and not self.dry_run:
                 raise ValueError("SLACK_BOT_TOKEN environment variable is not set")
         return SlackClient(token, dry_run=self.dry_run,
-                           job_name=self.get_job_name(),
-                           job_run_url=self.get_job_run_url(),
-                           job_run_name=self.get_job_run_name())
+                           job_name=jenkins.get_job_name(),
+                           build_url=jenkins.get_build_url(),
+                           build_id=jenkins.get_build_id())
 
     def new_mail_client(self):
         return MailService.from_config(self.config)
-
-    def get_job_name(self):
-        return os.environ.get("JOB_NAME")
-
-    def get_job_run_name(self):
-        return os.environ.get("BUILD_ID")
-
-    def get_job_run_url(self):
-        url = os.environ.get("BUILD_URL")
-        if not url:
-            return None
-        return f"{url.rstrip('/')}"

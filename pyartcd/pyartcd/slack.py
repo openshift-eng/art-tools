@@ -12,12 +12,12 @@ class SlackClient:
     """
     DEFAULT_CHANNEL = "#art-release"
 
-    def __init__(self, token: str, job_name: Optional[str], job_run_name: Optional[str], job_run_url: Optional[str], dry_run: bool = False) -> None:
+    def __init__(self, token: str, job_name: Optional[str], build_id: Optional[str], build_url: Optional[str], dry_run: bool = False) -> None:
         self.token = token
         self.channel = self.DEFAULT_CHANNEL
         self.job_name = job_name
-        self.job_run_name = job_run_name
-        self.job_run_url = job_run_url
+        self.build_id = build_id
+        self.build_url = build_url
         self.dry_run = dry_run
         self.as_user = "art-release-bot"
         self.icon_emoji = ":robot_face:"
@@ -43,9 +43,9 @@ class SlackClient:
 
     async def say(self, message: str, thread_ts: Optional[str] = None):
         attachments = []
-        if self.job_run_url:
+        if self.build_url:
             attachments.append({
-                "title": f"Job: {self.job_name} <{self.job_run_url}/consoleFull|{self.job_run_name}>",
+                "title": f"Job: {self.job_name} <{self.build_url}/consoleFull|{self.build_id}>",
                 "color": "#439FE0",
             })
         if self.dry_run:
@@ -68,9 +68,9 @@ class SlackClient:
 
     async def post_image(self, message: str, file: str):
         attachments = []
-        if self.job_run_url:
+        if self.build_url:
             attachments.append({
-                "title": f"Job: {self.job_name} <{self.job_run_url}|{self.job_run_name}>",
+                "title": f"Job: {self.job_name} <{self.build_url}|{self.build_id}>",
                 "color": "#439FE0",
             })
         if self.dry_run:
