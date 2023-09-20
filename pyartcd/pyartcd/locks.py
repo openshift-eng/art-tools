@@ -8,12 +8,12 @@ from pyartcd import redis
 
 # Defines the pipeline locks managed by Redis
 class Lock(enum.Enum):
-    OLM_BUNDLE = 'olm-bundle-lock-{version}'
-    MIRRORING_RPMS = 'mirroring-rpms-{version}'
-    COMPOSE = 'compose-lock-{version}'
-    BUILD = 'build-lock-{version}'
-    MASS_REBUILD = 'mass-rebuild-serializer'
-    SIGNING = 'signing-lock-{signing_env}'
+    OLM_BUNDLE = 'lock:olm-bundle-{version}'
+    MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
+    COMPOSE = 'lock:compose:{version}'
+    BUILD = 'lock:build:{version}'
+    MASS_REBUILD = 'lock:mass-rebuild-serializer'
+    SIGNING = 'lock:signing:{signing_env}'
 
 
 # This constant defines for each lock type:
@@ -127,9 +127,9 @@ class LockManager(Aioredlock):
         """
 
         if version:
-            pattern = f'*-lock-{version}'
+            pattern = f'lock:*:{version}'
         else:
-            pattern = '*-lock-*'
+            pattern = 'lock:*'
 
         self.logger.info('Retrieving locks matching pattern "%s"', pattern)
         return await redis.get_keys(pattern)
