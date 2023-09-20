@@ -477,9 +477,14 @@ class PromotePipeline:
 
         lock = Lock.SIGNING
         lock_name = lock.value.format(signing_env=self.signing_env)
+        lock_identifier = jenkins.get_build_path()
+        if not lock_identifier:
+            self._logger.warning('Env var BUILD_URL has not been defined: '
+                                 'a random identifier will be used for the locks')
+
         lock_manager = locks.LockManager.from_lock(lock)
 
-        async with await lock_manager.lock(lock_name):
+        async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
             async with AsyncSignatory(uri, cert_file, key_file, sig_keyname=sig_keyname) as signatory:
                 tasks = []
                 json_digests = []

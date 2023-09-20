@@ -61,6 +61,14 @@ def get_build_url():
 
 
 def get_build_path():
+    """
+    Examples:
+    - https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46870/ =>
+        job/aos-cd-builds/job/build%252Focp4/46870
+    - https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46870 =>
+        job/aos-cd-builds/job/build%252Focp4/46870
+    """
+
     url = get_build_url()
     return '/'.join(url.split('/')[3:]) if url else None
 
