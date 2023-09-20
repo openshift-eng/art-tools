@@ -18,10 +18,12 @@ async def cleanup_locks(runtime: Runtime):
             # Lock ID is a build URL minus Jenkins server base URL
             build_path = await lock_manager.get_lock_id(lock_name)
             build_url = f'{constants.JENKINS_UI_URL}/{build_path}'
-            runtime.logger.info('Found build %s associated with lock %s', build_url, lock_name)
 
             try:
-                if not jenkins.is_build_running(build_path):
+                is_build_running = jenkins.is_build_running(build_path)
+                runtime.logger.info('Found build %s associated with lock %s', build_url, lock_name)
+
+                if not is_build_running:
                     runtime.logger.warning('Deleting lock %s that was created by %s that\'s not currently running',
                                            lock_name,
                                            build_url.replace(constants.JENKINS_SERVER_URL, constants.JENKINS_UI_URL))
