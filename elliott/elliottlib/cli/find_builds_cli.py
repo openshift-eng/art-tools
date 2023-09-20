@@ -13,6 +13,7 @@ import elliottlib
 from elliottlib import Runtime, brew, constants, errata, logutil
 from elliottlib import exectools
 from elliottlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from elliottlib.rhcos import get_container_configs
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option, click_coroutine)
@@ -244,8 +245,15 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
     rhcos_config = assembly_rhcos_config(runtime.get_releases_config(), runtime.assembly)
     build_ids_by_arch = dict()
     nvrs = []
-    for _, tag_config in rhcos_config.items():
-        for arch, pullspec in tag_config['images'].items():
+
+    # Keys under rhcos_config are not necessary payload tags. One exception is `dependencies`
+    # make sure we only process payload tags
+    rhcos_payload_tags = [c['name'] for c in get_container_configs(runtime)]
+    for key, config in rhcos_config.items():
+        if key not in rhcos_payload_tags:
+            continue
+
+        for arch, pullspec in config['images'].items():
             build_id = get_build_id_from_rhcos_pullspec(pullspec, runtime.logger)
             if arch not in build_ids_by_arch:
                 build_ids_by_arch[arch] = set()
@@ -258,7 +266,7 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
                 runtime.logger.info(f'Found rhcos nvr: {nvr}')
                 nvrs.append(nvr)
             else:
-                runtime.logger.info(f'rhcos nvr not found: {nvr}')
+                runtime.logger.warning(f'rhcos nvr not found: {nvr}')
     return nvrs
 
 
