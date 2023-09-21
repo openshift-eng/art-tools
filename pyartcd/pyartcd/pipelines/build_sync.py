@@ -16,6 +16,8 @@ from doozerlib.util import go_suffix_for_arch
 
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
+class ViableFalseError(Exception):
+    pass
 
 class BuildSyncPipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
@@ -256,7 +258,15 @@ class BuildSyncPipeline:
             cmd.extend([f'--exclude-arch {arch}' for arch in self.exclude_arches])
         if self.runtime.dry_run:
             cmd.extend(['--skip-gc-tagging', '--moist-run'])
-        await exectools.cmd_assert_async(cmd)
+
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd)
+        viable_false_message = "DO NOT PROCEED WITH THIS ASSEMBLY PAYLOAD"
+        if rc != 0:
+            if viable_false_message in stderr:
+                raise ViableFalseError(stderr)
+            else:
+                msg = f'Command {cmd} exited with code {rc}'
+                raise ChildProcessError(msg)
 
         # Populate CI imagestreams
         await self._populate_ci_imagestreams()
@@ -397,13 +407,18 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         await pipeline.run()
         await pipeline.handle_success()
 
-    except (RuntimeError, ChildProcessError):
+    except (RuntimeError, ChildProcessError, ViableFalseError) as e:
         # Only for 'stream' assembly, track failure to enable future notifications
         if assembly == 'stream' and not runtime.dry_run:
             await pipeline.handle_failure()
 
-        # Re-reise the exception to make the job as failed
-        raise
+        # check if error is viable false, if it is set exit code to 2 to indicate partial success
+        if isinstance(e, ViableFalseError):
+            runtime.logger.error(f'Exiting with code 2 (partial success): {e}')
+            sys.exit(2)
+        else:
+            # Re-raise the exception to make the job as failed
+            raise
 
     except RedisError as e:
         runtime.logger.error('Encountered error when updating the fail counter: %s', e)
