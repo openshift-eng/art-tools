@@ -82,4 +82,6 @@ async def delete_key(conn: aioredis.commands.Redis, key: str) -> int:
     """
 
     logger.debug('Deleting key %s', key)
-    return await conn.delete(key)
+    res = await conn.delete(key)
+    logger.debug('Key %s %s', key, 'deleted' if res else 'not found')
+    return res
