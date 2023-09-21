@@ -376,9 +376,12 @@ class Metadata(object):
         :return: the content of the file
         """
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
-        req = exectools.retry(
-            3, lambda: urllib.request.urlopen(url),
-            check_f=lambda req: req.code == 200)
+        try:
+            req = exectools.retry(
+                3, lambda: urllib.request.urlopen(url),
+                check_f=lambda req: req.code == 200)
+        except Exception as e:
+            raise IOError(f"Failed to fetch {url}: {e}. Does branch {branch} exist?")
         return req.read()
 
     def get_latest_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
