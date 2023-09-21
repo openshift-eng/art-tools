@@ -54,10 +54,11 @@ class BuildSyncPipeline:
         self.logger.info('Update nightly imagestreams...')
         await self._update_nightly_imagestreams()
 
-        #  All good: reset fail count to 0
+        #  All good: delete fail counter
         if self.assembly == 'stream':
-            await redis.set_value(self.fail_count_name, 0)
-            self.runtime.logger.info('Fail count "%s" set to 0', self.fail_count_name)
+            res = await redis.delete_key(self.fail_count_name)
+            if res:
+                self.runtime.logger.debug('Fail count "%s" deleted', self.fail_count_name)
 
     async def _retrigger_current_nightlies(self):
         """
@@ -298,7 +299,7 @@ class BuildSyncPipeline:
     async def handle_failure(self):
         # Increment failure count
         current_count = await redis.get_value(self.fail_count_name)
-        if current_count is None:
+        if current_count is None:  # does not yet exist in Redis
             current_count = 0
         fail_count = int(current_count) + 1
         self.runtime.logger.info('Failure count for %s: %s', self.version, fail_count)
