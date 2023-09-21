@@ -381,7 +381,7 @@ class Metadata(object):
                 3, lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200)
         except Exception as e:
-            raise IOError(f"Failed to fetch {url}: {e}")
+            raise IOError(f"Failed to fetch {url}: {e}. Does branch {branch} exist?")
         return req.read()
 
     def get_latest_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
