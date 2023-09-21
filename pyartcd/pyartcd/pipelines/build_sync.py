@@ -2,7 +2,7 @@ import asyncio
 import glob
 import json
 import os
-
+import sys
 import click
 import yaml
 
@@ -16,8 +16,10 @@ from doozerlib.util import go_suffix_for_arch
 
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
+
 class ViableFalseError(Exception):
     pass
+
 
 class BuildSyncPipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
