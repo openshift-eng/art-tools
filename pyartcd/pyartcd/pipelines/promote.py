@@ -346,6 +346,14 @@ class PromotePipeline:
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients(client_type, release_infos)
                 if not self.skip_signing:
+                    if not message_digests:
+                        # if job retriggered due to UMB server issue, then sha256sum.txt may not get signed
+                        for arch, release_info in release_infos.items():
+                            if arch == "multi":
+                                message_digest = f"multi/clients/{client_type}/{release_name}/sha256sum.txt"
+                            else:
+                                message_digest = f"{arch}/clients/{client_type}/{release_name}/sha256sum.txt"
+                            message_digests.append(message_digest)
                     await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
 
         except Exception as err:
