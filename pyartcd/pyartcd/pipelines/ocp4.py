@@ -956,7 +956,7 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
     )
 
     lock_manager = None
-    fail_count_name = f'count:ocp4-failure:{assembly}:{version}'
+    fail_count_name = f'count:failure:ocp4:{assembly}:{version}'
 
     try:
         if ignore_locks:

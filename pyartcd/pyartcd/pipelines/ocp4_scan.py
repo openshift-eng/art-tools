@@ -146,7 +146,7 @@ async def ocp4_scan(runtime: Runtime, version: str):
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
     pipeline = Ocp4ScanPipeline(runtime, version)
-    fail_count_name = f'count:ocp4-scan-failure:stream:{version}'
+    fail_count_name = f'count:failure:ocp4-scan:stream:{version}'
 
     try:
         # Skip the build if already locked
