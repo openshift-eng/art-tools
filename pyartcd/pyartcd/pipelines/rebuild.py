@@ -613,6 +613,5 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
             async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
                 await pipeline.run()
 
-        except LockError as e:
-            runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
+        finally:
+            await lock_manager.destroy()

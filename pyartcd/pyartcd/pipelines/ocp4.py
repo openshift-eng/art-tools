@@ -579,10 +579,6 @@ class Ocp4Pipeline:
             await self._slack_client.say(error_msg)
             raise
 
-        except LockError as e:
-            self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
-
         finally:
             await lock_manager.destroy()
 
@@ -735,10 +731,6 @@ class Ocp4Pipeline:
                     await self._rebase_images()
                     await self._build_images()
 
-            except LockError as e:
-                self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-                raise
-
             finally:
                 await lock_manager.destroy()
 
@@ -814,10 +806,6 @@ class Ocp4Pipeline:
             self.runtime.logger.error(traceback.format_exc())
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(error_msg)
-            raise
-
-        except LockError as e:
-            self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
             raise
 
         finally:
@@ -976,10 +964,6 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         try:
             async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
                 await pipeline.run()
-
-        except LockError as e:
-            runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
 
         finally:
             await lock_manager.destroy()

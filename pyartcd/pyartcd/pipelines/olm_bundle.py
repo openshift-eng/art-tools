@@ -95,9 +95,5 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
                                    f'buildvm job: {os.environ["BUILD_URL"]}')
             raise
 
-    except LockError as e:
-        runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-        raise
-
     finally:
         await lock_manager.destroy()

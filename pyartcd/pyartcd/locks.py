@@ -1,6 +1,7 @@
 import enum
 import logging
 
+import aioredlock
 from aioredlock import Aioredlock
 
 from pyartcd import redis
@@ -105,15 +106,25 @@ class LockManager(Aioredlock):
         )
 
     async def lock(self, resource, *args, **kwargs):
-        self.logger.info('Trying to acquire lock %s', resource)
-        lock = await super().lock(resource, *args, **kwargs)
-        self.logger.info('Acquired resource %s', lock.resource)
-        return lock
+        try:
+            self.logger.info('Trying to acquire lock %s', resource)
+            lock = await super().lock(resource, *args, **kwargs)
+            self.logger.info('Acquired resource %s', lock.resource)
+            return lock
+
+        except aioredlock.LockError as e:
+            self.logger.error('Failed acquiring lock %s: %s', resource, e)
+            raise
 
     async def unlock(self, lock):
-        self.logger.info('Releasing lock "%s"', lock.resource)
-        await super().unlock(lock)
-        self.logger.info('Lock released')
+        try:
+            self.logger.info('Releasing lock "%s"', lock.resource)
+            await super().unlock(lock)
+            self.logger.info('Lock released')
+
+        except aioredlock.LockError as e:
+            self.logger.error('Failed releasing lock %s: %s', lock.resource, e)
+            raise
 
     async def get_lock_id(self, resource) -> str:
         self.logger.debug('Retrieving identifier for lock %s', resource)
