@@ -3,7 +3,7 @@ import os
 import click
 from aioredlock import LockError
 
-from pyartcd import constants, exectools, jenkins
+from pyartcd import constants, exectools, jenkins, redis
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd import locks
 from pyartcd.locks import Lock
@@ -65,6 +65,7 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
+    fail_count_name = f'count:failure:olm_bundle:{assembly}:{version}'
     try:
         # Try to acquire olm-bundle lock for build version
         async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
@@ -86,14 +87,27 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
 
             runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
-    except (ChildProcessError, RuntimeError) as e:
+            # All good: clear fail counter
+            await redis.clear_counter(fail_count_name)
+
+    except (ChildProcessError, RuntimeError, LockError) as e:
         runtime.logger.error('Encountered error: %s', e)
-        if not runtime.dry_run:
-            slack_client = runtime.new_slack_client()
-            slack_client.bind_channel(version)
-            await slack_client.say('*:heavy_exclamation_mark: olm_bundle failed*\n'
-                                   f'buildvm job: {os.environ["BUILD_URL"]}')
-            raise
+
+        # Just do nothing if this is a dry run
+        if runtime.dry_run:
+            return
+
+        # Only for 'stream' assembly, track failure to enable future notifications
+        if assembly == 'stream':
+            await redis.increment_counter(fail_count_name)
+
+        slack_client = runtime.new_slack_client()
+        slack_client.bind_channel(version)
+        await slack_client.say('*:heavy_exclamation_mark: olm_bundle failed*\n'
+                               f'buildvm job: {os.environ["BUILD_URL"]}')
+
+        # Re-raise the exception to make the job as failed
+        raise
 
     finally:
         await lock_manager.destroy()
