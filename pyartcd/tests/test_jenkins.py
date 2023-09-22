@@ -69,6 +69,8 @@ class TestJenkinsStartBuild(unittest.TestCase):
 
     def test_get_build_url_and_path(self):
         # No BUILD_URL env var defined
+        if os.environ.get('BUILD_URL'):
+            del os.environ['BUILD_URL']
         self.assertEqual(jenkins.get_build_url(), None)
         self.assertEqual(jenkins.get_build_path(), None)
 
