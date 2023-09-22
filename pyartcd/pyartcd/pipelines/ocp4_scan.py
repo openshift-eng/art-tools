@@ -5,7 +5,7 @@ import yaml
 import click
 from aioredlock import LockError
 
-from pyartcd import constants, exectools, util, locks
+from pyartcd import constants, exectools, util, locks, redis
 from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
@@ -145,13 +145,26 @@ async def ocp4_scan(runtime: Runtime, version: str):
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
+    pipeline = Ocp4ScanPipeline(runtime, version)
+    fail_count_name = f'count:ocp4-scan-failure:stream:{version}'
+
     try:
         # Skip the build if already locked
         if await lock_manager.is_locked(lock_name):
             runtime.logger.info('Looks like there is another build ongoing for %s -- skipping for this run', version)
         else:
             async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
-                await Ocp4ScanPipeline(runtime, version).run()
+                await pipeline.run()
+
+        # All good
+        await redis.clear_counter(fail_count_name)
+
+    except (RuntimeError, ChildProcessError, LockError):
+        # Track failure to enable future notifications
+        await redis.increment_counter(fail_count_name)
+
+        # Re-raise the exception to make the job as failed
+        raise
 
     finally:
         await lock_manager.destroy()
