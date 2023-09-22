@@ -400,7 +400,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         if assembly == 'stream':
             await pipeline.handle_failure()
 
-        # Re-reise the exception to make the job as failed
+        # Re-raise the exception to make the job as failed
         raise
 
     except RedisError as e:

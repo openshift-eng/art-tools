@@ -85,3 +85,33 @@ async def delete_key(conn: aioredis.commands.Redis, key: str) -> int:
     res = await conn.delete(key)
     logger.debug('Key %s %s', key, 'deleted' if res else 'not found')
     return res
+
+
+async def clear_counter(counter: str):
+    """
+    Clear counter from Redis
+    """
+
+    res = await delete_key(counter)
+
+    if res:
+        logger.info('Counter "%s" deleted', counter)
+
+    else:
+        logger.info('Counter %s can\'t be deleted as it does not exist')
+
+
+async def increment_counter(counter: str):
+    """
+    Increment by 1 a counter on Redis
+    """
+
+    # Get current count
+    current_count = await get_value(counter)
+    if current_count is None:  # does not yet exist in Redis
+        current_count = 0
+
+    # Increment counter
+    new_count = int(current_count) + 1
+    await set_value(counter, new_count)
+    logger.info('Count %s set to %s', counter, new_count)
