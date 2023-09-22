@@ -56,9 +56,7 @@ class BuildSyncPipeline:
 
         #  All good: delete fail counter
         if self.assembly == 'stream':
-            res = await redis.delete_key(self.fail_count_name)
-            if res:
-                self.runtime.logger.debug('Fail count "%s" deleted', self.fail_count_name)
+            await redis.clear_counter(self.fail_count_name)
 
     async def _retrigger_current_nightlies(self):
         """
@@ -82,7 +80,8 @@ class BuildSyncPipeline:
         arches -= set(self.exclude_arches)
 
         async def _retrigger_arch(arch: str):
-            self.logger.info('Triggering %s release controller to cut new release using previously synced builds...', arch)
+            self.logger.info('Triggering %s release controller to cut new release '
+                             'using previously synced builds...', arch)
             suffix = go_suffix_for_arch(arch, is_private=False)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi8 ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller'
@@ -155,7 +154,8 @@ class BuildSyncPipeline:
         cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} get -n ocp is/{self.version}-art-latest -o=json'
         _, out, _ = await exectools.cmd_gather_async(cmd)
         tags = json.loads(out)['spec']['tags']
-        tags_to_transfer = [tag['name'] for tag in tags if 'machine-os-content' in tag['name'] or 'rhel-coreos' in tag['name']]
+        tags_to_transfer = [tag['name'] for tag in tags if 'machine-os-content' in tag['name']
+                            or 'rhel-coreos' in tag['name']]
         return tags_to_transfer
 
     @exectools.limit_concurrency(500)
@@ -297,18 +297,11 @@ class BuildSyncPipeline:
                     await asyncio.sleep(5)
 
     async def handle_failure(self):
-        # Increment failure count
-        current_count = await redis.get_value(self.fail_count_name)
-        if current_count is None:  # does not yet exist in Redis
-            current_count = 0
-        fail_count = int(current_count) + 1
-        self.runtime.logger.info('Failure count for %s: %s', self.version, fail_count)
-
         # Update fail counter on Redis
-        await redis.set_value(self.fail_count_name, fail_count)
+        fail_count = await redis.increment_counter(self.fail_count_name)
 
-        # Less than 2 failures, assembly != stream: just break the build
-        if fail_count < 2 or self.assembly != 'stream':
+        # Less than 2 failures: just break the build
+        if fail_count < 2:
             raise
 
         # More than 2 failures: we need to notify ART and #forum-relase before breaking the build

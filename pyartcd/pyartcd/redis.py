@@ -101,9 +101,9 @@ async def clear_counter(counter: str):
         logger.info('Counter %s can\'t be deleted as it does not exist')
 
 
-async def increment_counter(counter: str):
+async def increment_counter(counter: str) -> int:
     """
-    Increment by 1 a counter on Redis
+    Increment by 1 a counter on Redis. Returns the new counter value
     """
 
     # Get current count
@@ -115,3 +115,5 @@ async def increment_counter(counter: str):
     new_count = int(current_count) + 1
     await set_value(counter, new_count)
     logger.info('Count %s set to %s', counter, new_count)
+
+    return new_count
