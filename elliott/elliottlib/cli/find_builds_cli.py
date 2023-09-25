@@ -232,7 +232,7 @@ PRESENT advisory. Here are some examples:
             erratum.attach_builds(unshipped_builds, kind)
             cdn_repos = et_data.get('cdn_repos')
             if kind == 'image':
-                set_rhcos_file_meta(advisory_id)
+                ensure_rhcos_file_meta(advisory_id)
                 if cdn_repos and not no_cdn_repos:
                     erratum.set_cdn_repos(cdn_repos)
 
@@ -270,7 +270,7 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
     return nvrs
 
 
-def set_rhcos_file_meta(advisory_id):
+def ensure_rhcos_file_meta(advisory_id):
     # this assumes that the advisory is in NEW_FILES state
 
     file_meta = errata.get_file_meta(advisory_id)
