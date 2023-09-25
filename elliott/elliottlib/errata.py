@@ -639,44 +639,6 @@ def add_jira_bugs_with_retry(advisory: Erratum, bugids: List[str], noop: bool = 
                 raise e
 
 
-def get_rpmdiff_runs(advisory_id, status=None, session=None):
-    """ Get RPMDiff runs for a given advisory.
-    :param advisory_id: advisory number
-    :param status: If set, only returns RPMDiff runs in the status.
-    :param session: requests.Session object.
-    """
-    params = {
-        "filter[active]": "true",
-        "filter[test_type]": "rpmdiff",
-        "filter[errata_id]": advisory_id,
-    }
-    if status:
-        if status not in constants.ET_EXTERNAL_TEST_STATUSES:
-            raise ValueError("{} is not a valid RPMDiff run status.".format(status))
-        params["filter[status]"] = status
-    url = constants.errata_url + "/api/v1/external_tests"
-    if not session:
-        session = requests.Session()
-
-    # This is a paginated API. We need to increment page[number] until an empty array is returned.
-    # https://errata.devel.redhat.com/developer-guide/api-http-api.html#api-pagination
-    page_number = 1
-    while True:
-        params["page[number]"] = page_number
-        resp = session.get(
-            url,
-            params=params,
-            auth=HTTPSPNEGOAuth(),
-        )
-        resp.raise_for_status()
-        data = resp.json()["data"]
-        if not data:
-            break
-        for item in data:
-            yield item
-        page_number += 1
-
-
 def get_image_cdns(advisory_id):
     return errata_xmlrpc.get_advisory_cdn_docker_file_list(advisory_id)
 
@@ -855,3 +817,31 @@ def remove_dependent_advisories(advisory_id):
         if response.status_code != requests.codes.created:
             raise IOError(f'Failed to remove dependent {dependent} from {advisory_id}'
                           f'with code {response.status_code} and error: {response.text}')
+
+
+def get_file_meta(advisory_id) -> List[dict]:
+    """Get the metadata for all applicable files in this advisory (does not include builds)
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-get-apiv1erratumidfilemeta
+    [{
+    "file": {
+      "id": 8820909,
+      "path": "/mnt/redhat/brewroot/packages/rhcos-s390x/413.92.202307311416/0/images/coreos-assembler-git.tar.gz",
+      "type": "tar",
+      "arch": {
+        "id": 8,
+        "name": "noarch"
+      }
+    },
+    "title": "RHCOS Image metadata (s390x)",
+    "rank": 1
+    },..]
+    """
+    return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
+
+
+def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
+    """Update the metadata for some or all files in this advisory.
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-put-apiv1erratumidfilemeta
+    """
+    return ErrataConnector()._put(f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true',
+                                  json=file_meta)
