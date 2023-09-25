@@ -819,7 +819,7 @@ def remove_dependent_advisories(advisory_id):
                           f'with code {response.status_code} and error: {response.text}')
 
 
-def get_file_meta(advisory_id) -> dict:
+def get_file_meta(advisory_id) -> List[dict]:
     """Get the metadata for all applicable files in this advisory (does not include builds)
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-get-apiv1erratumidfilemeta
     [{
@@ -839,7 +839,7 @@ def get_file_meta(advisory_id) -> dict:
     return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
 
 
-def put_file_meta(advisory_id, file_meta: dict) -> dict:
+def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """Update the metadata for some or all files in this advisory.
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-put-apiv1erratumidfilemeta
     """
