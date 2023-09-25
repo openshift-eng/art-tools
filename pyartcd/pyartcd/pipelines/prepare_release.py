@@ -608,10 +608,9 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             _LOGGER.warning("Release JIRA %s has different number of subtasks from the template ticket %s. Subtasks will not be updated.", issue.key, template_issue.key)
             return
         for subtask, template_subtask in zip(subtasks, template_subtasks):
-            fields = {
-                "summary": template_subtask.fields.summary,
-                "description": template_subtask.fields.description,
-            }
+            fields = {"summary": template_subtask.fields.summary}
+            if template_subtask.fields.description:
+                fields["description"] = template_subtask.fields.description
             if "template" in template_subtask.fields.labels:
                 fields = self._render_jira_template(fields, template_vars)
             if not self.dry_run:
