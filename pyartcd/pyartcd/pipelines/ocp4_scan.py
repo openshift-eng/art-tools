@@ -135,26 +135,16 @@ class Ocp4ScanPipeline:
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str):
-    # Create a Lock manager instance
     lock = Lock.BUILD
-    lock_manager = locks.LockManager.from_lock(lock)
-
-    # Get lock name and identifier
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    try:
-        # Skip the build if already locked
-        if await lock_manager.is_locked(lock_name):
-            runtime.logger.info('Looks like there is another build ongoing for %s -- skipping for this run', version)
-        else:
-            async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
-                await Ocp4ScanPipeline(runtime, version).run()
-
-    except LockError as e:
-        runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-        raise
-    finally:
-        await lock_manager.destroy()
+    await locks.run_with_lock(
+        coro=Ocp4ScanPipeline(runtime, version).run(),
+        lock=lock,
+        lock_name=lock_name,
+        lock_id=lock_identifier,
+        skip_if_locked=True
+    )
