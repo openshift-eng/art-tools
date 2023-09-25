@@ -184,6 +184,10 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
     if included_bug_ids:
         logger.warning(f"The following {bug_tracker.type} bugs will be additionally included because they are "
                        f"explicitly defined in the assembly config: {included_bug_ids}")
+        # filter out bugs that are already swept in
+        # so that we don't double add them
+        bug_ids = {b.id for b in bugs}
+        included_bug_ids = included_bug_ids - bug_ids
         included_bugs = bug_tracker.get_bugs(included_bug_ids)
         bugs.extend(included_bugs)
     if excluded_bug_ids:
@@ -204,7 +208,8 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
     bugs = await get_bugs_sweep(runtime, find_bugs_obj, brew_event, bug_tracker)
 
     advisory_ids = runtime.get_default_advisories()
-    bugs_by_type = categorize_bugs_by_type(bugs, advisory_ids,
+    included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
+    bugs_by_type = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
                                            major_version=major_version)
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
@@ -245,7 +250,8 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
     return included_bug_ids, excluded_bug_ids
 
 
-def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int], major_version: int = 4):
+def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
+                            permitted_bug_ids, major_version: int = 4):
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -332,14 +338,21 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int], ma
     not_found = set(tracker_bugs) - found
     if not_found:
         not_found_with_component = [(b.id, b.whiteboard_component) for b in not_found]
-        red_prefix("Tracker Bugs Warning: ")
-        click.echo("The following (tracker bug, package) were found BUT not attached,"
-                   " since no corresponding brew build was found attached to any advisory. "
-                   "First attach builds to the correct advisory and rerun to attach the bugs, "
-                   "or exclude the bug ids in the assembly definition")
-        click.echo(not_found_with_component)
-        raise ValueError(f'No builds found for CVE (bug, package): {not_found_with_component}. Either attach '
-                         f'builds or exclude the bugs in the assembly definition')
+        logger.warning('No attached builds found in advisories for tracker bugs (bug, package):'
+                       f' {not_found_with_component}.')
+
+        if permitted_bug_ids:
+            logger.warning('The following bugs will be attached because they are '
+                           f'explicitly included in the assembly config: {permitted_bug_ids}')
+            not_found = not_found - set(permitted_bug_ids)
+
+        if not_found:
+            not_found_with_component = [(b.id, b.whiteboard_component) for b in not_found]
+            message = ('No attached builds found in advisories for tracker bugs (bug, package): '
+                       f'{not_found_with_component}. Either attach builds or explicitly include/exclude the bug ids '
+                       'in the assembly definition')
+            logger.error(message)
+            raise ValueError(message)
 
     return bugs_by_type
 
