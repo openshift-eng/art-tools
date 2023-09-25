@@ -158,7 +158,8 @@ PRESENT advisory. Here are some examples:
     brew_session = runtime.build_retrying_koji_client(caching=True)
     if builds:
         green_prefix('Fetching builds...')
-        unshipped_nvrps = _fetch_nvrps_by_nvr_or_id(builds, tag_pv_map, ignore_product_version=remove, brew_session=brew_session)
+        unshipped_nvrps = _fetch_nvrps_by_nvr_or_id(builds, tag_pv_map, include_shipped=include_shipped,
+                                                    ignore_product_version=remove, brew_session=brew_session)
     elif clean:
         unshipped_builds = errata.get_brew_builds(advisory_id)
     elif from_diff:
@@ -167,10 +168,11 @@ PRESENT advisory. Here are some examples:
         if kind == 'image':
             unshipped_nvrps = await _fetch_builds_by_kind_image(runtime, tag_pv_map, brew_session, payload,
                                                                 non_payload, include_shipped)
-            rhcos_nvrs = get_rhcos_nvrs_from_assembly(runtime, brew_session)
-            unshipped_rhcos_nvrps = _fetch_nvrps_by_nvr_or_id(rhcos_nvrs, tag_pv_map, include_shipped,
-                                                              brew_session=brew_session)
-            unshipped_nvrps.extend(unshipped_rhcos_nvrps)
+            if payload:
+                rhcos_nvrs = get_rhcos_nvrs_from_assembly(runtime, brew_session)
+                unshipped_rhcos_nvrps = _fetch_nvrps_by_nvr_or_id(rhcos_nvrs, tag_pv_map, include_shipped=include_shipped,
+                                                                  brew_session=brew_session)
+                unshipped_nvrps.extend(unshipped_rhcos_nvrps)
         elif kind == 'rpm':
             unshipped_nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
 
@@ -296,7 +298,7 @@ def ensure_rhcos_file_meta(advisory_id):
         errata.put_file_meta(advisory_id, rhcos_file_meta)
 
 
-def _fetch_nvrps_by_nvr_or_id(ids_or_nvrs, tag_pv_map, include_shipped, ignore_product_version=False,
+def _fetch_nvrps_by_nvr_or_id(ids_or_nvrs, tag_pv_map, include_shipped=False, ignore_product_version=False,
                               brew_session: koji.ClientSession = None):
     builds = brew.get_build_objects(ids_or_nvrs, brew_session)
     nonexistent_builds = list(filter(lambda b: b[1] is None, zip(ids_or_nvrs, builds)))
