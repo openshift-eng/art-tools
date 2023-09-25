@@ -357,7 +357,7 @@ class BuildSyncPipeline:
 @click.option("--data-path", required=True, default=constants.OCP_BUILD_DATA_URL,
               help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
 @click.option("--emergency-ignore-issues", is_flag=True,
-              help="Ignore all issues with constructing payload. Do not use without approval.")
+              help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. Do not use without approval.")
 @click.option("--retrigger-current-nightly", is_flag=True,
               help="Forces the release controller to re-run with existing images. No change will be made to payload"
                    "images in the release")
