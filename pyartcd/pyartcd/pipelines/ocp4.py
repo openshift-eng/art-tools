@@ -841,7 +841,7 @@ class Ocp4Pipeline:
                 content=f'Check Jenkins console for details: {jenkins.current_build_url}/console'
             )
 
-    async def handle_success(self):
+    def _report_success(self):
         # Update description with build metrics
         if self.runtime.dry_run or (not self.build_plan.build_rpms and not self.build_plan.build_images):
             record_log = {}  # Nothing was actually built
@@ -892,6 +892,7 @@ class Ocp4Pipeline:
 
         await self._mirror_rpms()
         await self._sweep()
+        self._report_success()
 
         if self.success_nvrs:  # Trigger osh scans for successfully built images and RPMs
             self._trigger_osh_scans()
