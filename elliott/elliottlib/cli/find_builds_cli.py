@@ -286,11 +286,10 @@ def ensure_rhcos_file_meta(advisory_id):
         if f['title'] or 'rhcos' not in f['file']['path']:
             continue
 
-        arch = None
-        for a in brew_arches:
-            if a in f['file']['path']:
-                arch = a
-                break
+        arch = next((a for a in brew_arches if a in f['file']['path']), None)
+        if not arch:
+            raise ValueError(f'Unable to determine arch from rhcos file path: {f["file"]["path"]}. Please investigate.')
+
         title = f'RHCOS Image metadata ({arch})'
         rhcos_file_meta.append({'file': f['file']['id'], 'title': title})
     if rhcos_file_meta:
