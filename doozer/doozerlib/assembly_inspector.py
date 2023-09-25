@@ -107,11 +107,8 @@ class AssemblyInspector:
                         if release_tag:
                             self.runtime.logger.warning(f"Permit {rpm_build['nvr']} because it was already released through {release_tag}.")
                             continue
-                    # For GA releases, the rpm must have an explicit "ship-ok" tag
-                    if self.assembly_type is AssemblyTypes.STANDARD:
-                        issues.append(AssemblyIssue(f'{component_description} has {rpm_build["nvr"]}, which is missing the ship-ok tag: {rpm_delivery_config.ship_ok_tag}', component=component, code=AssemblyIssueCode.IMPERMISSIBLE))
-                    # For pre-GA releases, MISSING_SHIP_OK_TAG issue will be reported if the rpm doesn't have a "ship-ok" tag
-                    if self.assembly_type is AssemblyTypes.CANDIDATE:
+                    # For non-stream releases, MISSING_SHIP_OK_TAG issue will be reported if the rpm doesn't have a "ship-ok" tag
+                    if self.assembly_type is not AssemblyTypes.STREAM:
                         issues.append(AssemblyIssue(f'{component_description} has {rpm_build["nvr"]}, which is missing the ship-ok tag: {rpm_delivery_config.ship_ok_tag}', component=component, code=AssemblyIssueCode.MISSING_SHIP_OK_TAG))
         return issues
 
