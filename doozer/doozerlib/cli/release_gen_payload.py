@@ -51,7 +51,7 @@ from doozerlib.util import find_manifest_list_sha
 @click.option("--exclude-arch", metavar="ARCH", required=False, multiple=True,
               help="Architecture (brew nomenclature) to exclude from payload generation")
 @click.option("--emergency-ignore-issues", default=False, is_flag=True,
-              help="If you must get this command to permit an assembly despite issues. Do not use without approval.")
+              help="If you must get this command to permit an assembly despite issues. Only supported for type: stream. Do not use without approval.")
 @click.option("--apply", default=False, is_flag=True,
               help="Perform mirroring and imagestream updates.")
 @click.option("--apply-multi-arch", default=False, is_flag=True,
@@ -315,6 +315,11 @@ class GenPayloadCli:
         if rt.assembly_type is AssemblyTypes.STREAM:
             # Only nightlies have the concept of private and public payloads
             self.privacy_modes = [False, True]
+
+        if rt.assembly_type is not AssemblyTypes.STREAM and self.emergency_ignore_issues:
+            raise DoozerFatalError(
+                "Assemblies of type other than 'stream' need to have their permits listed "
+                "in the assembly definitions. `EMERGENCY_IGNORE_ISSUES` is not a valid option")
 
         # check that we can produce a full multi nightly if requested
         if self.apply_multi_arch and (rt.images or rt.exclude or self.exclude_arch):
