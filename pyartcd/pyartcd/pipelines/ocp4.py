@@ -708,6 +708,9 @@ class Ocp4Pipeline:
             self.success_nvrs += successful_build_nvrs
 
     async def _rebase_and_build_images(self):
+        if not self.build_plan.build_images:
+            return  # to facilitate testing
+
         # In case of mass rebuilds, rebase and build should happend within the same lock scope
         # Otherwise we might rebase, then get blocked on the mass rebuild lock
         # As a consequence, we might be building outdated stuff

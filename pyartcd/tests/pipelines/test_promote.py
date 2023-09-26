@@ -281,6 +281,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         load_group_config.assert_awaited_once_with("openshift-4.10", "4.10.99", env=ANY)
         load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
 
+    @patch("pyartcd.locks.run_with_lock")
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
@@ -318,7 +319,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
-                                              build_release_image: AsyncMock, _, __):
+                                              build_release_image: AsyncMock, *_):
         runtime = MagicMock(
             config={
                 "build_config": {
