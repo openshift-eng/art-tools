@@ -99,6 +99,17 @@ def get_concerns(image, runtime, limit, url_markup):
 
 
 def query(name, runtime, limit=100):
+    """
+    For 'stream' assembly only, query 'log_build' table  for component 'name'. MariaDB output will look like this:
+
+    +--------------+-----------------+---------------+-----------------------------------------------------------------+
+    | brew_task_id | brew_task_state | time_unix     | jenkins_build_url                                               |
+    +--------------+-----------------+---------------+-----------------------------------------------------------------+
+    | 55423385     | success         | 1694877067322 | https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/... |
+    | 55301551     | success         | 1694608297117 | https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/... |
+    | 55263583     | failure         | 1694516997964 | https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/... |
+    """
+
     domain = "`log_build`"
     fields_str = "`brew_task_id`, `brew_task_state`, `time_unix`, `jenkins_build_url`"
     where_str = f"""
@@ -107,7 +118,7 @@ def query(name, runtime, limit=100):
         AND `time_unix` is not null
     """
     if runtime.group_config.assemblies.enabled:
-        where_str += f" AND label_release REGEXP 'assembly.(stream|{runtime.assembly})' "
+        where_str += f" AND label_release LIKE '%assembly.stream%' "
     sort_by_str = ' ORDER BY `time_unix` DESC'
 
     expr = f'SELECT {fields_str} FROM {domain} {where_str} {sort_by_str}'
