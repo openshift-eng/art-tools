@@ -118,7 +118,7 @@ def query(name, runtime, limit=100):
         AND `time_unix` is not null
     """
     if runtime.group_config.assemblies.enabled:
-        where_str += f" AND label_release LIKE '%assembly.stream%' "
+        where_str += " AND label_release LIKE '%assembly.stream%' "
     sort_by_str = ' ORDER BY `time_unix` DESC'
 
     expr = f'SELECT {fields_str} FROM {domain} {where_str} {sort_by_str}'
