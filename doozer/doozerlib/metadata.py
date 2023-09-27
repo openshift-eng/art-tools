@@ -174,7 +174,7 @@ class Metadata(object):
                 build_obj = self.get_latest_build(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
-                    self.logger.warning(f'Pinning upstream source to commit of last assembly selected build ({build_obj["id"]}) -> commit {self.commitish} ')
+                    self.logger.debug(f'Pinning upstream source to commit of last assembly selected build ({build_obj["id"]}) -> commit {self.commitish} ')
                 else:
                     # If this is part of a unit test, don't make the caller's life more difficult thatn it already is; skip the exception.
                     if 'unittest' not in sys.modules.keys():
