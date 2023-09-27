@@ -55,36 +55,34 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
     cmd.append('--')
     cmd.extend(nvrs.split(','))
 
-    # Create a Lock manager instance
     lock = Lock.OLM_BUNDLE
-    lock_manager = locks.LockManager.from_lock(lock)
-
-    # Get lock name and identifier
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
     try:
-        # Try to acquire olm-bundle lock for build version
-        async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
-            # Build bundles
-            runtime.logger.info('Running command: %s', cmd)
-            await exectools.cmd_assert_async(cmd)
+        # Build bundles
+        await locks.run_with_lock(
+            coro=exectools.cmd_assert_async(cmd),
+            lock=lock,
+            lock_name=lock_name,
+            lock_id=lock_identifier
+        )
 
-            # Parse doozer record.log
-            with open('doozer_working/record.log') as file:
-                record_log = parse_record_log(file)
-            records = record_log.get('build_olm_bundle', [])
-            bundle_nvrs = []
+        # Parse doozer record.log
+        with open('doozer_working/record.log') as file:
+            record_log = parse_record_log(file)
+        records = record_log.get('build_olm_bundle', [])
+        bundle_nvrs = []
 
-            for record in records:
-                if record['status'] != '0':
-                    raise RuntimeError('record.log includes unexpected build_olm_bundle '
-                                       f'record with error message: {record["message"]}')
-                bundle_nvrs.append(record['bundle_nvr'])
+        for record in records:
+            if record['status'] != '0':
+                raise RuntimeError('record.log includes unexpected build_olm_bundle '
+                                   f'record with error message: {record["message"]}')
+            bundle_nvrs.append(record['bundle_nvr'])
 
-            runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
+        runtime.logger.info(f'Successfully built:\n{", ".join(bundle_nvrs)}')
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)
@@ -94,10 +92,3 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
             await slack_client.say('*:heavy_exclamation_mark: olm_bundle failed*\n'
                                    f'buildvm job: {os.environ["BUILD_URL"]}')
             raise
-
-    except LockError as e:
-        runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-        raise
-
-    finally:
-        await lock_manager.destroy()

@@ -465,6 +465,13 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
         super().__init__(*args, **kwargs)
         self.ocp4: ocp4.Ocp4Pipeline = self.default_ocp4_pipeline()
 
+    def setUp(self) -> None:
+        os.environ['BUILD_URL'] = 'build-url'
+
+    def tearDown(self) -> None:
+        if os.environ.get('BUILD_URL'):
+            del os.environ['BUILD_URL']
+
     @staticmethod
     @patch("os.path.abspath", return_value='doozer_working')
     def default_ocp4_pipeline(*_) -> ocp4.Ocp4Pipeline:

@@ -116,6 +116,9 @@ class Ocp4Pipeline:
             raise RuntimeError(
                 f"ASSEMBLY cannot be set to '{self.assembly}' because assemblies are not enabled in ocp-build-data.")
 
+        if self.assembly.lower() == "test":
+            jenkins.update_title(" [TEST]")
+
     async def _initialize_version(self):
         """
         Initialize the "version" data structure
@@ -237,6 +240,7 @@ class Ocp4Pipeline:
         """
 
         jenkins.update_description('Pinned builds (whether source changed or not).<br/>')
+        self.runtime.logger.info('Pinned builds (whether source changed or not)')
 
         if not self.build_plan.build_rpms:
             jenkins.update_description('RPMs: not building.<br/>')
@@ -546,30 +550,24 @@ class Ocp4Pipeline:
             self.runtime.logger.info("Skipping compose build as it's not permitted")
             return
 
-        # Create a Lock manager instance
-        lock = Lock.COMPOSE
-        lock_manager = locks.LockManager.from_lock(lock)
-        lock_name = lock.value.format(version=self.version.stream)
-
+        # Build compose
         try:
-            async with await lock_manager.lock(resource=lock_name, lock_identifier=self.lock_identifier):
-                # Build compose
-                plashets_built = await plashets.build_plashets(
-                    stream=self.version.stream,
-                    release=self.version.release,
-                    assembly=self.assembly,
-                    doozer_working=self._doozer_working,
-                    data_path=self.data_path,
-                    data_gitref=self.data_gitref,
-                    dry_run=self.runtime.dry_run
-                )
-                self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
+            plashets_built = await plashets.build_plashets(
+                stream=self.version.stream,
+                release=self.version.release,
+                assembly=self.assembly,
+                doozer_working=self._doozer_working,
+                data_path=self.data_path,
+                data_gitref=self.data_gitref,
+                dry_run=self.runtime.dry_run
+            )
+            self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
-                # public rhel7 ose plashet, if present, needs mirroring to /enterprise/ for CI
-                if plashets_built.get('rhel-server-ose-rpms', None):
-                    self.rpm_mirror.plashet_dir_name = plashets_built['rhel-server-ose-rpms']['plashetDirName']
-                    self.rpm_mirror.local_plashet_path = plashets_built['rhel-server-ose-rpms']['localPlashetPath']
-                    self.runtime.logger.info('rhel7 plashet to mirror: %s', str(self.rpm_mirror))
+            # public rhel7 ose plashet, if present, needs mirroring to /enterprise/ for CI
+            if plashets_built.get('rhel-server-ose-rpms', None):
+                self.rpm_mirror.plashet_dir_name = plashets_built['rhel-server-ose-rpms']['plashetDirName']
+                self.rpm_mirror.local_plashet_path = plashets_built['rhel-server-ose-rpms']['localPlashetPath']
+                self.runtime.logger.info('rhel7 plashet to mirror: %s', str(self.rpm_mirror))
 
         except ChildProcessError as e:
             error_msg = f'Failed building compose: {e}'
@@ -578,13 +576,6 @@ class Ocp4Pipeline:
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(error_msg)
             raise
-
-        except LockError as e:
-            self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
-
-        finally:
-            await lock_manager.destroy()
 
         if self.assembly == 'stream':
             # Since plashets may have been rebuilt, fire off sync for CI. This will transfer RPMs out to
@@ -718,34 +709,13 @@ class Ocp4Pipeline:
 
     async def _rebase_and_build_images(self):
         if not self.build_plan.build_images:
-            self.runtime.logger.info('Not building images.')
-            return
+            return  # to facilitate testing
 
         # In case of mass rebuilds, rebase and build should happend within the same lock scope
         # Otherwise we might rebase, then get blocked on the mass rebuild lock
         # As a consequence, we might be building outdated stuff
-        if self.mass_rebuild:
-            lock = Lock.MASS_REBUILD
-            lock_manager = locks.LockManager.from_lock(lock)
-            lock_name = lock.value  # version agnostic, only 1 mass rebuild allowed
-
-            try:
-                # Try to acquire mass-rebuild lock for build version
-                async with await lock_manager.lock(resource=lock_name, lock_identifier=self.lock_identifier):
-                    await self._rebase_images()
-                    await self._build_images()
-
-            except LockError as e:
-                self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-                raise
-
-            finally:
-                await lock_manager.destroy()
-
-        else:
-            # If it's not a mass rebuild, rebase and build without acquiring the lock
-            await self._rebase_images()
-            await self._build_images()
+        await self._rebase_images()
+        await self._build_images()
 
     async def _sync_images(self):
         if not self.build_plan.build_images:
@@ -783,28 +753,27 @@ class Ocp4Pipeline:
 
         s3_base_dir = f'/enterprise/enterprise-{self.version.stream}'
 
-        # Create a Lock manager instance
-        lock = Lock.MIRRORING_RPMS
-        lock_manager = locks.LockManager.from_lock(lock)
-        lock_name = lock.value.format(version=self.version.stream)
-
         # Sync plashets to mirror
         try:
-            async with await lock_manager.lock(resource=lock_name, lock_identifier=self.lock_identifier):
-                s3_path = f'{s3_base_dir}/latest/'
-                await sync_repo_to_s3_mirror(
-                    local_dir=self.rpm_mirror.local_plashet_path,
-                    s3_path=s3_path,
-                    dry_run=self.runtime.dry_run
-                )
+            await locks.run_with_lock(
+                coro=sync_repo_to_s3_mirror(local_dir=self.rpm_mirror.local_plashet_path,
+                                            s3_path=f'{s3_base_dir}/latest/',
+                                            dry_run=self.runtime.dry_run),
+                lock=Lock.MIRRORING_RPMS,
+                lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
+                lock_id=self.lock_identifier
+            )
 
-                s3_path = f'/enterprise/all/{self.version.stream}/latest/'
-                await sync_repo_to_s3_mirror(
+            await locks.run_with_lock(
+                coro=sync_repo_to_s3_mirror(
                     local_dir=self.rpm_mirror.local_plashet_path,
-                    s3_path=s3_path,
+                    s3_path=f'/enterprise/all/{self.version.stream}/latest/',
                     dry_run=self.runtime.dry_run
-                )
-
+                ),
+                lock=Lock.MIRRORING_RPMS,
+                lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
+                lock_id=self.lock_identifier
+            )
             self.runtime.logger.info('Finished mirroring OCP %s to openshift mirrors',
                                      f'{self.version.stream}-{self.version.release}')
 
@@ -815,13 +784,6 @@ class Ocp4Pipeline:
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(error_msg)
             raise
-
-        except LockError as e:
-            self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
-
-        finally:
-            await lock_manager.destroy()
 
     async def _sweep(self):
         if self.all_image_build_failed:
@@ -879,28 +841,49 @@ class Ocp4Pipeline:
     async def run(self):
         await self._initialize()
 
-        if self.assembly.lower() == "test":
-            jenkins.update_title(" [TEST]")
-
+        # Plan builds
         if self.build_plan.pin_builds:
-            self.runtime.logger.info('Pinned builds (whether source changed or not)')
             self._plan_pinned_builds()
-
         else:
             self.runtime.logger.info('Building only where source has changed.')
             await self._plan_builds()
 
+        # Rebase and build RPMs
         await self._rebase_and_build_rpms()
         if not self.skip_plashets:
-            await self._build_compose()
+            await locks.run_with_lock(
+                coro=self._build_compose(),
+                lock=Lock.COMPOSE,
+                lock_name=Lock.COMPOSE.value.format(version=self.version.stream),
+                lock_id=self.lock_identifier
+            )
         else:
             self.runtime.logger.warning('Skipping plashets creation as SKIP_PLASHETS was set to True')
 
-        await self._rebase_and_build_images()
+        # Rebase and build images
+        if self.build_plan.build_images:
+            if self.mass_rebuild:
+                await locks.run_with_lock(
+                    coro=self._rebase_and_build_images(),
+                    lock=Lock.MASS_REBUILD,
+                    lock_name=Lock.MASS_REBUILD.value,
+                    lock_id=self.lock_identifier
+                )
+            else:
+                await self._rebase_and_build_images()
+        else:
+            self.runtime.logger.info('Not building images.')
+
+        # Sync images
         await self._sync_images()
 
+        # Mirror RPMs
         await self._mirror_rpms()
+
+        # Find MODIFIED bugs for the target-releases, and set them to ON_QA
         await self._sweep()
+
+        # All good
         self._report_success()
 
         if self.success_nvrs:  # Trigger osh scans for successfully built images and RPMs
@@ -968,18 +951,9 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         await pipeline.run()
 
     else:
-        # Create a Lock manager instance
-        lock = Lock.BUILD
-        lock_manager = locks.LockManager.from_lock(lock)
-        lock_name = lock.value.format(version=version)
-
-        try:
-            async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
-                await pipeline.run()
-
-        except LockError as e:
-            runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
-
-        finally:
-            await lock_manager.destroy()
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=Lock.BUILD,
+            lock_name=Lock.BUILD.value.format(version=version),
+            lock_id=lock_identifier
+        )

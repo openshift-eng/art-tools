@@ -346,7 +346,18 @@ class PromotePipeline:
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients(client_type, release_infos)
                 if not self.skip_signing:
-                    await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
+                    lock = Lock.SIGNING
+                    lock_identifier = jenkins.get_build_path()
+                    if not lock_identifier:
+                        self._logger.warning('Env var BUILD_URL has not been defined: '
+                                             'a random identifier will be used for the locks')
+
+                    await locks.run_with_lock(
+                        coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
+                        lock=lock,
+                        lock_name=lock.value.format(signing_env=self.signing_env),
+                        lock_id=lock_identifier
+                    )
 
         except Exception as err:
             self._logger.exception(err)
@@ -475,42 +486,32 @@ class PromotePipeline:
         message_digest_sig_dir = self._working_dir / "message_digests"
         base_to_mirror_dir = self._working_dir / "to_mirror/openshift-v4"
 
-        lock = Lock.SIGNING
-        lock_name = lock.value.format(signing_env=self.signing_env)
-        lock_identifier = jenkins.get_build_path()
-        if not lock_identifier:
-            self._logger.warning('Env var BUILD_URL has not been defined: '
-                                 'a random identifier will be used for the locks')
+        async with AsyncSignatory(uri, cert_file, key_file, sig_keyname=sig_keyname) as signatory:
+            tasks = []
+            json_digests = []
+            for release_info in release_infos.values():
+                version = release_info["metadata"]["version"]
+                pullspec = release_info["image"]
+                digest = release_info["digest"]
+                json_digests.append((version, pullspec, digest))
+                # if this payload is a manifest list, iterate through each manifest
+                manifests = release_info.get("manifests", [])
+                for manifest in manifests:
+                    if manifest["platform"]["os"] != "linux":
+                        raise ValueError("Unsupported OS %s in manifest list %s", manifest["platform"]["os"], release_info["image"])
+                    json_digests.append((version, pullspec, manifest["digest"]))
 
-        lock_manager = locks.LockManager.from_lock(lock)
+            for version, pullspec, digest in json_digests:
+                sig_file = json_digest_sig_dir / f"{digest.replace(':', '=')}" / "signature-1"
+                tasks.append(self._sign_json_digest(signatory, version, pullspec, digest, sig_file))
 
-        async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
-            async with AsyncSignatory(uri, cert_file, key_file, sig_keyname=sig_keyname) as signatory:
-                tasks = []
-                json_digests = []
-                for release_info in release_infos.values():
-                    version = release_info["metadata"]["version"]
-                    pullspec = release_info["image"]
-                    digest = release_info["digest"]
-                    json_digests.append((version, pullspec, digest))
-                    # if this payload is a manifest list, iterate through each manifest
-                    manifests = release_info.get("manifests", [])
-                    for manifest in manifests:
-                        if manifest["platform"]["os"] != "linux":
-                            raise ValueError("Unsupported OS %s in manifest list %s", manifest["platform"]["os"], release_info["image"])
-                        json_digests.append((version, pullspec, manifest["digest"]))
-
-                for version, pullspec, digest in json_digests:
-                    sig_file = json_digest_sig_dir / f"{digest.replace(':', '=')}" / "signature-1"
-                    tasks.append(self._sign_json_digest(signatory, version, pullspec, digest, sig_file))
-
-                for message_digest in message_digests:
-                    input_path = base_to_mirror_dir / message_digest
-                    if not input_path.is_file():
-                        raise IOError(f"Message digest file {input_path} doesn't exist or is not a regular file")
-                    sig_file = message_digest_sig_dir / f"{message_digest}.gpg"
-                    tasks.append(self._sign_message_digest(signatory, release_name, input_path, sig_file))
-                await asyncio.gather(*tasks)
+            for message_digest in message_digests:
+                input_path = base_to_mirror_dir / message_digest
+                if not input_path.is_file():
+                    raise IOError(f"Message digest file {input_path} doesn't exist or is not a regular file")
+                sig_file = message_digest_sig_dir / f"{message_digest}.gpg"
+                tasks.append(self._sign_message_digest(signatory, release_name, input_path, sig_file))
+            await asyncio.gather(*tasks)
 
         self._logger.info("All artifacts have been successfully signed.")
         self._logger.info("Publishing signatures...")

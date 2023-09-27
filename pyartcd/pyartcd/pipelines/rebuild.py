@@ -598,21 +598,16 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
         await pipeline.run()
 
     else:
-        # Create a Lock manager instance
         lock = locks.Lock.BUILD
-        lock_manager = locks.LockManager.from_lock(lock)
-
-        # Get lock name and identifier
         lock_name = lock.value.format(version=version)
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
             runtime.logger.warning('Env var BUILD_URL has not been defined: '
                                    'a random identifier will be used for the locks')
 
-        try:
-            async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
-                await pipeline.run()
-
-        except LockError as e:
-            runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=lock,
+            lock_name=lock_name,
+            lock_id=lock_identifier
+        )
