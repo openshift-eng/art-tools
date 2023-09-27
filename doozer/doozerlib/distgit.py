@@ -29,6 +29,7 @@ import doozerlib
 from doozerlib import assertion, constants, exectools, logutil, state, util
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.brew import get_build_objects, watch_task, BuildStates
+from doozerlib.constants import BREWWEB_URL
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.model import ListModel, Missing, Model
@@ -1083,7 +1084,7 @@ class ImageDistGitRepo(DistGitRepo):
                                 # Message to be posted to the comment
                                 message = Template("**[ART PR BUILD NOTIFIER]**\n\n"
                                                    "This PR has been included in build "
-                                                   "[$nvr](https://brewweb.engineering.redhat.com/brew/buildinfo"
+                                                   f"[$nvr]({BREWWEB_URL}/buildinfo"
                                                    "?buildID=$build_id) "
                                                    "for distgit *$distgit_name*. \n All builds following this will "
                                                    "include this PR.")

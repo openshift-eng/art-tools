@@ -8,6 +8,7 @@ import koji
 from doozerlib import brew, exectools
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.cli import cli, click_coroutine, pass_runtime
+from doozerlib.constants import BREWWEB_URL
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_delivery import RPMDeliveries
 from doozerlib.runtime import Runtime
@@ -68,7 +69,7 @@ class TagRPMsCli:
             return [task.result for task in tasks]
         task_ids = cast(List[int], await exectools.to_thread(_func))
         if task_ids:
-            TASK_URL = "https://brewweb.engineering.redhat.com/brew/taskinfo?taskID="
+            TASK_URL = f'{BREWWEB_URL}/taskinfo?taskID='
             logger.info("Waiting for task(s) to complete: %s", ", ".join(map(lambda t: f"{TASK_URL}{t}", task_ids)))
             errors = await brew.watch_tasks_async(session, logger.info, task_ids)
             # we will treat "already tagged" error as a success
