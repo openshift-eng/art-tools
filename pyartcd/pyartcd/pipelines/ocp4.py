@@ -8,7 +8,7 @@ import yaml
 from aioredlock import LockError
 
 from pyartcd import locks, util, plashets, exectools, constants, \
-    jenkins, record as record_util, oc
+    jenkins, record as record_util, oc, redis
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
@@ -484,7 +484,8 @@ class Ocp4Pipeline:
             success_map = record_util.get_successful_rpms(record_log, full_record=True)
 
             # Kick off SAST scans for builds that succeeded using the NVR
-            # Gives a comma separated list of NVRs, the filter-lambda function will handle the case of nvrs filed not found
+            # Gives a comma separated list of NVRs, the filter-lambda function
+            # will handle the case of nvrs filed not found
             successful_rpm_nvrs = list(filter(lambda x: x, [build.get("nvrs") for build in success_map.values()]))
 
             if successful_rpm_nvrs:
@@ -499,7 +500,7 @@ class Ocp4Pipeline:
         failed_map = record_util.get_failed_rpms(record_log)
         if not failed_map:
             # failed so badly we don't know what failed; give up
-            raise
+            raise RuntimeError('Unknown failures in rpm builds')
         failed_rpms = list(failed_map.keys())
         jenkins.update_description(f'Failed rpms: {", ".join(failed_rpms)}<br/>')
 
@@ -579,10 +580,6 @@ class Ocp4Pipeline:
             await self._slack_client.say(error_msg)
             raise
 
-        except LockError as e:
-            self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
-
         finally:
             await lock_manager.destroy()
 
@@ -637,7 +634,7 @@ class Ocp4Pipeline:
         failed_map = record_util.get_failed_builds(record_log, full_record=True)
         if not failed_map:
             # failed so badly we don't know what failed; give up
-            raise
+            raise RuntimeError('Unknown failures in image builds')
         failed_images = list(failed_map.keys())
 
         if len(failed_images) <= 10:
@@ -735,10 +732,6 @@ class Ocp4Pipeline:
                     await self._rebase_images()
                     await self._build_images()
 
-            except LockError as e:
-                self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-                raise
-
             finally:
                 await lock_manager.destroy()
 
@@ -816,10 +809,6 @@ class Ocp4Pipeline:
             await self._slack_client.say(error_msg)
             raise
 
-        except LockError as e:
-            self.runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
-
         finally:
             await lock_manager.destroy()
 
@@ -874,7 +863,9 @@ class Ocp4Pipeline:
         try:
             jenkins.start_scan_osh(nvrs=self.success_nvrs)
         except Exception as e:
-            self.runtime.logger.error(f"Failed to trigger scan-osh job: {e}")
+            msg = f"Failed to trigger scan-osh job: {e}"
+            self.runtime.logger.error(msg)
+            raise RuntimeError(msg)
 
     async def run(self):
         await self._initialize()
@@ -933,11 +924,12 @@ class Ocp4Pipeline:
               help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES '
                    '(e.g. logging-kibana5,openshift-jenkins-2)')
 @click.option('--skip-plashets', is_flag=True, default=False,
-              help='Do not build plashets (for example to save time when running multiple builds against test assembly)')
+              help='Do not build plashets (e.g. to save time when running multiple builds against test assembly)')
 @click.option('--mail-list-failure', required=False, default='aos-art-automation+failed-ocp4-build@redhat.com',
               help='Failure Mailing List')
 @click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
+              help='Do not wait for other builds in this version to complete '
+                   '(use only if you know they will not conflict)')
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str, pin_builds: bool,
@@ -964,22 +956,33 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         lock_identifier=lock_identifier
     )
 
-    if ignore_locks:
-        await pipeline.run()
+    lock_manager = None
+    fail_count_name = f'count:failure:ocp4:{assembly}:{version}'
 
-    else:
-        # Create a Lock manager instance
-        lock = Lock.BUILD
-        lock_manager = locks.LockManager.from_lock(lock)
-        lock_name = lock.value.format(version=version)
+    try:
+        if ignore_locks:
+            await pipeline.run()
 
-        try:
+        else:
+            # Create a Lock manager instance
+            lock = Lock.BUILD
+            lock_manager = locks.LockManager.from_lock(lock)
+            lock_name = lock.value.format(version=version)
+
             async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_identifier):
                 await pipeline.run()
 
-        except LockError as e:
-            runtime.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-            raise
+        # All good: clear fail counter
+        await redis.clear_counter(fail_count_name)
 
-        finally:
+    except (RuntimeError, ValueError, ChildProcessError, LockError):
+        # Only for 'stream' assembly, track failure to enable future notifications
+        if assembly == 'stream':
+            await redis.increment_counter(fail_count_name)
+
+        # Re-raise the exception to make the job as failed
+        raise
+
+    finally:
+        if lock_manager:
             await lock_manager.destroy()
