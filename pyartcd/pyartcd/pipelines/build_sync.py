@@ -55,7 +55,7 @@ class BuildSyncPipeline:
         await self._update_nightly_imagestreams()
 
         #  All good: delete fail counter
-        if self.assembly == 'stream':
+        if self.assembly == 'stream' and not self.runtime.dry_run:
             res = await redis.delete_key(self.fail_count_name)
             if res:
                 self.runtime.logger.debug('Fail count "%s" deleted', self.fail_count_name)
@@ -397,7 +397,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
 
     except (RuntimeError, ChildProcessError):
         # Only for 'stream' assembly, track failure to enable future notifications
-        if assembly == 'stream':
+        if assembly == 'stream' and not runtime.dry_run:
             await pipeline.handle_failure()
 
         # Re-reise the exception to make the job as failed
