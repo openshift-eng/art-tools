@@ -12,6 +12,7 @@ import aiofiles
 import aiofiles.os
 
 from doozerlib import brew, exectools
+from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.model import Missing
 from doozerlib.rpmcfg import RPMMetadata
@@ -411,7 +412,7 @@ fi
             out, _ = await exectools.cmd_assert_async(cmd, cwd=dg.dg_path)
         else:
             logger.warning("DRY RUN - Would have created Brew task with %s", cmd)
-            out = "Created task: 0\nTask info: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=0\n"
+            out = f"Created task: 0\nTask info: {BREWWEB_URL}/taskinfo?taskID=0\n"
         # we should have a brew task we can monitor listed in the stdout.
         out_lines = out.splitlines()
         # Look for a line like: "Created task: 13949050" . Extract the identifier.

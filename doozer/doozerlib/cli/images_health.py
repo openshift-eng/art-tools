@@ -9,7 +9,7 @@ import click
 
 # doozerlib
 from doozerlib.cli import cli, pass_runtime
-
+from doozerlib.constants import BREWWEB_URL
 
 BuildInfo = collections.namedtuple('BuildInfo', 'record_name, task_id task_state ts build_url, task_url, dt')
 
@@ -70,13 +70,13 @@ def get_concerns(image, runtime, limit, url_markup):
         if record[1] == 'success':
             latest_success_idx = idx
             latest_success_bi = record
-            latest_success_bi_task_url = f"https://brewweb.engineering.redhat.com/brew/taskinfo?taskID={latest_success_bi[0]}"
+            latest_success_bi_task_url = f"{BREWWEB_URL}/taskinfo?taskID={latest_success_bi[0]}"
             latest_success_bi_build_url = latest_success_bi[3]
             latest_success_bi_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(latest_success_bi[2] / 1000))
             break
 
     latest_attempt_build_url = records[0][3]
-    latest_attempt_task_url = f"https://brewweb.engineering.redhat.com/brew/taskinfo?taskID={records[0][0]}"
+    latest_attempt_task_url = f"{BREWWEB_URL}/taskinfo?taskID={records[0][0]}"
     oldest_attempt_bi_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(records[-1][2] / 1000))
 
     if latest_success_idx != 0:
@@ -136,7 +136,7 @@ def extract_buildinfo(record):
         dt=datetime.datetime.fromtimestamp(int(attrs['build.time.unix']) / 1000.0),
         task_state=attrs['brew.task_state'],
         build_url=attrs['jenkins.build_url'],
-        task_url=f"https://brewweb.engineering.redhat.com/brew/taskinfo?taskID={attrs['brew.task_id']}"
+        task_url=f"{BREWWEB_URL}/taskinfo?taskID={attrs['brew.task_id']}"
     )
 
 

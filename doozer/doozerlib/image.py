@@ -8,6 +8,7 @@ from typing import (Any, Awaitable, Dict, List, Optional, Set, Tuple, Union,
 
 import doozerlib
 from doozerlib import brew, coverity, exectools
+from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 from doozerlib.model import Missing, Model
@@ -714,7 +715,7 @@ class BrewBuildImageInspector:
         """
         :return: Returns a link for humans to go look at details for this brew build.
         """
-        return f'https://brewweb.engineering.redhat.com/brew/buildinfo?buildID={self._brew_build_id}'
+        return f'{BREWWEB_URL}/buildinfo?buildID={self._brew_build_id}'
 
     def get_brew_build_dict(self) -> Dict:
         """
