@@ -11,7 +11,7 @@ from pyartcd import redis
 class Lock(enum.Enum):
     OLM_BUNDLE = 'lock:olm-bundle-{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
-    COMPOSE = 'lock:compose:{version}'
+    PLASHET = 'lock:compose:{assembly}:{version}'
     BUILD = 'lock:build:{version}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
@@ -35,7 +35,7 @@ LOCK_POLICY = {
         'lock_timeout': 60 * 60 * 3,  # 3 hours
     },
     # compose: give up after 1 hour
-    Lock.COMPOSE: {
+    Lock.PLASHET: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': 60 * 60 * 6,  # 6 hours

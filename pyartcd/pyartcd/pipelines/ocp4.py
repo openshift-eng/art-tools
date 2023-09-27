@@ -851,12 +851,15 @@ class Ocp4Pipeline:
         # Rebase and build RPMs
         await self._rebase_and_build_rpms()
         if not self.skip_plashets:
+            lock = Lock.PLASHET
+            lock_name = lock.value.format(assembly=self.assembly, version=self.version.stream)
             await locks.run_with_lock(
                 coro=self._build_compose(),
-                lock=Lock.COMPOSE,
-                lock_name=Lock.COMPOSE.value.format(version=self.version.stream),
+                lock=lock,
+                lock_name=lock_name,
                 lock_id=self.lock_identifier
             )
+
         else:
             self.runtime.logger.warning('Skipping plashets creation as SKIP_PLASHETS was set to True')
 
