@@ -5,6 +5,7 @@ import click
 from errata_tool import Erratum
 
 from elliottlib import bzutil, constants, logutil
+from elliottlib.assembly import assembly_issues_config
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -83,7 +84,11 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
     # skip advisory type check if advisories are
     # manually passed in, and we don't know their type
     if '?' not in advisory_id_map.keys():
-        validator.verify_bugs_advisory_type(non_flaw_bugs, advisory_id_map, advisory_bug_map)
+        included_bug_ids = set()
+        if runtime.assembly:
+            issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
+            included_bug_ids = {issue["id"] for issue in issues_config.include}
+        validator.verify_bugs_advisory_type(non_flaw_bugs, advisory_id_map, advisory_bug_map, included_bug_ids)
 
     if not skip_multiple_advisories_check:
         await validator.verify_bugs_multiple_advisories(non_flaw_bugs)
@@ -177,8 +182,8 @@ class BugValidator:
         if verify_bug_status:
             self._verify_bug_status(non_flaw_bugs)
 
-    def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map):
-        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map)
+    def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
+        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids)
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
             expected = bugs_by_type[kind]
