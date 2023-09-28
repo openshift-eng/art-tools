@@ -102,6 +102,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         self.assertIn('Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status '
                       'MODIFIED', result.output)
 
+    @patch('elliottlib.cli.verify_attached_bugs_cli.assembly_issues_config')
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
     @patch('elliottlib.cli.verify_attached_bugs_cli.AsyncErrataAPI')
     def test_verify_attached_bugs_cli_fail_on_type(self, *_):
@@ -116,6 +117,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(Runtime).should_receive("get_default_advisories")\
             .and_return({'image': 1, 'rpm': 2, 'extras': 3, 'metadata': 4})
+        flexmock(Runtime).should_receive("get_releases_config")\
+            .and_return({})
 
         bugs = [
             flexmock(id="OCPBUGS-1", is_ocp_bug=lambda: True),
