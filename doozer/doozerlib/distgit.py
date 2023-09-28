@@ -1692,7 +1692,7 @@ class ImageDistGitRepo(DistGitRepo):
             # Set all labels in from config into the Dockerfile content
             if self.config.labels is not Missing:
                 for k, v in self.config.labels.items():
-                    dfp.labels[k] = v
+                    dfp.labels[k] = str(v)
 
             # Set the image name
             dfp.labels["name"] = self.config.name
