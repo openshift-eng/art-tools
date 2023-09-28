@@ -78,6 +78,10 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
                 }
             }
         )
+        errata_api.get_builds_flattened.return_value = [
+            "a-1.0.0-1.el8", "b-1.0.0-1.el8", "c-1.0.0-1.el8", "d-1.0.0-1.el8",
+            "a-1.0.0-1.el7", "e-1.0.0-1.el7", "f-1.0.0-1.el7"
+        ]
         tracker_flaws = {
             1: [101, 103],
             2: [101, 103],

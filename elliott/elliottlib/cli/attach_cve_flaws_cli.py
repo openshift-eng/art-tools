@@ -151,7 +151,8 @@ def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
 
 
 async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Erratum, flaw_bugs: Iterable[Bug], attached_tracker_bugs: List[Bug], tracker_flaws: Dict[int, Iterable], dry_run: bool):
-    attached_builds = [b for pv in advisory.errata_builds.values() for b in pv]
+    # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
+    attached_builds = await errata_api.get_builds_flattened(advisory.errata_id)
     cve_components_mapping: Dict[str, Set[str]] = {}
     for tracker in attached_tracker_bugs:
         component_name = tracker.whiteboard_component
