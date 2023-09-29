@@ -5,6 +5,7 @@ from doozerlib import util
 from doozerlib.cli import cli
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector, get_container_configs, get_container_pullspec
 
+
 @cli.command("gen-assembly:rhcos", short_help="Generate assembly config for rhcos by given build_id")
 @click.argument("build_id", required=True)
 @click.pass_obj
