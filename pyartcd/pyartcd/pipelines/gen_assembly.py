@@ -83,7 +83,7 @@ class GenAssemblyPipeline:
         slack_thread = slack_response["message"]["ts"]
         try:
             if self.arches and not self.custom:
-                raise ValueError("Customizing arches can only be used with custom assemblies.")
+                self._logger.warning("Customizing arches for non-custom assembly, proceed with caution")
 
             if self.custom and (self.auto_previous or self.previous_list or self.in_flight):
                 raise ValueError("Specifying previous list for a custom release is not allowed.")
