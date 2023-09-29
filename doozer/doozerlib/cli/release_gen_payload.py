@@ -28,7 +28,8 @@ from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async
 from doozerlib.util import red_print, go_suffix_for_arch, brew_arch_for_go_arch, isolate_nightly_name_components, \
-    convert_remote_git_to_https, go_arch_for_brew_arch
+    go_arch_for_brew_arch
+from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.assembly import AssemblyTypes, assembly_basis, AssemblyIssue, AssemblyIssueCode
 from doozerlib import exectools
 from doozerlib.model import Model

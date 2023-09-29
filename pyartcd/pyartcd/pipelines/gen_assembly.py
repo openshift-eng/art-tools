@@ -8,11 +8,15 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 
 import click
 from ghapi.all import GhApi
+
+from artcommonlib.util import split_git_url, merge_objects
 from pyartcd import exectools, constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
 from ruamel.yaml import YAML
+
+from pyartcd.jenkins import start_build_sync
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -20,35 +24,22 @@ yaml.preserve_quotes = True
 yaml.width = 4096
 
 
-def _merge(a, b):
-    """ Merges two, potentially deep, objects into a new one and returns the result.
-    'a' is layered over 'b' and is dominant when necessary. The output is 'c'.
-    """
-    if not isinstance(a, dict) or not isinstance(b, dict):
-        return a
-    c: OrderedDict = b.copy()
-    for k, v in a.items():
-        c[k] = _merge(v, b.get(k))
-        if k not in b:
-            # move new entry to the beginning
-            c.move_to_end(k, last=False)
-    return c
-
-
 class GenAssemblyPipeline:
     """ Rebase and build MicroShift for an assembly """
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, ocp_build_data_url: str,
+    def __init__(self, runtime: Runtime, group: str, assembly: str, data_path: str,
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
-                 custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...], auto_previous: bool,
-                 logger: Optional[logging.Logger] = None):
+                 custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
+                 auto_previous: bool, auto_trigger_build_sync: bool, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
+        self.data_path = data_path
         self.nightlies = nightlies
         self.allow_pending = allow_pending
         self.allow_rejected = allow_rejected
         self.allow_inconsistency = allow_inconsistency
+        self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
         self.in_flight = in_flight
@@ -71,15 +62,13 @@ class GenAssemblyPipeline:
         # sets environment variables for Doozer
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
-
-        if not ocp_build_data_url:
-            ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
-        if ocp_build_data_url:
-            self._doozer_env_vars["DOOZER_DATA_PATH"] = ocp_build_data_url
+        self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path if data_path else \
+            self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
 
     async def run(self):
         self._slack_client.bind_channel(self.group)
-        slack_response = await self._slack_client.say(f":construction: Generating assembly definition {self.assembly} :construction:")
+        slack_response = await self._slack_client.say(
+            f":construction: Generating assembly definition {self.assembly} :construction:")
         slack_thread = slack_response["message"]["ts"]
         try:
             if self.arches and not self.custom:
@@ -102,6 +91,7 @@ class GenAssemblyPipeline:
             # Sends a slack message
             message = f"Hi @release-artists , please review assembly definition for {self.assembly}: {pr.html_url}"
             await self._slack_client.say(message, slack_thread)
+
         except Exception as err:
             error_message = f"Error generating assembly definition: {err}\n {traceback.format_exc()}"
             self._logger.error(error_message)
@@ -109,10 +99,11 @@ class GenAssemblyPipeline:
             raise
 
     async def _get_nightlies(self):
-        """ Get nightlies from Release Controllers
-        :param release: release field for rebase
+        """
+        Get nightlies from Release Controllers
         :return: NVRs
         """
+
         cmd = [
             "doozer",
             "--group", self.group,
@@ -138,6 +129,7 @@ class GenAssemblyPipeline:
         """ Run doozer release:gen-assembly from-releases
         :return: Assembly definition
         """
+
         cmd = [
             "doozer",
             "--group", self.group,
@@ -164,50 +156,75 @@ class GenAssemblyPipeline:
         return yaml.load(out)
 
     async def _create_or_update_pull_request(self, assembly_definition: OrderedDict):
-        """ Create or update pull request for ocp-build-data
+        """
+        Create or update pull request for ocp-build-data
         :param assembly_definition: the assembly definition to be added to releases.yml
         """
+
         self._logger.info("Creating ocp-build-data PR...")
-        # Clone ocp-build-data
-        build_data_path = self._working_dir / "ocp-build-data-push"
-        build_data = GitRepository(build_data_path, dry_run=self.runtime.dry_run)
+
+        # Gather PR data
         ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
-        await build_data.setup(ocp_build_data_repo_push_url)
-        branch = f"auto-gen-assembly-{self.group}-{self.assembly}"
-        await build_data.fetch_switch_branch(branch, self.group)
-        # Load releases.yml
-        releases_yaml_path = build_data_path / "releases.yml"
-        releases_yaml = yaml.load(releases_yaml_path) if releases_yaml_path.exists() else {}
-        # Make changes
-        releases_yaml = _merge(assembly_definition, releases_yaml)
-        yaml.dump(releases_yaml, releases_yaml_path)
-        # Create a PR
-        title = f"Add assembly {self.assembly}"
-        body = f"Created by job run {jenkins.get_build_url()}"
         match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
         if not match:
-            raise ValueError(f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")
+            raise ValueError(
+                f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")
+
+        title = f"Add assembly {self.assembly}"
+        body = f"Created by job run {jenkins.get_build_url()}"
+        branch = f"auto-gen-assembly-{self.group}-{self.assembly}"
         head = f"{match[1]}:{branch}"
         base = self.group
+
+        # Dry run
         if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', body '%s'", head, base, title, body)
+            self._logger.warning(
+                "[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', body '%s'",
+                head, base, title, body)
+
+            if self.auto_trigger_build_sync:
+                self._logger.info(
+                    "[DRY RUN] Would have triggered build-sync with the PR assembly definition")
             d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
             result = namedtuple('pull_request', d.keys())(*d.values())
             return result
+
+        # Clone ocp-build-data
+        build_data_path = self._working_dir / "ocp-build-data-push"
+        build_data = GitRepository(build_data_path, dry_run=self.runtime.dry_run)
+        await build_data.setup(ocp_build_data_repo_push_url)
+        await build_data.fetch_switch_branch(branch, self.group)
+
+        # Make changes to releases.yml and push changes to auto-gen-assembly branch
+        releases_yaml_path = build_data_path / "releases.yml"
+        releases_yaml = yaml.load(releases_yaml_path) if releases_yaml_path.exists() else {}
+        releases_yaml = merge_objects(assembly_definition, releases_yaml)
+        yaml.dump(releases_yaml, releases_yaml_path)
         pushed = await build_data.commit_push(f"{title}\n{body}")
-        result = None
-        if pushed:
-            owner = "openshift-eng"
-            repo = "ocp-build-data"
-            api = GhApi(owner=owner, repo=repo, token=self._github_token)
-            existing_prs = api.pulls.list(state="open", base=base, head=head)
-            if not existing_prs.items:
-                result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
-            else:
-                pull_number = existing_prs.items[0].number
-                result = api.pulls.update(pull_number=pull_number, title=title, body=body)
-        else:
+        if not pushed:
             self._logger.warning("PR is not created: Nothing to commit.")
+            return None
+
+        # Create a pull request
+        _, owner, repo = split_git_url(ocp_build_data_repo_push_url)
+        api = GhApi(owner=owner, repo=repo, token=self._github_token)
+        existing_prs = api.pulls.list(state="open", base=base, head=head)
+        if not existing_prs.items:
+            result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+        else:
+            pull_number = existing_prs.items[0].number
+            result = api.pulls.update(pull_number=pull_number, title=title, body=body)
+
+        # Trigger build-sync
+        if self.auto_trigger_build_sync:
+            self._logger.info("Triggering build-sync")
+            build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
+            # we're not passing doozer_data_path to build-sync because we always create branch on the base repo
+            start_build_sync(build_version=build_version,
+                             assembly=self.assembly,
+                             doozer_data_path=self.data_path,
+                             doozer_data_gitref=branch)
+
         return result
 
 
@@ -228,6 +245,8 @@ class GenAssemblyPipeline:
               help="Allow matching nightlies built from matching commits but with inconsistent RPMs")
 @click.option("--custom", is_flag=True,
               help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.")
+@click.option('--auto-trigger-build-sync', is_flag=True,
+              help='Will trigger build-sync automatically after PR creation')
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] (for custom assemblies only) Limit included arches to this list")
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
@@ -236,9 +255,12 @@ class GenAssemblyPipeline:
 @pass_runtime
 @click_coroutine
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
-                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, arches: Tuple[str, ...], in_flight: Optional[str],
+                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool,
+                       auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
                        previous_list: Tuple[str, ...], auto_previous: bool):
-    pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, ocp_build_data_url=data_path,
-                                   nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected, allow_inconsistency=allow_inconsistency,
-                                   arches=arches, custom=custom, in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous)
+    pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, data_path=data_path,
+                                   nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
+                                   allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
+                                   auto_trigger_build_sync=auto_trigger_build_sync,
+                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous)
     await pipeline.run()

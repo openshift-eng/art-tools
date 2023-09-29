@@ -1,4 +1,7 @@
 from future import standard_library
+
+import artcommonlib.util
+
 standard_library.install_aliases()
 from contextlib import contextmanager
 from collections import namedtuple
@@ -1148,7 +1151,7 @@ class Runtime(GroupRuntime):
                    applicable private repo replacement, remote_git will be returned (normalized to https).
             - branch: Optional public branch name if the public upstream source use a different branch name from the private upstream.
         """
-        remote_https = util.convert_remote_git_to_https(remote_git)
+        remote_https = artcommonlib.util.convert_remote_git_to_https(remote_git)
 
         if self.group_config.public_upstreams:
 
@@ -1162,8 +1165,8 @@ class Runtime(GroupRuntime):
                 pub = upstream["public"]
                 # priv can be a full repo, or an organization (e.g. git@github.com:openshift)
                 # It will be treated as a prefix to be replaced
-                https_priv_prefix = util.convert_remote_git_to_https(priv)  # Normalize whatever is specified in group.yaml
-                https_pub_prefix = util.convert_remote_git_to_https(pub)
+                https_priv_prefix = artcommonlib.util.convert_remote_git_to_https(priv)  # Normalize whatever is specified in group.yaml
+                https_pub_prefix = artcommonlib.util.convert_remote_git_to_https(pub)
                 if remote_https.startswith(f'{https_priv_prefix}/') or remote_https == https_priv_prefix:
                     # If we have not set the prefix yet, or if it is longer than the current contender
                     if not target_priv_prefix or len(https_priv_prefix) > len(target_pub_prefix):
@@ -1183,7 +1186,7 @@ class Runtime(GroupRuntime):
         if self.cache_dir:
             git_cache_dir = os.path.join(self.cache_dir, self.user or "default", 'git')
             util.mkdirs(git_cache_dir)
-            normalized_url = util.convert_remote_git_to_https(remote_url)
+            normalized_url = artcommonlib.util.convert_remote_git_to_https(remote_url)
             # Strip special chars out of normalized url to create a human friendly, but unique filename
             file_friendly_url = normalized_url.split('//')[-1].replace('/', '_')
             repo_dir = os.path.join(git_cache_dir, file_friendly_url)

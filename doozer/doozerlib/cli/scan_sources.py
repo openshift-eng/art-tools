@@ -6,6 +6,7 @@ import yaml
 from typing import List, Tuple, Optional
 from github import GithubException
 
+import artcommonlib.util
 from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, exectools, rhcos, util
 from doozerlib.cli import cli, pass_runtime
@@ -181,7 +182,7 @@ class ConfigScanSources:
                 continue
 
             public_url, public_branch_name = public_upstream
-            priv_url = util.convert_remote_git_to_https(metadata.config.content.source.git.url)
+            priv_url = artcommonlib.util.convert_remote_git_to_https(metadata.config.content.source.git.url)
             priv_branch_name = metadata.config.content.source.git.branch.target
 
             # If a git commit hash was declared as the upstream source, skip the rebase
@@ -205,8 +206,8 @@ class ConfigScanSources:
                 continue
 
             # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
-            _, public_org, public_repo_name = util.split_git_url(public_url)
-            _, priv_org, priv_repo_name = util.split_git_url(priv_url)
+            _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
+            _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
 
             if self._do_shas_match(public_url, public_branch_name,
                                    metadata.config.content.source.git.url, priv_branch_name):
