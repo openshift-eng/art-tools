@@ -14,6 +14,8 @@ from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
 from ruamel.yaml import YAML
 
+from pyartcd.jenkins import start_build_sync
+
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
 yaml.preserve_quotes = True
@@ -40,8 +42,8 @@ class GenAssemblyPipeline:
 
     def __init__(self, runtime: Runtime, group: str, assembly: str, ocp_build_data_url: str,
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
-                 custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...], auto_previous: bool,
-                 logger: Optional[logging.Logger] = None):
+                 custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
+                 auto_previous: bool, auto_trigger_build_sync: bool, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -49,6 +51,8 @@ class GenAssemblyPipeline:
         self.allow_pending = allow_pending
         self.allow_rejected = allow_rejected
         self.allow_inconsistency = allow_inconsistency
+        self.auto_trigger_build_sync = auto_trigger_build_sync
+        self.ocp_build_data_url = ocp_build_data_url
         self.custom = custom
         self.arches = arches
         self.in_flight = in_flight
@@ -72,9 +76,9 @@ class GenAssemblyPipeline:
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
 
-        if not ocp_build_data_url:
-            ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
-        if ocp_build_data_url:
+        if not self.ocp_build_data_url:
+            self.ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
+        if self.ocp_build_data_url:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = ocp_build_data_url
 
     async def run(self):
@@ -190,10 +194,23 @@ class GenAssemblyPipeline:
         head = f"{match[1]}:{branch}"
         base = self.group
         if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', body '%s'", head, base, title, body)
+            if self.auto_trigger_build_sync:
+                self._logger.info(
+                    "[DRY RUN] Would have triggered build-sync with the PR assembly definition")
+            self._logger.info("[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', "
+                              "body '%s'", head, base, title, body)
             d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
             result = namedtuple('pull_request', d.keys())(*d.values())
             return result
+
+        if self.auto_trigger_build_sync:
+            self._logger.info("Triggering build-sync")
+            build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
+            # we're not passing doozer_data_path to build-sync because we always create branch on the base repo
+            start_build_sync(build_version=build_version,
+                             doozer_data_gitref=branch,
+                             assembly=self.assembly)
+
         pushed = await build_data.commit_push(f"{title}\n{body}")
         result = None
         if pushed:
@@ -228,6 +245,8 @@ class GenAssemblyPipeline:
               help="Allow matching nightlies built from matching commits but with inconsistent RPMs")
 @click.option("--custom", is_flag=True,
               help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.")
+@click.option('--auto-trigger-build-sync', is_flag=True,
+              help='Will trigger build-sync automatically after PR creation')
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] (for custom assemblies only) Limit included arches to this list")
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
@@ -236,9 +255,12 @@ class GenAssemblyPipeline:
 @pass_runtime
 @click_coroutine
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
-                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, arches: Tuple[str, ...], in_flight: Optional[str],
+                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool,
+                       auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
                        previous_list: Tuple[str, ...], auto_previous: bool):
     pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, ocp_build_data_url=data_path,
-                                   nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected, allow_inconsistency=allow_inconsistency,
-                                   arches=arches, custom=custom, in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous)
+                                   nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
+                                   allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
+                                   auto_trigger_build_sync=auto_trigger_build_sync,
+                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous)
     await pipeline.run()
