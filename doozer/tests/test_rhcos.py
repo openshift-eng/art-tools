@@ -9,6 +9,7 @@ from urllib.error import URLError
 import yaml
 
 from doozerlib import rhcos
+from artcommonlib.rhcos import RhcosMissingContainerException
 from doozerlib.model import Model
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
@@ -213,7 +214,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
         # test its behavior on misconfiguration / edge case
         container_conf = dict(name='spam', build_metadata_key='eggs')
-        with self.assertRaises(rhcos.RhcosMissingContainerException):
+        with self.assertRaises(RhcosMissingContainerException):
             rhcos_build.get_container_pullspec(Model(container_conf))
 
     @patch('doozerlib.exectools.cmd_assert')

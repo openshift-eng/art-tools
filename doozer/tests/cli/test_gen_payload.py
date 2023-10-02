@@ -17,6 +17,7 @@ from doozerlib.image import BrewBuildImageInspector
 from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
+from artcommonlib.rhcos import RhcosMissingContainerException
 
 
 async def no_sleep(arg):
@@ -38,7 +39,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
         # test when a primary container is missing from rhcos build
         rhcos_build.get_container_pullspec.side_effect = [
-            rhcos.RhcosMissingContainerException("primary missing"),
+            RhcosMissingContainerException("primary missing"),
             "somereg/somerepo@sha256:somesum",
         ]
         rhcos_entries, issues = rgp_cli.PayloadGenerator._find_rhcos_payload_entries(assembly_inspector, "arch")
@@ -49,7 +50,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         # test when a non-primary container is missing from rhcos build
         rhcos_build.get_container_pullspec.side_effect = [
             "somereg/somerepo@sha256:somesum",
-            rhcos.RhcosMissingContainerException("non-primary missing"),
+            RhcosMissingContainerException("non-primary missing"),
         ]
         rhcos_entries, issues = rgp_cli.PayloadGenerator._find_rhcos_payload_entries(assembly_inspector, "arch")
         self.assertIn("spam", rhcos_entries)

@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 import click
 import yaml
 from typing import List, Tuple, Optional
-
 from github import GithubException
 
+from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, exectools, rhcos, util
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
@@ -555,7 +555,7 @@ class ConfigScanSources:
         for arch in self.runtime.arches:
             for private in (False, True):
                 name = f"{version}-{arch}{'-priv' if private else ''}"
-                tagged_rhcos_id = self._tagged_rhcos_id(rhcos.get_primary_container_name(self.runtime),
+                tagged_rhcos_id = self._tagged_rhcos_id(get_primary_container_name(self.runtime),
                                                         version, arch, private)
                 latest_rhcos_id = self._latest_rhcos_build_id(version, arch, private)
                 status = dict(name=name)
