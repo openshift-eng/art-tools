@@ -220,8 +220,12 @@ class JIRABug(Bug):
 
     @property
     def component(self):
-        component0 = self.bug.fields.components[0].name
-        return component0.split('/')[0].strip()
+        try:
+            component0 = self.bug.fields.components[0].name
+            return component0.split('/')[0].strip()
+        except IndexError:
+            logger.error('No component set for bug %s', self.bug.key)
+            raise
 
     @property
     def status(self):
