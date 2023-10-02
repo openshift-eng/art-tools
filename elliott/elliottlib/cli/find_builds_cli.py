@@ -51,11 +51,6 @@ pass_runtime = click.make_pass_decorator(Runtime)
     type=click.Choice(['rpm', 'image']),
     help='Find builds of the given KIND [rpm, image]')
 @click.option(
-    '--from-diff', '--between',
-    required=False,
-    nargs=2,
-    help='Two payloads to compare against')
-@click.option(
     '--json', 'as_json', metavar='FILE_NAME',
     help='Dump new builds as JSON array to a file (or "-" for stdout)')
 @click.option(
@@ -81,7 +76,7 @@ pass_runtime = click.make_pass_decorator(Runtime)
     help='(For rpms) Only sweep member rpms')
 @click_coroutine
 @pass_runtime
-async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds, kind, from_diff, as_json,
+async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds, kind, as_json,
                           remove, clean, no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
     '''Automatically or manually find or attach/remove viable rpm or image builds
 to ADVISORY. Default behavior searches Brew for viable builds in the
@@ -127,14 +122,10 @@ PRESENT advisory. Here are some examples:
     $ elliott --group openshift-4.3 find-builds -k image -b oauth-server-container-v4.3.22-202005212137 -a 55017 --remove
 '''
 
-    if from_diff and builds:
-        raise click.BadParameter('Use only one of --build or --from-diff/--between.')
-    if clean and (remove or from_diff or builds):
-        raise click.BadParameter('Option --clean cannot be used with --build or --from-diff/--between.')
+    if clean and (remove or builds):
+        raise click.BadParameter('Option --clean cannot be used with --build or --remove.')
     if remove and not builds:
         raise click.BadParameter('Option --remove only supports removing specific builds with -b.')
-    if from_diff and kind != "image":
-        raise click.BadParameter('Option --from-diff/--between should be used with --kind/-k image.')
     if advisory_id and default_advisory_type:
         raise click.BadParameter('Use only one of --use-default-advisory or --attach')
     if payload and non_payload:
@@ -162,8 +153,6 @@ PRESENT advisory. Here are some examples:
                                                     ignore_product_version=remove, brew_session=brew_session)
     elif clean:
         unshipped_builds = errata.get_brew_builds(advisory_id)
-    elif from_diff:
-        unshipped_nvrps = _fetch_builds_from_diff(from_diff[0], from_diff[1], tag_pv_map)
     else:
         if kind == 'image':
             unshipped_nvrps = await _fetch_builds_by_kind_image(runtime, tag_pv_map, brew_session, payload,
@@ -349,12 +338,6 @@ def _json_dump(as_json, unshipped_builds, kind, tag_pv_map):
         else:
             with open(as_json, 'w') as json_file:
                 json.dump(json_data, json_file, indent=4, sort_keys=True)
-
-
-def _fetch_builds_from_diff(from_payload, to_payload, tag_pv_map):
-    green_print('Fetching changed images between payloads...')
-    nvrs = elliottlib.openshiftclient.get_build_list(from_payload, to_payload)
-    return _fetch_nvrps_by_nvr_or_id(nvrs, tag_pv_map)
 
 
 def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
