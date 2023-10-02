@@ -3,7 +3,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
 from elliottlib.model import ListModel
 from elliottlib import util, exectools, constants
-from artcommonlib.rhcos import get_container_configs
+from artcommonlib.rhcos import get_container_configs, get_primary_container_name
 
 
 def release_url(runtime, version, arch="x86_64", private=False):
@@ -81,8 +81,8 @@ def _build_meta(runtime, build_id, version, arch="x86_64", private=False, meta_t
         return json.loads(req.read().decode())
 
 
-def get_build_from_payload(payload_pullspec):
-    rhcos_tag = 'machine-os-content'
+def get_build_from_payload(runtime, payload_pullspec):
+    rhcos_tag = get_primary_container_name(runtime)
     out, _ = exectools.cmd_assert(["oc", "adm", "release", "info", "--image-for", rhcos_tag, "--", payload_pullspec])
     rhcos_pullspec = out.split('\n')[0]
     out, _ = exectools.cmd_assert(["oc", "image", "info", "-o", "json", rhcos_pullspec])
