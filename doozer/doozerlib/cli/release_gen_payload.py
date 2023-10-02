@@ -13,12 +13,13 @@ import aiofiles
 import click
 from doozerlib import rpm_utils
 import yaml
-from doozerlib import rhcos
+from artcommonlib import rhcos
+from artcommonlib.rhcos import RhcosMissingContainerException
 import openshift as oc
 from doozerlib.rpm_utils import parse_nvr
 
 from doozerlib.brew import KojiWrapperMetaReturn
-from doozerlib.rhcos import RHCOSBuildInspector, RhcosMissingContainerException
+from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.image import ImageMetadata, BrewBuildImageInspector, ArchiveImageInspector
 from doozerlib.assembly_inspector import AssemblyInspector

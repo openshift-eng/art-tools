@@ -13,85 +13,10 @@ from doozerlib.model import ListModel, Model
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
 from doozerlib.util import brew_suffix_for_arch, isolate_el_version_in_release
+from artcommonlib import rhcos
 
 RHCOS_BASE_URL = "https://releases-rhcos-art.apps.ocp-virt.prod.psi.redhat.com/storage/releases"
-# Historically the only RHCOS container was 'machine-os-content'; see
-# https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
-# But in the future this will change, see
-# https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md
-default_primary_container = dict(
-    name="machine-os-content",
-    build_metadata_key="oscontainer",
-    primary=True)
-
 logger = logutil.getLogger(__name__)
-
-
-class RhcosMissingContainerException(Exception):
-    """
-    Thrown when group.yml configuration expects an RHCOS container but it is
-    not available as specified in the RHCOS metadata.
-    """
-    pass
-
-
-def get_container_configs(runtime):
-    """
-    look up the group.yml configuration for RHCOS container(s) for this group, or create if missing.
-    @return ListModel with Model entries like ^^ default_primary_container
-    """
-    return runtime.group_config.rhcos.payload_tags or ListModel([default_primary_container])
-
-
-def get_container_names(runtime):
-    """
-    look up the payload tags of the group.yml-configured RHCOS container(s) for this group
-    @return list of container names
-    """
-    return {tag.name for tag in get_container_configs(runtime)}
-
-
-def get_primary_container_conf(runtime):
-    """
-    look up the group.yml-configured primary RHCOS container for this group.
-    @return Model with entries for name and build_metadata_key
-    """
-    for tag in get_container_configs(runtime):
-        if tag.primary:
-            return tag
-    raise Exception("Need to provide a group.yml rhcos.payload_tags entry with primary=true")
-
-
-def get_primary_container_name(runtime):
-    """
-    convenience method to retrieve configured primary RHCOS container name
-    @return primary container name (used in payload tag)
-    """
-    return get_primary_container_conf(runtime).name
-
-
-def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
-    """
-    determine the container pullspec from the RHCOS build meta and config
-    @return full container pullspec string (registry/repo@sha256:...)
-    """
-    key = container_conf.build_metadata_key
-    if key not in build_meta:
-        raise RhcosMissingContainerException(f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata")
-
-    container = build_meta[key]
-
-    if 'digest' in container:
-        # "oscontainer": {
-        #   "digest": "sha256:04b54950ce2...",
-        #   "image": "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
-        # },
-        return container['image'] + "@" + container['digest']
-
-    # "base-oscontainer": {
-    #     "image": "registry.ci.openshift.org/rhcos/rhel-coreos@sha256:b8e1064cae637f..."
-    # },
-    return container['image']
 
 
 class RHCOSNotFound(Exception):
@@ -123,7 +48,7 @@ class RHCOSBuildFinder:
         @return Model with entries for name and build_metadata_key
         """
         if not self._primary_container:
-            self._primary_container = get_primary_container_conf(self.runtime)
+            self._primary_container = rhcos.get_primary_container_conf(self.runtime)
         return self._primary_container
 
     def rhcos_release_url(self) -> str:
@@ -243,7 +168,7 @@ class RHCOSBuildFinder:
         build_id = self.latest_rhcos_build_id()
         if build_id is None:
             return None, None
-        return build_id, get_container_pullspec(
+        return build_id, rhcos.get_container_pullspec(
             self.rhcos_build_meta(build_id),
             container_conf or self.get_primary_container_conf()
         )
@@ -406,14 +331,14 @@ class RHCOSBuildInspector:
         look up the group.yml-configured primary RHCOS container.
         @return Model with entries for name and build_metadata_key
         """
-        return get_primary_container_conf(self.runtime)
+        return rhcos.get_primary_container_conf(self.runtime)
 
     def get_container_configs(self):
         """
         look up the group.yml-configured RHCOS containers and return their configs as a list
         @return list(Model) with entries for name and 15:97build_metadata_key
         """
-        return get_container_configs(self.runtime)
+        return rhcos.get_container_configs(self.runtime)
 
     def get_container_pullspec(self, container_config: Model = None) -> str:
         """
@@ -428,7 +353,7 @@ class RHCOSBuildInspector:
         if container_config.name in self.pullspec_for_tag:
             # per note above... when given a pullspec, prefer that to the build record
             return self.pullspec_for_tag[container_config.name]
-        return get_container_pullspec(self.get_build_metadata(), container_config)
+        return rhcos.get_container_pullspec(self.get_build_metadata(), container_config)
 
     def get_container_digest(self, container_config: Model = None) -> str:
         """

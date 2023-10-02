@@ -14,7 +14,7 @@ from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib import exectools
 from doozerlib.model import Model
 from doozerlib import brew
-from doozerlib import rhcos
+from artcommonlib import rhcos
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.image import BrewBuildImageInspector
 from doozerlib.runtime import Runtime

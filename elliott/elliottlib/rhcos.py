@@ -3,23 +3,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
 from elliottlib.model import ListModel
 from elliottlib import util, exectools, constants
-
-# Historically the only RHCOS container was 'machine-os-content'; see
-# https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
-# But in the future this will change, see
-# https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md
-default_primary_container = dict(
-    name="machine-os-content",
-    build_metadata_key="oscontainer",
-    primary=True)
-
-
-def get_container_configs(runtime):
-    """
-    look up the group.yml configuration for RHCOS container(s) for this group, or create if missing.
-    @return ListModel with Model entries like ^^ default_primary_container
-    """
-    return runtime.group_config.rhcos.payload_tags or ListModel([default_primary_container])
+from artcommonlib.rhcos import get_container_configs
 
 
 def release_url(runtime, version, arch="x86_64", private=False):

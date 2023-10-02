@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import click
 import yaml
 
+from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, exectools, rhcos, util
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
@@ -273,7 +274,7 @@ def _detect_rhcos_status(runtime, kubeconfig) -> list:
     for arch in runtime.arches:
         for private in (False, True):
             name = f"{version}-{arch}{'-priv' if private else ''}"
-            tagged_rhcos_id = _tagged_rhcos_id(kubeconfig, rhcos.get_primary_container_name(runtime), version, arch, private)
+            tagged_rhcos_id = _tagged_rhcos_id(kubeconfig, get_primary_container_name(runtime), version, arch, private)
             latest_rhcos_id = _latest_rhcos_build_id(runtime, version, arch, private)
             status = dict(name=name)
             if not latest_rhcos_id:
