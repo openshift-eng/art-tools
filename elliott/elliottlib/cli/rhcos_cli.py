@@ -2,6 +2,7 @@ import click
 import json
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util, exectools
+from artcommonlib.rhcos import get_primary_container_name
 
 
 @cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")
@@ -87,7 +88,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
             for local_arch in target_arches:
                 p = get_pullspec(release, local_arch)
                 payload_pullspecs.append(p)
-        build_ids = [get_build_id_from_image_pullspec(p) for p in payload_pullspecs]
+        build_ids = [get_build_id_from_image_pullspec(runtime, p) for p in payload_pullspecs]
     elif named_assembly:
         rhcos_pullspecs = get_rhcos_pullspecs_from_assembly(runtime)
         build_ids = [(get_build_id_from_rhcos_pullspec(p, logger), arch) for arch, p in rhcos_pullspecs.items() if
@@ -112,13 +113,13 @@ def get_rhcos_pullspecs_from_assembly(runtime):
         raise click.BadParameter("only named assemblies with valid rhcos values are supported. If an assembly is "
                                  "based on another, try using the original assembly")
 
-    images = rhcos_def['machine-os-content']['images']
+    images = rhcos_def[get_primary_container_name(runtime)]['images']
     return images
 
 
-def get_build_id_from_image_pullspec(pullspec):
+def get_build_id_from_image_pullspec(runtime, pullspec):
     util.green_print(f"Image pullspec: {pullspec}")
-    build_id, arch = rhcos.get_build_from_payload(pullspec)
+    build_id, arch = rhcos.get_build_from_payload(runtime, pullspec)
     return build_id, arch
 
 
