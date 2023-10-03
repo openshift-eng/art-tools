@@ -51,6 +51,7 @@ class PromotePipeline:
                  skip_image_list: bool = False,
                  skip_build_microshift: bool = False,
                  skip_signing: bool = False,
+                 skip_cincinnati_prs: bool = False,
                  permit_overwrite: bool = False,
                  no_multi: bool = False, multi_only: bool = False,
                  skip_mirror_binaries: bool = False,
@@ -66,6 +67,7 @@ class PromotePipeline:
         self.skip_build_microshift = skip_build_microshift
         self.skip_mirror_binaries = skip_mirror_binaries
         self.skip_signing = skip_signing
+        self.skip_cincinnati_prs = skip_cincinnati_prs
         self.permit_overwrite = permit_overwrite
 
         if multi_only and no_multi:
@@ -405,8 +407,11 @@ class PromotePipeline:
             if rhcos:
                 rhcos_version = rhcos["annotations"]["io.openshift.build.versions"].split("=")[1]  # machine-os=48.84.202112162302-0 => 48.84.202112162302-0
                 data["content"][arch]["rhcos_version"] = rhcos_version
-        # sync rhcos
+        # sync rhcos srpms
         await self.sync_rhcos_srpms(assembly_type, data)
+
+        self.create_cincinnati_prs(assembly_type, data)
+
         json.dump(data, sys.stdout)
 
     @staticmethod
@@ -1441,6 +1446,40 @@ class PromotePipeline:
             self.runtime.config["email"][f"qe_notification_recipients_ocp{release_version[0]}"],
             subject, content, archive_dir=email_dir, dry_run=self.runtime.dry_run)
 
+    def create_cincinnati_prs(self, assembly_type, release_info):
+        """ Create Cincinnati PRs for the release.
+        """
+        if assembly_type == "custom":
+            self._logger.info("Skipping PR creation for custom assembly")
+            return
+
+        if self.skip_cincinnati_prs:
+            self._logger.info("Skipping Cincinnati PRs creation since skip param is set")
+            return
+
+        if self.runtime.dry_run:
+            self._logger.info("[DRY RUN] Would have created Cincinnati PRs.")
+            return
+
+        candidate_pr_note = ""
+        justifications = release_info["justifications"]
+        if justifications:
+            candidate_pr_note = "\n".join(justifications)
+
+        from_releases = [arch_info["from_release"].split(":")[-1]
+                         for arch_info in release_info["content"].values() if "from_release" in arch_info]
+
+        advisory_id = 0
+        if "advisory" in release_info and release_info["advisory"]:
+            advisory_id = release_info["advisory"]
+
+        jenkins.start_build_cincinnati_prs(
+            from_releases,
+            release_info["name"],
+            advisory_id,
+            candidate_pr_note,
+        )
+
 
 @cli.command("promote")
 @click.option("-g", "--group", metavar='NAME', required=True,
@@ -1457,6 +1496,8 @@ class PromotePipeline:
               help="Do not build microshift rpm")
 @click.option("--skip-signing", is_flag=True,
               help="Do not sign artifacts")
+@click.option("--skip-cincinnati-prs", is_flag=True,
+              help="Do not create Cincinnati PRs")
 @click.option("--permit-overwrite", is_flag=True,
               help="DANGER! Allows the pipeline to overwrite an existing payload.")
 @click.option("--no-multi", is_flag=True, help="Do not promote a multi-arch/heterogeneous payload.")
@@ -1472,6 +1513,7 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                   skip_image_list: bool,
                   skip_build_microshift: bool,
                   skip_signing: bool,
+                  skip_cincinnati_prs: bool,
                   permit_overwrite: bool, no_multi: bool, multi_only: bool,
                   skip_mirror_binaries: bool,
                   use_multi_hack: bool,
@@ -1481,6 +1523,7 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                                skip_image_list,
                                skip_build_microshift,
                                skip_signing,
+                               skip_cincinnati_prs,
                                permit_overwrite, no_multi, multi_only,
                                skip_mirror_binaries,
                                use_multi_hack,

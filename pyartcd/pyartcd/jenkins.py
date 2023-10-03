@@ -30,6 +30,7 @@ class Jobs(Enum):
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     SCAN_OSH = 'aos-cd-builds/build%2Fscan-osh'
+    CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
 
 
 def init_jenkins():
@@ -276,6 +277,19 @@ def start_build_sync(build_version: str, assembly: str, doozer_data_path: Option
         job=Jobs.BUILD_SYNC,
         params=params,
         **kwargs
+    )
+
+
+def start_build_cincinnati_prs(from_releases: list, release_name: str, advisory_id: int,
+                               candidate_pr_note: str, **kwargs) -> Optional[str]:
+    return start_build(
+        job=Jobs.CINCINNATI_PRS,
+        params={
+            'FROM_RELEASE_TAG': ','.join(from_releases),
+            'RELEASE_NAME': release_name,
+            'ADVISORY_NUM': advisory_id,
+            'CANDIDATE_PR_NOTE': candidate_pr_note,
+        }, **kwargs
     )
 
 
