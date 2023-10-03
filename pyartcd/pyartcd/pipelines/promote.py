@@ -21,6 +21,7 @@ from tenacity import (RetryCallState, RetryError, retry,
                       retry_if_exception_type, retry_if_result,
                       stop_after_attempt, wait_fixed)
 
+from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import assembly
 from doozerlib.util import (brew_arch_for_go_arch, brew_suffix_for_arch,
                             go_arch_for_brew_arch, go_suffix_for_arch)
@@ -35,7 +36,7 @@ from pyartcd.mail import MailService
 from pyartcd.s3 import sync_dir_to_s3_mirror
 from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
     extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
-from pyartcd.runtime import Runtime
+from pyartcd.runtime import Runtime, GroupRuntime
 
 
 yaml = YAML(typ="safe")
@@ -44,6 +45,15 @@ yaml.default_flow_style = False
 
 class PromotePipeline:
     DEST_RELEASE_IMAGE_REPO = constants.RELEASE_IMAGE_REPO
+
+    @classmethod
+    async def create(cls, *args, **kwargs):
+        self = cls(*args, **kwargs)
+        self.group_runtime = await GroupRuntime.create(
+            self.runtime.config, self.runtime.working_dir,
+            self.group, self.assembly
+        )
+        return self
 
     def __init__(self, runtime: Runtime, group: str, assembly: str,
                  skip_blocker_bug_check: bool = False,
@@ -127,7 +137,7 @@ class PromotePipeline:
 
         # Load group config and releases.yml
         logger.info("Loading build data...")
-        group_config = await util.load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
+        group_config = self.group_runtime.group_config
         releases_config = await util.load_releases_config(
             group=self.group,
             data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL
@@ -405,7 +415,8 @@ class PromotePipeline:
             from_release = release_info.get("references", {}).get("metadata", {}).get("annotations", {}).get("release.openshift.io/from-release")
             if from_release:
                 data["content"][arch]["from_release"] = from_release
-            rhcos = next((t for t in release_info.get("references", {}).get("spec", {}).get("tags", []) if t["name"] == "machine-os-content"), None)
+            rhcos_name = get_primary_container_name(self.group_runtime)
+            rhcos = next((t for t in release_info.get("references", {}).get("spec", {}).get("tags", []) if t["name"] == rhcos_name), None)
             if rhcos:
                 rhcos_version = rhcos["annotations"]["io.openshift.build.versions"].split("=")[1]  # machine-os=48.84.202112162302-0 => 48.84.202112162302-0
                 data["content"][arch]["rhcos_version"] = rhcos_version
@@ -989,7 +1000,7 @@ class PromotePipeline:
                         "spec": {
                             "tags": [
                                 {
-                                    "name": "machine-os-content",
+                                    "name": get_primary_container_name(self.group_runtime),
                                     "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
                                 }
                             ]
@@ -1524,15 +1535,9 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                   skip_mirror_binaries: bool,
                   use_multi_hack: bool,
                   signing_env: Optional[str]):
-    pipeline = PromotePipeline(runtime, group, assembly,
-                               skip_blocker_bug_check, skip_attached_bug_check,
-                               skip_image_list,
-                               skip_build_microshift,
-                               skip_signing,
-                               skip_cincinnati_prs,
-                               skip_ota_notification,
-                               permit_overwrite, no_multi, multi_only,
-                               skip_mirror_binaries,
-                               use_multi_hack,
-                               signing_env)
+    pipeline = await PromotePipeline.create(
+        runtime, group, assembly, skip_blocker_bug_check, skip_attached_bug_check, skip_image_list,
+        skip_build_microshift, skip_signing, skip_cincinnati_prs, skip_ota_notification,
+        permit_overwrite, no_multi, multi_only, skip_mirror_binaries, use_multi_hack, signing_env
+    )
     await pipeline.run()
