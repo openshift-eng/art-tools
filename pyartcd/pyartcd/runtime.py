@@ -5,7 +5,8 @@ from typing import Any, Dict, Optional
 
 import tomli
 
-from pyartcd import jenkins
+from artcommonlib import runtime, model
+from pyartcd import jenkins, util, constants
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.slack import SlackClient
@@ -57,3 +58,36 @@ class Runtime:
 
     def new_mail_client(self):
         return MailService.from_config(self.config)
+
+
+class GroupRuntime(runtime.GroupRuntime):
+
+    @classmethod
+    async def create(cls, *args, **kwargs):
+        """Async instantiation that populates group_config"""
+        self = cls(*args, **kwargs)
+
+        self._group_config = model.Model(await util.load_group_config(
+            self.group, self.assembly, None,
+            self.doozer_data_path, self.doozer_data_gitref
+        ))
+        return self
+
+    def __init__(
+            self,
+            config: Dict[str, Any], working_dir: Path,
+            group: str, assembly: str = "test",
+            doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+            doozer_data_gitref: str = ''):
+
+        self.config = config
+        self.working_dir = working_dir
+        self.group = group
+        self.assembly = assembly
+        self.doozer_data_path = doozer_data_path
+        self.doozer_data_gitref = doozer_data_gitref
+        self._group_config = model.Missing  # stub
+
+    @property
+    def group_config(self):
+        return self._group_config
