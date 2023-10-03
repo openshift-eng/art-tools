@@ -7,6 +7,7 @@ import tempfile
 from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
 from pyartcd.pipelines.promote import PromotePipeline
 from doozerlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 
 
 class TestPromotePipeline(IsolatedAsyncioTestCase):
@@ -128,10 +129,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
         with self.assertRaisesRegex(ValueError, "must be explicitly defined"):
             await pipeline.run()
-        load_group_config.assert_awaited_once_with("openshift-4.10", "4.10.99", env=ANY)
+        load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(
             group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
 
@@ -153,10 +154,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="stream", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="stream", signing_env="prod")
         with self.assertRaisesRegex(ValueError, "not supported"):
             await pipeline.run()
-        load_group_config.assert_awaited_once_with("openshift-4.10", "stream", env=ANY)
+        load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10',
                                                       data_path='https://example.com/ocp-build-data.git')
 
@@ -180,10 +181,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
             new_slack_client=MagicMock(return_value=AsyncMock())
         )
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="art0001", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="art0001", signing_env="prod")
         with self.assertRaisesRegex(ValueError, "patch_version is not set"):
             await pipeline.run()
-        load_group_config.assert_awaited_once_with("openshift-4.10", "art0001", env=ANY)
+        load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10',
                                                       data_path='https://example.com/ocp-build-data.git')
 
@@ -209,7 +210,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={
         "releases": {"art0001": {"assembly": {"type": "custom", "basis": {"patch_version": 99}}}}
     })
-    @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
+    @patch("pyartcd.pipelines.promote.util.load_group_config",
+           return_value=Model(dict(arches=["x86_64", "s390x"])))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     async def test_run_with_custom_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                             load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
@@ -231,11 +233,12 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="art0001",
-                                   skip_attached_bug_check=True, skip_mirror_binaries=True, signing_env="prod")
+        pipeline = await PromotePipeline.create(
+            runtime, group="openshift-4.10", assembly="art0001",
+            skip_attached_bug_check=True, skip_mirror_binaries=True, signing_env="prod")
 
         await pipeline.run()
-        load_group_config.assert_awaited_once_with("openshift-4.10", "art0001", env=ANY)
+        load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10',
                                                       data_path='https://example.com/ocp-build-data.git')
         get_release_image_info.assert_any_await(
@@ -256,7 +259,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={
         "releases": {"4.10.99": {"assembly": {"type": "standard"}}}
     })
-    @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=dict(arches=["x86_64", "s390x"]))
+    @patch("pyartcd.pipelines.promote.util.load_group_config",
+           return_value=Model(dict(arches=["x86_64", "s390x"])))
     async def test_run_with_standard_assembly_without_upgrade_edges(self, load_group_config: AsyncMock,
                                                                     load_releases_config: AsyncMock, _):
         runtime = MagicMock(
@@ -274,11 +278,11 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value = AsyncMock()
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
 
         with self.assertRaisesRegex(ValueError, "missing the required `upgrades` field"):
             await pipeline.run()
-        load_group_config.assert_awaited_once_with("openshift-4.10", "4.10.99", env=ANY)
+        load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
 
     @patch("pyartcd.locks.run_with_lock")
@@ -312,12 +316,12 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             "aarch64": "nightly-aarch64",
         }}}}}
     })
-    @patch("pyartcd.pipelines.promote.util.load_group_config", return_value={
+    @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=Model({
         "upgrades": "4.10.98,4.9.99",
         "advisories": {"rpm": 1, "image": 2, "extras": 3, "metadata": 4},
         "description": "whatever",
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
-    })
+    }))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
@@ -337,8 +341,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value = AsyncMock()
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
-        pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99",
-                                   skip_mirror_binaries=True, signing_env="prod")
+        pipeline = await PromotePipeline.create(
+            runtime, group="openshift-4.10", assembly="4.10.99",
+            skip_mirror_binaries=True, signing_env="prod")
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline.change_advisory_state = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={
@@ -354,7 +359,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.send_image_list_email = AsyncMock()
         pipeline.is_accepted = AsyncMock(return_value=False)
         await pipeline.run()
-        load_group_config.assert_awaited_once_with("openshift-4.10", "4.10.99", env=ANY)
+        load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
         pipeline.check_blocker_bugs.assert_awaited_once_with()
         for advisory in [1, 2, 3, 4]:
