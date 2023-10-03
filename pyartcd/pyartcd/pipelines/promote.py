@@ -52,6 +52,7 @@ class PromotePipeline:
                  skip_build_microshift: bool = False,
                  skip_signing: bool = False,
                  skip_cincinnati_prs: bool = False,
+                 skip_ota_notification: bool = False,
                  permit_overwrite: bool = False,
                  no_multi: bool = False, multi_only: bool = False,
                  skip_mirror_binaries: bool = False,
@@ -68,6 +69,7 @@ class PromotePipeline:
         self.skip_mirror_binaries = skip_mirror_binaries
         self.skip_signing = skip_signing
         self.skip_cincinnati_prs = skip_cincinnati_prs
+        self.skip_ota_notification = skip_ota_notification
         self.permit_overwrite = permit_overwrite
 
         if multi_only and no_multi:
@@ -1473,11 +1475,12 @@ class PromotePipeline:
         if "advisory" in release_info and release_info["advisory"]:
             advisory_id = release_info["advisory"]
 
-        jenkins.start_build_cincinnati_prs(
+        jenkins.start_cincinnati_prs(
             from_releases,
             release_info["name"],
             advisory_id,
             candidate_pr_note,
+            self.skip_ota_notification
         )
 
 
@@ -1498,6 +1501,8 @@ class PromotePipeline:
               help="Do not sign artifacts")
 @click.option("--skip-cincinnati-prs", is_flag=True,
               help="Do not create Cincinnati PRs")
+@click.option("--skip-ota-notification", is_flag=True,
+                help="Do not send OTA notification on slack")
 @click.option("--permit-overwrite", is_flag=True,
               help="DANGER! Allows the pipeline to overwrite an existing payload.")
 @click.option("--no-multi", is_flag=True, help="Do not promote a multi-arch/heterogeneous payload.")
@@ -1514,6 +1519,7 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                   skip_build_microshift: bool,
                   skip_signing: bool,
                   skip_cincinnati_prs: bool,
+                  skip_ota_notification: bool,
                   permit_overwrite: bool, no_multi: bool, multi_only: bool,
                   skip_mirror_binaries: bool,
                   use_multi_hack: bool,
@@ -1524,6 +1530,7 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                                skip_build_microshift,
                                skip_signing,
                                skip_cincinnati_prs,
+                               skip_ota_notification,
                                permit_overwrite, no_multi, multi_only,
                                skip_mirror_binaries,
                                use_multi_hack,

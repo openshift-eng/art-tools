@@ -280,8 +280,8 @@ def start_build_sync(build_version: str, assembly: str, doozer_data_path: Option
     )
 
 
-def start_build_cincinnati_prs(from_releases: list, release_name: str, advisory_id: int,
-                               candidate_pr_note: str, **kwargs) -> Optional[str]:
+def start_cincinnati_prs(from_releases: list, release_name: str, advisory_id: int,
+                         candidate_pr_note: str, skip_ota_notification, **kwargs) -> Optional[str]:
     return start_build(
         job=Jobs.CINCINNATI_PRS,
         params={
@@ -289,6 +289,7 @@ def start_build_cincinnati_prs(from_releases: list, release_name: str, advisory_
             'RELEASE_NAME': release_name,
             'ADVISORY_NUM': advisory_id,
             'CANDIDATE_PR_NOTE': candidate_pr_note,
+            'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification
         }, **kwargs
     )
 
