@@ -6,7 +6,7 @@ defusedxml
 future
 koji
 pip_system_certs
-PyGitHub >= 1.46
+PyGitHub == 1.59.1
 pyyaml >= 5.1
 requests
 requests_kerberos
