@@ -97,13 +97,13 @@ class TestVerifyAttachedOperators(unittest.TestCase):
             "returns external repos for nvr1 and not nvr2"
         )
 
-    @patch("elliottlib.cli.verify_attached_operators_cli.red_print")  # suppress output
-    @patch("elliottlib.cli.verify_attached_operators_cli.green_print")  # suppress output
+    @patch("elliottlib.cli.verify_attached_operators_cli.red_print")  # capture output
+    @patch("elliottlib.cli.verify_attached_operators_cli.green_print")  # capture output
     @patch("elliottlib.cli.verify_attached_operators_cli._nvr_for_operand_pullspec")
     @patch("elliottlib.cli.verify_attached_operators_cli._get_attached_advisory_ids")
     @patch("elliottlib.cli.verify_attached_operators_cli._get_cdn_repos")
     def test_missing_references(self, mock_gcdnr, mock_gadids, mock_nvr, mock_green, mock_red):
-        out = []
+        out = []  # populated by print due to side effects below
         mock_red.side_effect = mock_green.side_effect = lambda arg: out.append(arg)
         bundles = yaml.safe_load("""
             - nvr: bundle-nvr-1-0
@@ -121,41 +121,41 @@ class TestVerifyAttachedOperators(unittest.TestCase):
         mock_nvr.return_value = "operand-nvr-1-0"
         mock_gadids.return_value = set()
         mock_gcdnr.return_value = set()
-        self.assertEqual({"operand-nvr-1-0"}, vaocli._missing_references(None, bundles, set(), False))
+        self.assertEqual({None: ["operand-nvr-1-0"]}, vaocli._missing_references(None, bundles, set(), False, False)[1])
         self.assertIn("not shipped or attached", out.pop())
 
         # when we say the operand digest has been shipped, but give no CDNs
-        vaocli._missing_references(None, bundles, {"sha256:feedface"}, False)
+        vaocli._missing_references(None, bundles, {"sha256:feedface"}, False, False)
         self.assertIn("does not have any CDN repos", out.pop(), "should be found in shipped")
 
         # when we say it's attached to some advisory, but give no CDNs
         mock_gadids.return_value = {42}
-        vaocli._missing_references(None, bundles, set(), False)
+        vaocli._missing_references(None, bundles, set(), False, False)
         self.assertIn("does not have any CDN repos", out.pop(), "should be found in attached")
 
         # when we give a CDN but it doesn't match the bundle pullspec
         mock_gcdnr.return_value = {"openshift4/ose-kube-rbac-proxy-NOT"}
-        vaocli._missing_references(None, bundles, set(), False)
+        vaocli._missing_references(None, bundles, set(), False, False)
         self.assertIn("needs CDN repo 'openshift4/ose-kube-rbac-proxy'", out.pop())
 
         # when the CDN does match
         mock_gcdnr.return_value = {"openshift4/ose-kube-rbac-proxy"}
         self.assertFalse(
-            vaocli._missing_references(None, bundles, {"sha256:feedface"}, False),
+            vaocli._missing_references(None, bundles, {"sha256:feedface"}, False, False)[0],
             "should succeed")
         self.assertIn("shipped/shipping", out.pop())
 
         # ... but we omit advisories that weren't specified
-        vaocli._missing_references(None, bundles, set(), True)
-        self.assertIn("only found in omitted advisory {42}", out.pop())
+        self.assertEqual({42: ["operand-nvr-1-0"]}, vaocli._missing_references(None, bundles, set(), True, False)[1])
+        self.assertIn("only attached to separate advisory {42}", out.pop())
 
         # when not excluding separate advisories, it is finally found
         self.assertFalse(
-            vaocli._missing_references(None, bundles, set(), False),
+            vaocli._missing_references(None, bundles, set(), False, False)[0],
             "when not omitted")
         self.assertIn("attached to separate advisory {42}", out.pop())
 
         # when looking up the operand NVR in errata-tool fails
         mock_gadids.side_effect = BrewBuildException("no such build")
-        vaocli._missing_references(None, bundles, set(), False)
+        vaocli._missing_references(None, bundles, set(), False, False)
         self.assertIn("failed to look up in errata-tool", out.pop())
