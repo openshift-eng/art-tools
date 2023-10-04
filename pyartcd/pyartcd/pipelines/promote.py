@@ -1451,7 +1451,7 @@ class PromotePipeline:
     def create_cincinnati_prs(self, assembly_type, release_info):
         """ Create Cincinnati PRs for the release.
         """
-        if assembly_type == "custom":
+        if assembly_type == assembly.AssemblyTypes.CUSTOM:
             self._logger.info("Skipping PR creation for custom assembly")
             return
 
@@ -1502,7 +1502,7 @@ class PromotePipeline:
 @click.option("--skip-cincinnati-prs", is_flag=True,
               help="Do not create Cincinnati PRs")
 @click.option("--skip-ota-notification", is_flag=True,
-                help="Do not send OTA notification on slack")
+              help="Do not send OTA notification on slack")
 @click.option("--permit-overwrite", is_flag=True,
               help="DANGER! Allows the pipeline to overwrite an existing payload.")
 @click.option("--no-multi", is_flag=True, help="Do not promote a multi-arch/heterogeneous payload.")
