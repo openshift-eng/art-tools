@@ -289,7 +289,8 @@ def start_cincinnati_prs(from_releases: list, release_name: str, advisory_id: in
             'RELEASE_NAME': release_name,
             'ADVISORY_NUM': advisory_id,
             'CANDIDATE_PR_NOTE': candidate_pr_note,
-            'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification
+            'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification,
+            'GITHUB_ORG': 'openshift',
         }, **kwargs
     )
 
