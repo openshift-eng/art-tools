@@ -4,7 +4,7 @@ import os
 import shutil
 import tempfile
 
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
+from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
 from pyartcd.pipelines.promote import PromotePipeline
 from doozerlib.assembly import AssemblyTypes
 
@@ -284,6 +284,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.locks.run_with_lock")
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.jenkins.start_cincinnati_prs")
     @patch("pyartcd.pipelines.promote.PromotePipeline.build_release_image", return_value=None)
     @patch("pyartcd.pipelines.promote.get_release_image_info", side_effect=lambda pullspec, raise_if_not_found=False: {
         "image": pullspec,
@@ -299,7 +300,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                         "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
                     }
                 ]
-            }
+            },
+            "metadata": {"annotations": {"release.openshift.io/from-release": 'registry.ci.openshift.org/ocp/release:nightly'}}
         }
     } if raise_if_not_found else None)
     @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={
@@ -319,7 +321,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
-                                              build_release_image: AsyncMock, *_):
+                                              build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -376,6 +378,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.wait_for_stable.assert_any_await("4.10.99", "ppc64le", "4-stable-ppc64le")
         pipeline.wait_for_stable.assert_any_await("4.10.99", "aarch64", "4-stable-arm64")
         pipeline.send_image_list_email.assert_awaited_once_with("4.10.99", 2, ANY)
+        start_cincinnati_prs.assert_called_once_with(['nightly', 'nightly', 'nightly', 'nightly'], "4.10.99", 2, '', False)
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
