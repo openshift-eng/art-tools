@@ -1,5 +1,6 @@
 import logging
 import os
+import typing
 from functools import wraps
 from string import Template
 
@@ -39,6 +40,7 @@ def handle_connection(func):
         res = await func(conn, *args, **kwargs)
         conn.close()
         return res
+
     return wrapper
 
 
@@ -85,3 +87,45 @@ async def delete_key(conn: aioredis.commands.Redis, key: str) -> int:
     res = await conn.delete(key)
     logger.debug('Key %s %s', key, 'deleted' if res else 'not found')
     return res
+
+
+@handle_connection
+async def list_push(conn: aioredis.commands.Redis, key: str, value: str) -> None:
+    """
+    Push to a list in Redis, like a queue (FIFO). Docs: https://redis.io/docs/data-types/lists/
+    """
+
+    logger.debug('Pushing value %s to list %s', value, key)
+    await conn.lpush(key, value)
+
+
+@handle_connection
+async def list_pop(conn: aioredis.commands.Redis, key: str) -> typing.Optional[str]:
+    """
+    Pop a value from a list, like a queue (FIFO). Docs: https://redis.io/docs/data-types/lists/
+    :return: A string if a value is present, else None
+    """
+
+    value = await conn.rpop(key)
+    logger.debug('List %s has value %s', key, value)
+    return value
+
+
+@handle_connection
+async def list_see_all(conn: aioredis.commands.Redis, key: str) -> typing.Optional[list]:
+    """
+    Get all values from the Redis list. Does not pop values, list will still exist in Redis
+
+    :return: List of values from the key, or None if the list is empty or does not exist.
+    """
+    values = await conn.lrange(key, 0, -1)
+
+    return values
+
+
+async def list_push_all(key: str, values: list) -> None:
+    """
+    Push all values from list to the Redis key
+    """
+    for value in values:
+        await list_push(key, value)
