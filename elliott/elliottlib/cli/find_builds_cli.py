@@ -131,8 +131,8 @@ PRESENT advisory. Here are some examples:
         raise click.BadParameter('Use only one of --build or --from-diff/--between.')
     if clean and (remove or from_diff or builds):
         raise click.BadParameter('Option --clean cannot be used with --build or --from-diff/--between.')
-    if not builds and remove:
-        raise click.BadParameter('Option --remove only support removing specific build with -b.')
+    if remove and not builds:
+        raise click.BadParameter('Option --remove only supports removing specific builds with -b.')
     if from_diff and kind != "image":
         raise click.BadParameter('Option --from-diff/--between should be used with --kind/-k image.')
     if advisory_id and default_advisory_type:
