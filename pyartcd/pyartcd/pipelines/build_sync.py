@@ -2,7 +2,7 @@ import asyncio
 import glob
 import json
 import os
-
+import re
 import click
 import yaml
 
@@ -13,6 +13,7 @@ from pyartcd.runtime import Runtime
 from pyartcd import exectools, constants, redis, util
 from pyartcd.util import branch_arches
 from doozerlib.util import go_suffix_for_arch
+from ghapi.all import GhApi
 
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
@@ -37,7 +38,65 @@ class BuildSyncPipeline:
         self.working_dir = self.runtime.working_dir
         self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
 
+    async def comment_on_assembly_pr(self, text_body):
+        """
+        Comment the link to this jenkins build on the assembly PR if it was triggered automatically
+        """
+        # Keeping in try-except so that job doesn't fail because of any error here
+        try:
+            base_repo = "openshift-eng"
+            repository = "ocp-build-data"
+            branch = self.doozer_data_gitref
+            token = os.environ.get('GITHUB_TOKEN')
+
+            pattern = r"github\.com/([^/]+)/"
+            match = re.search(pattern, self.data_path)
+
+            repo_owner = None
+            if match:
+                repo_owner = match.group(1)
+
+            api = GhApi(owner=base_repo, repo=repository, token=token)
+
+            # Check if the doozer_data_gitref is given then, if not
+            # then it set the branch to openshift-{major}.{minor}
+            if not branch:
+                branch = f"openshift-{self.version}"
+
+            # Head needs to have the repo name prepended for GhApi to fetch the correct one
+            head = f"{repo_owner}:{branch}"
+            # Find our assembly PR.
+            prs = api.pulls.list(head=head, state="open")
+
+            if len(prs) != 1:
+                self.logger.error(
+                    f"{len(prs)} PR(s) were found with head={head}. We need only 1.")
+                return
+
+            if len(prs) == 0:
+                self.logger.error(f"No assembly PRs were found with head={head}")
+                return
+
+            pr_number = prs[0]["number"]
+
+            if self.runtime.dry_run:
+                self.logger.warning(f"[DRY RUN] Would have commented on PR {base_repo}/{repository}/pull/{pr_number} "
+                                    f"with the message: \n {text_body}")
+                return
+
+            # https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
+            # PR is an issue as far as  GitHub API is concerned
+            api.issues.create_comment(issue_number=pr_number, body=text_body)
+        except Exception as e:
+            self.logger.error(f"Error commenting to PR: {e}")
+
     async def run(self):
+        if self.assembly != 'stream':
+            # Comment on PR if triggered from gen assembly
+            # TODO: Need to get job run URL
+            text_body = f"Build sync job has been triggered"
+            await self.comment_on_assembly_pr(text_body)
+
         # Make sure we're logged into the OC registry
         await registry_login(self.runtime)
 
@@ -53,6 +112,12 @@ class BuildSyncPipeline:
         # Update nightly imagestreams
         self.logger.info('Update nightly imagestreams...')
         await self._update_nightly_imagestreams()
+
+        if self.assembly != 'stream':
+            # Comment on the PR that the job succeeded
+            # TODO: Need to get job run URL
+            text_body = f"Build sync job succeeded!"
+            await self.comment_on_assembly_pr(text_body)
 
     async def handle_success(self):
         #  All good: delete fail counter
@@ -347,6 +412,11 @@ class BuildSyncPipeline:
             if group_config['software_lifecycle']['phase'] == 'release':
                 slack_client.bind('#forum-ocp-release').say(msg)
 
+    async def handle_assembly_failure(self):
+        if self.assembly != 'stream':
+            # TODO: Need to get job run URL
+            text_body = f"Build sync job failed!"
+            await self.comment_on_assembly_pr(text_body)
 
 @cli.command('build-sync')
 @click.option("--version", required=True,
@@ -401,6 +471,9 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         # Only for 'stream' assembly, track failure to enable future notifications
         if assembly == 'stream' and not runtime.dry_run:
             await pipeline.handle_failure()
+
+        # comment on the PR that build-sync for assembly failed
+        await pipeline.handle_assembly_failure()
 
         # Re-reise the exception to make the job as failed
         raise
