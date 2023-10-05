@@ -52,8 +52,9 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
         cmd.append('--force')
     if runtime.dry_run:
         cmd.append('--dry-run')
-    cmd.append('--')
-    cmd.extend(nvrs.split(','))
+    if nvrs:
+        cmd.append('--')
+        cmd.extend(nvrs.split(','))
 
     lock = Lock.OLM_BUNDLE
     lock_name = lock.value.format(version=version)
