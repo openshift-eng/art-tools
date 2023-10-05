@@ -6,10 +6,15 @@ from doozerlib.cli import cli
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector, get_container_configs, get_container_pullspec
 
 
-@cli.command("gen-assembly:rhcos", short_help="Generate assembly config for rhcos by given build_id")
+@cli.command("gen-assembly:rhcos", short_help="Generate assembly config for rhcos by given build_id eg. 414.92.202309222337-0")
 @click.argument("build_id", required=True)
 @click.pass_obj
 def gen_assembly_rhcos(runtime, build_id):
+    """
+    Generate assembly config for rhcos by given build_id
+
+    $ doozer -g openshift-4.14 gen-assembly:rhcos 414.92.202309222337-0
+    """
     runtime.initialize(clone_distgits=False)
     rhcos_info = {}
     for arch in runtime.group_config.arches:
