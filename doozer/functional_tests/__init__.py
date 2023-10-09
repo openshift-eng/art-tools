@@ -21,8 +21,6 @@ DOOZER_ENV = {  # never prompt on the terminal
     "GIT_TERMINAL_PROMPT": "0",
 }
 
-BREW_HUB = "https://brewhub.engineering.redhat.com/brewhub"
-
 
 def run_doozer(doozer_args=[], checked=True):
     """ Executes Doozer as a subprocess with current Python interpreter.

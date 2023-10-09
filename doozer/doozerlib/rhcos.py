@@ -14,8 +14,8 @@ from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
 from doozerlib.util import brew_suffix_for_arch, isolate_el_version_in_release
 from artcommonlib import rhcos
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 
-RHCOS_BASE_URL = "https://releases-rhcos-art.apps.ocp-virt.prod.psi.redhat.com/storage/releases"
 logger = logutil.getLogger(__name__)
 
 
@@ -74,7 +74,7 @@ class RHCOSBuildFinder:
         if self.custom:
             bucket_suffix += '-custom'
 
-        return f"{RHCOS_BASE_URL}/rhcos-{self.version}{bucket_suffix}"
+        return f"{RHCOS_RELEASES_BASE_URL}/rhcos-{self.version}{bucket_suffix}"
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
     def latest_rhcos_build_id(self) -> Optional[str]:

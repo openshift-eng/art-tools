@@ -1,10 +1,9 @@
 """
 This file contains constants that are used to manage OCP Image and RPM builds
 """
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, BREW_HUB, BREW_DOWNLOAD_URL
 
-BREW_HUB = "https://brewhub.engineering.redhat.com/brewhub"
-BREW_DOWNLOAD_URL = "https://download.eng.bos.redhat.com/brewroot"
-RHCOS_RELEASES_BASE_URL = "https://releases-rhcos-art.apps.ocp-virt.prod.psi.redhat.com/storage/releases"
+
 CINCINNATI_BASE_URL = "https://api.openshift.com/api/upgrades_info/v1/graph"
 BREW_DOWNLOAD_TEMPLATE = BREW_DOWNLOAD_URL + "/packages/{name}/{version}/{release}/files/{file_path}"
 CGIT_URL = "https://pkgs.devel.redhat.com/cgit"
