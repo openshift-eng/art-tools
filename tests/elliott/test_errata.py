@@ -10,7 +10,7 @@ import bugzilla
 
 import unittest
 from unittest.mock import MagicMock, patch, Mock
-from tests import test_structures
+from . import test_structures
 from elliottlib import errata, constants, brew, exceptions
 
 unshipped_builds = [

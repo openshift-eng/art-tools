@@ -60,10 +60,7 @@ WORKDIR /workspaces/art-tools
 COPY . .
 RUN chown "$USERNAME" -R /workspaces/art-tools
 RUN sudo -u "$USERNAME" pip3 install --user -U "pip>=22.3" "setuptools>=64"
-RUN sudo -u "$USERNAME" pip3 install --user -e ./doozer
-RUN sudo -u "$USERNAME" pip3 install --user -e ./elliott
-RUN sudo -u "$USERNAME" pip3 install --user -e ./pyartcd
-RUN cd elliott && sudo -u "$USERNAME" pip3 install --user -e .[tests]
+RUN sudo -u "$USERNAME" pip3 install --user -e . -e .[tests]
 RUN GOBIN=/usr/bin/ go install github.com/mikefarah/yq/v4@latest
 USER "$USER_UID"
 ENV ELLIOTT_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \

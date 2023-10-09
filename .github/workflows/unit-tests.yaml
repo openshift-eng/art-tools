@@ -1,14 +1,15 @@
-name: pyartcd-unit-tests
+
+name: unit-tests
 
 on:
   pull_request:
     paths:
-      - 'pyartcd/**'
+      - '**'
 
 jobs:
   tests:
     runs-on: ubuntu-latest
-    container: fedora:37
+    container: fedora:38
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python 3.8
@@ -16,8 +17,8 @@ jobs:
         with:
           python-version: '3.8'
       - name: Install packages
-        run: cd pyartcd && dnf install -y gcc krb5-devel
+        run: dnf install -y gcc krb5-devel
       - name: Create venv and install dependencies
-        run: cd pyartcd && make venv
+        run: make venv
       - name: Run tests
-        run: cd pyartcd && make test
+        run: make test

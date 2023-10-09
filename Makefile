@@ -10,10 +10,10 @@ venv:
 	# source venv/bin/activate
 
 lint:
-	./venv/bin/python -m flake8
+	./venv/bin/python -m flake8 artcommonlib/ doozerlib/ elliottlib/ pyartcd/
 
 pylint:
-	./venv/bin/python -m pylint artcommonlib/
+	./venv/bin/python -m pylint artcommonlib/ doozerlib/ elliottlib/ pyartcd/
 
 test: lint
 	./venv/bin/python -m pytest --verbose --color=yes --disable-pytest-warnings tests/
