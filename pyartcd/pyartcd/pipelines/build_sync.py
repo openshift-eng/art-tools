@@ -6,10 +6,11 @@ import os
 import click
 import yaml
 
+from artcommonlib import rhcos
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
 from pyartcd.redis import RedisError
-from pyartcd.runtime import Runtime
+from pyartcd.runtime import Runtime, GroupRuntime
 from pyartcd import exectools, constants, redis, util
 from pyartcd.util import branch_arches
 from doozerlib.util import go_suffix_for_arch
@@ -18,11 +19,22 @@ GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
 
 class BuildSyncPipeline:
+
+    @classmethod
+    async def create(cls, *args, **kwargs):
+        self = cls(*args, **kwargs)
+        self.group_runtime = await GroupRuntime.create(
+            self.runtime.config, self.working_dir,
+            self.group, self.assembly
+        )
+        return self
+
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                  emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
                  debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
         self.runtime = runtime
         self.version = version
+        self.group = f'openshift-{version}'
         self.assembly = assembly
         self.publish = publish
         self.data_path = data_path
@@ -147,18 +159,6 @@ class BuildSyncPipeline:
         cmd.extend(glob.glob('*.backup.yaml'))
         await exectools.cmd_assert_async(cmd)
 
-    async def _tags_to_transfer(self) -> list:
-        """
-        Gather a list of tags to mirror to the CI imagestream. This will include rhel-coreos*
-        to pick up any future RHCOS RHEL versions (e.g. rhel-coreos-8 and rhel-coreos[-extensions] starting with RHEL9).
-        """
-
-        cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} get -n ocp is/{self.version}-art-latest -o=json'
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        tags = json.loads(out)['spec']['tags']
-        tags_to_transfer = [tag['name'] for tag in tags if 'machine-os-content' in tag['name'] or 'rhel-coreos' in tag['name']]
-        return tags_to_transfer
-
     @exectools.limit_concurrency(500)
     async def _tag_into_ci_imagestream(self, arch_suffix, tag):
         # isolate the pullspec trom the ART imagestream tag
@@ -205,7 +205,7 @@ class BuildSyncPipeline:
                 group=f'openshift-{self.version}',
                 assembly=self.assembly
             )
-            tags_to_transfer: list = await self._tags_to_transfer()
+            tags_to_transfer: list = rhcos.get_container_names(self.group_runtime)
 
             tasks = []
             for arch in supported_arches:
@@ -341,10 +341,8 @@ class BuildSyncPipeline:
             await slack_client.say(msg)
 
         if fail_count % forum_release_notify_frequency == 0:
-            group_config = await util.load_group_config(group=f'openshift-{self.version}', assembly=self.assembly)
-
             # For GA releases, let forum-ocp-release know why no new builds
-            if group_config['software_lifecycle']['phase'] == 'release':
+            if self.group_runtime.group_config['software_lifecycle']['phase'] == 'release':
                 slack_client.bind('#forum-ocp-release').say(msg)
 
 
@@ -378,7 +376,7 @@ class BuildSyncPipeline:
 async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
                      debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
-    pipeline = BuildSyncPipeline(
+    pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
         assembly=assembly,
