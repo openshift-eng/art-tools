@@ -158,7 +158,7 @@ async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: st
             return await coro
 
     except LockError as e:
-        lock_manager.logger.error('Failed acquiring lock %s: %s', e)
+        lock_manager.logger.error('Failed acquiring lock %s: %s', lock_name, e)
         raise
 
     finally:
