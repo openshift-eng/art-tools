@@ -1,9 +1,10 @@
-name: pyartcd-unit-tests
+
+name: unit-tests
 
 on:
   pull_request:
     paths:
-      - 'pyartcd/**'
+      - '**'
 
 jobs:
   tests:
@@ -16,6 +17,8 @@ jobs:
         with:
           fetch-depth: 0
           set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
+      - name: Install packages
+        run: dnf install -y gcc krb5-devel
       - name: Set up Python 3.8
         uses: actions/setup-python@v4
         with:
@@ -23,6 +26,6 @@ jobs:
       - name: Install packages
         run: dnf install -y gcc krb5-devel
       - name: Create venv and install dependencies
-        run: cd pyartcd && make venv
+        run: make venv
       - name: Run tests
-        run: cd pyartcd && make test
+        run: make test
