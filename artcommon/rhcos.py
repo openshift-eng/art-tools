@@ -1,4 +1,5 @@
 from artcommon.model import ListModel, Model
+from artcommon.runtime import GroupRuntime
 
 # Historically the only RHCOS container was 'machine-os-content'; see
 # https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
@@ -18,7 +19,7 @@ class RhcosMissingContainerException(Exception):
     pass
 
 
-def get_container_configs(runtime):
+def get_container_configs(runtime: GroupRuntime):
     """
     look up the group.yml configuration for RHCOS container(s) for this group, or create if missing.
     @return ListModel with Model entries like ^^ default_primary_container
@@ -26,7 +27,7 @@ def get_container_configs(runtime):
     return runtime.group_config.rhcos.payload_tags or ListModel([default_primary_container])
 
 
-def get_container_names(runtime):
+def get_container_names(runtime: GroupRuntime):
     """
     look up the payload tags of the group.yml-configured RHCOS container(s) for this group
     @return list of container names
@@ -34,7 +35,7 @@ def get_container_names(runtime):
     return {tag.name for tag in get_container_configs(runtime)}
 
 
-def get_primary_container_conf(runtime):
+def get_primary_container_conf(runtime: GroupRuntime):
     """
     look up the group.yml-configured primary RHCOS container for this group.
     @return Model with entries for name and build_metadata_key
@@ -45,7 +46,7 @@ def get_primary_container_conf(runtime):
     raise Exception("Need to provide a group.yml rhcos.payload_tags entry with primary=true")
 
 
-def get_primary_container_name(runtime):
+def get_primary_container_name(runtime: GroupRuntime):
     """
     convenience method to retrieve configured primary RHCOS container name
     @return primary container name (used in payload tag)
