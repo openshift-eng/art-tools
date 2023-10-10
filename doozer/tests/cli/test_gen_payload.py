@@ -17,7 +17,7 @@ from doozerlib.image import BrewBuildImageInspector
 from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
-from artcommonlib.rhcos import RhcosMissingContainerException
+from artcommon.rhcos import RhcosMissingContainerException
 
 
 async def no_sleep(arg):

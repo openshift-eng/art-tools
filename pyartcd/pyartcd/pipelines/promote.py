@@ -21,7 +21,7 @@ from tenacity import (RetryCallState, RetryError, retry,
                       retry_if_exception_type, retry_if_result,
                       stop_after_attempt, wait_fixed)
 
-from artcommonlib.rhcos import get_primary_container_name
+from artcommon.rhcos import get_primary_container_name
 from doozerlib import assembly
 from doozerlib.util import (brew_arch_for_go_arch, brew_suffix_for_arch,
                             go_arch_for_brew_arch, go_suffix_for_arch)

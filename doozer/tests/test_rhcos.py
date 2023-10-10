@@ -9,7 +9,7 @@ from urllib.error import URLError
 import yaml
 
 from doozerlib import rhcos
-from artcommonlib.rhcos import RhcosMissingContainerException
+from artcommon.rhcos import RhcosMissingContainerException
 from doozerlib.model import Model
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos

@@ -60,7 +60,6 @@ WORKDIR /workspaces/art-tools
 COPY . .
 RUN chown "$USERNAME" -R /workspaces/art-tools
 RUN sudo -u "$USERNAME" pip3 install --user -U "pip>=22.3" "setuptools>=64"
-RUN sudo -u "$USERNAME" pip3 install --user -e ./art-common
 RUN sudo -u "$USERNAME" pip3 install --user -e ./doozer
 RUN sudo -u "$USERNAME" pip3 install --user -e ./elliott
 RUN sudo -u "$USERNAME" pip3 install --user -e ./pyartcd

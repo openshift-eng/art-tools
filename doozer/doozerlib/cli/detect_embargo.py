@@ -8,7 +8,7 @@ import click
 import yaml
 
 from doozerlib import Runtime, brew, exectools
-from artcommonlib import rhcos
+from artcommon import rhcos
 from doozerlib import build_status_detector as bs_detector
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.exceptions import DoozerFatalError

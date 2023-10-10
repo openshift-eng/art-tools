@@ -7,7 +7,7 @@ import tempfile
 from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
 from pyartcd.pipelines.promote import PromotePipeline
 from doozerlib.assembly import AssemblyTypes
-from artcommonlib.model import Model
+from artcommon.model import Model
 
 
 class TestPromotePipeline(IsolatedAsyncioTestCase):

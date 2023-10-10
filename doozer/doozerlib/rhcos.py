@@ -13,8 +13,8 @@ from doozerlib.model import ListModel, Model
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
 from doozerlib.util import brew_suffix_for_arch, isolate_el_version_in_release
-from artcommonlib import rhcos
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
+from artcommon import rhcos
+from artcommon.constants import RHCOS_RELEASES_BASE_URL
 
 logger = logutil.getLogger(__name__)
 

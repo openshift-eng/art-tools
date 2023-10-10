@@ -2,7 +2,7 @@ import click
 import json
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util, exectools
-from artcommonlib.rhcos import get_primary_container_name
+from artcommon.rhcos import get_primary_container_name
 
 
 @cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")

@@ -6,7 +6,7 @@ import os
 import click
 import yaml
 
-from artcommonlib import rhcos
+from artcommon import rhcos
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
 from pyartcd.redis import RedisError

@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 import tomli
 
-from artcommonlib import runtime, model
+from artcommon import runtime, model
 from pyartcd import jenkins, util, constants
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService

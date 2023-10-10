@@ -4,7 +4,7 @@ import yaml
 from doozerlib import util
 from doozerlib.cli import cli
 from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
-from artcommonlib.rhcos import get_container_configs, get_container_pullspec
+from artcommon.rhcos import get_container_configs, get_container_pullspec
 
 
 @cli.command("gen-assembly:rhcos", short_help="Generate assembly config for rhcos by given build_id eg. 414.92.202309222337-0")

@@ -11,7 +11,7 @@ from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.assembly import assembly_rhcos_config, AssemblyTypes, assembly_permits, AssemblyIssue, \
     AssemblyIssueCode, assembly_type
 from doozerlib.rhcos import RHCOSBuildInspector, RHCOSBuildFinder
-from artcommonlib.rhcos import get_container_configs, RhcosMissingContainerException
+from artcommon.rhcos import get_container_configs, RhcosMissingContainerException
 
 
 class AssemblyInspector:

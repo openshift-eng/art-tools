@@ -55,7 +55,6 @@ dependencies = [
     "pyyaml",
     "requests",
     "requests-gssapi ~= 1.2.3",
-    "rh-art-commonlib",
     "ruamel.yaml",
     "tenacity",
     "jira >= 3.4.1",  # https://github.com/pycontribs/jira/issues/1486

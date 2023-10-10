@@ -13,8 +13,8 @@ import aiofiles
 import click
 from doozerlib import rpm_utils
 import yaml
-from artcommonlib import rhcos
-from artcommonlib.rhcos import RhcosMissingContainerException
+from artcommon import rhcos
+from artcommon.rhcos import RhcosMissingContainerException
 import openshift as oc
 from doozerlib.rpm_utils import parse_nvr
 

@@ -3,7 +3,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
 from elliottlib.model import ListModel
 from elliottlib import util, exectools, constants
-from artcommonlib.rhcos import get_container_configs, get_primary_container_name
+from artcommon.rhcos import get_container_configs, get_primary_container_name
 
 
 def release_url(runtime, version, arch="x86_64", private=False):
