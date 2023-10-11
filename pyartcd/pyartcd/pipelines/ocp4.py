@@ -866,6 +866,7 @@ class Ocp4Pipeline:
         # Rebase and build images
         if self.build_plan.build_images:
             if self.mass_rebuild:
+                await self._slack_client.say(f':construction: Mass rebuild for {self.version} :construction:')
                 await locks.run_with_lock(
                     coro=self._rebase_and_build_images(),
                     lock=Lock.MASS_REBUILD,
