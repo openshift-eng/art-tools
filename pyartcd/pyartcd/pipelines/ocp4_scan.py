@@ -23,6 +23,7 @@ class Ocp4ScanPipeline:
         self.rhcos_inconsistent = False
         self.inconsistent_rhcos_rpms = None
         self.changes = {}
+        self.issues = []
         self._doozer_working = self.runtime.working_dir / "doozer_working"
 
     async def run(self):
@@ -40,6 +41,7 @@ class Ocp4ScanPipeline:
         # Check for RHCOS changes and inconsistencies
         # Running these two commands sequentially (instead of using asyncio.gather) to avoid file system conflicts
         await self._get_changes()
+        await self._handle_scan_issues()
         await self._rhcos_inconsistent()
 
         # Handle source changes, if any
@@ -96,6 +98,7 @@ class Ocp4ScanPipeline:
               f'--group=openshift-{self.version} ' \
               f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]}'
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
+
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
 
         yaml_data = yaml.safe_load(out)
@@ -112,6 +115,30 @@ class Ocp4ScanPipeline:
             self.rhcos_changed = False
 
         self.changes = changes
+        self.issues = yaml_data.get('issues', [])
+
+    async def _handle_scan_issues(self):
+        """
+        doozer config:scan-sources might have encountered issues during rebase into openshift-priv.
+        Issues may include:
+        - a repo could not be rebased because it needs manual reconciliation
+        - git push to openshift-priv failed even after retries
+
+        In both cases, an alert is generated on Slack
+        """
+
+        if not self.issues:
+            return  # all good
+
+        slack_client = self.runtime.new_slack_client()
+        slack_client.bind_channel(self.version)
+        message = \
+            f':warning: @release-artists, some issues have arisen during scan-sources for *{self.version}* :warning:'
+        slack_response = await slack_client.say(message)
+
+        slack_thread = slack_response["message"]["ts"]
+        for issue in self.issues:
+            await slack_client.say(f'\n- `{issue["name"]}`: {issue["issue"]}', slack_thread)
 
     async def _rhcos_inconsistent(self):
         """
