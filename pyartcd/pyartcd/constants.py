@@ -17,6 +17,12 @@ NIGHTLY_PAYLOAD_REPOS = {
     "ppc64le": "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le",
     "aarch64": "registry.ci.openshift.org/ocp-arm64/release-arm64",
 }
+RELEASE_CONTROLLER_ENDPOINT = {
+    "x86_64": "https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestream",
+    "aarch64": "https://arm64.ocp.releases.ci.openshift.org/api/v1/releasestream",
+    "s390x": "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream",
+    "ppc64le": "https://ppc64le.ocp.releases.ci.openshift.org/api/v1/releasestream",
+}
 
 # Maps the name of a release component tag to the filename element to include
 # when creating artifacts on mirror.openshift.com.

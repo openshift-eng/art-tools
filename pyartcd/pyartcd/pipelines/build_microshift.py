@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import requests
 import traceback
 from collections import namedtuple
 from datetime import datetime
@@ -12,7 +13,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, cast
 
 import click
 from doozerlib.assembly import AssemblyTypes
-from doozerlib.util import (brew_arch_for_go_arch,
+from doozerlib.util import (go_arch_for_brew_arch,
                             isolate_nightly_name_components)
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
@@ -96,7 +97,7 @@ class BuildMicroShiftPipeline:
                     raise ValueError("--no-rebase is not supported to build against assembly stream.")
                 if not self.payloads:
                     raise ValueError("Release payloads must be specified to rebase against assembly stream.")
-                payload_infos = await self.parse_release_payloads(self.payloads)
+                payload_infos = self.parse_release_payloads(self.payloads)
                 if "x86_64" not in payload_infos or "aarch64" not in payload_infos:
                     raise ValueError("x86_64 payload and aarch64 payload are required for rebasing microshift.")
                 for info in payload_infos.values():
@@ -267,28 +268,20 @@ class BuildMicroShiftPipeline:
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     @staticmethod
-    async def parse_release_payloads(payloads: Iterable[str]):
+    def parse_release_payloads(payloads: Iterable[str]):
         result = {}
-        pullspecs = []
         for payload in payloads:
-            if "/" not in payload:
-                # Convert nightly name to pullspec
-                # 4.12.0-0.nightly-2022-10-25-210451 ==> registry.ci.openshift.org/ocp/release:4.12.0-0.nightly-2022-10-25-210451
-                _, brew_cpu_arch, _ = isolate_nightly_name_components(payload)
-                pullspecs.append(constants.NIGHTLY_PAYLOAD_REPOS[brew_cpu_arch] + ":" + payload)
+            if "arm64" in payload:
+                brew_arch = "aarch64"
+                res = requests.get(f"{constants.RELEASE_CONTROLLER_ENDPOINT[brew_arch]}/{payload.split('-')[0]}-0.nightly-arm64/release/{payload}")
             else:
-                # payload is a pullspec
-                pullspecs.append(payload)
-        payload_infos = await asyncio.gather(*(oc.get_release_image_info(pullspec) for pullspec in pullspecs))
-        for info in payload_infos:
-            arch = info["config"]["architecture"]
-            brew_arch = brew_arch_for_go_arch(arch)
-            version = info["metadata"]["version"]
+                brew_arch = "x86_64"
+                res = requests.get(f"{constants.RELEASE_CONTROLLER_ENDPOINT[brew_arch]}/{payload.split('-')[0]}-0.nightly/release/{payload}")
             result[brew_arch] = {
-                "version": version,
-                "arch": arch,
-                "pullspec": info["image"],
-                "digest": info["digest"],
+                "version": payload,
+                "arch": go_arch_for_brew_arch(brew_arch),
+                "pullspec": constants.NIGHTLY_PAYLOAD_REPOS[brew_arch] + ":" + payload,
+                "digest": res.json()['changeLogJson']['to']['digest'],
             }
         return result
 
