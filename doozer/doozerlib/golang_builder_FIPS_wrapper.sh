@@ -1,6 +1,6 @@
 #!/bin/sh
 
-LOG_PREFIX="Go compliance shim [${__doozer_group}][${__doozer_key}]:"
+LOG_PREFIX="Go compliance shim [$$] [${__doozer_group}][${__doozer_key}]:"
 
 echoerr() {
   if [[ "${GO_COMPLIANCE_DEBUG}" == "1" || "${GO_COMPLIANCE_INFO}" == "1" ]]; then
@@ -26,7 +26,15 @@ run_go() {
   else
     # The Dockerfile must ensure that "go.real" is in the current $PATH
     echoerr "invoking real go binary"
-    go.real "${ARGS[@]}"
+    # Pass GO_COMPLIANCE_INFO=0 GO_COMPLIANCE_DEBUG=0 to the go invocation.
+    # This is because go programs will sometimes invoke go programs. In one
+    # scenario, the parent go program was trying to parse the stderr of the
+    # child go invocation. Since the shim was outputting to stderr,
+    # this parsing failed.
+    GO_COMPLIANCE_INFO=0 GO_COMPLIANCE_DEBUG=0 go.real "${ARGS[@]}"
+    EXT="$?"
+    echoerr "Exited with: ${EXT}"
+    exit "${EXT}"
   fi
 }
 
