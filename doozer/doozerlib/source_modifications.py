@@ -82,7 +82,7 @@ class AddModifier(object):
         :param doozer_source: Relative source path within doozer
 
         """
-        self.source = kwargs["source"]
+        self.source = kwargs.get("source", None)
         self.path = kwargs["path"]
         self.overwriting = kwargs.get("overwriting", False)
         self.validate = kwargs.get("validate", None)
@@ -125,7 +125,7 @@ class AddModifier(object):
                 else:
                     raise ValueError("Unknown 'validate' value: {self.validate}")
         else:  # use doozer local source
-            content = Path(Path(__file__).parent, self.doozer_source).read_text()
+            content = Path(Path(__file__).parent, self.doozer_source).read_bytes()
 
         mkdirs(os.path.dirname(dest_path))
         with io.open(dest_path, "wb") as dest_file:
