@@ -31,7 +31,6 @@ from .pushd import Dir
 
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata
-from .metadata import Metadata, RebuildHint
 from doozerlib import state
 from .model import Model, Missing
 from multiprocessing import Lock, RLock, Semaphore
@@ -1555,19 +1554,6 @@ class Runtime(object):
         major = int(self.group_config.vars['MAJOR'])
         minor = int(self.group_config.vars['MINOR'])
         return major, minor
-
-    def scan_for_upstream_changes(self) -> List[Tuple[Metadata, RebuildHint]]:
-        """
-        Determines if the current upstream source commit hash has a downstream
-        build associated with it.
-        :return: Returns a list of tuples. Each tuple contains an rpm or image metadata
-        and a change tuple (changed: bool, message: str).
-        """
-        return exectools.parallel_exec(
-            lambda meta, _: (meta, meta.needs_rebuild()),
-            self.image_metas() + self.rpm_metas(),
-            n_threads=20,
-        ).get()
 
     def resolve_metadata(self):
         """
