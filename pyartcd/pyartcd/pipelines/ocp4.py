@@ -712,7 +712,7 @@ class Ocp4Pipeline:
 
         if self.mass_rebuild:
             await self._slack_client.say(
-                f':construction: Starting image builds for {self.version} mass rebuild :construction:')
+                f':construction: Starting image builds for {self.version.stream} mass rebuild :construction:')
 
         # In case of mass rebuilds, rebase and build should happend within the same lock scope
         # Otherwise we might rebase, then get blocked on the mass rebuild lock
@@ -721,7 +721,7 @@ class Ocp4Pipeline:
         await self._build_images()
 
         if self.mass_rebuild:
-            await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version} complete :done_it_is:')
+            await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version.stream} complete :done_it_is:')
 
     async def _sync_images(self):
         if not self.build_plan.build_images:
@@ -873,7 +873,7 @@ class Ocp4Pipeline:
         if self.build_plan.build_images:
             if self.mass_rebuild:
                 await self._slack_client.say(
-                    f':loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:')
+                    f':loading-correct: Enqueuing mass rebuild for {self.version.stream} :loading-correct:')
                 await locks.run_with_lock(
                     coro=self._rebase_and_build_images(),
                     lock=Lock.MASS_REBUILD,
