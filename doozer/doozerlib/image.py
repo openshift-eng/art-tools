@@ -5,7 +5,6 @@ import json
 import logging
 from typing import (Any, Awaitable, Dict, List, Optional, Set, Tuple, Union,
                     cast)
-from copy import deepcopy
 
 import doozerlib
 from doozerlib import brew, coverity, exectools
@@ -460,26 +459,11 @@ class ImageMetadata(Metadata):
                 return False
 
     def calculate_config_digest(self, group_config, streams):
-        ignore_keys = ["owners", "scan_sources", "content.source.ci_alignment",
-                       "content.source.git"]  # list of keys that shouldn't be involved in config digest calculation
-        image_config: Dict[str, Any] = deepcopy(self.config.primitive())
+        image_config: Dict[str, Any] = self.config.primitive()  # primitive() should create a shallow clone for the underlying dict
         group_config: Dict[str, Any] = group_config.primitive()
         streams: Dict[str, Any] = streams.primitive()
-
-        # Remove image_config fields specified in ignore_keys
-        for key in ignore_keys:
-            c = image_config
-            seg = None
-            p = None
-            for seg in key.split("."):
-                if seg not in c:
-                    p = None
-                    break
-                p = c
-                c = c[seg]
-            if p and seg:
-                del p[seg]
-
+        if "owners" in image_config:
+            del image_config["owners"]  # ignore the owners entry for the digest: https://issues.redhat.com/browse/ART-1080
         message = {
             "config": image_config,
         }
