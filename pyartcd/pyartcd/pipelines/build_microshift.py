@@ -167,10 +167,16 @@ class BuildMicroShiftPipeline:
 
             if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                 version = f'{major}.{minor}'
-                jenkins.start_microshift_sync(version=version, assembly=self.assembly)
-                message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
-                          f"This will publish the microshift build to mirror"
-                await self.slack_say(message)
+                try:
+                    jenkins.start_microshift_sync(version=version, assembly=self.assembly)
+                    message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
+                              f"This will publish the microshift build to mirror"
+                    await self.slack_say(message)
+                except Exception:
+                    message = "@release-artists Please start <microshift sync | " \
+                              "https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888" \
+                              "/job/aos-cd-builds/job/build%252Fmicroshift_sync> manually."
+                    await self.slack_say(message)
 
             # prepare microshift advisory
             await self.slack_say(f"Start preparing microshift advisory for assembly {self.assembly}..")
