@@ -8,6 +8,7 @@ import click
 from doozerlib import dotconfig, __version__
 from doozerlib.cli import cli_opts
 from doozerlib.runtime import Runtime
+from doozerlib.telemetry import initialize_telemetry
 from doozerlib.util import yellow_print
 
 CTX_GLOBAL = None
@@ -38,6 +39,8 @@ def print_version(ctx, param, value):
 @click.group(context_settings=context_settings)
 @click.option('--version', is_flag=True, callback=print_version,
               expose_value=False, is_eager=True)
+@click.option('--enable-telemetry', is_flag=True,
+              help="[Experimental] Enable OpenTelemetry support")
 @click.option("--data-path", metavar='PATH', default=None,
               help="Git repo or directory containing groups metadata")
 @click.option("--working-dir", metavar='PATH', default=None,
@@ -104,6 +107,10 @@ def print_version(ctx, param, value):
 def cli(ctx, **kwargs):
     global CTX_GLOBAL
     kwargs['global_opts'] = None  # can only be set in settings.yaml, add manually
+
+    # Initialize telemetry if needed
+    if kwargs['enable_telemetry'] or os.environ.get("TELEMETRY_ENABLED") == "1":
+        initialize_telemetry()
 
     # This section mostly for containerizing doozer
     # It allows the user to simply place settings.yaml into their working dir

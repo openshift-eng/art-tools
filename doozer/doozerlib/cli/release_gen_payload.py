@@ -15,14 +15,17 @@ from doozerlib import rpm_utils
 import yaml
 from doozerlib import rhcos
 import openshift as oc
-from doozerlib.rpm_utils import parse_nvr
+from opentelemetry import metrics, trace
 
+
+from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.rhcos import RHCOSBuildInspector, RhcosMissingContainerException
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.image import ImageMetadata, BrewBuildImageInspector, ArchiveImageInspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
+from doozerlib.telemetry import start_as_current_span_async
 from doozerlib.util import red_print, go_suffix_for_arch, brew_arch_for_go_arch, isolate_nightly_name_components, \
     convert_remote_git_to_https, go_arch_for_brew_arch
 from doozerlib.assembly import AssemblyTypes, assembly_basis, AssemblyIssue, AssemblyIssueCode
@@ -30,6 +33,9 @@ from doozerlib import exectools
 from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import find_manifest_list_sha
+
+
+TRACER = trace.get_tracer(__name__)
 
 
 @cli.command("release:gen-payload", short_help="Mirror release images to quay and release-controller")
@@ -272,16 +278,25 @@ class GenPayloadCli:
         # do we proceed with this payload after weighing issues against permits?
         self.payload_permitted = False
 
+    @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
         """
         Main entry point once instantiated with CLI inputs.
         """
+        rt = self.runtime
+        span = trace.get_current_span()
+        span.set_attributes({
+            "doozer.group": rt.group,
+            "doozer.assembly": str(rt.assembly) if rt.assembly else "",
+            "doozer.assembly_type": str(rt.assembly_type),
+            "doozer.brew_event": int(rt.brew_event) if rt.brew_event else 0,
+            "doozer.arches": sorted(rt.arches),
+        })
 
         self.validate_parameters()
-
-        rt = self.runtime
         self.logger.info(f"Collecting latest information associated with the assembly: {rt.assembly}")
-        assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
+        with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
+            assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
 
         self.payload_entries_for_arch = self.generate_payload_entries(assembly_inspector)
         assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
@@ -289,6 +304,7 @@ class GenPayloadCli:
         self.logger.info('\n%s', yaml.dump(assembly_report, default_flow_style=False, indent=2))
         with self.output_path.joinpath("assembly-report.yaml").open(mode="w") as report_file:
             yaml.dump(assembly_report, stream=report_file, default_flow_style=False, indent=2)
+        span.set_attribute("doozer.result.report", assembly_report)
 
         self.assess_assembly_viability()
         await self.sync_payloads()  # even when not permitted, produce what we _would have_ synced
@@ -347,14 +363,15 @@ class GenPayloadCli:
 
         return report
 
+    @start_as_current_span_async(TRACER, "GenPayloadCli.generate_assembly_issues_report")
     async def generate_assembly_issues_report(self, assembly_inspector: AssemblyInspector) -> (bool, Dict[str, Dict]):
         """
         Populate self.assembly_issues and payload entries with inconsistencies found.
         """
-
+        span = trace.get_current_span()
         rt = self.runtime
         self.logger.info("Checking assembly content for inconsistencies.")
-
+        span.add_event("Checking assembly content for inconsistencies")
         self.detect_mismatched_siblings(assembly_inspector)
         assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
 
@@ -366,6 +383,8 @@ class GenPayloadCli:
         # check that RPMs belonging to this assembly/group are consistent with the assembly definition.
         for rpm_meta in rt.rpm_metas():
             self.assembly_issues.extend(assembly_inspector.check_group_rpm_package_consistency(rpm_meta))
+
+        # check that RPMs belonging to this assembly/group are the latest
         if rt.assembly_type is AssemblyTypes.STREAM:
             await self.detect_non_latest_rpms(assembly_inspector)
         # check that images for this assembly/group are consistent with the assembly definition.
@@ -380,24 +399,30 @@ class GenPayloadCli:
         # If the assembly claims to have reference nightlies, assert that our payload matches them exactly.
         self.assembly_issues.extend(await PayloadGenerator.check_nightlies_consistency(assembly_inspector))
 
+        span.add_event("Summarizing assembly issue permits")
         return self.summarize_issue_permits(assembly_inspector)
 
+    @TRACER.start_as_current_span("GenPayloadCli.detect_mismatched_siblings")
     def detect_mismatched_siblings(self, assembly_inspector: AssemblyInspector):
         """
         Mismatched siblings are built from the same repo but at a different commit
         """
-
+        span = trace.get_current_span()
         self.logger.debug("Checking for mismatched sibling sources...")
         group_images: List = assembly_inspector.get_group_release_images().values()
+        issues = []
         for mismatched, sibling in PayloadGenerator.find_mismatched_siblings(group_images):
-            self.assembly_issues.append(AssemblyIssue(
+            issue = AssemblyIssue(
                 f"{mismatched.get_nvr()} was built from a different upstream "
                 f"source commit ({mismatched.get_source_git_commit()[:7]}) "
                 f"than one of its siblings {sibling.get_nvr()} "
                 f"from {sibling.get_source_git_commit()[:7]}",
                 component=mismatched.get_image_meta().distgit_key,
                 code=AssemblyIssueCode.MISMATCHED_SIBLINGS
-            ))
+            )
+            issues.append(issue)
+        self.assembly_issues.extend(issues)
+        span.set_attribute("doozer.result.issues", list(map(lambda it: it.to_dict(), issues)))
 
     @staticmethod
     def generate_id_tags_list(assembly_inspector: AssemblyInspector) -> List[Tuple[int, str]]:
@@ -411,6 +436,7 @@ class GenPayloadCli:
             if bbii
         ]
 
+    @TRACER.start_as_current_span("GenPayloadCli.collect_assembly_build_ids")
     def collect_assembly_build_ids(self, assembly_inspector: AssemblyInspector) -> Set[int]:
         """
         Collect a list of brew builds (images and RPMs) included in the assembly.
@@ -479,6 +505,7 @@ class GenPayloadCli:
                             'Adding tag %s to build: %s to prevent garbage collection.', desired_tag, build_id)
                         m.tagBuild(desired_tag, build_id)
 
+    @start_as_current_span_async(TRACER, "GenPayloadCli.detect_non_latest_rpms")
     async def detect_non_latest_rpms(self, assembly_inspector: AssemblyInspector):
         """
         If this is a stream assembly, images which are not using the latest rpm builds should not reach
@@ -506,6 +533,7 @@ class GenPayloadCli:
                             component=dgk, code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD
                         ))
 
+    @TRACER.start_as_current_span("GenPayloadCli.detect_inconsistent_images")
     def detect_inconsistent_images(self, assembly_inspector: AssemblyInspector):
         """
         Create issues for image builds selected by this assembly/group
@@ -517,6 +545,7 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(assembly_inspector.check_group_image_consistency(bbii))
 
+    @TRACER.start_as_current_span("GenPayloadCli.detect_installed_rpms_issues")
     def detect_installed_rpms_issues(self, assembly_inspector: AssemblyInspector):
         """
         Create issues for image builds with installed rpms
@@ -534,6 +563,7 @@ class GenPayloadCli:
         org, repo = self.component_repo
         return f"quay.io/{org}/{repo}"
 
+    @TRACER.start_as_current_span("GenPayloadCli.generate_payload_entries")
     def generate_payload_entries(self, assembly_inspector: AssemblyInspector) -> Dict[str, Dict[str, PayloadEntry]]:
         """
         Generate single-arch PayloadEntries for the assembly payload.
@@ -557,6 +587,7 @@ class GenPayloadCli:
 
         return entries_for_arch
 
+    @start_as_current_span_async(TRACER, "GenPayloadCli.detect_extend_payload_entry_issues")
     async def detect_extend_payload_entry_issues(self, assembly_inspector: AssemblyInspector):
         """
         Associate assembly issues with related payload entries if any.
@@ -671,6 +702,7 @@ class GenPayloadCli:
 
         return payload_permitted, assembly_issues_report
 
+    @TRACER.start_as_current_span("GenPayloadCli.assess_assembly_viability")
     def assess_assembly_viability(self):
         """
         Adjust assembly viability if needed per emergency_ignore_issues.
@@ -685,6 +717,15 @@ class GenPayloadCli:
                 self.apply = False
                 self.apply_multi_arch = False
 
+        span = trace.get_current_span()
+        span.set_attributes({
+            "doozer.param.emergency_ignore_issues": self.emergency_ignore_issues,
+            "doozer.result.viability": self.payload_permitted,
+            "doozer.result.apply": self.apply,
+            "doozer.result.apply_multi_arch": self.apply_multi_arch,
+        })
+
+    @start_as_current_span_async(TRACER, "GenPayloadCli.sync_payloads")
     async def sync_payloads(self):
         """
         Use the payload entries that have been generated across the arches to mirror the images
@@ -1541,9 +1582,13 @@ class PayloadGenerator:
         }
 
     @staticmethod
+    @TRACER.start_as_current_span("PayloadGenerator._find_rhcos_payload_entries")
     def _find_rhcos_payload_entries(assembly_inspector: AssemblyInspector,
-                                    arch: str) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
-
+                                    arch: str) -> Tuple[Dict[str, PayloadEntry], List[AssemblyIssue]]:
+        span = trace.get_current_span()
+        span.set_attributes({
+            "doozer.param.arch": arch,
+        })
         members: Dict[str, PayloadEntry] = dict()
         issues: List[AssemblyIssue] = list()
         rhcos_build: RHCOSBuildInspector = assembly_inspector.get_rhcos_build(arch)
@@ -1797,6 +1842,7 @@ class PayloadGenerator:
         return issues
 
     @staticmethod
+    @start_as_current_span_async(TRACER, "GenPayloadCli.check_nightlies_consistency")
     async def check_nightlies_consistency(assembly_inspector: AssemblyInspector) -> List[AssemblyIssue]:
         """
         If this assembly has reference-releases, check whether the current images selected by the
