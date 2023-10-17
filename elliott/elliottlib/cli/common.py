@@ -4,7 +4,7 @@ from functools import update_wrapper
 
 import click
 
-from elliottlib import Runtime, constants, dotconfig, version, errata
+from elliottlib import Runtime, constants, dotconfig, __version__, errata
 from elliottlib.cli import cli_opts
 from elliottlib.util import green_prefix, red_prefix, yellow_print
 
@@ -12,8 +12,8 @@ from elliottlib.util import green_prefix, red_prefix, yellow_print
 def print_version(ctx, param, value):
     if not value or ctx.resilient_parsing:
         return
-    click.echo('Elliott v{}'.format(version()))
-    click.echo("Python v{}".format(sys.version))
+    click.echo(f'Elliott v{__version__}')
+    click.echo(f'Python v{sys.version}')
     ctx.exit()
 
 

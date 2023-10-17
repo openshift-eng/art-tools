@@ -5,7 +5,7 @@ from functools import update_wrapper
 
 import click
 
-from doozerlib import dotconfig, version
+from doozerlib import dotconfig, __version__
 from doozerlib.cli import cli_opts
 from doozerlib.runtime import Runtime
 from doozerlib.util import yellow_print
@@ -26,7 +26,7 @@ or else they would die.
 def print_version(ctx, param, value):
     if not value or ctx.resilient_parsing:
         return
-    click.echo('Doozer v{}'.format(version()))
+    click.echo('Doozer v{}'.format(__version__))
     click.echo('Python v{}'.format(sys.version))
     click.echo(VERSION_QUOTE)
     ctx.exit()
