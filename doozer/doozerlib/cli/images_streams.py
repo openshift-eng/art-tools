@@ -77,6 +77,28 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, dry
             if upstream_dest is Missing:
                 raise IOError(f'Unable to mirror {upstream_entry_name} since upstream_image is not defined')
 
+            # If upstream_image_mirror is set, try to mirror the upstream_image
+            # to the locations specified. Note that this is NOT upstream_image_base .
+            # This should be the fully transformed result. Usually this is used
+            # to mirror public builder images to the private image builders.
+            # It is also important to note that there is no guarantee that the upstream_image
+            # image exists yet. If the image does not yet exist, this code should fail
+            # quietly.
+            if config.upstream_image_mirror is not Missing:
+                check_cmd = f'oc image info {config.upstream_image}'
+                rc, _, _ = exectools.cmd_gather(check_cmd)
+                if rc != 0:
+                    print(f'upstream_image {config.upstream_image} could not be found (this can be normal if no attempt has been made to create this image yet). Ignoring upstream_image_mirror until it does.')
+                else:
+                    for upstream_image_mirror_dest in config.upstream_image_mirror:
+                        priv_cmd = f'oc image mirror {config.upstream_image} {upstream_image_mirror_dest}'
+                        if runtime.registry_config_dir is not None:
+                            priv_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
+                        if dry_run:
+                            print(f'For {upstream_entry_name}, would have run: {priv_cmd}')
+                        else:
+                            exectools.cmd_assert(priv_cmd, retries=3, realtime=True)
+
             # If the configuration specifies an upstream_image_base, then ART is responsible for mirroring
             # that location and NOT the upstream_image. A buildconfig from gen-buildconfig is responsible
             # for transforming upstream_image_base to upstream_image.
@@ -128,16 +150,6 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, dry
                     print(f'For {upstream_entry_name}, would have run: {arm_cmd}')
                 else:
                     exectools.cmd_assert(arm_cmd, retries=3, realtime=True, timeout=1800)
-            # mirror builder image streams to priv namespace
-            if config.upstream_image_mirror is not Missing:
-                for upstream_image_mirror_dest in config.upstream_image_mirror:
-                    priv_cmd = f'oc image mirror {upstream_dest} {upstream_image_mirror_dest}'
-                    if runtime.registry_config_dir is not None:
-                        priv_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
-                    if dry_run:
-                        print(f'For {upstream_entry_name}, would have run: {priv_cmd}')
-                    else:
-                        exectools.cmd_assert(priv_cmd, retries=3, realtime=True)
 
 
 @images_streams.command('check-upstream', short_help='Dumps information about CI buildconfigs/mirrored images associated with this group.')
