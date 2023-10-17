@@ -11,6 +11,7 @@ from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
+from doozerlib.pushd import Dir
 
 
 class ConfigScanSources:
@@ -197,9 +198,18 @@ class ConfigScanSources:
             if current_digest.strip() != prev_digest.strip():
                 self.runtime.logger.info('%s config_digest %s is differing from %s',
                                          image_meta.distgit_key, prev_digest, current_digest)
-                self.add_image_meta_change(image_meta,
-                                           RebuildHint(RebuildHintCode.CONFIG_CHANGE,
-                                                       'Metadata configuration change'))
+                # fetch latest commit message on branch
+                with Dir(self.runtime.data_path):
+                    rc, commit_message, _ = exectools.cmd_gather('git log -1 --format=%s', strip=True)
+                    if rc != 0:
+                        raise IOError(f'Unable to retrieve commit message from {self.runtime.data_path}')
+
+                if commit_message.lower().startswith('scan-sources:noop'):
+                    self.runtime.logger.info('Ignoring digest change since commit message indicates noop')
+                else:
+                    self.add_image_meta_change(image_meta,
+                                               RebuildHint(RebuildHintCode.CONFIG_CHANGE,
+                                                           'Metadata configuration change'))
         except exectools.RetryException:
             self.runtime.logger.info('%s config_digest cannot be retrieved; request a build',
                                      image_meta.distgit_key)
