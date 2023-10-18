@@ -199,10 +199,10 @@ class ConfigScanSources:
                 self.runtime.logger.info('%s config_digest %s is differing from %s',
                                          image_meta.distgit_key, prev_digest, current_digest)
                 # fetch latest commit message on branch
-                with Dir(self.runtime.data_path):
+                with Dir(self.runtime.data_dir):
                     rc, commit_message, _ = exectools.cmd_gather('git log -1 --format=%s', strip=True)
                     if rc != 0:
-                        raise IOError(f'Unable to retrieve commit message from {self.runtime.data_path}')
+                        raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir}')
 
                 if commit_message.lower().startswith('scan-sources:noop'):
                     self.runtime.logger.info('Ignoring digest change since commit message indicates noop')
