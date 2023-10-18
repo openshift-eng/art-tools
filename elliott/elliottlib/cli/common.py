@@ -125,4 +125,7 @@ def move_builds(attached_builds, kind, from_advisory, to_advisory):
     to_erratum.ensure_state('NEW_FILES')
     to_erratum.attach_builds(attached_builds, kind)
     if old_state != 'NEW_FILES':
-        to_erratum.ensure_state(old_state)
+        try:
+            to_erratum.ensure_state(old_state)
+        except errata.ErrataException as ex:
+            yellow_print(f"Unable to move advisory {to_advisory} to {old_state}: {ex}. Please move it manually.")

@@ -330,11 +330,9 @@ def _handle_missing_builds(
         for adv in missing:
             missing_nvrs = builds_by_advisory[adv]
             if adv:
-                print(f"  {missing_nvrs} --from {adv}\n")
                 attached_builds = [b for b in errata.get_brew_builds(adv) if b.nvr in missing_nvrs]
                 move_builds(attached_builds, "image", adv, target)
             else:
-                print(f"  {missing_nvrs} --attach {target}\n")
                 # attaching builds from scratch is complicated; call out to existing cli
                 ctx.invoke(find_builds_cli, advisory=target, default_advisory_type=None,
                            builds=missing_nvrs, kind="image", from_diff=None, as_json=False,
@@ -342,14 +340,7 @@ def _handle_missing_builds(
                            non_payload=False, include_shipped=False, member_only=False)
         return True, True
     else:
-        print("To manually attach builds not already in the specified advisories:")
-        for adv in missing:
-            if adv:
-                builds_args = ",".join(b for b in builds_by_advisory[adv])
-                print(f"  elliott move-builds -k image --only {builds_args} --from {adv} --to <target_advisory>\n")
-            else:
-                builds_args = " ".join(f"-b {b}" for b in builds_by_advisory[adv])
-                print(f"  elliott find-builds -k image {builds_args} --attach <target_advisory>\n")
+        print("To automatically attach/move builds not already in the specified advisory, run with --gather-dependencies")
         return True, False
 
 
