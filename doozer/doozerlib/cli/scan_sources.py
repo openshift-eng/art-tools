@@ -205,7 +205,16 @@ class ConfigScanSources:
                         raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir}')
 
                 if commit_message.lower().startswith('scan-sources:noop'):
-                    self.runtime.logger.info('Ignoring digest change since commit message indicates noop')
+                    self.runtime.logger.info('Since commit message indicates noop, this does not count as a rebuild '
+                                             'change. Will update config digest')
+                    self.runtime.logger.info('Cloning distgit repo %s', image_meta.distgit_key)
+                    image_distgit = image_meta.distgit_repo()
+                    image_distgit.metadata.prevent_cloning = False
+                    image_distgit.clone(image_distgit.runtime.distgits_dir, image_distgit.branch)
+                    with Dir(image_distgit.distgit_dir):
+                        with image_distgit.dg_path.joinpath(".oit", "config_digest").open('w') as f:
+                            f.write(current_digest)
+                        self.runtime.logger.info("Saved config digest %s to .oit/config_digest", current_digest)
                 else:
                     self.add_image_meta_change(image_meta,
                                                RebuildHint(RebuildHintCode.CONFIG_CHANGE,
