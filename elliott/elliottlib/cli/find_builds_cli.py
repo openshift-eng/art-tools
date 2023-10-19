@@ -76,6 +76,8 @@ pass_runtime = click.make_pass_decorator(Runtime)
     help='(For rpms) Only sweep member rpms')
 @click_coroutine
 @pass_runtime
+# # # NOTE: if you change the method signature, be aware that verify_attached_operators_cli.py # # #
+# # # invokes find_builds_cli so please avoid breaking it.                                     # # #
 async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds, kind, as_json,
                           remove, clean, no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
     '''Automatically or manually find or attach/remove viable rpm or image builds
