@@ -258,7 +258,7 @@ class BuildMicroShiftPipeline:
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     # Advisory can have several pending checks, so retry it a few times
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(600))
+    @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))
     async def _change_advisory_status(self):
         """ move advisory status to QE
         """
