@@ -143,7 +143,7 @@ class ConfigScanSources:
         if create_event_ts > self.newest_image_event_ts:
             self.newest_image_event_ts = create_event_ts
 
-    def check_dependents(self, image_meta, build_info):
+    def check_dependents(self, image_meta: ImageMetadata, build_info):
         rebase_time = util.isolate_timestamp_in_release(build_info["release"])
         if not rebase_time:  # no timestamp string in NVR?
             return
@@ -186,7 +186,7 @@ class ConfigScanSources:
             n_threads=20
         )
 
-    def check_config_changes(self, image_meta, build_info):
+    def check_config_changes(self, image_meta: ImageMetadata, build_info):
         try:
             # git://pkgs.devel.redhat.com/containers/atomic-openshift-descheduler#6fc9c31e5d9437ac19e3c4b45231be8392cdacac
             source_url = build_info['source']
@@ -198,11 +198,12 @@ class ConfigScanSources:
             if current_digest.strip() != prev_digest.strip():
                 self.runtime.logger.info('%s config_digest %s is differing from %s',
                                          image_meta.distgit_key, prev_digest, current_digest)
-                # fetch latest commit message on branch
+                # fetch latest commit message on branch for the image metadata file
                 with Dir(self.runtime.data_dir):
-                    rc, commit_message, _ = exectools.cmd_gather('git log -1 --format=%s', strip=True)
+                    path = f'images/{image_meta.config_filename}'
+                    rc, commit_message, _ = exectools.cmd_gather(f'git log -1 --format=%s -- {path}', strip=True)
                     if rc != 0:
-                        raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir}')
+                        raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir} for {path}')
 
                 if commit_message.lower().startswith('scan-sources:noop'):
                     self.runtime.logger.info('Ignoring digest change since commit message indicates noop')
