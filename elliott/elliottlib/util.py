@@ -556,7 +556,7 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
         go_version = None
         nvr = (build['name'], build['version'], build['release'])
         name = nvr[0]
-        if 'golang-builder' in name or 'go-toolset' in name:
+        if name == 'openshift-golang-builder-container' or 'go-toolset' in name:
             go_version = golang_builder_version(nvr, logger)
             if not go_version:
                 raise ValueError(f'Cannot find go version for {name}')
@@ -572,7 +572,8 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
             continue
 
         for p, pinfo in parents.items():
-            if 'builder' in p or 'go-toolset' in p:
+            # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.20.10-202310161945.el9.gbbb66ea
+            if 'openshift-golang-builder' in p or 'go-toolset' in p:
                 go_version = pinfo.get('nvr')
                 break
 
