@@ -1,29 +1,38 @@
 import asyncio
+import os
 from datetime import datetime, timezone
 
 import click
 import yaml
 from typing import List, Tuple, Optional
 
-from doozerlib import brew, exectools, rhcos, util
-from doozerlib.cli import cli, pass_runtime, click_coroutine
+from github import Github
+
+from doozerlib import brew, exectools, rhcos, util, constants
+from doozerlib.cli import cli, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
+from doozerlib.model import Missing
+from doozerlib.pushd import Dir
 from doozerlib.runtime import Runtime
 from doozerlib.pushd import Dir
 
 
 class ConfigScanSources:
-    def __init__(self, runtime: Runtime, ci_kubeconfig: str, as_yaml: bool):
+    def __init__(self, runtime: Runtime, ci_kubeconfig: str, as_yaml: bool,
+                 rebase_priv: bool = False, dry_run: bool = False):
         self.runtime = runtime
         self.ci_kubeconfig = ci_kubeconfig
         self.as_yaml = as_yaml
+        self.rebase_priv = rebase_priv
+        self.dry_run = dry_run
 
         self.changing_rpm_metas = set()
         self.changing_image_metas = set()
         self.changing_rpm_packages = set()
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
+        self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
 
         self.all_rpm_metas = set(runtime.rpm_metas())
         self.all_image_metas = set(runtime.image_metas())
@@ -32,13 +41,19 @@ class ConfigScanSources:
         self.oldest_image_event_ts = None
         self.newest_image_event_ts = 0
 
+        self.github_client = Github(login_or_token=os.getenv(constants.GITHUB_TOKEN))
+
     def run(self):
         with self.runtime.shared_koji_client_session() as koji_api:
             self.runtime.logger.info(f'scan-sources coordinate: brew_event: '
                                      f'{koji_api.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))}')
             self.runtime.logger.info(f'scan-sources coordinate: emulated_brew_event: {self.runtime.brew_event}')
 
-            # First, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
+            # First, try to rebase into openshift-priv to reduce upstream merge -> downstream build time
+            if self.rebase_priv:
+                self.rebase_into_priv()
+
+            # Then, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
             self.scan_for_upstream_changes(koji_api)
 
             # Check for other reasons why images should be rebuilt (e.g. config changes, dependencies)
@@ -54,6 +69,157 @@ class ConfigScanSources:
 
         # We have our information. Now build and print the output report
         self.generate_report()
+
+    def _try_reconciliation(self, metadata: Metadata, repo_name: str, pub_branch_name: str, priv_branch_name: str):
+        reconciled = False
+
+        # Attempt a fast-forward merge
+        rc, _, _ = exectools.cmd_gather(cmd=['git', 'pull', '--ff-only', 'public_upstream', pub_branch_name])
+        if not rc:
+            # fast-forward succeeded, will push to openshift-priv
+            self.runtime.logger.info('Fast-forwarded %s from public_upstream/%s', metadata.name, pub_branch_name)
+            reconciled = True
+
+        else:
+            # fast-forward failed, trying a merge commit
+            rc, _, _ = exectools.cmd_gather(cmd=['git', 'merge', f'public_upstream/{pub_branch_name}',
+                                                 '-m', f'Reconciled {repo_name} with public upstream'],
+                                            log_stderr=True,
+                                            log_stdout=True)
+            if not rc:
+                # merge succeeded, will push to openshift-priv
+                reconciled = True
+                self.runtime.logger.info('Merged public_upstream/%s into %s', priv_branch_name, metadata.name)
+
+        if not reconciled:
+            # Could not rebase from public upstream: need manual reconciliation. Log a warning and return
+            self.runtime.logger.warning('failed rebasing %s from public upstream: will need manual reconciliation',
+                                        metadata.name)
+            self.issues.append({'name': metadata.distgit_key,
+                                'issue': 'Could not rebase into -priv as it needs manual reconciliation'})
+            return
+
+        if self.dry_run:
+            self.runtime.logger.info('Would have tried reconciliation for %s/%s', repo_name, priv_branch_name)
+            return
+
+        # Try to push to openshift-priv
+        try:
+            exectools.cmd_assert(
+                cmd=['git', 'push', 'origin', priv_branch_name],
+                retries=3)
+            self.runtime.logger.info('Successfully reconciled %s with public upstream', metadata.name)
+
+        except ChildProcessError:
+            # Failed pushing to openshift-priv
+            self.runtime.logger.warning('failed pushing to openshift-priv for %s', metadata.name)
+            self.issues.append({'name': metadata.distgit_key,
+                                'issue': 'Failed pushing to openshift-priv'})
+
+    def _do_shas_match(self, pub_org, pub_repo_name, pub_branch_name,
+                       priv_org, priv_repo_name, priv_branch_name) -> bool:
+        """
+        Use GitHub API to check commit SHAs on private and public upstream for a given branch.
+        Return True if they match, False otherwise
+        """
+
+        # Check public commit ID
+        pub_commit = self.github_client.get_repo(f'{pub_org}/{pub_repo_name}').get_branch(pub_branch_name).commit
+
+        # Check private commit ID
+        priv_commit = self.github_client.get_repo(f'{priv_org}/{priv_repo_name}').get_branch(priv_branch_name).commit
+
+        if pub_commit.sha == priv_commit.sha:
+            self.runtime.logger.debug('Latest commits match on public and priv upstreams for %s', priv_repo_name)
+            return True
+
+        self.runtime.logger.info('Latest commits do not match on public and priv upstreams for %s: '
+                                 'public SHA = %s, private SHA = %s', priv_repo_name, pub_commit.sha, priv_commit.sha)
+        return False
+
+    def _is_pub_ancestor_of_priv(self, path: str, pub_branch_name: str, priv_branch_name: str, repo_name: str) -> bool:
+        """
+        If a reconciliation already happened, private upstream might have a merge commit thus be a descendant
+        of the public upstream. In this case, we don't need to rebase public into priv
+
+        Use merge-base --is-ancestor to determine if public upstream is an ancestor of the private one
+        """
+
+        with Dir(path):
+            rc, _, _ = exectools.cmd_gather(['git', 'merge-base', '--is-ancestor',
+                                             f'public_upstream/{pub_branch_name}', f'origin/{priv_branch_name}'])
+            if rc:
+                self.runtime.logger.info('Public upstream is ahead of private for %s: will need to rebase', repo_name)
+                return False
+
+        self.runtime.logger.info('Private upstream is ahead of public for %s: no need to rebase', repo_name)
+        return True
+
+    def rebase_into_priv(self):
+        self.runtime.logger.info('Rebasing public upstream contents into openshift-priv')
+
+        upstream_mappings = exectools.parallel_exec(
+            lambda meta, _: (meta, self.runtime.get_public_upstream(meta.config.content.source.git.url)),
+            self.all_metas,
+            n_threads=20,
+        ).get()
+
+        for metadata, public_upstream in upstream_mappings:
+            # Skip rebase for disabled images
+            if not metadata.enabled:
+                continue
+
+            # TODO remove once we're confident it all works fine
+            # Only attempt a rebase for openshift-enterprise-tests
+            if not metadata.name == 'openshift-enterprise-tests':
+                continue
+
+            if metadata.config.content is Missing:
+                self.runtime.logger.warning('%s %s is a distgit-only component: skipping openshift-priv rebase',
+                                            metadata.meta_type, metadata.name)
+                continue
+
+            public_url, public_branch_name = public_upstream
+            priv_url = util.convert_remote_git_to_https(metadata.config.content.source.git.url)
+            priv_branch_name = metadata.config.content.source.git.branch.target
+
+            # If a git commit hash was declared as the upstream source, skip the rebase
+            try:
+                _ = int(priv_branch_name, 16)
+                # target branch is a sha: skip rebase for this component
+                continue
+            except ValueError:
+                # target branch is a normal branch name
+                pass
+
+            # If no public_upstreams field exists, public_branch_name will be None
+            public_branch_name = public_branch_name or priv_branch_name
+
+            if priv_url == public_url:
+                # Upstream repo does not have a public counterpart: no need to rebase
+                self.runtime.logger.warning('%s %s does not have a public upstream: skipping openshift-priv rebase',
+                                            metadata.meta_type, metadata.name)
+                continue
+
+            # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
+            _, public_org, public_repo_name = util.split_git_url(public_url)
+            _, priv_org, priv_repo_name = util.split_git_url(priv_url)
+
+            if self._do_shas_match(public_org, public_repo_name, public_branch_name,
+                                   priv_org, priv_repo_name, priv_branch_name):
+                # If they match, do nothing
+                continue
+
+            # If they don't, clone source repo
+            path = self.runtime.resolve_source(metadata)
+
+            # SHAs might differ because of previous rebase; let's check the actual content across upstreams
+            if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
+                # Private upstream is ahead of public: no need to rebase
+                continue
+
+            with Dir(path):
+                self._try_reconciliation(metadata, priv_repo_name, public_branch_name, priv_branch_name)
 
     def scan_for_upstream_changes(self, koji_api):
         # Determine if the current upstream source commit hash has a downstream build associated with it.
@@ -317,8 +483,10 @@ class ConfigScanSources:
 
         if self.as_yaml:
             click.echo('---')
+            results['issues'] = self.issues
             click.echo(yaml.safe_dump(results, indent=4))
         else:
+            # Log change results
             for kind, items in results.items():
                 if not items:
                     continue
@@ -327,6 +495,10 @@ class ConfigScanSources:
                     click.echo('  {} is {} (reason: {})'.format(item['name'],
                                                                 'changed' if item['changed'] else 'the same',
                                                                 item['reason']))
+            # Log issues
+            click.echo("ISSUES:")
+            for item in self.issues:
+                click.echo(f"   {item['name']}: {item['issue']}")
 
         self.runtime.logger.debug(f'KojiWrapper cache size: {int(brew.KojiWrapper.get_cache_size() / 1024)}KB')
 
@@ -398,8 +570,11 @@ class ConfigScanSources:
 @click.option("--ci-kubeconfig", metavar='KC_PATH', required=False,
               help="File containing kubeconfig for looking at release-controller imagestreams")
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
+@click.option("--rebase-priv", default=False, is_flag=True,
+              help='Try to reconcile public upstream into openshift-priv')
+@click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
 @pass_runtime
-def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml):
+def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
     """
     Determine if any rpms / images need to be rebuilt.
 
@@ -423,8 +598,8 @@ def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml):
     It will report RHCOS updates available per imagestream.
     """
 
-    runtime.initialize(mode='both', clone_distgits=False, clone_source=False, prevent_cloning=True)
-    ConfigScanSources(runtime, ci_kubeconfig, as_yaml).run()
+    runtime.initialize(mode='both', clone_distgits=False, clone_source=False, prevent_cloning=False)
+    ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
 
 
 cli.add_command(config_scan_source_changes)
