@@ -27,8 +27,6 @@ class Ocp4ScanPipeline:
         self.running = False
 
     async def run(self):
-        jenkins.init_jenkins()
-
         # Check if automation is frozen for current group
         if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
             self.logger.info('Skipping this build as it\'s not permitted')
@@ -174,6 +172,8 @@ async def ocp4_scan(runtime: Runtime, version: str):
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
     pipeline = Ocp4ScanPipeline(runtime, version)
+    jenkins.init_jenkins()
+
     await locks.run_with_lock(
         coro=pipeline.run(),
         lock=lock,
