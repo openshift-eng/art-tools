@@ -3,7 +3,6 @@ from typing import Optional
 import yaml
 
 import click
-from aioredlock import LockError
 
 from pyartcd import constants, exectools, util, locks
 from pyartcd import jenkins
@@ -25,13 +24,16 @@ class Ocp4ScanPipeline:
         self.changes = {}
         self.issues = []
         self._doozer_working = self.runtime.working_dir / "doozer_working"
+        self.running = False
 
     async def run(self):
         # Check if automation is frozen for current group
         if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
             self.logger.info('Skipping this build as it\'s not permitted')
-            jenkins.update_description(' [SKIPPED]')
             return
+
+        # Mark this run as being executed (not skipped)
+        self.running = True
 
         self.logger.info('Building: %s', self.version)
 
@@ -169,10 +171,16 @@ async def ocp4_scan(runtime: Runtime, version: str):
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
+    pipeline = Ocp4ScanPipeline(runtime, version)
     await locks.run_with_lock(
-        coro=Ocp4ScanPipeline(runtime, version).run(),
+        coro=pipeline.run(),
         lock=lock,
         lock_name=lock_name,
         lock_id=lock_identifier,
         skip_if_locked=True
     )
+
+    if not pipeline.running:
+        # A build can be skipped because it's frozen, or because there's another run ongoing in the same group
+        # In both cases, run() has not been executed, and we can signal this by adding [SKIPPED] to the build title
+        jenkins.update_title(' [SKIPPED]')
