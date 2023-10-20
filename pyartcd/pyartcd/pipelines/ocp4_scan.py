@@ -99,7 +99,7 @@ class Ocp4ScanPipeline:
         # Run doozer scan-sources
         cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} ' \
               f'--group=openshift-{self.version} ' \
-              f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]}'
+              f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]} --rebase-priv'
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
 
         self.logger.info('scan-sources output for openshift-%s:\n%s', self.version, out)
