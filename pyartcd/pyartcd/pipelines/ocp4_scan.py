@@ -30,6 +30,7 @@ class Ocp4ScanPipeline:
         # Check if automation is frozen for current group
         if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
             self.logger.info('Skipping this build as it\'s not permitted')
+            jenkins.update_description(' [SKIPPED]')
             return
 
         self.logger.info('Building: %s', self.version)
