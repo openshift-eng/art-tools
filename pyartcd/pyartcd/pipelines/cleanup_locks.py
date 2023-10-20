@@ -1,3 +1,5 @@
+import os
+
 from aioredlock import Lock
 
 from pyartcd import redis, jenkins, constants
@@ -12,6 +14,8 @@ from pyartcd.runtime import Runtime
 async def cleanup_locks(runtime: Runtime):
     lock_manager = LockManager([redis.redis_url()])
     active_locks = await lock_manager.get_locks()
+
+    removed_locks = []
 
     try:
         for lock_name in active_locks:
@@ -29,6 +33,7 @@ async def cleanup_locks(runtime: Runtime):
                                            build_url.replace(constants.JENKINS_SERVER_URL, constants.JENKINS_UI_URL))
                     lock: Lock = await lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
                     await lock_manager.unlock(lock)
+                    removed_locks.append(lock_name)
 
                 else:
                     runtime.logger.info('Build %s is still running: won\'t delete lock %s', build_path, lock_name)
@@ -38,3 +43,9 @@ async def cleanup_locks(runtime: Runtime):
 
     finally:
         await lock_manager.destroy()
+
+    # Display removed locks in the build title
+    jenkins.init_jenkins()
+    if os.getenv('BUILD_URL') and os.getenv('JOB_NAME'):
+        if removed_locks:
+            jenkins.update_title(f' [{", ".join(removed_locks)}]')
