@@ -1,11 +1,13 @@
 [build-system]
-requires = [
-    "setuptools>=65.5.1",  # not directly required, pinned by Snyk to avoid a vulnerability
-]
+requires = ["setuptools>=65.5.1", "setuptools_scm[toml]>=8.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["elliottlib", "elliottlib.cli"]
+[tool.setuptools.packages.find]
+include = ["elliottlib*"]
+namespaces = false
+
+[tool.setuptools_scm]
+root = ".."
 
 [project]
 dynamic = ["version"]
@@ -25,7 +27,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -63,8 +64,8 @@ dependencies = [
 elliott = "elliottlib.cli.__main__:main"
 
 [project.urls]
-homepage = "https://github.com/openshift-eng/elliott"
-repository = "https://github.com/openshift-eng/elliott.git"
+homepage = "https://github.com/openshift-eng/art-tools/tree/main/elliott"
+repository = "https://github.com/openshift-eng/art-tools.git"
 
 [project.optional-dependencies]
 tests = [

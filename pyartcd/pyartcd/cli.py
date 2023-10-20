@@ -1,11 +1,13 @@
 import asyncio
-from functools import update_wrapper
 import logging
+import sys
+from functools import update_wrapper
 from pathlib import Path
 from typing import Optional
 
 import click
 
+from pyartcd import __version__
 from pyartcd.runtime import Runtime
 
 pass_runtime = click.make_pass_decorator(Runtime)
@@ -21,10 +23,21 @@ def click_coroutine(f):
     return update_wrapper(wrapper, f)
 
 
+def print_version(ctx, param, value):
+    if not value or ctx.resilient_parsing:
+        return
+    click.echo('artcd v{}'.format(__version__))
+    click.echo('Python v{}'.format(sys.version))
+    ctx.exit()
+
+
 # ============================================================================
 # GLOBAL OPTIONS: parameters for all commands
 # ============================================================================
 @click.group(context_settings=dict(help_option_names=['-h', '--help']))
+@click.option('--version', is_flag=True, callback=print_version,
+              expose_value=False, is_eager=True,
+              help="Print version information and quit")
 @click.option("--config", "-c", metavar='PATH',
               help="Configuration file ('~/.config/artcd.toml' by default)")
 @click.option("--working-dir", "-C", metavar='PATH', default=None,
@@ -35,6 +48,7 @@ def click_coroutine(f):
               help="[MULTIPLE] increase output verbosity")
 @click.pass_context
 def cli(ctx: click.Context, config: Optional[str], working_dir: Optional[str], dry_run: bool, verbosity: int):
+
     config_filename = config or Path("~/.config/artcd.toml").expanduser()
     working_dir = working_dir or Path.cwd()
     # configure logging
