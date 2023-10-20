@@ -24,16 +24,18 @@ class Ocp4ScanPipeline:
         self.changes = {}
         self.issues = []
         self._doozer_working = self.runtime.working_dir / "doozer_working"
-        self.running = False
+        self.locked = True  # True by default; if not locked, run() will set it to False
+        self.frozen = False
 
     async def run(self):
+        # If we get here, lock could be acquired
+        self.locked = False
+
         # Check if automation is frozen for current group
         if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
             self.logger.info('Skipping this build as it\'s not permitted')
+            self.frozen = True
             return
-
-        # Mark this run as being executed (not skipped)
-        self.running = True
 
         self.logger.info('Building: %s', self.version)
 
@@ -182,7 +184,10 @@ async def ocp4_scan(runtime: Runtime, version: str):
         skip_if_locked=True
     )
 
-    if not pipeline.running:
-        # A build can be skipped because it's frozen, or because there's another run ongoing in the same group
-        # In both cases, run() has not been executed, and we can signal this by adding [SKIPPED] to the build title
-        jenkins.update_title(' [SKIPPED]')
+    # A build can be skipped because it's frozen, or because there's another run ongoing in the same group
+    # Signal this by adding a [SKIPPED] tag to the build title
+    if pipeline.locked:
+        jenkins.update_title(' [SKIPPED][LOCKED]')
+
+    elif pipeline.frozen:
+        jenkins.update_title(' [SKIPPED][FROZEN]')
