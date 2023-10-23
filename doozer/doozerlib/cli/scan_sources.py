@@ -130,7 +130,7 @@ class ConfigScanSources:
         priv_commit = self.github_client.get_repo(f'{priv_org}/{priv_repo_name}').get_branch(priv_branch_name).commit
 
         if pub_commit.sha == priv_commit.sha:
-            self.runtime.logger.debug('Latest commits match on public and priv upstreams for %s', priv_repo_name)
+            self.runtime.logger.info('Latest commits match on public and priv upstreams for %s', priv_repo_name)
             return True
 
         self.runtime.logger.info('Latest commits do not match on public and priv upstreams for %s: '
@@ -167,6 +167,7 @@ class ConfigScanSources:
         for metadata, public_upstream in upstream_mappings:
             # Skip rebase for disabled images
             if not metadata.enabled:
+                self.runtime.logger.warning('%s is disabled: skipping rebase', metadata.name)
                 continue
 
             # TODO remove once we're confident it all works fine
@@ -187,7 +188,9 @@ class ConfigScanSources:
             try:
                 _ = int(priv_branch_name, 16)
                 # target branch is a sha: skip rebase for this component
+                self.runtime.logger.warning(f'Target branch for %s is a SHA: skipping rebase', metadata.name)
                 continue
+
             except ValueError:
                 # target branch is a normal branch name
                 pass
