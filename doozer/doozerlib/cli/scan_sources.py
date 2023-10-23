@@ -188,7 +188,7 @@ class ConfigScanSources:
             try:
                 _ = int(priv_branch_name, 16)
                 # target branch is a sha: skip rebase for this component
-                self.runtime.logger.warning(f'Target branch for %s is a SHA: skipping rebase', metadata.name)
+                self.runtime.logger.warning('Target branch for %s is a SHA: skipping rebase', metadata.name)
                 continue
 
             except ValueError:
