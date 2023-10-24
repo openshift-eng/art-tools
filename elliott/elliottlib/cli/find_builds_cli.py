@@ -194,9 +194,10 @@ PRESENT advisory. Here are some examples:
                                                nvrp[3], session=requests.Session())
         )
         previous = len(unshipped_builds)
-        unshipped_builds = _filter_out_inviable_builds(unshipped_builds)
+        unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds)
         if len(unshipped_builds) != previous:
-            click.echo(f'Filtered out {previous - len(unshipped_builds)} inviable build(s)')
+            click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
+                       f'these advisories: {attached_to_advisories}')
 
         _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
 
@@ -506,9 +507,13 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     return nvrps
 
 
-def _filter_out_inviable_builds(build_objects):
-    unshipped_builds = []
+def _filter_out_attached_builds(build_objects):
+    """
+    Filter out builds that are already attached to an ART advisory
+    """
+    unattached_builds = []
     errata_version_cache = {}  # avoid reloading the same errata for multiple builds
+    attached_to_advisories = set()
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
@@ -526,7 +531,8 @@ def _filter_out_inviable_builds(build_objects):
                 errata_version_cache[eid] = metadata_comments_json[0]['release']
             if errata_version_cache[eid] == get_release_version(b.product_version):
                 in_same_version = True
+                attached_to_advisories.add(eid)
                 break
         if not in_same_version:
-            unshipped_builds.append(b)
-    return unshipped_builds
+            unattached_builds.append(b)
+    return unattached_builds, attached_to_advisories

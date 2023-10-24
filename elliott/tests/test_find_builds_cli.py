@@ -1,5 +1,5 @@
 import unittest
-from elliottlib.cli.find_builds_cli import _filter_out_inviable_builds, _find_shipped_builds
+from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds
 from elliottlib.brew import Build
 from elliottlib import errata as erratalib
 from flexmock import flexmock
@@ -12,23 +12,27 @@ class TestFindBuildsCli(unittest.TestCase):
     Test elliott find-builds command and internal functions
     """
 
-    def test_filter_out_inviable_builds_inviable(self):
+    def test_filter_out_attached_builds_inviable(self):
         metadata = json.loads('''{"release": "4.1", "kind": "rpm", "impetus": "cve"}''')
         flexmock(erratalib).should_receive("get_metadata_comments_json").and_return([metadata])
 
         builds = flexmock(Build(nvr="test-1.1.1", product_version="RHEL-7-OSE-4.1"))
         builds.should_receive("all_errata").and_return([{"id": 12345}])
 
-        self.assertEqual([], _filter_out_inviable_builds([builds]))
+        builds, advisories = _filter_out_attached_builds([builds])
+        self.assertEqual([], builds)
+        self.assertEqual({12345}, advisories)
 
-    def test_filter_out_inviable_builds_viable(self):
+    def test_filter_out_attached_builds_viable(self):
         metadata = json.loads('''{"release": "4.1", "kind": "rpm", "impetus": "cve"}''')
         flexmock(erratalib).should_receive("get_metadata_comments_json").and_return([metadata])
 
         builds = flexmock(Build(nvr="test-1.1.1", product_version="RHEL-7-OSE-4.5"))
         builds.should_receive("all_errata").and_return([{"id": 12345}])
 
-        self.assertEqual([Build("test-1.1.1")], _filter_out_inviable_builds([builds]))
+        builds, advisories = _filter_out_attached_builds([builds])
+        self.assertEqual([Build("test-1.1.1")], builds)
+        self.assertEqual(set(), advisories)
 
     @mock.patch("elliottlib.brew.get_builds_tags")
     def test_find_shipped_builds(self, get_builds_tags: mock.MagicMock):
