@@ -408,3 +408,12 @@ def start_scan_osh(nvrs: list, version: str, email: Optional[str] = "", **kwargs
         params=params,
         **kwargs
     )
+
+
+def is_api_reachable() -> bool:
+    """
+    Returns True if Jenkins API is reachable, False otherwise
+    """
+
+    endpoint = f'{constants.JENKINS_SERVER_URL}/api/json'
+    return requests.get(endpoint).status_code == 200

@@ -39,7 +39,13 @@ async def cleanup_locks(runtime: Runtime):
                     runtime.logger.info('Build %s is still running: won\'t delete lock %s', build_path, lock_name)
 
             except ValueError:
-                runtime.logger.warning('Could not get build from lock %s with id %s: skipping', lock_name, build_path)
+                if jenkins.is_api_reachable():
+                    # Make sure Jenkins API are responding
+                    # Assume the build is not found because it was manually deleted, and clean up the orphan lock
+                    runtime.logger.warning('Could not get build from lock %s with id %s: deleting',
+                                           lock_name, build_path)
+                    lock: Lock = await lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
+                    await lock_manager.unlock(lock)
 
     finally:
         await lock_manager.destroy()
