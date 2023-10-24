@@ -387,6 +387,11 @@ class ConfigScanSources:
                                        RebuildHint(RebuildHintCode.CONFIG_CHANGE,
                                                    'Unable to retrieve config_digest'))
 
+        except IOError:
+            # IOError is raised by fetch_cgit_file() when config_digest could not be found
+            self.runtime.logger.warning('config_digest not found for %s: skipping config check', image_meta.name)
+            return
+
     def check_changing_rpms(self):
         # Checks if an image needs to be rebuilt based on the packages (and therefore RPMs)
         # it is dependent on might have changed in tags relevant to the image.
