@@ -78,7 +78,8 @@ class BuildMicroShiftPipeline:
         major, minor = util.isolate_major_minor_in_group(self.group)
 
         try:
-            await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
+            group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
+            advisories = group_config.get("advisories", {})
             releases_config = await load_releases_config(
                 group=self.group,
                 data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL
@@ -172,11 +173,18 @@ class BuildMicroShiftPipeline:
                     message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
                               f"This will publish the microshift build to mirror"
                     await self.slack_say(message)
-                except Exception:
+                except Exception as err:
+                    self._logger("Failed to trigger microshift_sync job: %s", err)
                     message = "@release-artists Please start <microshift sync | " \
                               "https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888" \
                               "/job/aos-cd-builds/job/build%252Fmicroshift_sync> manually."
                     await self.slack_say(message)
+
+            # Check if microshift advisory is defined in assembly
+            if 'microshift' not in advisories:
+                self._logger.info("Skipping advisory prep since microshift advisory is not defined in assembly %s",
+                                  self.assembly)
+                return
 
             # prepare microshift advisory
             await self.slack_say(f"Start preparing microshift advisory for assembly {self.assembly}..")
@@ -187,7 +195,7 @@ class BuildMicroShiftPipeline:
             await self._change_advisory_status()
             await self.slack_say("Completed preparing microshift advisory.")
         except Exception as err:
-            slack_message = f"Error building microshift: {err}"
+            slack_message = f"Encountered error: {err}"
             error_message = slack_message + f"\n {traceback.format_exc()}"
             self._logger.error(error_message)
             if assembly_type != AssemblyTypes.STREAM:
