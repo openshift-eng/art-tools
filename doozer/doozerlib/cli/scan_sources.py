@@ -6,7 +6,7 @@ import click
 import yaml
 from typing import List, Tuple, Optional
 
-from github import Github
+from github import Github, GithubException
 
 from doozerlib import brew, exectools, rhcos, util, constants
 from doozerlib.cli import cli, pass_runtime
@@ -14,7 +14,6 @@ from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.model import Missing
-from doozerlib.pushd import Dir
 from doozerlib.runtime import Runtime
 from doozerlib.pushd import Dir
 
@@ -55,7 +54,10 @@ class ConfigScanSources:
 
             # First, try to rebase into openshift-priv to reduce upstream merge -> downstream build time
             if self.rebase_priv:
-                self.rebase_into_priv()
+                try:
+                    self.rebase_into_priv()
+                except GithubException as e:
+                    self.runtime.logger.warning('GitHub exception raised: quitting rebase: %s', e)
 
             # Then, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
             self.scan_for_upstream_changes(koji_api)
