@@ -168,14 +168,6 @@ class AsyncErrataUtils:
         parsed_nvrs = [(n['name'], n['version'], n['release']) for n in [parse_nvr(n) for n in attached_builds]]
         go_nvr_map = util.get_golang_container_nvrs(parsed_nvrs, _LOGGER)
 
-        # image advisory should have maximum 3 go build versions - one for etcd and
-        # possibly 2 (rhelX and rhelX+1) for all other images
-        # in case of other image advisories, there should max be 2
-        if len(go_nvr_map) > 3:
-            raise ValueError(f"Unexpected go build versions found {go_nvr_map.keys()}. "
-                             "There should not be more than 3: 1 for etcd and maximum 2 for all other images. "
-                             "Please investigate")
-
         etcd_golang_builder, base_golang_builders = None, []
         for builder_nvr_string in go_nvr_map.keys():
             builder_nvr = parse_nvr(builder_nvr_string)
@@ -185,7 +177,11 @@ class AsyncErrataUtils:
                 raise ValueError(f"Unexpected `name` value for nvr {builder_nvr}. Expected "
                                  f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.")
 
-            if len(go_nvr_map[builder_nvr_string]) == 1 and 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
+            if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
+                if etcd_golang_builder:
+                    raise ValueError(f"Multiple etcd builds found in advisory {go_nvr_map[etcd_golang_builder][0]}, "
+                                     f"with builders: {etcd_golang_builder} and {builder_nvr_string}. "
+                                     "Please investigate")
                 etcd_golang_builder = builder_nvr_string
             else:
                 base_golang_builders.append(builder_nvr_string)
