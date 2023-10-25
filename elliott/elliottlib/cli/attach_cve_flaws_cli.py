@@ -189,7 +189,7 @@ def get_updated_advisory_rhsa(logger, cve_boilerplate: dict, advisory: Erratum, 
             security_reviewer=cve_boilerplate['security_reviewer'],
             synopsis=cve_boilerplate['synopsis'],
             topic=cve_boilerplate['topic'].format(IMPACT="Low"),
-            solution=cve_boilerplate['solution'],
+            # solution=cve_boilerplate['solution'],
             security_impact='Low',
         )
 
