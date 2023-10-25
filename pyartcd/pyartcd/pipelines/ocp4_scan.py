@@ -91,6 +91,9 @@ class Ocp4ScanPipeline:
                 assembly="stream",
             )
 
+        else:
+            jenkins.update_title(' [NO CHANGES]')
+
     async def _get_changes(self):
         """
         Check for changes by calling doozer config:scan-sources
