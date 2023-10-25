@@ -43,6 +43,10 @@ class ConfigScanSources:
 
         self.github_client = Github(login_or_token=os.getenv(constants.GITHUB_TOKEN))
 
+        # TODO temp hack to apply rebase into -priv to only one component; when a random component is rebased,
+        # the rebase procedure will exit. This will let us inspect the results while minimizing risks
+        self.rebased = False
+
     def run(self):
         with self.runtime.shared_koji_client_session() as koji_api:
             self.runtime.logger.info(f'scan-sources coordinate: brew_event: '
@@ -110,6 +114,9 @@ class ConfigScanSources:
                 retries=3)
             self.runtime.logger.info('Successfully reconciled %s with public upstream', metadata.name)
 
+            # TODO remove once we're confident it all works fine
+            self.rebased = True
+
         except ChildProcessError:
             # Failed pushing to openshift-priv
             self.runtime.logger.warning('failed pushing to openshift-priv for %s', metadata.name)
@@ -171,9 +178,8 @@ class ConfigScanSources:
                 continue
 
             # TODO remove once we're confident it all works fine
-            # Only attempt a rebase for openshift-enterprise-tests
-            if not metadata.name == 'openshift-enterprise-tests':
-                continue
+            if self.rebased:
+                return
 
             if metadata.config.content is Missing:
                 self.runtime.logger.warning('%s %s is a distgit-only component: skipping openshift-priv rebase',
@@ -363,6 +369,7 @@ class ConfigScanSources:
             # Look at the digest that created THIS build. What is in head does not matter.
             prev_digest = image_meta.fetch_cgit_file('.oit/config_digest',
                                                      commit_hash=source_commit).decode('utf-8')
+
             current_digest = image_meta.calculate_config_digest(self.runtime.group_config, self.runtime.streams)
             if current_digest.strip() != prev_digest.strip():
                 self.runtime.logger.info('%s config_digest %s is differing from %s',
