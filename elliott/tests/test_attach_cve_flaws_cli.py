@@ -41,7 +41,6 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             security_reviewer=boilerplate['security_reviewer'],
             synopsis=boilerplate['synopsis'],
             topic=boilerplate['topic'].format(IMPACT="Low"),
-            solution=boilerplate['solution'],
             security_impact='Low',
         )
 
