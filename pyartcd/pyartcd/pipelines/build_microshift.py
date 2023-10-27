@@ -122,7 +122,7 @@ class BuildMicroShiftPipeline:
             pr = None
 
             if assembly_type is not AssemblyTypes.STREAM and not self.force:
-                pinned_nvrs = util.get_rpm_if_pinned(releases_config, self.assembly, 'microshift')
+                pinned_nvrs = util.get_rpm_if_pinned_directly(releases_config, self.assembly, 'microshift')
                 if pinned_nvrs:
                     message = (f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to "
                                "rebuild.")

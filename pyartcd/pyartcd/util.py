@@ -157,8 +157,10 @@ def get_release_name_for_assembly(group_name: str, releases_config: Dict, assemb
     return doozerutil.get_release_name_for_assembly(group_name, model.Model(releases_config), assembly_name)
 
 
-def get_rpm_if_pinned(releases_config: Dict, assembly_name: str, rpm_name: str) -> dict:
-    pinned_rpms = assembly._assembly_config_struct(model.Model(releases_config), assembly_name, 'members', {'rpms': []})['rpms']
+def get_rpm_if_pinned_directly(releases_config: Dict, assembly_name: str, rpm_name: str) -> dict:
+    # this does not consider inherited assemblies
+    # use with caution
+    pinned_rpms = model.Model(releases_config).releases[assembly_name].assembly.members.rpms
     return next((rpm['metadata']['is'] for rpm in pinned_rpms if rpm['distgit_key'] == rpm_name), dict())
 
 
