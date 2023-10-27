@@ -1,14 +1,13 @@
 import asyncio
-import os
 from datetime import datetime, timezone
 
 import click
 import yaml
 from typing import List, Tuple, Optional
 
-from github import Github, GithubException
+from github import GithubException
 
-from doozerlib import brew, exectools, rhcos, util, constants
+from doozerlib import brew, exectools, rhcos, util
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
@@ -40,8 +39,6 @@ class ConfigScanSources:
         self.oldest_image_event_ts = None
         self.newest_image_event_ts = 0
 
-        self.github_client = Github(login_or_token=os.getenv(constants.GITHUB_TOKEN))
-
         # TODO temp hack to apply rebase into -priv to only one component; when a random component is rebased,
         # the rebase procedure will exit. This will let us inspect the results while minimizing risks
         self.rebased = False
@@ -54,10 +51,7 @@ class ConfigScanSources:
 
             # First, try to rebase into openshift-priv to reduce upstream merge -> downstream build time
             if self.rebase_priv:
-                try:
-                    self.rebase_into_priv()
-                except GithubException as e:
-                    self.runtime.logger.warning('GitHub exception raised: quitting rebase: %s', e)
+                self.rebase_into_priv()
 
             # Then, scan for any upstream source code changes. If found, these are guaranteed rebuilds.
             self.scan_for_upstream_changes(koji_api)
@@ -125,25 +119,34 @@ class ConfigScanSources:
             self.issues.append({'name': metadata.distgit_key,
                                 'issue': 'Failed pushing to openshift-priv'})
 
-    def _do_shas_match(self, pub_org, pub_repo_name, pub_branch_name,
-                       priv_org, priv_repo_name, priv_branch_name) -> bool:
+    def _do_shas_match(self, public_url, pub_branch_name,
+                       priv_url, priv_branch_name) -> bool:
         """
         Use GitHub API to check commit SHAs on private and public upstream for a given branch.
         Return True if they match, False otherwise
         """
 
-        # Check public commit ID
-        pub_commit = self.github_client.get_repo(f'{pub_org}/{pub_repo_name}').get_branch(pub_branch_name).commit
+        try:
+            # Check public commit ID
+            out, _ = exectools.cmd_assert(['git', 'ls-remote', public_url, pub_branch_name],
+                                          retries=5, on_retry='sleep 5')
+            pub_commit = out.strip().split()[0]
 
-        # Check private commit ID
-        priv_commit = self.github_client.get_repo(f'{priv_org}/{priv_repo_name}').get_branch(priv_branch_name).commit
+            # Check private commit ID
+            out, _ = exectools.cmd_assert(['git', 'ls-remote', priv_url, priv_branch_name],
+                                          retries=5, on_retry='sleep 5')
+            priv_commit = out.strip().split()[0]
 
-        if pub_commit.sha == priv_commit.sha:
-            self.runtime.logger.info('Latest commits match on public and priv upstreams for %s', priv_repo_name)
+        except ChildProcessError:
+            self.runtime.logger.warning('Could not fetch latest commit SHAs from %s: skipping rebase', public_url)
+            return True
+
+        if pub_commit == priv_commit:
+            self.runtime.logger.info('Latest commits match on public and priv upstreams for %s', public_url)
             return True
 
         self.runtime.logger.info('Latest commits do not match on public and priv upstreams for %s: '
-                                 'public SHA = %s, private SHA = %s', priv_repo_name, pub_commit.sha, priv_commit.sha)
+                                 'public SHA = %s, private SHA = %s', public_url, pub_commit, priv_commit)
         return False
 
     def _is_pub_ancestor_of_priv(self, path: str, pub_branch_name: str, priv_branch_name: str, repo_name: str) -> bool:
@@ -216,8 +219,8 @@ class ConfigScanSources:
             _, public_org, public_repo_name = util.split_git_url(public_url)
             _, priv_org, priv_repo_name = util.split_git_url(priv_url)
 
-            if self._do_shas_match(public_org, public_repo_name, public_branch_name,
-                                   priv_org, priv_repo_name, priv_branch_name):
+            if self._do_shas_match(public_url, public_branch_name,
+                                   metadata.config.content.source.git.url, priv_branch_name):
                 # If they match, do nothing
                 continue
 
