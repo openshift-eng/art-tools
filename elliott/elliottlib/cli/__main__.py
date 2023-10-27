@@ -43,6 +43,7 @@ from elliottlib.cli.find_builds_cli import find_builds_cli
 from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
 from elliottlib.cli.create_cli import create_cli
 from elliottlib.cli.add_metadata_cli import add_metadata_cli
+from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.cli.change_state_cli import change_state_cli
 from elliottlib.cli.puddle_advisories_cli import puddle_advisories_cli
 from elliottlib.cli.rpmdiff_cli import rpmdiff_cli
@@ -455,6 +456,7 @@ unsigned builds.
 cli.add_command(add_metadata_cli)
 cli.add_command(advisory_images_cli)
 cli.add_command(advisory_impetus_cli)
+cli.add_command(create_placeholder_cli)
 cli.add_command(create_cli)
 cli.add_command(change_state_cli)
 cli.add_command(find_bugs_sweep_cli)
