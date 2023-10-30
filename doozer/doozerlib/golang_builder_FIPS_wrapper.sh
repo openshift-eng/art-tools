@@ -226,7 +226,8 @@ if [[ "${EXEMPT}" != "1" ]]; then
 
     # prior to detecting 'IN_RUN', grafana failed because it ran
     # 'go run build.go build' which caused the script to exec 'go run build.go build -tags strictfipsruntime'
-    if [[ "${arg}" == "build" && "${IN_RUN}" == "0" ]]; then
+    # 'go install ...' can also trigger builds. https://github.com/openshift/sriov-dp-admission-controller/blob/e7d954e5e287cca11ccce1684c54b2d170f0410d/scripts/build.sh#L32 .
+    if [[ ( "${arg}" == "build" || "${arg}" == "install" ) && "${IN_RUN}" == "0" ]]; then
       # -tags apparently cannot come after a build path
       # e.g. "build ./cmd/cluster-openshift-apiserver-operator -tags strictfipsruntime" is invalid.
       # So, if we see "build" and no "-tags" ahead, then go ahead and force FOD tag.
