@@ -322,7 +322,11 @@ async def is_build_permitted(version: str, data_path: str = constants.OCP_BUILD_
         # Check current day of the week
         weekday = get_weekday()
         if weekday in ['Saturday', 'Sunday']:
-            logger.info('Automation is permitted during weekends, and today is %s', weekday)
+            logger.info(f'Automation is permitted during weekends, and today is {weekday}')
+            return True
+
+        if weekday in ['Monday'] and os.environ.get('JOB_BASE_NAME', '') in ['images-health']:
+            logger.info(f"Permitting automated run of {os.environ['JOB_BASE_NAME']} on Monday")
             return True
 
         logger.info('Scheduled builds for %s are permitted only on weekends, and today is %s', version, weekday)
