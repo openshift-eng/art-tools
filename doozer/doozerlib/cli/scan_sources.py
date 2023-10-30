@@ -474,22 +474,24 @@ class ConfigScanSources:
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_dgks
-            image_results.append({
-                'name': dgk,
-                'changed': is_changing,
-                'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}', 'No change detected'),
-            })
+            if is_changing:
+                image_results.append({
+                    'name': dgk,
+                    'changed': is_changing,
+                    'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}')
+                })
 
         rpm_results = []
         changing_rpm_dgks = [meta.distgit_key for meta in self.changing_rpm_metas]
         for rpm_meta in self.all_rpm_metas:
             dgk = rpm_meta.distgit_key
             is_changing = dgk in changing_rpm_dgks
-            rpm_results.append({
-                'name': dgk,
-                'changed': is_changing,
-                'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}', 'No change detected'),
-            })
+            if is_changing:
+                rpm_results.append({
+                    'name': dgk,
+                    'changed': is_changing,
+                    'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}')
+                })
 
         results = dict(
             rpms=rpm_results,
@@ -567,7 +569,9 @@ class ConfigScanSources:
                     status['changed'] = True
                     status['reason'] = f"latest RHCOS build is {latest_rhcos_id} " \
                                        f"which differs from istag {tagged_rhcos_id}"
-                statuses.append(status)
+
+                if status['changed']:
+                    statuses.append(status)
 
         return statuses
 
