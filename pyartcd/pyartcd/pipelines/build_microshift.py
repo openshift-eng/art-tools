@@ -192,8 +192,8 @@ class BuildMicroShiftPipeline:
             await self._attach_builds()
             await self._sweep_bugs()
             await self._attach_cve_flaws()
-            await self._verify_microshift_bugs(microshift_advisory_id)
             await self._change_advisory_status()
+            await self._verify_microshift_bugs(microshift_advisory_id)
             await self.slack_say("Completed preparing microshift advisory.")
         except Exception as err:
             slack_message = f"Encountered error: {err}"
@@ -263,7 +263,7 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "verify-attached-bugs",
             "--verify-flaws",
-            advisory_id
+            str(advisory_id)
         ]
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
