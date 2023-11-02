@@ -3,23 +3,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
 from elliottlib.model import ListModel
 from elliottlib import util, exectools, constants
-
-# Historically the only RHCOS container was 'machine-os-content'; see
-# https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
-# But in the future this will change, see
-# https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md
-default_primary_container = dict(
-    name="machine-os-content",
-    build_metadata_key="oscontainer",
-    primary=True)
-
-
-def get_container_configs(runtime):
-    """
-    look up the group.yml configuration for RHCOS container(s) for this group, or create if missing.
-    @return ListModel with Model entries like ^^ default_primary_container
-    """
-    return runtime.group_config.rhcos.payload_tags or ListModel([default_primary_container])
+from artcommon.rhcos import get_container_configs, get_primary_container_name
 
 
 def release_url(runtime, version, arch="x86_64", private=False):
@@ -97,8 +81,8 @@ def _build_meta(runtime, build_id, version, arch="x86_64", private=False, meta_t
         return json.loads(req.read().decode())
 
 
-def get_build_from_payload(payload_pullspec):
-    rhcos_tag = 'machine-os-content'
+def get_build_from_payload(runtime, payload_pullspec):
+    rhcos_tag = get_primary_container_name(runtime)
     out, _ = exectools.cmd_assert(["oc", "adm", "release", "info", "--image-for", rhcos_tag, "--", payload_pullspec])
     rhcos_pullspec = out.split('\n')[0]
     out, _ = exectools.cmd_assert(["oc", "image", "info", "-o", "json", rhcos_pullspec])

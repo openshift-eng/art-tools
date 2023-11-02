@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple
 import click
 import yaml
 
+from artcommon.runtime import GroupRuntime
 from elliottlib import brew, constants, gitdata, logutil, util
 from elliottlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
 from elliottlib.exceptions import ElliottFatalError
@@ -33,7 +34,7 @@ def remove_tmp_working_dir(runtime):
 # ============================================================================
 
 
-class Runtime(object):
+class Runtime(GroupRuntime):
     # pylint: disable=no-member
     # TODO: analyze/fix pylint no-member violations
 
@@ -65,7 +66,7 @@ class Runtime(object):
             self.__dict__[key] = val
 
         self._remove_tmp_working_dir = False
-        self.group_config = None
+        self._group_config = None
         self.debug_log_path = None
 
         # Map of dist-git repo name -> ImageMetadata object. Populated when group is set.
@@ -87,6 +88,14 @@ class Runtime(object):
 
     def get_default_advisories(self):
         return self.group_config.get('advisories', {})
+
+    @property
+    def group_config(self):
+        return self._group_config
+
+    @group_config.setter
+    def group_config(self, config: Model):
+        self._group_config = config
 
     def get_group_config(self):
         # group.yml can contain a `vars` section which should be a
