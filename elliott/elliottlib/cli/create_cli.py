@@ -24,6 +24,9 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
               type=click.Choice(elliottlib.constants.errata_valid_impetus),
               default='standard',
               help="Impetus for the advisory creation. 'standard' by default")
+@click.option("--art-advisory-key",
+              type=click.Choice(['rpm', 'microshift', 'metadata', 'image', 'extras']),
+              help="Class of the advisory. Should be one of [rpm, microshift, metadata, image, extras].")
 @click.option("--date", required=True,
               callback=validate_release_date,
               help="Release date for the advisory. Format: YYYY-Mon-DD.")
@@ -49,7 +52,7 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
               help="Bug IDs for attaching to the advisory on creation. Required for creating a security advisory.")
 @click.pass_obj
 @click.pass_context
-def create_cli(ctx, runtime, errata_type, kind, impetus, date, assigned_to, manager, package_owner, with_liveid, yes, bugs):
+def create_cli(ctx, runtime, errata_type, kind, impetus, art_advisory_key, date, assigned_to, manager, package_owner, with_liveid, yes, bugs):
     """Create a new advisory. The kind of advisory must be specified with
 '--kind'. Valid choices are 'rpm' and 'image'.
 
@@ -112,7 +115,7 @@ advisory.
             et_data,
             errata_type=errata_type,
             kind=kind,
-            boilerplate_name=(impetus if impetus != "standard" else kind),
+            boilerplate_name=(art_advisory_key if art_advisory_key else kind),
             release_date=release_date.strftime(YMD),
             assigned_to=assigned_to,
             manager=manager,
