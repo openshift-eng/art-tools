@@ -6,6 +6,7 @@ import tempfile
 
 from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
 from pyartcd.pipelines.promote import PromotePipeline
+from pyartcd.exceptions import VerificationError
 from doozerlib.assembly import AssemblyTypes
 from artcommon.model import Model
 
@@ -284,6 +285,117 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
+
+    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={
+        "releases": {"4.10.99": {"assembly": {"type": "standard"}}}
+    })
+    @patch("pyartcd.pipelines.promote.util.load_group_config",
+           return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99")))
+    async def test_run_with_standard_assembly_without_image_advisory(self, load_group_config: AsyncMock,
+                                                                     load_releases_config: AsyncMock, _):
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git"
+                },
+                "jira": {
+                    "url": "https://issues.redhat.com/"
+                }
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False
+        )
+        runtime.new_slack_client.return_value = AsyncMock()
+        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.bind_channel = MagicMock()
+
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline.check_blocker_bugs = AsyncMock()
+
+        with self.assertRaisesRegex(VerificationError, "No associated image advisory"):
+            await pipeline.run()
+        load_group_config.assert_awaited_once()
+        load_releases_config.assert_awaited_once_with(group='openshift-4.10',
+                                                      data_path='https://example.com/ocp-build-data.git')
+
+    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={
+        "releases": {"4.10.99": {"assembly": {"type": "standard"}}}
+    })
+    @patch("pyartcd.pipelines.promote.util.load_group_config",
+           return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99", advisories={"image": 2})))
+    async def test_run_with_standard_assembly_without_liveid(self, load_group_config: AsyncMock,
+                                                             load_releases_config: AsyncMock, _):
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git"
+                },
+                "jira": {
+                    "url": "https://issues.redhat.com/"
+                }
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False
+        )
+        runtime.new_slack_client.return_value = AsyncMock()
+        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.bind_channel = MagicMock()
+
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline.check_blocker_bugs = AsyncMock()
+        pipeline.change_advisory_state = AsyncMock()
+        pipeline.get_advisory_info = AsyncMock(return_value={
+            "id": 2,
+            "errata_id": 2,
+            "status": "QE",
+        })
+
+        with self.assertRaisesRegex(VerificationError, "doesn't have a live ID"):
+            await pipeline.run()
+        load_group_config.assert_awaited_once()
+        load_releases_config.assert_awaited_once_with(group='openshift-4.10',
+                                                      data_path='https://example.com/ocp-build-data.git')
+
+    @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
+    @patch("pyartcd.pipelines.promote.util.load_releases_config", return_value={
+        "releases": {"4.10.99": {"assembly": {"type": "standard"}}}
+    })
+    @patch("pyartcd.pipelines.promote.util.load_group_config",
+           return_value=Model(dict(arches=["x86_64", "s390x"], upgrades="4.10.98,4.9.99", advisories={"image": 2})))
+    async def test_run_with_standard_assembly_invalid_errata_status(self, load_group_config: AsyncMock,
+                                                                    load_releases_config: AsyncMock, _):
+        runtime = MagicMock(
+            config={
+                "build_config": {
+                    "ocp_build_data_url": "https://example.com/ocp-build-data.git"
+                },
+                "jira": {
+                    "url": "https://issues.redhat.com/"
+                }
+            },
+            working_dir=Path("/path/to/working"),
+            dry_run=False
+        )
+        runtime.new_slack_client.return_value = AsyncMock()
+        runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
+        runtime.new_slack_client.return_value.bind_channel = MagicMock()
+
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline.check_blocker_bugs = AsyncMock()
+        pipeline.change_advisory_state = AsyncMock()
+        pipeline.get_advisory_info = AsyncMock(return_value={
+            "id": 2,
+            "errata_id": 2222,
+            "fulladvisory": "RHBA-2099:2222-02",
+            "status": "NEW_FILES"})
+
+        with self.assertRaisesRegex(VerificationError, "should not be in NEW_FILES state"):
+            await pipeline.run()
+        load_group_config.assert_awaited_once()
+        load_releases_config.assert_awaited_once_with(group='openshift-4.10',
+                                                      data_path='https://example.com/ocp-build-data.git')
 
     @patch("pyartcd.locks.run_with_lock")
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")

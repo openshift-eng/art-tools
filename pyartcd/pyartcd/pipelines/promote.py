@@ -197,7 +197,7 @@ class PromotePipeline:
                 # Attempt to move all advisories to QE
                 tasks = []
                 for impetus, advisory in impetus_advisories.items():
-                    if not advisory:
+                    if not advisory or advisory <= 0:
                         continue
                     logger.info("Moving advisory %s to QE...", advisory)
                     if not self.runtime.dry_run:
