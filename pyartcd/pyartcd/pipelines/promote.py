@@ -222,16 +222,17 @@ class PromotePipeline:
                     logger.info("Verifying associated image advisory %s...", image_advisory)
                     image_advisory_info = await self.get_advisory_info(image_advisory)
                     try:
-                        live_id = self.get_live_id(image_advisory_info)
-                        if not live_id:
-                            raise VerificationError(f"Advisory {image_advisory_info['id']} doesn't have a live ID.")
                         if assembly_type != assembly.AssemblyTypes.CANDIDATE:
                             self.verify_advisory_status(image_advisory_info)
-                        errata_url = f"https://access.redhat.com/errata/{live_id}"  # don't quote
                     except VerificationError as err:
                         logger.warn("%s", err)
                         justification = self._reraise_if_not_permitted(err, "INVALID_ERRATA_STATUS", permits)
                         justifications.append(justification)
+
+                    live_id = self.get_live_id(image_advisory_info)
+                    if not live_id:
+                        raise VerificationError(f"Advisory {image_advisory_info['id']} doesn't have a live ID.")
+                    errata_url = f"https://access.redhat.com/errata/{live_id}"  # don't quote
 
             # Verify attached bugs
             if self.skip_attached_bug_check:
