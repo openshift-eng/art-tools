@@ -850,8 +850,8 @@ class PromotePipeline:
             return
 
         major, minor = util.isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 13:
-            self._logger.info("Skip microshift build for version < 4.13")
+        if major == 4 and minor < 14:
+            self._logger.info("Skip microshift build for version < 4.14")
             return
 
         jenkins.start_build_microshift(f'{major}.{minor}', self.assembly, self.runtime.dry_run)
