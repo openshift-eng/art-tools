@@ -12,7 +12,7 @@ from typing import Dict, Optional, Tuple
 import click
 import yaml
 
-from artcommon.runtime import GroupRuntime
+from artcommonlib.runtime import GroupRuntime
 from elliottlib import brew, constants, gitdata, logutil, util
 from elliottlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
 from elliottlib.exceptions import ElliottFatalError
