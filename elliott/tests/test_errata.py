@@ -152,6 +152,9 @@ class TestAdvisoryImages(unittest.TestCase):
                         'redhat-openshift3-ose-kube-rbac-proxy': {
                             'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1']
                         }
+                    },
+                    'external_repos': {
+                        "openshift3/ose-kube-rbac-proxy": {}
                     }
                 }
             }
@@ -163,6 +166,9 @@ class TestAdvisoryImages(unittest.TestCase):
                         'redhat-openshift3-jenkins-subordinate-base-rhel7': {
                             'tags': ['v3.11', 'v3.11.154', 'v3.11.154-1']
                         }
+                    },
+                    'external_repos': {
+                        "openshift3/jenkins-subordinate-base-rhel7": {}
                     }
                 }
             }
@@ -174,6 +180,9 @@ class TestAdvisoryImages(unittest.TestCase):
                         'redhat-openshift3-ose-pod': {
                             'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1']
                         }
+                    },
+                    'external_repos': {
+                        "openshift3/ose-pod": {}
                     }
                 }
             }

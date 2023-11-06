@@ -661,18 +661,19 @@ def get_advisory_images(image_advisory_id, raw=False):
     if raw:
         return '\n'.join(cdn_docker_file_list.keys())
 
-    pattern = re.compile(r'^redhat-openshift(\d)-')
+    def _get_image_name(nvr, repo):
+        name = next(iter(repo['docker']['target']['external_repos'].keys()), None)
+        if not name:
+            raise ValueError(f"Couldn't get repo name for {nvr}. Please open a ticket for CLOUDWF to set up the CDN repo.")
+        return name
 
-    def _get_image_name(repo):
-        return pattern.sub(r'openshift\1/', list(repo['docker']['target']['repos'].keys())[0])
-
-    def _get_nvr(component):
+    def _get_vr(component):
         parts = component.split('-')
         return '{}-{}'.format(parts[-2], parts[-1])
 
     image_list = [
-        '{}:{}'.format(_get_image_name(repo), _get_nvr(key))
-        for key, repo in sorted(cdn_docker_file_list.items())
+        '{}:{}'.format(_get_image_name(nvr, repo), _get_vr(nvr))
+        for nvr, repo in sorted(cdn_docker_file_list.items())
     ]
 
     return '#########\n{}\n#########'.format('\n'.join(image_list))
