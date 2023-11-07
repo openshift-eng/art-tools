@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sys
+import os
 from functools import update_wrapper
 from pathlib import Path
 from typing import Optional
@@ -9,6 +10,7 @@ import click
 
 from pyartcd import __version__
 from pyartcd.runtime import Runtime
+from pyartcd.telemetry import initialize_telemetry
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -38,6 +40,8 @@ def print_version(ctx, param, value):
 @click.option('--version', is_flag=True, callback=print_version,
               expose_value=False, is_eager=True,
               help="Print version information and quit")
+@click.option('--enable-telemetry', is_flag=True,
+              help="[Experimental] Enable OpenTelemetry support")
 @click.option("--config", "-c", metavar='PATH',
               help="Configuration file ('~/.config/artcd.toml' by default)")
 @click.option("--working-dir", "-C", metavar='PATH', default=None,
@@ -47,8 +51,11 @@ def print_version(ctx, param, value):
 @click.option("--verbosity", "-v", count=True,
               help="[MULTIPLE] increase output verbosity")
 @click.pass_context
-def cli(ctx: click.Context, config: Optional[str], working_dir: Optional[str], dry_run: bool, verbosity: int):
-
+def cli(ctx: click.Context, config: Optional[str], working_dir: Optional[str], dry_run: bool, verbosity: int,
+        enable_telemetry: bool):
+    # Initialize telemetry if needed
+    if enable_telemetry or os.environ.get("TELEMETRY_ENABLED") == "1":
+        initialize_telemetry()
     config_filename = config or Path("~/.config/artcd.toml").expanduser()
     working_dir = working_dir or Path.cwd()
     # configure logging

@@ -5,6 +5,7 @@ import os
 
 import click
 import yaml
+from opentelemetry import trace
 
 from artcommonlib import rhcos
 from pyartcd.cli import cli, pass_runtime, click_coroutine
@@ -12,9 +13,12 @@ from pyartcd.oc import registry_login
 from pyartcd.redis import RedisError
 from pyartcd.runtime import Runtime, GroupRuntime
 from pyartcd import exectools, constants, redis, util
+from pyartcd.telemetry import start_as_current_span_async
 from pyartcd.util import branch_arches
 from doozerlib.util import go_suffix_for_arch
 
+
+TRACER = trace.get_tracer(__name__)
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
 
@@ -256,7 +260,7 @@ class BuildSyncPipeline:
             cmd.extend([f'--exclude-arch {arch}' for arch in self.exclude_arches])
         if self.runtime.dry_run:
             cmd.extend(['--skip-gc-tagging', '--moist-run'])
-        await exectools.cmd_assert_async(cmd)
+        await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
         # Populate CI imagestreams
         await self._populate_ci_imagestreams()
@@ -373,6 +377,7 @@ class BuildSyncPipeline:
                    "heterogeneous release payload by setting this to true")
 @pass_runtime
 @click_coroutine
+@start_as_current_span_async(TRACER, "build-sync")
 async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
                      debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
@@ -390,10 +395,16 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         exclude_arches=exclude_arches,
         skip_multiarch_payload=skip_multiarch_payload
     )
-
+    span = trace.get_current_span()
+    span.set_attributes({
+        "pyartcd.param.dry_run": runtime.dry_run,
+        "pyartcd.param.version": version,
+        "pyartcd.param.assembly": assembly,
+    })
     try:
         await pipeline.run()
         await pipeline.handle_success()
+        span.set_status(trace.StatusCode.OK)
 
     except (RuntimeError, ChildProcessError):
         # Only for 'stream' assembly, track failure to enable future notifications

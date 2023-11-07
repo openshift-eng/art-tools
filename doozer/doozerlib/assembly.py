@@ -93,6 +93,13 @@ class AssemblyIssue:
     def __repr__(self):
         return self.msg
 
+    def to_dict(self):
+        return {
+            "code": self.code.value,
+            "component": self.component,
+            "msg": self.msg
+        }
+
 
 def merger(a, b):
     """
