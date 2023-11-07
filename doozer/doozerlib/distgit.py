@@ -1649,6 +1649,11 @@ class ImageDistGitRepo(DistGitRepo):
             # Source or not, we should find a Dockerfile in the root at this point or something is wrong
             assertion.isfile(dg_path.joinpath("Dockerfile"), "Unable to find Dockerfile in distgit root")
 
+            # Workaround for https://issues.redhat.com/browse/STONEBLD-1929
+            containerfile = dg_path.joinpath('Containerfile')
+            if containerfile.is_file():
+                containerfile.unlink()
+
             self._generate_repo_conf()
 
             self._generate_config_digest()
