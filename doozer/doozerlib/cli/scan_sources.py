@@ -39,10 +39,6 @@ class ConfigScanSources:
         self.oldest_image_event_ts = None
         self.newest_image_event_ts = 0
 
-        # TODO temp hack to apply rebase into -priv to only one component; when a random component is rebased,
-        # the rebase procedure will exit. This will let us inspect the results while minimizing risks
-        self.rebased = False
-
     def run(self):
         with self.runtime.shared_koji_client_session() as koji_api:
             self.runtime.logger.info(f'scan-sources coordinate: brew_event: '
@@ -109,9 +105,6 @@ class ConfigScanSources:
                 cmd=['git', 'push', 'origin', priv_branch_name],
                 retries=3)
             self.runtime.logger.info('Successfully reconciled %s with public upstream', metadata.name)
-
-            # TODO remove once we're confident it all works fine
-            self.rebased = True
 
         except ChildProcessError:
             # Failed pushing to openshift-priv
@@ -181,10 +174,6 @@ class ConfigScanSources:
             if not metadata.enabled:
                 self.runtime.logger.warning('%s is disabled: skipping rebase', metadata.name)
                 continue
-
-            # TODO remove once we're confident it all works fine
-            if self.rebased:
-                return
 
             if metadata.config.content is Missing:
                 self.runtime.logger.warning('%s %s is a distgit-only component: skipping openshift-priv rebase',
