@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
 from pyartcd.pipelines.promote import PromotePipeline
 from pyartcd.exceptions import VerificationError
 from doozerlib.assembly import AssemblyTypes
-from artcommon.model import Model
+from artcommonlib.model import Model
 
 
 class TestPromotePipeline(IsolatedAsyncioTestCase):
