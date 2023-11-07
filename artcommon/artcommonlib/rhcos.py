@@ -1,5 +1,5 @@
-from artcommon.model import ListModel, Model
-from artcommon.runtime import GroupRuntime
+from artcommonlib.model import ListModel, Model
+from artcommonlib.runtime import GroupRuntime
 
 # Historically the only RHCOS container was 'machine-os-content'; see
 # https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md

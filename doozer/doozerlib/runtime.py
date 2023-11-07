@@ -22,7 +22,7 @@ import re
 
 from jira import JIRA
 
-from artcommon.runtime import GroupRuntime
+from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
 from . import logutil
 from . import assertion
