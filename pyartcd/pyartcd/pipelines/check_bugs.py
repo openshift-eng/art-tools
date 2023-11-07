@@ -178,15 +178,14 @@ class CheckBugsPipeline:
                 report[k].extend(v)
 
         # Format output message
-        message = ':red-siren: *There are some issues to look into:*'
         for k in report.keys():
-            message += f'\n:warning:*{k}*'
+            message = f':red-siren:  `Bug(s) requiring attention for:` \n:warning: *{k}*'
             for i in report[k]:
                 message += f'\n{i}'
 
-        self.logger.info('Sending notification to Slack')
-        self.logger.debug(message)
-        await self.slack_client.say(message)
+            self.logger.info('Sending notification to Slack')
+            self.logger.debug(message)
+            await self.slack_client.say(message)
 
 
 @cli.command('check-bugs')

@@ -387,9 +387,13 @@ def extras_bugs(bugs: type_bug_set) -> type_bug_set:
 
 
 def print_report(bugs: type_bug_list, output: str = 'text') -> None:
+    approved_url = 'https://source.redhat.com/groups/public/openshift/openshift_wiki/openshift_bugzilla_process'
     if output == 'slack':
         for bug in bugs:
-            click.echo("<{}|{}> - {:<25s} ".format(bug.weburl, bug.id, bug.component))
+            if bug.release_blocker:
+                click.echo("<{}|_Release blocker: Approved_> bug for <{}|{}> - {:<25s} ".format(approved_url, bug.weburl, bug.id, bug.component))
+            else:
+                click.echo("<{}|{}> - {:<25s} ".format(bug.weburl, bug.id, bug.component))
 
     elif output == 'json':
         print(json.dumps(
