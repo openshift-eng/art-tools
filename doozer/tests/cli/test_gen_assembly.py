@@ -283,8 +283,8 @@ class TestGenPayloadCli(TestCase):
         })
         self.assertEqual(release_jira, "ART-0")
 
-        runtime.get_major_minor_fields.return_value = (4, 13)
-        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.13.2')
+        runtime.get_major_minor_fields.return_value = (4, 14)
+        gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.3')
         advisories, release_jira = gacli._get_advisories_release_jira()
         self.assertEqual(advisories, {
             'image': -1,
