@@ -1516,11 +1516,11 @@ class ImageDistGitRepo(DistGitRepo):
                 return datetime.now() < feature_freeze_date
             except ChildProcessError:
                 # Could not access Gitlab: display a warning and fallback to default
-                self.logger.error('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
+                self.logger.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
                 return False
             except ValueError as e:
                 # A GITLAB token env var was not provided: display a warning and fallback to default
-                self.logger.error(f'Fallback to default ART config: {e}')
+                self.logger.warning(f'Fallback to default ART config: {e}')
                 return False
         elif self.runtime.group_config.canonical_builders_from_upstream in ['on', True]:
             # yaml parser converts bare 'on' to True, same for 'off' and False
