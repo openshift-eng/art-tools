@@ -1,4 +1,6 @@
-import datetime, re, click
+import datetime
+import re
+import click
 from collections import deque
 from itertools import chain
 from multiprocessing import cpu_count
@@ -492,7 +494,8 @@ def total_size(o, handlers={}, verbose=False):
                     OtherContainerClass: OtherContainerClass.get_elements}
 
     """
-    dict_handler = lambda d: chain.from_iterable(d.items())
+    def dict_handler(d):
+        return chain.from_iterable(d.items())
     all_handlers = {
         tuple: iter,
         list: iter,

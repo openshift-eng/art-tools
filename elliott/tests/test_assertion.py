@@ -7,7 +7,7 @@ import unittest
 try:
     from elliottlib.assertion import FileNotFoundError
     from elliottlib.assertion import ChildProcessError
-except:
+except Exception:
     pass
 
 from elliottlib import assertion

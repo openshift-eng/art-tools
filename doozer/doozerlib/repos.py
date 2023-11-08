@@ -382,7 +382,7 @@ class Repos(object):
                     cert=(cs_auth_cert, cs_auth_key),
                 )
                 break
-            except:
+            except Exception:
                 if i == retry_count - 1:
                     raise
                 time.sleep(5)

@@ -503,7 +503,8 @@ def total_size(o, handlers=None, verbose=False):
     if handlers is None:
         handlers = dict()
 
-    dict_handler = lambda d: chain.from_iterable(d.items())
+    def dict_handler(d):
+        return chain.from_iterable(d.items())
     all_handlers = {
         tuple: iter,
         list: iter,
@@ -757,15 +758,16 @@ def get_release_calc_previous(version, arch,
     curr_versions, current_edges = get_channel_versions(candidate_channel, arch, graph_url, graph_content_stable,
                                                         graph_content_candidate)
     suggestions = get_build_suggestions(major, minor, arch, suggestions_url)
+
+    def target_within_range(target, min, max):
+        # check if target version in the range of min and max
+        return (semver.VersionInfo.parse(target) >= semver.VersionInfo.parse(min) and semver.VersionInfo.parse(target) < semver.VersionInfo.parse(max))
+
     for v in prev_versions:
-        if (semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['minor_min'])
-                and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['minor_max'])
-                and v not in suggestions['minor_block_list']):
+        if (target_within_range(v, suggestions['minor_min'], suggestions['minor_max']) and v not in suggestions['minor_block_list']):
             upgrade_from.add(v)
     for v in curr_versions:
-        if (semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['z_min'])
-                and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['z_max'])
-                and v not in suggestions['z_block_list']):
+        if (target_within_range(v, suggestions['z_min'], suggestions['z_max']) and v not in suggestions['z_block_list']):
             upgrade_from.add(v)
 
     candidate_channel_versions, candidate_edges = curr_versions, current_edges

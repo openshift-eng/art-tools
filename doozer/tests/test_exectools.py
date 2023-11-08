@@ -32,7 +32,8 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         Given a function that passes, make sure it returns successfully with
         a single retry or greater.
         """
-        pass_function = lambda: True
+        def pass_function():
+            return True
         self.assertTrue(exectools.retry(1, pass_function))
         self.assertTrue(exectools.retry(2, pass_function))
 
@@ -41,7 +42,8 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         Given a function that fails, make sure that it raise an exception
         correctly with a single retry limit and greater.
         """
-        fail_function = lambda: False
+        def fail_function():
+            return False
         assertRaisesRegex = self.assertRaisesRegex if hasattr(self, 'assertRaisesRegex') else self.assertRaisesRegexp
         assertRaisesRegex(
             Exception, self.ERROR_MSG.format(1), exectools.retry, 1, fail_function)
@@ -74,7 +76,9 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         Verify that the retry task return value is passed back out faithfully.
         """
         obj = {}
-        func = lambda: obj
+
+        def func():
+            return obj
         self.assertIs(exectools.retry(1, func, check_f=lambda _: True), obj)
 
 

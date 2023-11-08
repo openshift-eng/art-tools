@@ -436,7 +436,7 @@ class OLMBundle(object):
         cmd = 'oc image info --filter-by-os=linux/amd64 -o json {}'.format(pull_spec)
         try:
             out, err = exectools.cmd_assert(cmd, retries=3)
-        except:
+        except Exception:
             self.runtime.logger.error(f'Unable to find image from CSV: {pull_spec}. Image may have failed to build after CSV rebase.')
             raise
 

@@ -9,8 +9,8 @@ import koji
 import logging
 from . import constants
 from future.standard_library import install_aliases
-install_aliases()
 from urllib.parse import urldefrag
+install_aliases()
 
 # Exclude those files from the outputing tarball sources:
 TARBALL_IGNORES = {".gitignore", ".oit", "container.yaml",

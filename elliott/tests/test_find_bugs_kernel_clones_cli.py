@@ -165,7 +165,6 @@ FOO-2	ON_QA	test bug 2
             MagicMock(spec=Issue, **{
                 "key": "FOO-1", "fields": MagicMock(),
                 "fields.summary": "Fake bug 1",
-                "fields.summary": "Fake bug 1",
                 "fields.labels": ["art:bz#1", "art:kmaint:KMAINT-1"],
                 "fields.status.name": "New",
             }),
@@ -226,7 +225,6 @@ FOO-2	ON_QA	test bug 2
         found_bugs = [
             MagicMock(spec=Issue, **{
                 "key": "FOO-1", "fields": MagicMock(),
-                "fields.summary": "Fake bug 1",
                 "fields.summary": "Fake bug 1",
                 "fields.labels": ["art:bz#1", "art:kmaint:KMAINT-1"],
                 "fields.status.name": "New",

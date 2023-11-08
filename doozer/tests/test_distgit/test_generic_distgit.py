@@ -123,7 +123,7 @@ class TestGenericDistGit(TestDistgit):
             repo.clone("my-root-dir", "my-branch")
         except OSError:
             self.fail("Should not have raised a \"dir already exists\" exception")
-        except:
+        except Exception:
             pass  # doesn't matter if something fails at a later point
 
         # simulating any other OSError

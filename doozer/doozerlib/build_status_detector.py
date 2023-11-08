@@ -75,11 +75,10 @@ class BuildStatusDetector:
         for suspect in suspect_build_ids:
             for archive in self.archive_lists[suspect]:
                 rpms = archive["rpms"]
-                suspected_rpms = [
-                    rpm for rpm in rpms
-                    if util.isolate_pflag_in_release(rpm["release"]) == "p1"
-                    or rpm["build_id"] in embargoed_rpm_ids
-                ]
+                suspected_rpms = []
+                for rpm in rpms:
+                    if util.isolate_pflag_in_release(rpm["release"]) == "p1" or rpm["build_id"] in embargoed_rpm_ids:
+                        suspected_rpms.append(rpm)
                 shipped = self.find_shipped_builds([rpm["build_id"] for rpm in suspected_rpms])
                 embargoed_rpms = [rpm for rpm in suspected_rpms if rpm["build_id"] not in shipped]
                 if embargoed_rpms:

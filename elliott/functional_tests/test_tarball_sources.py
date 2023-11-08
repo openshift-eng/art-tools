@@ -14,8 +14,7 @@ class TarballSourcesTestCase(unittest.TestCase):
 
     def test_tarball_sources_create(self):
         out = subprocess.check_output(
-            constants.ELLIOTT_CMD
-            + [
+            constants.ELLIOTT_CMD + [
                 "tarball-sources", "create", "--component=logging-fluentd-container",
                 "--out-dir", self.out_dir, "--force", "45606",
             ]
