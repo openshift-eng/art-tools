@@ -820,6 +820,17 @@ def remove_dependent_advisories(advisory_id):
                           f'with code {response.status_code} and error: {response.text}')
 
 
+def remove_blocking_advisories_depends(advisory_id):
+    # Remove advisory from blocking advisory's depends_on list
+    for blocking_advisory in get_blocking_advisories(advisory_id):
+        endpoint = f'/api/v1/erratum/{blocking_advisory}/remove_blocking_errata'
+        data = {"blocking_errata": int(advisory_id)}
+        response = ErrataConnector()._post(endpoint, data=data)
+        if response.status_code != requests.codes.created:
+            raise IOError(f'Failed to remove blocking {advisory_id} from {blocking_advisory}'
+                          f'with code {response.status_code} and error: {response.text}')
+
+
 def get_file_meta(advisory_id) -> List[dict]:
     """Get the metadata for all applicable files in this advisory (does not include builds)
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-get-apiv1erratumidfilemeta
