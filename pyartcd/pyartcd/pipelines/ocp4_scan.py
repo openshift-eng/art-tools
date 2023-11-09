@@ -64,6 +64,7 @@ class Ocp4ScanPipeline:
                 assembly='stream',
                 rpm_list=self.changes.get('rpms', []),
                 image_list=self.changes.get('images', []),
+                comment_on_pr=True
             )
 
         elif self.rhcos_inconsistent:

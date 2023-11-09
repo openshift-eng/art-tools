@@ -30,7 +30,8 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
     @patch("pyartcd.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
@@ -134,7 +135,8 @@ class TestPlannedBuilds(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
     @patch("pyartcd.jenkins.update_description")
@@ -346,7 +348,8 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
     def setUp(self) -> None:
@@ -487,7 +490,8 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
         pipeline._doozer_working = 'doozer_working'
         pipeline.build_plan.active_image_count = 5
@@ -684,7 +688,8 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
     @patch("pyartcd.util.get_freeze_automation", return_value="False")
@@ -805,7 +810,8 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
         pipeline.version.release = '2099010109.p?'
@@ -874,7 +880,8 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
         # No images
@@ -918,7 +925,8 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
         # No images
@@ -969,7 +977,8 @@ class TestMirrorRpms(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
         # Mock lock manager
@@ -1023,7 +1032,8 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             build_images='all',
             image_list='',
             skip_plashets=False,
-            mail_list_failure=''
+            mail_list_failure='',
+            comment_on_pr=False
         )
 
     def test_include_exclude(self):
