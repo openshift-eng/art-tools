@@ -35,7 +35,7 @@ class BuildSyncPipeline:
 
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                  emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
-                 debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
+                 images: str, exclude_arches: str, skip_multiarch_payload: bool):
         self.runtime = runtime
         self.version = version
         self.group = f'openshift-{version}'
@@ -45,7 +45,6 @@ class BuildSyncPipeline:
         self.emergency_ignore_issues = emergency_ignore_issues
         self.retrigger_current_nightly = retrigger_current_nightly
         self.doozer_data_gitref = doozer_data_gitref
-        self.debug = debug
         self.images = images
         self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
         self.skip_multiarch_payload = skip_multiarch_payload
@@ -99,7 +98,8 @@ class BuildSyncPipeline:
         arches -= set(self.exclude_arches)
 
         async def _retrigger_arch(arch: str):
-            self.logger.info('Triggering %s release controller to cut new release using previously synced builds...', arch)
+            self.logger.info(
+                'Triggering %s release controller to cut new release using previously synced builds...', arch)
             suffix = go_suffix_for_arch(arch, is_private=False)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi8 ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller'
@@ -360,14 +360,13 @@ class BuildSyncPipeline:
 @click.option("--data-path", required=True, default=constants.OCP_BUILD_DATA_URL,
               help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
 @click.option("--emergency-ignore-issues", is_flag=True,
-              help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. Do not use without approval.")
+              help="Ignore all issues with constructing payload. "
+                   "Only supported for assemblies of type: stream. Do not use without approval.")
 @click.option("--retrigger-current-nightly", is_flag=True,
               help="Forces the release controller to re-run with existing images. No change will be made to payload"
                    "images in the release")
 @click.option("--data-gitref", required=False,
               help="(Optional) Doozer data path git [branch / tag / sha] to use")
-@click.option("--debug", is_flag=True,
-              help="Run \"oc\" commands with greater logging")
 @click.option("--images", required=False,
               help="(Optional) Comma-separated list of images to sync, for testing purposes")
 @click.option("--exclude-arches", required=False,
@@ -380,7 +379,7 @@ class BuildSyncPipeline:
 @start_as_current_span_async(TRACER, "build-sync")
 async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
-                     debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
+                     images: str, exclude_arches: str, skip_multiarch_payload: bool):
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
@@ -390,7 +389,6 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         emergency_ignore_issues=emergency_ignore_issues,
         retrigger_current_nightly=retrigger_current_nightly,
         doozer_data_gitref=data_gitref,
-        debug=debug,
         images=images,
         exclude_arches=exclude_arches,
         skip_multiarch_payload=skip_multiarch_payload
