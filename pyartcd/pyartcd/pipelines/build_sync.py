@@ -2,20 +2,23 @@ import asyncio
 import glob
 import json
 import os
-
+import re
 import click
 import yaml
 from opentelemetry import trace
 
 from artcommonlib import rhcos
+from artcommonlib.util import split_git_url
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
 from pyartcd.redis import RedisError
 from pyartcd.runtime import Runtime, GroupRuntime
-from pyartcd import exectools, constants, redis, util
+from pyartcd import exectools, constants, redis
 from pyartcd.telemetry import start_as_current_span_async
 from pyartcd.util import branch_arches
+from pyartcd.jenkins import get_build_url
 from doozerlib.util import go_suffix_for_arch
+from ghapi.all import GhApi
 
 
 TRACER = trace.get_tracer(__name__)
@@ -52,8 +55,70 @@ class BuildSyncPipeline:
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
         self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
+        self.job_run = get_build_url()
+
+        self.slack_client = self.runtime.new_slack_client()
+        self.slack_client.bind_channel(f'openshift-{self.version}')
+
+    async def comment_on_assembly_pr(self, text_body):
+        """
+        Comment the link to this jenkins build on the assembly PR if it was triggered automatically
+        """
+
+        # Keeping in try-except so that job doesn't fail because of any error here
+        try:
+            _, owner, repository = split_git_url(self.data_path)
+            branch = self.doozer_data_gitref
+            token = os.environ.get('GITHUB_TOKEN')
+
+            pattern = r"github\.com/([^/]+)/"
+            match = re.search(pattern, self.data_path)
+
+            repo_owner = None
+            if match:
+                repo_owner = match.group(1)
+
+            api = GhApi(owner=owner, repo=repository, token=token)
+
+            # Check if the doozer_data_gitref is given then, if not
+            # then it set the branch to openshift-{major}.{minor}
+            if not branch:
+                branch = f"openshift-{self.version}"
+
+            # Head needs to have the repo name prepended for GhApi to fetch the correct one
+            head = f"{repo_owner}:{branch}"
+            # Find our assembly PR.
+            prs = api.pulls.list(head=head, state="open")
+
+            if len(prs) == 0:
+                self.logger.error(f"No assembly PRs were found with head={head}")
+                return
+
+            if len(prs) > 1:
+                self.logger.error(
+                    f"{len(prs)} PR(s) were found with head={head}. We need only 1.")
+                return
+
+            pr_number = prs[0]["number"]
+
+            if self.runtime.dry_run:
+                self.logger.warning(f"[DRY RUN] Would have commented on PR {owner}/{repository}/pull/{pr_number} "
+                                    f"with the message: \n {text_body}")
+                return
+
+            # https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
+            # PR is an issue as far as  GitHub API is concerned
+            api.issues.create_comment(issue_number=pr_number, body=text_body)
+
+        except Exception as e:
+            self.logger.error(f"Error commenting to PR: {e}")
 
     async def run(self):
+        if self.assembly != 'stream':
+            # Comment on PR if triggered from gen assembly
+            text_body = f"Build sync job [run]({self.job_run}) has been triggered"
+            await self.comment_on_assembly_pr(text_body)
+
         # Make sure we're logged into the OC registry
         await registry_login(self.runtime)
 
@@ -71,6 +136,13 @@ class BuildSyncPipeline:
         await self._update_nightly_imagestreams()
 
     async def handle_success(self):
+        if self.assembly != 'stream':
+            # Comment on the PR that the job succeeded
+            text_body = f"Build sync job [run]({self.job_run}) succeeded!"
+            await self.comment_on_assembly_pr(text_body)
+            await self.slack_client.say(f"@release-artists <{self.job_run}|build-sync> "
+                                        f"for assembly {self.assembly} succeeded!")
+
         #  All good: delete fail counter
         if self.assembly == 'stream' and not self.runtime.dry_run:
             res = await redis.delete_key(self.fail_count_name)
@@ -99,7 +171,8 @@ class BuildSyncPipeline:
         arches -= set(self.exclude_arches)
 
         async def _retrigger_arch(arch: str):
-            self.logger.info('Triggering %s release controller to cut new release using previously synced builds...', arch)
+            self.logger.info('Triggering %s release controller to cut new release using previously synced builds...',
+                             arch)
             suffix = go_suffix_for_arch(arch, is_private=False)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi8 ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller'
@@ -219,10 +292,7 @@ class BuildSyncPipeline:
             await asyncio.gather(*tasks)
 
         except (ChildProcessError, KeyError) as e:
-            slack_client = self.runtime.new_slack_client()
-            slack_client.bind_channel(f'openshift-{self.version}')
-            await slack_client.say(
-                f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
+            await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
     async def _update_nightly_imagestreams(self):
         """
@@ -302,6 +372,12 @@ class BuildSyncPipeline:
                     await asyncio.sleep(5)
 
     async def handle_failure(self):
+        if self.assembly != 'stream':
+            text_body = f"Build sync job [run]({self.job_run}) failed!"
+            await self.comment_on_assembly_pr(text_body)
+            await self.slack_client.say(f"@release-artists <{self.job_run}|build sync> "
+                                        f"for assembly {self.assembly} failed!")
+
         # Increment failure count
         current_count = await redis.get_value(self.fail_count_name)
         if current_count is None:  # does not yet exist in Redis
@@ -316,7 +392,7 @@ class BuildSyncPipeline:
         if fail_count < 2 or self.assembly != 'stream':
             raise
 
-        # More than 2 failures: we need to notify ART and #forum-relase before breaking the build
+        # More than 2 failures: we need to notify ART and #forum-release before breaking the build
         slack_client = self.runtime.new_slack_client()
         msg = f'Pipeline has failed to assemble release payload for {self.version} ' \
               f'(assembly {self.assembly}) {fail_count} times.'
@@ -360,7 +436,8 @@ class BuildSyncPipeline:
 @click.option("--data-path", required=True, default=constants.OCP_BUILD_DATA_URL,
               help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
 @click.option("--emergency-ignore-issues", is_flag=True,
-              help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. Do not use without approval.")
+              help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. "
+                   "Do not use without approval.")
 @click.option("--retrigger-current-nightly", is_flag=True,
               help="Forces the release controller to re-run with existing images. No change will be made to payload"
                    "images in the release")

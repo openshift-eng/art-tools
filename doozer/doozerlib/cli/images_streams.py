@@ -21,10 +21,10 @@ from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import exectools, constants
 from doozerlib.image import ImageMetadata
-from doozerlib.util import get_docker_config_json, convert_remote_git_to_ssh, \
-    split_git_url, remove_prefix, green_print, \
+from doozerlib.util import get_docker_config_json, green_print, \
     yellow_print, \
-    what_is_in_master, extract_version_fields, convert_remote_git_to_https
+    what_is_in_master, extract_version_fields
+from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
 
 
 @cli.group("images:streams", short_help="Manage ART equivalent images in upstream CI.")

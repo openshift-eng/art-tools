@@ -38,7 +38,8 @@ from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from doozerlib.util import convert_remote_git_to_https, yellow_print
+from doozerlib.util import yellow_print
+from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.comment_on_pr import CommentOnPr
 from string import Template
 

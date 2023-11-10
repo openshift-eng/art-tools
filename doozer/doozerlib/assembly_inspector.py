@@ -1,7 +1,8 @@
 from typing import Any, List, Dict, Optional
 
 from koji import ClientSession
-from doozerlib.model import Model
+
+import artcommonlib.util as artutil
 from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
 from doozerlib.rpm_utils import parse_nvr
 
@@ -315,8 +316,8 @@ class AssemblyInspector:
         content_git_url = image_meta.config.content.source.git.url
         if content_git_url:
             # Make sure things are in https form so we can compare
-            content_git_url, _ = self.runtime.get_public_upstream(util.convert_remote_git_to_https(content_git_url))
-            build_git_url = util.convert_remote_git_to_https(build_inspector.get_source_git_url())
+            content_git_url, _ = self.runtime.get_public_upstream(artutil.convert_remote_git_to_https(content_git_url))
+            build_git_url = artutil.convert_remote_git_to_https(build_inspector.get_source_git_url())
             if content_git_url != build_git_url:
                 # Impermissible as artist can just fix upstream git source in assembly definition
                 issues.append(AssemblyIssue(f'Expected image git source from metadata {content_git_url} but found {build_git_url} as the upstream source of the brew build', component=dgk))
