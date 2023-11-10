@@ -55,7 +55,7 @@ class RpmMirror:
 class Ocp4Pipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
                  pin_builds: bool, build_rpms: str, rpm_list: str, build_images: str, image_list: str,
-                 skip_plashets: bool, mail_list_failure: str, lock_identifier: str = None):
+                 skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, lock_identifier: str = None):
 
         self.runtime = runtime
         self.assembly = assembly
@@ -74,6 +74,7 @@ class Ocp4Pipeline:
         self.rpm_mirror = RpmMirror()  # will be filled in later by build-compose stage
         self.rpm_mirror.url = f'{constants.MIRROR_BASE_URL}/enterprise/enterprise/{self.version.stream}'
         self.all_image_build_failed = False
+        self.comment_on_pr = comment_on_pr
 
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.data_path = data_path
@@ -670,6 +671,9 @@ class Ocp4Pipeline:
         cmd.extend(self._include_exclude('images', self.build_plan.images_included, self.build_plan.images_excluded))
         cmd.extend(['images:build', '--repo-type', signing_mode])
 
+        if self.comment_on_pr:
+            cmd.extend(['--comment-on-pr'])
+
         if self.runtime.dry_run:
             self.runtime.logger.info('Would have executed: %s', ' '.join(cmd))
             return
@@ -932,11 +936,12 @@ class Ocp4Pipeline:
               help='Failure Mailing List')
 @click.option('--ignore-locks', is_flag=True, default=False,
               help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
+@click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str, pin_builds: bool,
                build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
-               mail_list_failure: str, ignore_locks: bool):
+               mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool):
 
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
@@ -955,7 +960,8 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         image_list=image_list,
         skip_plashets=skip_plashets,
         mail_list_failure=mail_list_failure,
-        lock_identifier=lock_identifier
+        lock_identifier=lock_identifier,
+        comment_on_pr=comment_on_pr
     )
 
     if ignore_locks:

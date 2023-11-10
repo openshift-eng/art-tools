@@ -29,7 +29,6 @@ import doozerlib
 from doozerlib import assertion, constants, exectools, logutil, state, util
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.brew import get_build_objects, watch_task, BuildStates
-from doozerlib.constants import BREWWEB_URL
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.model import ListModel, Missing, Model
@@ -41,7 +40,6 @@ from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.util import yellow_print
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.comment_on_pr import CommentOnPr
-from string import Template
 
 # doozer used to be part of OIT
 OIT_COMMENT_PREFIX = '#oit##'
@@ -1078,20 +1076,11 @@ class ImageDistGitRepo(DistGitRepo):
                         if comment_on_pr:
                             try:
                                 comment_on_pr_obj = CommentOnPr(distgit_dir=self.distgit_dir,
-                                                                token=os.getenv(constants.GITHUB_TOKEN))
-                                comment_on_pr_obj.set_repo_details()
-                                comment_on_pr_obj.set_github_client()
-                                comment_on_pr_obj.set_pr_from_commit()
-                                # Message to be posted to the comment
-                                message = Template("**[ART PR BUILD NOTIFIER]**\n\n"
-                                                   "This PR has been included in build "
-                                                   f"[$nvr]({BREWWEB_URL}/buildinfo"
-                                                   "?buildID=$build_id) "
-                                                   "for distgit *$distgit_name*. \n All builds following this will "
-                                                   "include this PR.")
-                                comment_on_pr_obj.post_comment(message.substitute(nvr=build_info["nvr"],
-                                                                                  build_id=build_info["id"],
-                                                                                  distgit_name=self.metadata.name))
+                                                                nvr=build_info["nvr"],
+                                                                build_id=build_info["id"],
+                                                                distgit_name=self.metadata.name
+                                                                )
+                                comment_on_pr_obj.run()
                             except Exception as e:
                                 self.logger.error(f"Error commenting on PR for build task id {task_id} for distgit"
                                                   f"{self.metadata.name}: {e}")
