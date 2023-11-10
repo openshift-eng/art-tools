@@ -38,7 +38,7 @@ class BuildSyncPipeline:
 
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                  emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
-                 debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
+                 images: str, exclude_arches: str, skip_multiarch_payload: bool):
         self.runtime = runtime
         self.version = version
         self.group = f'openshift-{version}'
@@ -48,7 +48,6 @@ class BuildSyncPipeline:
         self.emergency_ignore_issues = emergency_ignore_issues
         self.retrigger_current_nightly = retrigger_current_nightly
         self.doozer_data_gitref = doozer_data_gitref
-        self.debug = debug
         self.images = images
         self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
         self.skip_multiarch_payload = skip_multiarch_payload
@@ -443,8 +442,6 @@ class BuildSyncPipeline:
                    "images in the release")
 @click.option("--data-gitref", required=False,
               help="(Optional) Doozer data path git [branch / tag / sha] to use")
-@click.option("--debug", is_flag=True,
-              help="Run \"oc\" commands with greater logging")
 @click.option("--images", required=False,
               help="(Optional) Comma-separated list of images to sync, for testing purposes")
 @click.option("--exclude-arches", required=False,
@@ -457,7 +454,7 @@ class BuildSyncPipeline:
 @start_as_current_span_async(TRACER, "build-sync")
 async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
-                     debug: bool, images: str, exclude_arches: str, skip_multiarch_payload: bool):
+                     images: str, exclude_arches: str, skip_multiarch_payload: bool):
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
@@ -467,7 +464,6 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         emergency_ignore_issues=emergency_ignore_issues,
         retrigger_current_nightly=retrigger_current_nightly,
         doozer_data_gitref=data_gitref,
-        debug=debug,
         images=images,
         exclude_arches=exclude_arches,
         skip_multiarch_payload=skip_multiarch_payload
