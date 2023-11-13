@@ -6,6 +6,7 @@ import re
 import click
 import yaml
 from opentelemetry import trace
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import rhcos
 from artcommonlib.util import split_git_url
@@ -293,6 +294,7 @@ class BuildSyncPipeline:
         except (ChildProcessError, KeyError) as e:
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def _update_nightly_imagestreams(self):
         """
         Determine the content to update in the ART latest imagestreams and apply those changes on the CI cluster.
