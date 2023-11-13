@@ -223,7 +223,7 @@ def start_build(job: Jobs, params: dict,
 
 
 def start_ocp4(build_version: str, assembly: str, rpm_list: list,
-               image_list: list, **kwargs) -> Optional[str]:
+               image_list: list, comment_on_pr: bool, **kwargs) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly
@@ -246,6 +246,9 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
         params['IMAGE_LIST'] = ','.join(image_list)
     else:
         params['BUILD_IMAGES'] = 'none'
+
+    if comment_on_pr:
+        params['COMMENT_ON_PR'] = True
 
     return start_build(
         job=Jobs.OCP4,
