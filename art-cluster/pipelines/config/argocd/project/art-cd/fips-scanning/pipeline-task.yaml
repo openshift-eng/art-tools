@@ -1,0 +1,58 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: fips-pipeline-task
+spec:
+  params:
+    - description: 'OCP major version, eg: 4.15'
+      name: version
+      type: string
+    - description: 'Space separated NVRs'
+      name: nvrs
+      type: string
+    - description: 'DOOZER_DATA_PATH value'
+      name: doozer_path
+      type: string
+  steps:
+    - image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:base
+      name: run-script
+      resources: {}
+      script: |
+        #!/usr/bin/env bash
+
+        set -e
+
+        touch /root/.config/artcd.toml
+
+        kinit -kt /tmp/keytab/keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@IPA.REDHAT.COM
+
+        artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs) 
+
+      securityContext:
+        runAsGroup: 0
+        runAsUser: 0
+      volumeMounts:
+        - mountPath: /root/.config/art-bot
+          name: art-bot-docker-config
+        - mountPath: /root/.config/doozer
+          name: doozer-config
+        - mountPath: /tmp/keytab
+          name: art-bot-keytab
+      env:
+        - name: SLACK_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: art-bot-config
+              key: slack-api-token
+        - name: DOOZER_DATA_PATH
+          value: $(params.doozer_path)
+  volumes:
+    - name: art-bot-docker-config
+      secret:
+        secretName: art-bot-docker-config
+    - name: doozer-config
+      secret:
+        secretName: doozer-config
+    - name: art-bot-keytab
+      secret:
+        secretName: art-bot-keytab

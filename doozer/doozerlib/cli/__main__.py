@@ -26,6 +26,7 @@ from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.scan_osh import scan_osh
+from doozerlib.cli.scan_fips import scan_fips
 from doozerlib.cli.gen_assembly_helper import gen_assembly_rhcos
 from doozerlib.cli.rpms import rpms_print, rpms_rebase_and_build, rpms_rebase, rpms_build, rpms_clone, rpms_clone_sources
 from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_olm_bundle, build_olm_bundle, rebase_and_build_olm_bundle
