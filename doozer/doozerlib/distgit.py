@@ -1073,7 +1073,7 @@ class ImageDistGitRepo(DistGitRepo):
                         record["nvrs"] = build_info["nvr"]
                     if not dry_run:
                         self.update_build_db(True, task_id=task_id, scratch=scratch)
-                        if comment_on_pr:
+                        if comment_on_pr and self.runtime.assembly == "stream":
                             try:
                                 comment_on_pr_obj = CommentOnPr(distgit_dir=self.distgit_dir,
                                                                 nvr=build_info["nvr"],
