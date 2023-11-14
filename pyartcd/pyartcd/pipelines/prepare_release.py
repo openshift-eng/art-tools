@@ -119,8 +119,6 @@ class PrepareReleasePipeline:
         if assembly_type == AssemblyTypes.STREAM:
             if self.release_version[0] >= 4:
                 raise ValueError("Preparing a release from a stream assembly for OCP4+ is no longer supported.")
-        elif assembly_type == AssemblyTypes.PREVIEW:
-            raise ValueError("Do not run prepare-release for ECs")
 
         release_config = releases_config.get("releases", {}).get(self.assembly, {})
         self.release_name = get_release_name_for_assembly(self.group_name, releases_config, self.assembly)
