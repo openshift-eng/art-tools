@@ -75,16 +75,22 @@ errata_valid_impetus = [
     'extras',
     'metadata',
     "microshift",
+    "prerelease",
+    "advance",
+    "bootimage",
 ]
 
 # These are the types of advisories that may have definitions in group.yml
 # TODO: this should probably be user-definable in some way
 standard_advisory_types = [
-    'rpm',
-    'image',
-    'extras',
-    'metadata',
+    "rpm",
+    "image",
+    "extras",
+    "metadata",
     "microshift",
+    "prerelease",
+    "advance",
+    "bootimage",
 ]
 
 
