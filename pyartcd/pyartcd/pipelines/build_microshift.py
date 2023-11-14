@@ -174,7 +174,7 @@ class BuildMicroShiftPipeline:
                               f"This will publish the microshift build to mirror"
                     await self.slack_say(message)
                 except Exception as err:
-                    self._logger("Failed to trigger microshift_sync job: %s", err)
+                    self._logger.warning("Failed to trigger microshift_sync job: %s", err)
                     message = "@release-artists Please start <microshift sync | " \
                               "https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888" \
                               "/job/aos-cd-builds/job/build%252Fmicroshift_sync> manually."
