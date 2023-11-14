@@ -91,11 +91,11 @@ class BuildSyncPipeline:
             prs = api.pulls.list(head=head, state="open")
 
             if len(prs) == 0:
-                self.logger.error(f"No assembly PRs were found with head={head}")
+                self.logger.warning(f"No assembly PRs were found with head={head}")
                 return
 
             if len(prs) > 1:
-                self.logger.error(
+                self.logger.warning(
                     f"{len(prs)} PR(s) were found with head={head}. We need only 1.")
                 return
 
@@ -111,10 +111,10 @@ class BuildSyncPipeline:
             api.issues.create_comment(issue_number=pr_number, body=text_body)
 
         except Exception as e:
-            self.logger.error(f"Error commenting to PR: {e}")
+            self.logger.warning(f"Failed commenting to PR: {e}")
 
     async def run(self):
-        if self.assembly != 'stream':
+        if self.assembly not in ('stream', 'test'):
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
