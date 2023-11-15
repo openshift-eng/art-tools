@@ -202,7 +202,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "tags": [
                     {
                         "name": "machine-os-content",
-                        "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
+                        "annotations": {"version": "00.00.212301010000-0"}
                     }
                 ]
             }
@@ -413,7 +413,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "tags": [
                     {
                         "name": "machine-os-content",
-                        "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
+                        "annotations": {"version": "00.00.212301010000-0"}
                     }
                 ]
             },
@@ -512,7 +512,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "tags": [
                     {
                         "name": "machine-os-content",
-                        "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
+                        "annotations": {"version": "00.00.212301010000-0"}
                     }
                 ]
             }
