@@ -419,7 +419,7 @@ class PromotePipeline:
             rhcos_name = get_primary_container_name(self.group_runtime)
             rhcos = next((t for t in release_info.get("references", {}).get("spec", {}).get("tags", []) if t["name"] == rhcos_name), None)
             if rhcos:
-                rhcos_version = rhcos["annotations"]["io.openshift.build.versions"].split("=")[1]  # machine-os=48.84.202112162302-0 => 48.84.202112162302-0
+                rhcos_version = rhcos["annotations"]["version"]  # 415.92.202310161140-0
                 data["content"][arch]["rhcos_version"] = rhcos_version
         # sync rhcos srpms
         await self.sync_rhcos_srpms(assembly_type, data)
@@ -1002,7 +1002,7 @@ class PromotePipeline:
                             "tags": [
                                 {
                                     "name": get_primary_container_name(self.group_runtime),
-                                    "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
+                                    "annotations": {"version": "00.00.212301010000-0"}
                                 }
                             ]
                         }
