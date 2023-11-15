@@ -441,8 +441,8 @@ class PrepareReleasePipeline:
                 only_payload = True  # OCP 4+ image advisory only contains payload images
             elif impetus == "extras":
                 only_non_payload = True
-        elif impetus.startswith("silentops"):
-            return  # do not sweep into silentops advisories, they are pre-filled
+        elif impetus in ("silentops", "prerelease", "advance", "bootimage"):
+            return  # do not sweep into these advisories initially; later steps may fill them
         else:
             raise ValueError("Specified impetus is not supported: %s", impetus)
         cmd = [
