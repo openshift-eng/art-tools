@@ -225,14 +225,14 @@ class PrepareReleasePipeline:
         self._slack_client.bind_channel(self.release_name)
         for impetus, advisory in advisories.items():
             try:
-                if impetus == "metadata":
+                if impetus in ("metadata", "prerelease", "advance"):
                     # Verify attached operators
                     await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories["metadata"])
                 self.change_advisory_state(advisory, "QE")
             except CalledProcessError as ex:
                 _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
 
-            if impetus in ["image", "extras", "metadata"]:
+            if impetus in ("image", "extras", "metadata", "prerelease", "advance"):
                 if not is_greenwave_all_pass_on_advisory(advisory):
                     await self._slack_client.say(f"Some greenwave tests failed on https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists")
 
