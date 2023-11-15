@@ -273,6 +273,8 @@ class PromotePipeline:
             reference_releases = util.get_assembly_basis(releases_config, self.assembly).get("reference_releases", {})
             tag_stable = assembly_type in [assembly.AssemblyTypes.STANDARD, assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.PREVIEW]
             release_infos = await self.promote(assembly_type, release_name, arches, previous_list, metadata, reference_releases, tag_stable)
+            self._logger.info('Release info for %s: %s', release_name, json.dumps(release_infos, indent=4))
+
             pullspecs = {arch: release_info["image"] for arch, release_info in release_infos.items()}
             pullspecs_repr = ", ".join(f"{arch}: {pullspecs[arch]}" for arch in sorted(pullspecs.keys()))
             self._logger.info("All release images for %s have been promoted. Pullspecs: %s", release_name, pullspecs_repr)
