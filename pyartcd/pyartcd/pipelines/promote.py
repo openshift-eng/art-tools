@@ -1452,6 +1452,7 @@ class PromotePipeline:
             content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
                        f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
         content += f"\nJIRA ticket: {jira_link}\n"
+        content += f"\nAdvisory dashboard: https://art-dash.engineering.redhat.com/dashboard/release/{self.group} \n"
         content += "\nThanks.\n"
         release_version = tuple(map(int, release_name.split(".", 2)))
         email_dir = self._working_dir.absolute() / "email"
