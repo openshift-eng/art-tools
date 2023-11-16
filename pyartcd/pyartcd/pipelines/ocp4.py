@@ -843,10 +843,12 @@ class Ocp4Pipeline:
         jenkins.update_description(f'<hr />Build results:<br/><br/>{timing_report}<br/>')
 
     def _trigger_osh_scans(self):
-        try:
-            jenkins.start_scan_osh(nvrs=self.success_nvrs, version=self.version.stream)
-        except Exception as e:
-            self.runtime.logger.error(f"Failed to trigger scan-osh job: {e}")
+        if self.assembly == 'stream':
+            # Trigger scans only for stream assemblies
+            try:
+                jenkins.start_scan_osh(nvrs=self.success_nvrs, version=self.version.stream, create_jira_tickets=True)
+            except Exception as e:
+                self.runtime.logger.error(f"Failed to trigger scan-osh job: {e}")
 
     async def run(self):
         await self._initialize()
