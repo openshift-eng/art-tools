@@ -512,6 +512,10 @@ class ScanOshCli:
             self.runtime.logger.info(f"Triggering scans for this particular list of NVRs: {self.specific_nvrs}")
             nvrs_for_scans = self.specific_nvrs
 
+        if not nvrs_for_scans:
+            self.runtime.logger.info("No new builds to scan")
+            return
+
         if self.check_triggered:
             nvrs_for_scans = await self.get_untriggered_nvrs(nvrs_for_scans)
 
