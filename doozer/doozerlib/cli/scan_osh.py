@@ -179,7 +179,7 @@ class ScanOshCli:
             image_meta: ImageMetadata = self.runtime.image_map[distgit_name]
 
             try:
-                if not image_meta.scanning.jira_integration.enabled:
+                if not image_meta.config.get("scanning", {}).get("jira_integration", {}).get("enabled", False):
                     self.runtime.logger.info(f"Skipping OCPBUGS creation for package {data['package_name']} "
                                              f"since disabled in image metadata")
                     continue
@@ -196,18 +196,18 @@ class ScanOshCli:
             summary = f"{self.version} SAST scan issues for {brew_package_name}"
 
             # Find if there is already a "OPEN" ticket for this component.
-            # A ticket is said to be "OPEN" if statusCategory <= 'Assigned'.
+            # A ticket is said to be "OPEN" if status <= 'Assigned'.
             # If we detect a net-new security issue, we should open a new ticket instead of updating the one
             # that is in the process of being fixed.
             query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
-                    "statusCategory in ('New', 'Assigned')"
+                    "status in ('New', 'Assigned')"
             # Can use open_issues.pop().raw['fields'] to see all the fields for the JIRA issue, to test
             open_issues = self.search_issues(query)
             self.runtime.logger.info(f"Issues found with query '{query}': {open_issues}")
 
             # Check if this is the first time that we are raising the ticket for this component
             query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
-                    "statusCategory not in ('New', 'Assigned')"
+                    "status not in ('New', 'Assigned')"
             closed_issues = self.search_issues(query)
 
             previous_ticket_id = None
@@ -523,12 +523,10 @@ class ScanOshCli:
 
         # Trigger the scans
         self.trigger_scans(nvrs_for_scans)
-
         if self.runtime.group_config.scanning.jira_integration.enabled not in [True, "True", "true", "yes"]:
             self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for "
                                      f"{self.version}")
             return
-
         if self.create_jira_tickets:
             # Only run for the scheduled variant of this job
             # We use self.specific_nvrs for kicking off scans for images that ART is building
