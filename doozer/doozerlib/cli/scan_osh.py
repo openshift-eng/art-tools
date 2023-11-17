@@ -105,13 +105,14 @@ class ScanOshCli:
                 # task_id here would be the one of the previous successful scan
                 return successful_scan_task_id, task_id, previous_scan_nvr
 
-    @staticmethod
-    def check_if_scan_issues_exist(task_id: str, nvr: str) -> bool:
+    def check_if_scan_issues_exist(self, task_id: str, nvr: str) -> bool:
         """
         ProdSec only wants us to check the scan-results-imp.js file of a scan and see if scan issues are reported.
         """
 
-        response = requests.get(SCAN_RESULTS_URL_TEMPLATE.format(task_id=task_id, nvr=nvr))
+        url = SCAN_RESULTS_URL_TEMPLATE.format(task_id=task_id, nvr=nvr)
+        self.runtime.logger.info(f"Checking OSH Scan for issues: {url}")
+        response = requests.get(url)
 
         if len(response.json()["defects"]) > 0:
             return True
@@ -334,6 +335,7 @@ class ScanOshCli:
         brew_package_names = []
 
         for nvr in nvrs:
+            self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr}")
             brew_info = self.koji_session.getBuild(nvr)
 
             nvr = parse_nvr(brew_info["nvr"])
