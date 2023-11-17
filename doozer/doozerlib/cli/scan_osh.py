@@ -474,9 +474,11 @@ class ScanOshCli:
             for tag in self.brew_tags:
                 builds += self.get_tagged_latest(tag=tag)
 
-        # Sort the builds based on the event ID by descending order so that latest is always on top
+        # Sort the builds based on the event ID by ascending order so that latest is at the end of the list
+        # The reason is that we can have builds of the same component. So we should keep only the
+        # latest build NVR in the OCPBUGS ticket
         # Note: create_event is the event on which the build was tagged in the tag and not the build creation time
-        builds = sorted(builds, key=lambda x: x["create_event"], reverse=True)
+        builds = sorted(builds, key=lambda x: x["create_event"])
 
         nvrs = []
 
@@ -497,7 +499,7 @@ class ScanOshCli:
             self.runtime.logger.info(f"NVRs to trigger scans for {nvr_brew_mapping}")
 
         if builds:
-            latest_event_id = nvr_brew_mapping[0][1]
+            latest_event_id = nvr_brew_mapping[-1][1]
 
             nvrs_for_scans = nvrs
 
