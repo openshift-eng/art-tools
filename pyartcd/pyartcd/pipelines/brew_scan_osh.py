@@ -69,10 +69,8 @@ class OshScan:
                     f"{last_brew_event}"
                 ]
 
-            if self.create_jira_tickets:
-                # Only run for the scheduled variant of this job
-                # We use self.specific_nvrs for kicking off scans for images that ART is building
-                cmd.append("--create-jira-tickets")
+        if self.create_jira_tickets:
+            cmd.append("--create-jira-tickets")
 
         _, brew_event, _ = await exectools.cmd_gather_async(cmd, stderr=True)
         if not brew_event and not self.specific_nvrs:
