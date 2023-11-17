@@ -474,9 +474,11 @@ class ScanOshCli:
             for tag in self.brew_tags:
                 builds += self.get_tagged_latest(tag=tag)
 
-        # Sort the builds based on the event ID by descending order so that latest is always on top
+        # Sort the builds based on the event ID by ascending order so that latest is at the end of the list
+        # The reason is that we can have builds of the same component. So we should keep only the
+        # latest build NVR in the OCPBUGS ticket
         # Note: create_event is the event on which the build was tagged in the tag and not the build creation time
-        builds = sorted(builds, key=lambda x: x["create_event"], reverse=True)
+        builds = sorted(builds, key=lambda x: x["create_event"])
 
         nvrs = []
 
@@ -497,7 +499,7 @@ class ScanOshCli:
             self.runtime.logger.info(f"NVRs to trigger scans for {nvr_brew_mapping}")
 
         if builds:
-            latest_event_id = nvr_brew_mapping[0][1]
+            latest_event_id = nvr_brew_mapping[-1][1]
 
             nvrs_for_scans = nvrs
 
@@ -523,11 +525,16 @@ class ScanOshCli:
             self.runtime.logger.info("No new builds to scan")
             return
 
+        # For raising JIRA tickets, we ideally need to check them even if they are already scanned
+        all_nvrs = nvrs_for_scans
+
         if self.check_triggered:
             nvrs_for_scans = await self.get_untriggered_nvrs(nvrs_for_scans)
 
         # Trigger the scans
         self.trigger_scans(nvrs_for_scans)
+
+        # Check if the OCP version is enabled for raising Jira tickets
         if self.runtime.group_config.scanning.jira_integration.enabled not in [True, "True", "true", "yes"]:
             self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for "
                                      f"{self.version}")
@@ -535,7 +542,7 @@ class ScanOshCli:
         if self.create_jira_tickets:
             # Only run for the scheduled variant of this job
             # We use self.specific_nvrs for kicking off scans for images that ART is building
-            await self.ocp_bugs_workflow_run(nvrs_for_scans)
+            await self.ocp_bugs_workflow_run(all_nvrs)
 
 
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
