@@ -85,6 +85,8 @@ class ScanOshCli:
 
         successful_scan_task_id = None
         successful_scan_nvr = None
+        previous_scan_nvr = None
+        task_id = None
 
         for index, task_id in enumerate(finished_tasks):
             cmd = f"osh-cli task-info {task_id}"
@@ -106,6 +108,9 @@ class ScanOshCli:
 
                 # task_id here would be the one of the previous successful scan
                 return successful_scan_task_id, successful_scan_nvr, task_id, previous_scan_nvr
+
+        # If there is no successful scans
+        return successful_scan_task_id, successful_scan_nvr, task_id, previous_scan_nvr
 
     def check_if_scan_issues_exist(self, task_id: str, nvr: str) -> bool:
         """
@@ -144,6 +149,7 @@ class ScanOshCli:
     def is_latest_scan_different_from_previous(self, latest_scan_id, latest_scan_nvr, previous_scan_id,
                                                previous_scan_nvr):
         # If this is the first scan, then there won't be a previous one
+        # Or there is no previous successful scan
         if not previous_scan_id:
             return True
 
@@ -175,24 +181,6 @@ class ScanOshCli:
         """
         for brew_package_name in packages:
             data = packages[brew_package_name]
-
-            distgit_name = self.get_distgit_name_from_brew_nvr(data["nvr"])
-
-            image_meta: ImageMetadata = self.runtime.image_map[distgit_name]
-
-            try:
-                if not image_meta.config.get("scanning", {}).get("jira_integration", {}).get("enabled", False):
-                    self.runtime.logger.info(f"Skipping OCPBUGS creation for package {data['package_name']} "
-                                             f"since disabled in image metadata")
-                    continue
-            except AttributeError:
-                # Since this will fail until we set it up in image metadata
-                self.runtime.logger.info(f"Skipping OCPBUGS creation for package {data['package_name']} "
-                                         f"since disabled in image metadata")
-                continue
-
-            # Returns project and component name
-            _, potential_component = image_meta.get_jira_info()
 
             # Check if ticket exits
             summary = f"{self.version} SAST scan issues for {brew_package_name}"
@@ -234,7 +222,7 @@ class ScanOshCli:
                 "project": {"key": f"{self.jira_project}"},
                 "issuetype": {"name": "Bug"},
                 "versions": [{"name": f"{self.version}.z"}],  # Affects Version/s
-                "components": [{"name": potential_component}],
+                "components": [{"name": data["jira_potential_component"]}],
                 "security": {"id": "11697"},  # Restrict to Red Hat Employee
                 "summary": summary,
                 "description": description
@@ -324,7 +312,8 @@ class ScanOshCli:
                 self.runtime.logger.info(f"No successful scan found for package {brew_package_name}")
                 continue
 
-            if self.check_if_scan_issues_exist(task_id=data["latest_coverity_scan"], nvr=data["latest_coverity_scan_nvr"]):
+            if self.check_if_scan_issues_exist(task_id=data["latest_coverity_scan"],
+                                               nvr=data["latest_coverity_scan_nvr"]):
                 nvrs_with_scan_issues[brew_package_name] = data
 
             else:
@@ -338,6 +327,19 @@ class ScanOshCli:
 
         for nvr in nvrs:
             self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr}")
+
+            distgit_name = self.get_distgit_name_from_brew_nvr(nvr)
+
+            image_meta: ImageMetadata = self.runtime.image_map[distgit_name]
+
+            if not image_meta.config.get("scanning", {}).get("jira_integration", {}).get("enabled", False):
+                self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
+                                         f"since disabled in image metadata")
+                continue
+
+            # Returns project and component name
+            _, potential_component = image_meta.get_jira_info()
+
             brew_info = self.koji_session.getBuild(nvr)
 
             nvr = parse_nvr(brew_info["nvr"])
@@ -350,7 +352,8 @@ class ScanOshCli:
                 "package_name_with_version": pkg_name_w_version,
                 "nvr": brew_info["nvr"],
                 "brew_build_id": brew_info["id"],
-                "package_name": brew_info["package_name"]
+                "package_name": brew_info["package_name"],
+                "jira_potential_component": potential_component
             })
 
         # Get latest scan results
