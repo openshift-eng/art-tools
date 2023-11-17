@@ -3,7 +3,7 @@ This job scans the candidate tags for a particular version, and triggers scans f
 """
 import click
 from typing import Optional
-from pyartcd import exectools, redis
+from pyartcd import exectools, redis, jenkins
 from pyartcd.runtime import Runtime
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 
@@ -35,6 +35,8 @@ class OshScan:
         return last_brew_event
 
     async def run(self):
+        jenkins.update_title(f" {self.version}")
+
         cmd = [
             "doozer",
             "--group",
