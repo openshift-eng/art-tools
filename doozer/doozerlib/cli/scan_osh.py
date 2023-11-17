@@ -84,6 +84,7 @@ class ScanOshCli:
         finished_tasks = result.strip().split("\n")
 
         successful_scan_task_id = None
+        successful_scan_nvr = None
 
         for index, task_id in enumerate(finished_tasks):
             cmd = f"osh-cli task-info {task_id}"
@@ -95,6 +96,7 @@ class ScanOshCli:
                 if not successful_scan_task_id:
                     # Found the first successful scan.
                     successful_scan_task_id = task_id
+                    successful_scan_nvr = yaml.safe_load(result.replace(" =", ":"))["label"]
 
                     # Need to find the previous successful scan as well
                     continue
@@ -103,7 +105,7 @@ class ScanOshCli:
                 previous_scan_nvr = yaml.safe_load(result.replace(" =", ":"))["label"]  # returns NVR
 
                 # task_id here would be the one of the previous successful scan
-                return successful_scan_task_id, task_id, previous_scan_nvr
+                return successful_scan_task_id, successful_scan_nvr, task_id, previous_scan_nvr
 
     def check_if_scan_issues_exist(self, task_id: str, nvr: str) -> bool:
         """
@@ -322,11 +324,11 @@ class ScanOshCli:
                 self.runtime.logger.info(f"No successful scan found for package {brew_package_name}")
                 continue
 
-            if self.check_if_scan_issues_exist(task_id=data["latest_coverity_scan"], nvr=data["nvr"]):
+            if self.check_if_scan_issues_exist(task_id=data["latest_coverity_scan"], nvr=data["latest_coverity_scan_nvr"]):
                 nvrs_with_scan_issues[brew_package_name] = data
 
             else:
-                self.runtime.logger.info(f"No scan issues found for NVR: {data['nvr']}")
+                self.runtime.logger.info(f"No scan issues found for NVR: {data['latest_coverity_scan_nvr']}")
 
         return nvrs_with_scan_issues
 
@@ -355,8 +357,8 @@ class ScanOshCli:
         brew_coverity_mapping = {}
 
         for package in brew_package_names:
-            package["latest_coverity_scan"], package["previous_scan_id"], package["previous_scan_nvr"] = \
-                self.get_scan_info(package["package_name_with_version"])
+            package["latest_coverity_scan"], package["latest_coverity_scan_nvr"], package["previous_scan_id"], \
+                package["previous_scan_nvr"] = self.get_scan_info(package["package_name_with_version"])
             brew_coverity_mapping[package["package_name"]] = package
 
         # Collect packages that have scan issues detected
