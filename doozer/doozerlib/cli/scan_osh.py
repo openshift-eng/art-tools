@@ -523,11 +523,16 @@ class ScanOshCli:
             self.runtime.logger.info("No new builds to scan")
             return
 
+        # For raising JIRA tickets, we ideally need to check them even if they are already scanned
+        all_nvrs = nvrs_for_scans
+
         if self.check_triggered:
             nvrs_for_scans = await self.get_untriggered_nvrs(nvrs_for_scans)
 
         # Trigger the scans
         self.trigger_scans(nvrs_for_scans)
+
+        # Check if the OCP version is enabled for raising Jira tickets
         if self.runtime.group_config.scanning.jira_integration.enabled not in [True, "True", "true", "yes"]:
             self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for "
                                      f"{self.version}")
@@ -535,7 +540,7 @@ class ScanOshCli:
         if self.create_jira_tickets:
             # Only run for the scheduled variant of this job
             # We use self.specific_nvrs for kicking off scans for images that ART is building
-            await self.ocp_bugs_workflow_run(nvrs_for_scans)
+            await self.ocp_bugs_workflow_run(all_nvrs)
 
 
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
