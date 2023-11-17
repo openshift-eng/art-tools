@@ -19,8 +19,9 @@ class OshScan:
         self.specific_nvrs = nvrs
         self.all_builds = all_builds
         self.create_jira_tickets = create_jira_tickets
-
         self.redis_key = f"appdata:sast-scan:{self.version}"
+
+        jenkins.init_jenkins()
 
     async def store_brew_event(self, brew_event_id: str):
         await redis.set_value(self.redis_key, brew_event_id)
