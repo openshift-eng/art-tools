@@ -49,6 +49,7 @@ class ScanOshCli:
         self.jira_project = "OCPBUGS"
         self.skip_diff_check = skip_diff_check
         self.brew_distgit_mapping = self.get_brew_distgit_mapping()
+        self.jira_target_version = self.get_target_version()
 
         # Initialize runtime and brewhub session
         self.runtime.initialize(clone_distgits=False)
@@ -56,6 +57,21 @@ class ScanOshCli:
 
         # Initialize JIRA client
         self.jira_client: JIRA = self.runtime.build_jira_client()
+
+    def get_target_version(self):
+        """
+        Non GA versions have target version set to .0, while the others with .z
+        """
+        # https://github.com/openshift-eng/art-dashboard-server/tree/master/api#get-apiv1ga-version
+        url = "https://art-dash-server-art-dashboard-server.apps.artc2023.pc3z.p1.openshiftapps.com/api/v1/ga-version"
+
+        response = requests.get(url).json()
+
+        if response["status"] == "success":
+            latest_ga = response["payload"]
+            if int(self.version.split(".")[-1]) <= int(latest_ga.split(".")[-1]):
+                return f"{self.version}.z"
+            return f"{self.version}.0"
 
     def get_brew_distgit_mapping(self):
         _, output, _ = cmd_gather(f"doozer --disable-gssapi -g {self.runtime.group} "
@@ -221,7 +237,7 @@ class ScanOshCli:
             fields = {
                 "project": {"key": f"{self.jira_project}"},
                 "issuetype": {"name": "Bug"},
-                "versions": [{"name": f"{self.version}.z"}],  # Affects Version/s
+                "versions": [{"name": self.jira_target_version}],  # Affects Version/s
                 "components": [{"name": data["jira_potential_component"]}],
                 "security": {"id": "11697"},  # Restrict to Red Hat Employee
                 "summary": summary,
