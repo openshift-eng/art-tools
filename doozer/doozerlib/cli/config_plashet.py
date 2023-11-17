@@ -697,7 +697,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
             for nvre in desired_nvres:
                 poll_for -= assert_signed(config, nvre)
 
-    if signing_advisory_id and signing_advisory_mode == 'clean':
+    if possible_signing_needed and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
         update_advisory_builds(config, errata_proxy, signing_advisory_id, [], nvr_product_version)
 
@@ -842,7 +842,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
         for nvre in desired_nvres:
             poll_for -= assert_signed(config, nvre, poll_for)
 
-    if signing_advisory_id and signing_advisory_mode == 'clean':
+    if signed_desired(config) and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
         update_advisory_builds(config, errata_proxy, signing_advisory_id, [], nvr_product_version)
 
