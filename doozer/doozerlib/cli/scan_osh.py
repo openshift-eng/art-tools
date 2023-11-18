@@ -558,7 +558,12 @@ class ScanOshCli:
         if self.create_jira_tickets:
             # Only run for the scheduled variant of this job
             # We use self.specific_nvrs for kicking off scans for images that ART is building
-            await self.ocp_bugs_workflow_run(all_nvrs)
+
+            # We don't have ocp-build-data mapping for RPMs, which are not building. Let's exclude all RPMs for now
+            # for JIRA ticket creation
+            images_nvrs = [nvr for nvr in all_nvrs if "container" in nvr]
+
+            await self.ocp_bugs_workflow_run(images_nvrs)
 
 
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
