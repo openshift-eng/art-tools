@@ -344,7 +344,13 @@ class ScanOshCli:
         for nvr in nvrs:
             self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr}")
 
-            distgit_name = self.get_distgit_name_from_brew_nvr(nvr)
+            try:
+                distgit_name = self.get_distgit_name_from_brew_nvr(nvr)
+            except KeyError:
+                self.runtime.logger.warning(f"Looks like we are not building: {nvr}")
+
+                # Go to the next NVR
+                continue
 
             image_meta: ImageMetadata = self.runtime.image_map[distgit_name]
 
