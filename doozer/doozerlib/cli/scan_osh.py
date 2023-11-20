@@ -300,7 +300,9 @@ class ScanOshCli:
                     if not self.dry_run:
                         # Keep notify as False since this description will constantly be updated everytime there's a
                         # new build
-                        issue.update(fields=fields, notify=False)
+                        issue.update(
+                            fields={"description": fields["description"]},
+                            notify=False)
                         self.runtime.logger.info(f"The fields of {issue.key} has been updated to {fields}")
                     else:
                         self.runtime.logger.info(f"[DRY RUN]: Would have updated {issue.key} with to fields: {fields}")
