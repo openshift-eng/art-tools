@@ -87,7 +87,7 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)
-        if not runtime.dry_run:
+        if not runtime.dry_run and assembly != 'test':
             slack_client = runtime.new_slack_client()
             slack_client.bind_channel(version)
             await slack_client.say('*:heavy_exclamation_mark: olm_bundle failed*\n'
