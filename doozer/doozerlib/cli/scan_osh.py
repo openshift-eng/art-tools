@@ -156,9 +156,11 @@ class ScanOshCli:
     def search_issues(self, query):
         return self.jira_client.search_issues(query)
 
-    @staticmethod
-    def get_scan_defects(scan_id, scan_nvr):
-        scan_response = requests.get(SCAN_RESULTS_URL_TEMPLATE.format(task_id=scan_id, nvr=scan_nvr))
+    def get_scan_defects(self, scan_id, scan_nvr):
+        url = SCAN_RESULTS_URL_TEMPLATE.format(task_id=scan_id, nvr=scan_nvr)
+        self.runtime.logger.info(f"Checking Scan defects for url: {url}")
+
+        scan_response = requests.get(url)
 
         return scan_response.json()["defects"]
 
@@ -231,7 +233,7 @@ class ScanOshCli:
 
             description = MESSAGE.format(package_name=brew_package_name,
                                          scan_id=data["latest_coverity_scan"],
-                                         nvr=data["nvr"],
+                                         nvr=data["latest_coverity_scan_nvr"],
                                          brew_build_id=data["brew_build_id"])
 
             fields = {
@@ -250,7 +252,7 @@ class ScanOshCli:
                 # with the new build and scan
                 if not self.skip_diff_check and not self.is_latest_scan_different_from_previous(
                         latest_scan_id=data["latest_coverity_scan"],
-                        latest_scan_nvr=data["nvr"],
+                        latest_scan_nvr=data["latest_coverity_scan_nvr"],
                         previous_scan_id=data["previous_scan_id"],
                         previous_scan_nvr=data["previous_scan_nvr"]):
                     self.runtime.logger.info(f"No new defects found for package {data['package_name']}")
@@ -283,7 +285,7 @@ class ScanOshCli:
 
                 if self.has_latest_scan_resolved_all_issues(
                         latest_scan_id=data["latest_coverity_scan"],
-                        latest_scan_nvr=data["nvr"],
+                        latest_scan_nvr=data["latest_coverity_scan_nvr"],
                         previous_scan_id=data["previous_scan_id"],
                         previous_scan_nvr=data["previous_scan_nvr"]):
                     if not self.dry_run:
