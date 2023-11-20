@@ -1,7 +1,7 @@
+import re
 import click
 import koji
 import asyncio
-
 import requests
 import yaml
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -20,9 +20,10 @@ SCAN_RESULTS_URL_TEMPLATE = "https://cov01.lab.eng.brq2.redhat.com/osh/task/{tas
 MESSAGE = """
 One or more software security scan issues have been detected for the package *{package_name}*.
 
-*Build*: [{nvr}|https://brewweb.engineering.redhat.com/brew/buildinfo?buildID={brew_build_id}]
-*Scan result*: https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}
-*View issues*: https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}/log/{nvr}/scan-results-imp.js (Check 'defects')
+*Important scan results*: [html|https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}/log/{nvr}/scan-results-imp.html] / [json|https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}/log/{nvr}/scan-results-imp.js] (Check 'defects')
+*All scan results*: https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}
+*Build record*: [{nvr}|https://brewweb.engineering.redhat.com/brew/buildinfo?buildID={brew_build_id}]
+*Upstream commit*: [{upstream_git_commit}|{upstream_repo_url}/commit/{upstream_git_commit}]
 
 Once these issues are addressed, the Bug can be closed. But a new one will be opened if new issues are found in the next build.
 
@@ -176,6 +177,8 @@ class ScanOshCli:
 
         for defect in latest_scan_defects:
             if defect not in previous_scan_defects:
+                self.runtime.logger.info("Detected that the scan of the latest build has new issues, "
+                                         "compared to the previous one")
                 return True
 
         return False
@@ -191,6 +194,20 @@ class ScanOshCli:
             # If the previous scan results are not empty but the latest scan results are empty
             return True
         return False
+
+    def get_upstream_git_commit(self, nvr: str):
+        # Get "ead7616" from sriov-network-operator-container-v4.15.0-202311171551.p0.gead7616.assembly.stream
+        pattern = r".+\.g([a-z0-9]+)\..+"
+
+        # Use re.search to find the match in the filename
+        match = re.search(pattern, nvr)
+
+        # Check if a match is found
+        if match:
+            result = match.group(1)
+            return result
+        else:
+            self.runtime.logger.error("Regex match not found")
 
     def create_update_ocpbugs_ticket(self, packages: dict):
         """
@@ -231,10 +248,14 @@ class ScanOshCli:
                     # previous_ticket_id is already set to None, so no action needed
                     pass
 
+            upstream_git_commit = self.get_upstream_git_commit(nvr=data["latest_coverity_scan_nvr"])
+
             description = MESSAGE.format(package_name=brew_package_name,
                                          scan_id=data["latest_coverity_scan"],
                                          nvr=data["latest_coverity_scan_nvr"],
-                                         brew_build_id=data["brew_build_id"])
+                                         brew_build_id=data["brew_build_id"],
+                                         upstream_repo_url=data["upstream_repo_url"],
+                                         upstream_git_commit=upstream_git_commit)
 
             fields = {
                 "project": {"key": f"{self.jira_project}"},
@@ -289,7 +310,6 @@ class ScanOshCli:
                         previous_scan_id=data["previous_scan_id"],
                         previous_scan_nvr=data["previous_scan_nvr"]):
                     if not self.dry_run:
-
                         self.jira_client.transition_issue(issue.key, "Closed")
                         self.runtime.logger.info(f"Closed issue {issue.key}")
                     else:
@@ -363,6 +383,9 @@ class ScanOshCli:
                                          f"since disabled in image metadata")
                 continue
 
+            # Upstream repo URL from image config
+            upstream_repo_url = image_meta.config.get("content", {}).get("source", {}).get("git", {}).get("web")
+
             # Returns project and component name
             _, potential_component = image_meta.get_jira_info()
 
@@ -379,7 +402,8 @@ class ScanOshCli:
                 "nvr": brew_info["nvr"],
                 "brew_build_id": brew_info["id"],
                 "package_name": brew_info["package_name"],
-                "jira_potential_component": potential_component
+                "jira_potential_component": potential_component,
+                "upstream_repo_url": upstream_repo_url
             })
 
         # Get latest scan results
@@ -569,9 +593,17 @@ class ScanOshCli:
             # Only run for the scheduled variant of this job
             # We use self.specific_nvrs for kicking off scans for images that ART is building
 
-            # We don't have ocp-build-data mapping for RPMs, which are not building. Let's exclude all RPMs for now
-            # for JIRA ticket creation
-            images_nvrs = [nvr for nvr in all_nvrs if "container" in nvr]
+            images_nvrs = []
+            for nvr in all_nvrs:
+                if "container" not in nvr:
+                    # Exclude all non-container images
+                    continue
+
+                if not nvr.endswith(".stream"):
+                    # Exclude all non stream builds
+                    continue
+
+                images_nvrs.append(nvr)
 
             await self.ocp_bugs_workflow_run(images_nvrs)
 
