@@ -327,7 +327,8 @@ class ScanOshCli:
                             notify=False)
                         self.runtime.logger.info(f"The fields of {issue.key} has been updated to {fields}")
                     else:
-                        self.runtime.logger.info(f"[DRY RUN]: Would have updated {issue.key} with to fields: {fields}")
+                        self.runtime.logger.info(f"[DRY RUN]: Would have updated {issue.key} with new description: "
+                                                 f"{fields['description']}")
 
             else:
                 self.runtime.logger.error(f"More than one JIRA ticket exists: {open_issues}")
@@ -361,11 +362,15 @@ class ScanOshCli:
 
         return nvrs_with_scan_issues
 
-    async def ocp_bugs_workflow_run(self, nvrs: list):
-        # List of brew packages to check
+    async def ocp_bugs_workflow_run(self, brew_components: dict):
+        # List of brew components to check
         brew_package_names = []
 
-        for nvr in nvrs:
+        # We only care about the value
+        for build in brew_components.values():
+            nvr = build["nvr"]
+            brew_info = build["brew_info"]
+
             self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr}")
 
             try:
@@ -388,8 +393,6 @@ class ScanOshCli:
 
             # Returns project and component name
             _, potential_component = image_meta.get_jira_info()
-
-            brew_info = self.koji_session.getBuild(nvr)
 
             nvr = parse_nvr(brew_info["nvr"])
 
@@ -589,11 +592,15 @@ class ScanOshCli:
             self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for "
                                      f"{self.version}")
             return
-        if self.create_jira_tickets:
+
+        if self.specific_nvrs:
             # Only run for the scheduled variant of this job
             # We use self.specific_nvrs for kicking off scans for images that ART is building
+            self.runtime.logger.info("Detecting that this is not a scheduled job. Skipping OCPBUGS workflow run.")
+            return
 
-            images_nvrs = []
+        if self.create_jira_tickets:
+            brew_components = {}
             for nvr in all_nvrs:
                 if "container" not in nvr:
                     # Exclude all non-container images
@@ -603,9 +610,17 @@ class ScanOshCli:
                     # Exclude all non stream builds
                     continue
 
-                images_nvrs.append(nvr)
+                brew_info = self.koji_session.getBuild(nvr)
+                package_name = brew_info["package_name"]
 
-            await self.ocp_bugs_workflow_run(images_nvrs)
+                # More than one build of a component can be present after the previous run,
+                # so lets get just the latest build. The nvrs are ordered from earliest to newest
+                brew_components[package_name] = {
+                    "nvr": nvr,
+                    "brew_info": brew_info
+                }
+
+            await self.ocp_bugs_workflow_run(brew_components)
 
 
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
