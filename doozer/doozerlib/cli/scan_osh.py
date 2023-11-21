@@ -383,7 +383,7 @@ class ScanOshCli:
 
             image_meta: ImageMetadata = self.runtime.image_map[distgit_name]
 
-            if not image_meta.config.get("scanning", {}).get("jira_integration", {}).get("enabled", False):
+            if not image_meta.config.get("external_scanners", {}).get("sast_scanning", {}).get("jira_integration", {}).get("enabled", False):
                 self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
                                          f"since disabled in image metadata")
                 continue
@@ -588,7 +588,7 @@ class ScanOshCli:
         self.trigger_scans(nvrs_for_scans)
 
         # Check if the OCP version is enabled for raising Jira tickets
-        if self.runtime.group_config.scanning.jira_integration.enabled not in [True, "True", "true", "yes"]:
+        if self.runtime.group_config.external_scanners.sast_scanning.jira_integration.enabled not in [True, "True", "true", "yes"]:
             self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for "
                                      f"{self.version}")
             return
