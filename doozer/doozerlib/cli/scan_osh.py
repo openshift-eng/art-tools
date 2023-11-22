@@ -146,9 +146,9 @@ class ScanOshCli:
 
         url = SCAN_RESULTS_URL_TEMPLATE.format(task_id=task_id, nvr=nvr)
         self.runtime.logger.info(f"Checking OSH Scan for issues: {url}")
-        response = requests.get(url)
 
         try:
+            response = requests.get(url)
             if len(response.json()["defects"]) > 0:
                 return True
         except Exception:
