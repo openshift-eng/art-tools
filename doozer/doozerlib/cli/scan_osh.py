@@ -363,9 +363,13 @@ class ScanOshCli:
                 self.runtime.logger.info(f"No successful scan found for package {brew_package_name}")
                 continue
 
-            if self.check_if_scan_issues_exist(task_id=data["latest_coverity_scan"],
-                                               nvr=data["latest_coverity_scan_nvr"]):
-                nvrs_with_scan_issues[brew_package_name] = data
+            try:
+                if self.check_if_scan_issues_exist(task_id=data["latest_coverity_scan"],
+                                                   nvr=data["latest_coverity_scan_nvr"]):
+                    nvrs_with_scan_issues[brew_package_name] = data
+            except Exception:
+                self.runtime.logger.warning(f"Don't see scan-results-imp.js. Skipping {brew_package_name}")
+                continue
 
             else:
                 self.runtime.logger.info(f"No scan issues found for NVR: {data['latest_coverity_scan_nvr']}")
