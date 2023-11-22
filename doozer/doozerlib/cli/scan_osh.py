@@ -105,13 +105,21 @@ class ScanOshCli:
         previous_scan_nvr = None
         task_id = None
 
+        # Some components do not have any successful scans, so lets time out and go to the next one if so
+        failed_counter = 0
+        failed_counter_limit = 20
         for index, task_id in enumerate(finished_tasks):
+            if failed_counter >= failed_counter_limit:
+                self.runtime.logger.error(f"Reached failed scan limit, skipping component: {brew_package_name}")
+                return None, None, None, None
             cmd = f"osh-cli task-info {task_id}"
             self.runtime.logger.info(f"Running: {cmd}")
 
             _, result, _ = cmd_gather(cmd)
 
             if "state_label = CLOSED" in result:
+                # Reset counter since we found a successful scan
+                failed_counter = 0
                 if not successful_scan_task_id:
                     # Found the first successful scan.
                     successful_scan_task_id = task_id
@@ -125,6 +133,8 @@ class ScanOshCli:
 
                 # task_id here would be the one of the previous successful scan
                 return successful_scan_task_id, successful_scan_nvr, task_id, previous_scan_nvr
+
+            failed_counter += 1
 
         # If there is no successful scans
         return successful_scan_task_id, successful_scan_nvr, task_id, previous_scan_nvr
