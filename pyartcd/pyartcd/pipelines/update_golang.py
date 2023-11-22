@@ -12,8 +12,8 @@ from tenacity import (RetryCallState, RetryError, retry,
                       retry_if_exception_type, retry_if_result,
                       stop_after_attempt, wait_fixed)
 
+from artcommonlib.constants import BREW_HUB
 from pyartcd import jenkins
-from pyartcd import constants
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
@@ -33,7 +33,7 @@ class UpdateGolangPipeline:
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
         self.permit_missing_qe_tag = permit_missing_qe_tag
-        self.koji_session = koji.ClientSession(constants.BREW_SERVER)
+        self.koji_session = koji.ClientSession(BREW_HUB)
 
     async def run(self):
         # validate that the ocp version allows given rhel versions
@@ -46,6 +46,7 @@ class UpdateGolangPipeline:
             '4.13': {8, 9},
             '4.14': {8, 9},
             '4.15': {8, 9},
+            '4.16': {8, 9},
         }
         if self.ocp_version not in ocp_el_map:
             raise click.BadParameter(f'OCP version is not supported right now: {self.ocp_version}')
