@@ -761,7 +761,7 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
             'project': {'key': project},
             'issuetype': {'name': 'Bug'},
             'versions': [{'name': release_version}],  # Affects Version/s
-            'customfield_12323140': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12323140 is Target Version in jira
+            'customfield_12319940': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12319940 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
             'description': description
