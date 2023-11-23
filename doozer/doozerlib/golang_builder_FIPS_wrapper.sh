@@ -47,7 +47,7 @@ GO_COMPLIANCE_CGO_ENABLED_INCLUDE=${GO_COMPLIANCE_CGO_ENABLED_INCLUDE:-'.*'}
 GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE=${GO_COMPLIANCE_DYNAMIC_LINKING_INCLUDE:-'.*'}
 GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE=${GO_COMPLIANCE_OPENSSL_ENABLED_INCLUDE:-'.*'}
 
-if [[ -n "${OPENSHIFT_CI}" || "${__doozer_group}" == "openshift-"* ]]; then
+if [[ -n "${OPENSHIFT_CI}" || "${__doozer_group}" == "openshift-"* || "${GOEXPERIMENT}" == *strictfipsruntime* ]]; then
   GO_COMPLIANCE_POLICY="${GO_COMPLIANCE_POLICY:-exempt_darwin,exempt_windows,exempt_cross_compile}"
   export GOTOOLCHAIN="local"
   echoerr "Forcing GOTOOLCHAIN=${GOTOOLCHAIN}"
