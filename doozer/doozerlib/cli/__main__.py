@@ -1585,14 +1585,13 @@ def config_read_releases(runtime, as_len, as_yaml, out_file):
 
 
 @cli.command("config:read-assembly", short_help="Output aspects of a specific assembly defined in releases.yml")
-@click.option("--assembly", help="Group assembly to analyze", required=True)
 @click.option("--default", help="Value to print if key cannot be found", default=None)
 @click.option("--length", "as_len", default=False, is_flag=True, help='Print length of dict/list specified by key')
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Format output as YAML')
 @click.option("--out-file", help="Output contents to a file instead of stdout", default=None)
 @click.argument("key", nargs=1, metavar="KEY", type=click.STRING, default=None, required=False)
 @pass_runtime
-def config_read_assemblies(runtime, assembly, default, as_len, as_yaml, out_file, key):
+def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
     """
     Read data from releases.yaml for given group, assembly and key.
     An assembly must be specified. To get a global representation of release.yaml,
@@ -1600,23 +1599,26 @@ def config_read_assemblies(runtime, assembly, default, as_len, as_yaml, out_file
 
     Usage:
 
-    $ doozer --group=openshift-4.13 config:read-assembly --assembly 4.13.1
+    $ doozer --group=openshift-4.13 --assembly 4.13.1 config:read-assembly
 
-    $ doozer --group=openshift-4.13 config:read-assembly --assembly 4.13.1 --yaml
+    $ doozer --group=openshift-4.13 --assembly 4.13.1 config:read-assembly --yaml
 
-    $ doozer --group=openshift-4.13 config:read-assembly --assembly 4.13.1 --yaml --out-file /tmp/out.yaml
+    $ doozer --group=openshift-4.13 --assembly 4.13.1 config:read-assembly --yaml --out-file /tmp/out.yaml
 
-    $ doozer --group=openshift-4.13 config:read-assembly --assembly 4.13.1 --yaml assembly.issues.exclude --length
+    $ doozer --group=openshift-4.13 --assembly 4.13.1 config:read-assembly --yaml assembly.issues.exclude --length
 
-    $ doozer --group=openshift-4.13 config:read-assembly --assembly 4.13.1 --yaml assembly.promotion_permits
+    $ doozer --group=openshift-4.13 --assembly 4.13.1 config:read-assembly --yaml assembly.promotion_permits
 
-    $ doozer --group=openshift-4.13 config:read-assembly --assembly 4.13.2 --yaml assembly.promotion_permits --default []
+    $ doozer --group=openshift-4.13 --assembly 4.13.1 config:read-assembly --yaml assembly.promotion_permits --default []
     """
 
     CONFIG_RUNTIME_OPTS['group_only'] = True
     runtime.initialize(**CONFIG_RUNTIME_OPTS)
     releases = get_releases(runtime)['releases']
-    assembly_data = releases[assembly]
+    try:
+        assembly_data = releases[runtime.assembly]
+    except KeyError:
+        raise DoozerFatalError(f'No assembly data found for assembly "{runtime.assembly}" in group {runtime.group}')
 
     if key is not None:
         assembly_data = dict_get(assembly_data, key, None)

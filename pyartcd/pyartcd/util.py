@@ -126,8 +126,8 @@ async def load_assembly(group: str, assembly: str, key: str = '',
         'doozer',
         f'--data-path={data_path}',
         f'--group={group}',
-        'config:read-assembly',
         f'--assembly={assembly}',
+        'config:read-assembly',
         '--yaml',
         key
     ]
