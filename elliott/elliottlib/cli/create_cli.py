@@ -4,7 +4,6 @@ import elliottlib
 from elliottlib.bzutil import BugzillaBugTracker
 from elliottlib.cli.common import cli
 from elliottlib.cli.add_metadata_cli import add_metadata_cli
-from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.exectools import cmd_assert
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import YMD, validate_release_date, \
@@ -43,9 +42,6 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
               envvar="ELLIOTT_PACKAGE_OWNER_EMAIL",
               callback=validate_email_address,
               help="The email address of the person responsible managing the advisory.")
-@click.option('--with-placeholder', is_flag=True,
-              default=False, type=bool,
-              help="Create a placeholder bug and attach it to the advisory. Only valid if also using --yes.")
 @click.option('--with-liveid', is_flag=True,
               default=True, type=bool,
               help="Request a Live ID for the advisory. Only valid if also using --yes.")
@@ -56,7 +52,7 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
               help="Bug IDs for attaching to the advisory on creation. Required for creating a security advisory.")
 @click.pass_obj
 @click.pass_context
-def create_cli(ctx, runtime, errata_type, kind, impetus, art_advisory_key, date, assigned_to, manager, package_owner, with_placeholder, with_liveid, yes, bugs):
+def create_cli(ctx, runtime, errata_type, kind, impetus, art_advisory_key, date, assigned_to, manager, package_owner, with_liveid, yes, bugs):
     """Create a new advisory. The kind of advisory must be specified with
 '--kind'. Valid choices are 'rpm' and 'image'.
 
@@ -150,10 +146,6 @@ advisory.
         # options/arguments are mapped to the right parameters.
         ctx.invoke(add_metadata_cli, kind=kind, impetus=impetus, advisory=erratum.errata_id)
         click.echo(str(erratum))
-
-        if with_placeholder:
-            click.echo("Creating and attaching placeholder bug...")
-            ctx.invoke(create_placeholder_cli, kind=kind, advisory=erratum.errata_id)
 
         if with_liveid:
             click.echo("Requesting Live ID...")
