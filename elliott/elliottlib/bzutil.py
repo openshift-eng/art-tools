@@ -391,7 +391,10 @@ class JIRABug(Bug):
         return datetime.strptime(str(self.bug.fields.created), '%Y-%m-%dT%H:%M:%S.%f%z')
 
     def is_ocp_bug(self):
-        return self.bug.fields.project.key == "OCPBUGS"
+        return self.bug.fields.project.key == "OCPBUGS" and not self.is_placeholder_bug()
+
+    def is_placeholder_bug(self):
+        return ('Placeholder' in self.summary) and (self.component == 'Release') and ('Automation' in self.keywords)
 
     def _get_blocks(self):
         # link "blocks"
@@ -474,6 +477,10 @@ class BugTracker:
     @staticmethod
     def id_convert(id_string):
         raise NotImplementedError
+
+    def create_placeholder(self, kind, noop=False):
+        title = f"Placeholder bug for OCP {self.config.get('target_release')[0]} {kind} release"
+        return self.create_bug(title, title, "VERIFIED", ["Automation"], noop)
 
     def create_textonly(self, bug_title, bug_description, noop=False):
         return self.create_bug(bug_title, bug_description, "VERIFIED", [], noop)
