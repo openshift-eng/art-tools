@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import requests
+import yaml
 import click
 import koji
 from errata_tool import Erratum
@@ -38,15 +39,19 @@ class OperatorSDKPipeline:
                 raise ValueError("Advisory status not in REL_PREP yet ...")
             if advisory.errata_state == "SHIPPED_LIVE":
                 self._logger.info("Advisory status already in SHIPPED_LIVE, update subtask 9 ...")
-                self._jira_client.complete_subtask(self.parent_jira_key, 8, "Advisory status already in SHIPPED_LIVE")
+                self._jira_client.complete_subtask(self.parent_jira_key, "pushes advisory content to production CDN", "Advisory status already in SHIPPED_LIVE")
+                # check fast channel to decide if released on customer portal
+                res = requests.get("https://github.com/openshift/cincinnati-graph-data/raw/master/internal-channels/fast.yaml")
+                if self.assembly in yaml.load(res.content, Loader=yaml.FullLoader):
+                    self._jira_client.complete_subtask(self.parent_jira_key, "pushes release content to customer portal", "Release pushed to fast channel")
             self._logger.info("Advisory status already in post REL_PREP, update subtask 7 ...")
-            self._jira_client.complete_subtask(self.parent_jira_key, 6, "Advisory status already in REL_PREP")
+            self._jira_client.complete_subtask(self.parent_jira_key, "moves advisories to REL_PREP", "Advisory status already in REL_PREP")
 
             sdk_build = [b for b in sum(list(map(list, advisory.errata_builds.values())), []) if b.startswith(
                 'openshift-enterprise-operator-sdk-container')]
             if not sdk_build:
                 self._logger.info("No SDK build to ship, update subtask 8 then close ...")
-                self._jira_client.complete_subtask(self.parent_jira_key, 7, f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}")
+                self._jira_client.complete_subtask(self.parent_jira_key, "operator-sdk", f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}")
                 return
             build = koji.ClientSession(BREW_HUB).getBuild(sdk_build[0])
         elif self.nvr:
@@ -59,7 +64,7 @@ class OperatorSDKPipeline:
         for arch in self.arches.split(','):
             self._extract_binaries(arch, sdkVersion, build['extra']['image']['index']['pull'][0])
         if self.assembly:
-            self._jira_client.complete_subtask(self.parent_jira_key, 7, f"operator_sdk_sync job: {jenkins.get_build_url()}")
+            self._jira_client.complete_subtask(self.parent_jira_key, "operator-sdk", f"operator_sdk_sync job: {jenkins.get_build_url()}")
 
     def _get_sdkversion(self, build):
         build_log_res = requests.get(f"{BREW_DOWNLOAD_URL}/packages/{build['name']}/{build['version']}/{build['release']}/data/logs/x86_64.log")
