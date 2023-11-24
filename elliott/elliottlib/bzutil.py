@@ -782,7 +782,7 @@ class JIRABugTracker(BugTracker):
         val = ','.join(f'"{s}"' for s in desired_statuses)
         query = f"issue in ({','.join([b.id for b in bugs])}) " \
                 f"and status was in ({val}) " \
-                f'before("{dt}")'
+                f'on("{dt}")'
         return self._search(query, verbose=verbose)
 
     async def filter_attached_bugs(self, bugs: Iterable):
