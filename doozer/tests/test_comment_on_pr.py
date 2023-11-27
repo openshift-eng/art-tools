@@ -20,7 +20,7 @@ class TestCommentOnPr(unittest.TestCase):
         api_mock = MagicMock()
         api_mock.issues.list_comments.return_value = [{"body": "test comment"}]
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
-        comment_on_pr.pr_no = pr_no
+        comment_on_pr.pr = {'number': pr_no}
         comment_on_pr.gh_client = api_mock
         result = comment_on_pr.list_comments()
         api_mock.issues.list_comments.assert_called_once_with(issue_number=pr_no, per_page=100)
@@ -50,7 +50,7 @@ class TestCommentOnPr(unittest.TestCase):
         api_mock = MagicMock()
         mock_check_if_comment_exist.return_value = False
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
-        comment_on_pr.pr_no = pr_no
+        comment_on_pr.pr = {'number': pr_no}
         comment_on_pr.gh_client = api_mock
         _ = comment_on_pr.post_comment()
         api_mock.issues.create_comment.assert_called_once_with(issue_number=pr_no, body=self.comment)
@@ -61,8 +61,8 @@ class TestCommentOnPr(unittest.TestCase):
         comment_on_pr.gh_client = api_mock
         api_mock.repos.list_pull_requests_associated_with_commit.return_value = [{"html_url": "test_url", "number": 1}]
         comment_on_pr.set_pr_from_commit()
-        self.assertEqual(comment_on_pr.pr_url, 'test_url')
-        self.assertEqual(comment_on_pr.pr_no, 1)
+        self.assertEqual(comment_on_pr.pr['html_url'], 'test_url')
+        self.assertEqual(comment_on_pr.pr['number'], 1)
 
     def test_multiple_prs_for_merge_commit(self):
         api_mock = MagicMock()

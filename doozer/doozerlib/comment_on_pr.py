@@ -1,11 +1,19 @@
+import logging
 import os
-from ghapi.all import GhApi
-from doozerlib.pushd import Dir
+from datetime import datetime, timezone
+
 from dockerfile_parse import DockerfileParser
+from ghapi.all import GhApi
+
 from doozerlib.constants import BREWWEB_URL, GITHUB_TOKEN
+from doozerlib.pushd import Dir
+
+LOGGER = logging.getLogger(__name__)
 
 
 class CommentOnPr:
+    OLD_PR_AGE_IN_DAYS = 7  # A pull requests closed 7 days ago will be considered "old" and will not receive a comment
+
     def __init__(self, distgit_dir: str, nvr: str, build_id: str, distgit_name: str):
         self.distgit_dir = distgit_dir
         self.nvr = nvr
@@ -16,15 +24,14 @@ class CommentOnPr:
         self.repo = None
         self.commit = None
         self.gh_client = None  # GhApi client
-        self.pr_url = None
-        self.pr_no = None
+        self.pr = None
 
     def list_comments(self):
         """
         List the comments in a PR
         """
         # https://docs.github.com/rest/reference/issues#list-issue-comments
-        return self.gh_client.issues.list_comments(issue_number=self.pr_no, per_page=100)
+        return self.gh_client.issues.list_comments(issue_number=self.pr["number"], per_page=100)
 
     def check_if_comment_exist(self):
         """
@@ -50,7 +57,7 @@ class CommentOnPr:
                   f"for distgit *{self.distgit_name}*. \n All builds following this will " + \
                   "include this PR."
 
-        self.gh_client.issues.create_comment(issue_number=self.pr_no, body=comment)
+        self.gh_client.issues.create_comment(issue_number=self.pr["number"], body=comment)
 
     def set_pr_from_commit(self):
         """
@@ -60,8 +67,7 @@ class CommentOnPr:
         prs = self.gh_client.repos.list_pull_requests_associated_with_commit(self.commit)
         if len(prs) == 1:
             # self._logger.info(f"PR from merge commit {sha}: {pull_url}")
-            self.pr_url = prs[0]["html_url"]
-            self.pr_no = prs[0]["number"]
+            self.pr = prs[0]
             return
         raise Exception(f"Multiple PRs found for merge commit {self.commit}")
 
@@ -93,6 +99,14 @@ class CommentOnPr:
         self.set_repo_details()
         self.set_github_client()
         self.set_pr_from_commit()
+
+        # Skip if the PR is too old
+        if self.pr and self.pr['closed_at']:
+            closed_at = datetime.fromisoformat(self.pr['closed_at'].replace('Z', '+00:00'))
+            age = datetime.now(timezone.utc) - closed_at
+            if age.days >= self.OLD_PR_AGE_IN_DAYS:
+                LOGGER.warning("Skipped PR build notifier reporting on old PR %s", self.pr["html_url"])
+                return
 
         # Check if comment doesn't already exist. Then post comment
         if not self.check_if_comment_exist():
