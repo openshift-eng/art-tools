@@ -33,11 +33,11 @@ class BuildSyncPipeline:
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
-            self.group, self.assembly
+            self.group, self.assembly, self.doozer_data_path, self.doozer_data_gitref
         )
         return self
 
-    def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
+    def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, doozer_data_path: str,
                  emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
                  images: str, exclude_arches: str, skip_multiarch_payload: bool):
         self.runtime = runtime
@@ -45,7 +45,7 @@ class BuildSyncPipeline:
         self.group = f'openshift-{version}'
         self.assembly = assembly
         self.publish = publish
-        self.data_path = data_path
+        self.doozer_data_path = doozer_data_path
         self.emergency_ignore_issues = emergency_ignore_issues
         self.retrigger_current_nightly = retrigger_current_nightly
         self.doozer_data_gitref = doozer_data_gitref
@@ -67,12 +67,12 @@ class BuildSyncPipeline:
 
         # Keeping in try-except so that job doesn't fail because of any error here
         try:
-            _, owner, repository = split_git_url(self.data_path)
+            _, owner, repository = split_git_url(self.doozer_data_path)
             branch = self.doozer_data_gitref
             token = os.environ.get('GITHUB_TOKEN')
 
             pattern = r"github\.com/([^/]+)/"
-            match = re.search(pattern, self.data_path)
+            match = re.search(pattern, self.doozer_data_path)
 
             repo_owner = None
             if match:
@@ -280,7 +280,8 @@ class BuildSyncPipeline:
         try:
             supported_arches = await branch_arches(
                 group=f'openshift-{self.version}',
-                assembly=self.assembly
+                assembly=self.assembly,
+                data_path=self.doozer_data_path
             )
             tags_to_transfer: list = rhcos.get_container_names(self.group_runtime)
 
@@ -312,7 +313,7 @@ class BuildSyncPipeline:
             cmd.append(f'--images={self.images}')
         cmd.extend([
             f'--working-dir={mirror_working}',
-            f'--data-path={self.data_path}'
+            f'--data-path={self.doozer_data_path}'
         ])
         group_param = f'--group=openshift-{self.version}'
         if self.doozer_data_gitref:
@@ -462,7 +463,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         version=version,
         assembly=assembly,
         publish=publish,
-        data_path=data_path,
+        doozer_data_path=data_path,
         emergency_ignore_issues=emergency_ignore_issues,
         retrigger_current_nightly=retrigger_current_nightly,
         doozer_data_gitref=data_gitref,

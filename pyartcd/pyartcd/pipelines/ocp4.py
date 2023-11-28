@@ -661,9 +661,15 @@ class Ocp4Pipeline:
     async def _build_images(self):
         self.runtime.logger.info('Building images')
 
+        group_config = await util.load_group_config(
+            group=f'openshift-{self.version.stream}',
+            assembly=self.assembly,
+            doozer_data_path=self.data_path
+        )
         signing_mode = await util.get_signing_mode(
             group=f'openshift-{self.version.stream}',
-            assembly=self.assembly
+            assembly=self.assembly,
+            group_config=group_config,
         )
 
         # Doozer command

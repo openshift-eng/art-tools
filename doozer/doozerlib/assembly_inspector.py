@@ -306,7 +306,7 @@ class AssemblyInspector:
                 if package_name in installed_packages:
                     installed_nvr = installed_packages[package_name]['nvr']
                     if installed_nvr != assembly_nvr:
-                        issues.append(AssemblyIssue(f'Expected image to contain assembly RPM build {assembly_nvr} but found {installed_nvr} installed', component=rpm_dgk, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED))
+                        issues.append(AssemblyIssue(f'Expected {rpm_dgk} image to contain assembly RPM build {assembly_nvr} but found {installed_nvr} installed', component=rpm_dgk, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED))
 
         """
         Assess whether the image build has the upstream
