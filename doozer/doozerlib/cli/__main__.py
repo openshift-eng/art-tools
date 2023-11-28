@@ -44,6 +44,7 @@ from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.scan_osh import scan_osh
 from doozerlib.cli.gen_assembly_helper import gen_assembly_rhcos
+from doozerlib.cli.rpms import rpms_print
 
 from doozerlib import coverity
 from doozerlib.exceptions import DoozerFatalError
