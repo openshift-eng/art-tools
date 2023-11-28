@@ -4,7 +4,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from doozerlib import gitdata, rpmcfg
-from doozerlib.cli.rpms_build import _rpms_rebase_and_build
+from doozerlib.cli.rpms import _rpms_rebase_and_build
 from doozerlib.exectools import RetryException
 
 
@@ -22,7 +22,7 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         runtime.logger = logging.getLogger()
         return runtime
 
-    @patch("doozerlib.cli.rpms_build.RPMBuilder")
+    @patch("doozerlib.cli.rpms.RPMBuilder")
     async def test_rpms_build_success(self, MockedRPMBuilder: Mock):
         runtime = self._make_runtime()
         version = "v1.2.3"
@@ -71,7 +71,7 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 0)
 
-    @patch("doozerlib.cli.rpms_build.RPMBuilder")
+    @patch("doozerlib.cli.rpms.RPMBuilder")
     async def test_rpms_build_failure(self, MockedRPMBuilder: Mock):
         runtime = self._make_runtime()
         version = "v1.2.3"

@@ -36,7 +36,6 @@ from doozerlib.cli.images_health import images_health
 from doozerlib.cli.images_streams import images_streams, images_streams_mirror, images_streams_gen_buildconfigs
 from doozerlib.cli.release_gen_assembly import releases_gen_assembly, gen_assembly_from_releases
 from doozerlib.cli.scan_sources import config_scan_source_changes
-from doozerlib.cli.rpms_build import rpms_build
 from doozerlib.cli.rpms_read_config import config_read_rpms
 from doozerlib.cli.config_plashet import config_plashet
 from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
@@ -44,7 +43,7 @@ from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.scan_osh import scan_osh
 from doozerlib.cli.gen_assembly_helper import gen_assembly_rhcos
-from doozerlib.cli.rpms import rpms_print
+from doozerlib.cli.rpms import rpms_print, rpms_rebase_and_build, rpms_rebase, rpms_build, rpms_clone, rpms_clone_sources
 
 from doozerlib import coverity
 from doozerlib.exceptions import DoozerFatalError
@@ -102,27 +101,6 @@ def images_clone(runtime, clone_upstreams):
     runtime.initialize(clone_distgits=True, clone_source=clone_upstreams)
     # Never delete after clone; defeats the purpose of cloning
     runtime.remove_tmp_working_dir = False
-
-
-@cli.command("rpms:clone", help="Clone a group's rpm distgit repos locally.")
-@pass_runtime
-def rpms_clone(runtime):
-    runtime.initialize(mode='rpms', clone_distgits=True)
-    # Never delete after clone; defeats the purpose of cloning
-    runtime.remove_tmp_working_dir = False
-
-
-@cli.command("rpms:clone-sources", help="Clone a group's rpm source repos locally and add to sources yaml.")
-@click.option("--output-yml", metavar="YAML_PATH",
-              help="Output yml file to write sources dict to. Can be same as --sources option but must be explicitly specified.")
-@pass_runtime
-def rpms_clone_sources(runtime, output_yml):
-    runtime.initialize(mode='rpms')
-    # Never delete after clone; defeats the purpose of cloning
-    runtime.remove_tmp_working_dir = False
-    [r for r in runtime.rpm_metas()]
-    if output_yml:
-        runtime.export_sources(output_yml)
 
 
 @cli.command("images:list", help="List of distgits being selected.")
