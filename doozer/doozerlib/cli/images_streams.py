@@ -552,7 +552,10 @@ def resolve_upstream_from(runtime, image_entry):
             # directly instead of a heuristic.
             return target_meta.config.content.source.ci_alignment.upstream_image
         else:
-            image_name = target_meta.config.name.split('/')[-1]
+            # If payload_name is specified, this is what we need
+            # Otherwise, fallback to the legacy "name" field
+            name = target_meta.config.payload_name or target_meta.config.name
+            image_name = name.split('/')[-1]
             # In release payloads, images are promoted into an imagestream
             # tag name without the ose- prefix.
             image_name = remove_prefix(image_name, 'ose-')
