@@ -314,6 +314,14 @@ class ScanOshCli:
 
                     self.runtime.logger.info(f"Linked {previous_ticket_id.key} to {issue.key}")
 
+                # Report the latest and previous scan on the ticket as a comment
+                comment = f"This ticket was raised because ART automation found new issues in the " \
+                          f"[latest completed scan|{SCAN_RESULTS_URL_TEMPLATE.format(task_id=data['latest_coverity_scan'], nvr=data['latest_coverity_scan_nvr'])}], " \
+                          f"when compared to the [the previous one|{SCAN_RESULTS_URL_TEMPLATE.format(task_id=data['previous_scan_id'], nvr=data['previous_scan_nvr'])}]"
+
+                # https://jira.readthedocs.io/examples.html#comments
+                self.jira_client.add_comment(issue.key, comment)
+
             elif len(open_issues) == 1:
                 issue = open_issues.pop()
 
