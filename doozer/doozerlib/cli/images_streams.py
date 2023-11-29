@@ -1322,6 +1322,7 @@ If you have any questions about this pull request, please reach out to `@release
                 pr_msg = f'A new PR has been opened: {new_pr.html_url}'
                 pr_dgk_map[dgk] = new_pr
                 new_pr_links[dgk] = new_pr.html_url
+                reconcile_jira_issues(runtime, {dgk: new_pr}, moist_run)
                 logger.info(pr_msg)
                 yellow_print(pr_msg)
                 print(f'Sleeping {interstitial} seconds before opening another PR to prevent flooding prow...')
