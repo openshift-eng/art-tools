@@ -296,7 +296,7 @@ class ScanOshCli:
                 if self.dry_run:
                     self.runtime.logger.info(f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
                                              f"JIRA project with fields {fields}")
-                    return
+                    continue
 
                 issue: Issue = self.jira_client.create_issue(
                     fields
@@ -338,7 +338,7 @@ class ScanOshCli:
 
                 else:
                     # Update existing JIRA ticket if there is a change
-                    self.runtime.logger.info(f"A {self.jira_project} ticket already exists: {open_issues}")
+                    self.runtime.logger.info(f"A {self.jira_project} ticket already exists: {issue.key}")
 
                     if not self.dry_run:
                         # Keep notify as False since this description will constantly be updated everytime there's a
