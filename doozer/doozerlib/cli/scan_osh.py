@@ -9,7 +9,8 @@ from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.runtime import Runtime
 from doozerlib.exectools import fire_and_forget, cmd_gather_async, limit_concurrency, cmd_gather
 from doozerlib.util import cprint
-from doozerlib.image import Metadata
+from doozerlib.image import ImageMetadata
+from doozerlib.rpmcfg import RPMMetadata
 from typing import Optional
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -34,7 +35,7 @@ For other questions please reach out to @release-artists in #forum-ocp-art.
 """
 
 
-class ImageType(Enum):
+class BuildType(Enum):
     IMAGE = 1
     RPM = 2
 
@@ -56,7 +57,7 @@ class ScanOshCli:
         self.jira_project = "OCPBUGS"
         self.skip_diff_check = skip_diff_check
         self.brew_distgit_mapping = self.get_brew_distgit_mapping()
-        self.brew_distgit_mapping_rpms = self.get_brew_distgit_mapping(mode=ImageType.RPM)
+        self.brew_distgit_mapping_rpms = self.get_brew_distgit_mapping(kind=BuildType.RPM)
         self.jira_target_version = self.get_target_version()
 
         # Initialize runtime and brewhub session
@@ -81,11 +82,11 @@ class ScanOshCli:
                 return f"{self.version}.z"
             return f"{self.version}.0"
 
-    def get_brew_distgit_mapping(self, mode: ImageType = ImageType.IMAGE):
+    def get_brew_distgit_mapping(self, kind: BuildType = BuildType.IMAGE):
         # By default lets assume its image
         cmd = f"doozer --disable-gssapi -g {self.runtime.group} images:print --short '{{component}}: {{name}}'"
 
-        if mode == ImageType.RPM:
+        if kind == BuildType.RPM:
             cmd = f"doozer --disable-gssapi -g {self.runtime.group} rpms:print --include-disabled " \
                   f"--short '{{component}}: {{name}}'"
 
@@ -169,21 +170,19 @@ class ScanOshCli:
 
         return False
 
-    def get_distgit_name_from_brew_nvr(self, nvr: str) -> str:
+    def get_distgit_name_from_brew_nvr(self, nvr: str, kind: BuildType) -> str:
         """
             Returns the distgit name from the brew nvr
 
             :param nvr: Full NVR eg: openshift-enterprise-pod-container-v4.14.0-202310031045.p0.g9ef6de6.assembly.stream
+            :param kind: Either IMAGE or RPM
             """
         brew_package_name = self.koji_session.getBuild(buildInfo=nvr, strict=True)["package_name"]
 
-        distgit_name = self.brew_distgit_mapping.get(brew_package_name)
+        if kind == BuildType.IMAGE:
+            return self.brew_distgit_mapping.get(brew_package_name)
 
-        if not distgit_name:
-            # Check RPMs if its not in images
-            distgit_name = self.brew_distgit_mapping_rpms.get(brew_package_name)
-
-        return distgit_name
+        return self.brew_distgit_mapping_rpms.get(brew_package_name)
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
     def search_issues(self, query):
@@ -403,6 +402,16 @@ class ScanOshCli:
 
         return nvrs_with_scan_issues
 
+    @staticmethod
+    def is_sast_jira_enabled(meta):
+        """
+        Check if the OCPBUGS workflow is enabled in ocp-build-data config
+        """
+        flag = meta.config.get("external_scanners", {}).get("sast_scanning", {}).get("jira_integration", {}).get("enabled")
+        if flag in [True, "True", "true", "yes"]:
+            return True
+        return False
+
     async def ocp_bugs_workflow_run(self, brew_components: dict):
         # List of brew components to check
         brew_package_names = []
@@ -412,25 +421,29 @@ class ScanOshCli:
             nvr = build["nvr"]
             brew_info = build["brew_info"]
 
-            mode: ImageType = ImageType.IMAGE if "container" in nvr else ImageType.RPM
+            kind: BuildType = BuildType.IMAGE if "container" in nvr else BuildType.RPM
 
-            self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr} in mode {mode.name}")
+            self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr} for kind {kind.name}")
 
-            distgit_name = self.get_distgit_name_from_brew_nvr(nvr)
+            distgit_name = self.get_distgit_name_from_brew_nvr(nvr=nvr, kind=kind)
             if not distgit_name:
                 self.runtime.logger.warning(f"Looks like we are not building: {nvr}")
 
                 # Go to the next NVR
                 continue
 
+            meta = None
             # Metadata can be that of images or RPMs.
-            meta: Metadata = self.runtime.image_map.get(distgit_name) if self.runtime.image_map.get(distgit_name) else self.runtime.rpm_map.get(distgit_name)
+            if kind == BuildType.IMAGE:
+                meta: ImageMetadata = self.runtime.image_map.get(distgit_name)
+            elif kind == BuildType.RPM:
+                meta: RPMMetadata = self.runtime.rpm_map.get(distgit_name)
 
             # If there is no metadata for the component, the ART might not be building it
             if not meta:
                 self.runtime.logger.error(f"Looks like ART is not building image/rpm with distgit name: {distgit_name}")
                 continue
-            if not meta.config.get("external_scanners", {}).get("sast_scanning", {}).get("jira_integration", {}).get("enabled", False):
+            if not self.is_sast_jira_enabled(meta):
                 self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
                                          f"since disabled in image metadata")
                 continue
@@ -449,7 +462,7 @@ class ScanOshCli:
             # For RPMS, the nvr doesn't have a 'v' in them
             # Egs: microshift-4.15.0~0.nightly_2023_11_20_004519-202311200428.p0.ged001ce.assembly.microshift.el9 or
             # openshift-ansible-4.10.0-202310200811.p0.g72c7be6.assembly.stream.el7
-            if mode == ImageType.RPM:
+            if kind == BuildType.RPM:
                 pkg_name_w_version = pkg_name_w_version.replace("v", "")
 
             self.runtime.logger.info(f"Package name with version: {pkg_name_w_version}")
