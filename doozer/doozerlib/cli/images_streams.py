@@ -653,7 +653,7 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
             if issue in comment.body:
                 return  # an exist comment already have the issue
         pr.create_issue_comment(f"ART wants to connect issue [{issue}](https://issues.redhat.com/browse/{issue}) to this PR, \
-                                but found it is currently hooked up to {exist_issues}. Please consult with #aos-art if it is not clear what there is to do.")
+                                but found it is currently hooked up to {exist_issues}. Please consult with #forum-ocp-art if it is not clear what there is to do.")
     else:  # update pr title
         pr.edit(title=f"{issue}: {pr.title}")
 
