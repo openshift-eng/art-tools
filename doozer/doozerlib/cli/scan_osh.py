@@ -240,14 +240,14 @@ class ScanOshCli:
             query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
                     "status in ('New', 'Assigned')"
             # Can use open_issues.pop().raw['fields'] to see all the fields for the JIRA issue, to test
-            open_issues = self.search_issues(query)
+            # also jira title search is fuzzy, so we need to check if an issue is really the one we want
+            open_issues = [i for i in self.search_issues(query) if i.fields.summary == summary]
             self.runtime.logger.info(f"Issues found with query '{query}': {open_issues}")
 
             # Check if this is the first time that we are raising the ticket for this component
             query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
                     "status not in ('New', 'Assigned')"
-            closed_issues = self.search_issues(query)
-
+            closed_issues = [i for i in self.search_issues(query) if i.fields.summary == summary]
             previous_ticket_id = None
             if not closed_issues and not open_issues:
                 # There are no tickets for this component, raise a ticket
