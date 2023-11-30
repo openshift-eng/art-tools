@@ -779,7 +779,7 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
             )
             # check depend issues and set depend to a higher version issue if ture
             look_for_summary = f'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'
-            depend_issues = search_issues(f"project={project} AND summary ~ {look_for_summary}")
+            depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
             # jira title search is fuzzy, so we need to check if an issue is really the one we want
             depend_issues = [i for i in depend_issues if i.fields.summary == look_for_summary]
             if depend_issues:
