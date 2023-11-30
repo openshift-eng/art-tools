@@ -703,13 +703,16 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, PullRequest.PullRequest], d
             # If the component in prodsec data does not exist in the Jira project, use Unknown.
             component = 'Unknown'
 
-        query = f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) AND statusCategory in ("To Do", "In Progress")'
+        query = (f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) '
+                 'AND statusCategory in ("To Do", "In Progress")')
 
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
         def search_issues(query):
             return jira_client.search_issues(query)
 
-        open_issues = search_issues(query)
+        # jira title search is fuzzy, so we need to check if an issue is really the one we want
+        open_issues = [i for i in search_issues(query) if i.fields.summary == summary
+                       or i.fields.summary == old_summary_format]
 
         if open_issues:
             print(f'A JIRA issue is already open for {pr.html_url}: {open_issues[0].key}')
@@ -775,7 +778,10 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
                 fields
             )
             # check depend issues and set depend to a higher version issue if ture
-            depend_issues = search_issues(f"project={project} AND summary ~ 'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'")
+            look_for_summary = f'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'
+            depend_issues = search_issues(f"project={project} AND summary ~ {look_for_summary}")
+            # jira title search is fuzzy, so we need to check if an issue is really the one we want
+            depend_issues = [i for i in depend_issues if i.fields.summary == look_for_summary]
             if depend_issues:
                 jira_client.create_issue_link("Depend", issue.key, depend_issues[0].key)
             new_issues[distgit_key] = issue
