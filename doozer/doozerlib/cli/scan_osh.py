@@ -408,9 +408,8 @@ class ScanOshCli:
         Check if the OCPBUGS workflow is enabled in ocp-build-data config
         """
         flag = meta.config.get("external_scanners", {}).get("sast_scanning", {}).get("jira_integration", {}).get("enabled")
-        if flag in [True, "True", "true", "yes"]:
-            return True
-        return False
+
+        return flag in [True, "True", "true", "yes"]
 
     async def ocp_bugs_workflow_run(self, brew_components: dict):
         # List of brew components to check
