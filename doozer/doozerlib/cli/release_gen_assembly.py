@@ -484,8 +484,8 @@ class GenAssemblyCli:
 
         release_jira = "ART-0"
 
-        if self.assembly_type == AssemblyTypes.CANDIDATE:
-            # if this assembly is rc.X, then check if there is a previously defined rc.X-1
+        if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            # if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
             # pick advisories and release ticket from there
             split = re.split(r'(\d+)', self.gen_assembly_name)
             # ['rc.', '2', '']
@@ -497,9 +497,9 @@ class GenAssemblyCli:
                     previous_group = releases_config.releases[previous_assembly].assembly.group
                     advisories = previous_group.advisories.primitive()
                     release_jira = previous_group.release_jira
-                    self.logger.info(f"Reusing advisories and release ticket from previous candidate assembly {previous_assembly}, {previous_group.advisories}, {previous_group.release_jira}")
+                    self.logger.info(f"Reusing advisories and release ticket from previous assembly {previous_assembly}, {previous_group.advisories}, {previous_group.release_jira}")
                 else:
-                    self.logger.info("No matching previous candidate assembly found")
+                    self.logger.info("No matching previous assembly found")
 
         return advisories, release_jira
 
