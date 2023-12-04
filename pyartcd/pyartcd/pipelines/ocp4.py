@@ -846,7 +846,8 @@ class Ocp4Pipeline:
         if self.assembly == 'stream':
             # Trigger scans only for stream assemblies
             try:
-                jenkins.start_scan_osh(nvrs=self.success_nvrs, version=self.version.stream, create_jira_tickets=True)
+                jenkins.start_scan_osh(nvrs=self.success_nvrs, version=self.version.stream, create_jira_tickets=True,
+                                       check_triggered=True)
             except Exception as e:
                 self.runtime.logger.error(f"Failed to trigger scan-osh job: {e}")
 

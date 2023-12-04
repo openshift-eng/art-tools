@@ -397,11 +397,12 @@ def update_description(description: str, append: bool = True):
     set_build_description(build, description)
 
 
-def start_scan_osh(nvrs: list, version: str, create_jira_tickets: bool, email: Optional[str] = "", **kwargs):
+def start_scan_osh(nvrs: list, version: str, check_triggered: bool, create_jira_tickets: bool, email: Optional[str] = "", **kwargs):
     params = {
         "NVRS": ",".join(nvrs),
         "BUILD_VERSION": version,
-        "CREATE_JIRA_TICKETS": create_jira_tickets
+        "CREATE_JIRA_TICKETS": create_jira_tickets,
+        "CHECK_TRIGGERED": check_triggered
     }
 
     if email:
