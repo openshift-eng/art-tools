@@ -119,8 +119,6 @@ class PrepareReleasePipeline:
         if assembly_type == AssemblyTypes.STREAM:
             if self.release_version[0] >= 4:
                 raise ValueError("Preparing a release from a stream assembly for OCP4+ is no longer supported.")
-        elif assembly_type == AssemblyTypes.PREVIEW:
-            raise ValueError("Do not run prepare-release for ECs")
 
         release_config = releases_config.get("releases", {}).get(self.assembly, {})
         self.release_name = get_release_name_for_assembly(self.group_name, releases_config, self.assembly)
@@ -227,14 +225,14 @@ class PrepareReleasePipeline:
         self._slack_client.bind_channel(self.release_name)
         for impetus, advisory in advisories.items():
             try:
-                if impetus == "metadata":
+                if impetus in ("metadata", "prerelease", "advance"):
                     # Verify attached operators
                     await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories["metadata"])
                 self.change_advisory_state(advisory, "QE")
             except CalledProcessError as ex:
                 _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
 
-            if impetus in ["image", "extras", "metadata"]:
+            if impetus in ("image", "extras", "metadata", "prerelease", "advance"):
                 if not is_greenwave_all_pass_on_advisory(advisory):
                     await self._slack_client.say(f"Some greenwave tests failed on https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists")
 
@@ -443,8 +441,8 @@ class PrepareReleasePipeline:
                 only_payload = True  # OCP 4+ image advisory only contains payload images
             elif impetus == "extras":
                 only_non_payload = True
-        elif impetus.startswith("silentops"):
-            return  # do not sweep into silentops advisories, they are pre-filled
+        elif impetus in ("silentops", "prerelease", "advance", "bootimage"):
+            return  # do not sweep into these advisories initially; later steps may fill them
         else:
             raise ValueError("Specified impetus is not supported: %s", impetus)
         cmd = [
