@@ -326,7 +326,7 @@ class PromotePipeline:
                 # Send image list
                 if not image_advisory:
                     self._logger.warning("No need to send an advisory image list because this release doesn't have an image advisory.")
-                elif assembly_type == assembly.AssemblyTypes.CANDIDATE:
+                elif assembly_type in (assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.PREVIEW):
                     self._logger.warning("No need to send an advisory image list for a candidate release.")
                 elif self.skip_image_list:
                     self._logger.warning("Skip sending advisory image list")
