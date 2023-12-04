@@ -16,8 +16,7 @@ from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 from doozerlib.rpm_utils import parse_nvr
 
-SCAN_RESULTS_URL_TEMPLATE = "https://cov01.lab.eng.brq2.redhat.com/osh/task/{task_id}/log/{nvr}/scan-results-imp.js" \
-                            "?format=raw"
+SCAN_RESULTS_URL_TEMPLATE = "https://cov01.lab.eng.brq2.redhat.com/osh/task/{task_id}/log/{nvr}/scan-results-imp.js"
 
 MESSAGE = """
 One or more software security scan issues have been detected for the package *{package_name}*.
@@ -145,6 +144,10 @@ class ScanOshCli:
                 # Found the latest and previous successful scan
                 previous_scan_nvr = yaml.safe_load(result.replace(" =", ":"))["label"]  # returns NVR
 
+                if previous_scan_nvr == successful_scan_nvr:
+                    # Sometimes we have two scans with the same NVR
+                    continue
+
                 # task_id here would be the one of the previous successful scan
                 return successful_scan_task_id, successful_scan_nvr, task_id, previous_scan_nvr
 
@@ -158,7 +161,7 @@ class ScanOshCli:
         ProdSec only wants us to check the scan-results-imp.js file of a scan and see if scan issues are reported.
         """
 
-        url = SCAN_RESULTS_URL_TEMPLATE.format(task_id=task_id, nvr=nvr)
+        url = f"{SCAN_RESULTS_URL_TEMPLATE.format(task_id=task_id, nvr=nvr)}?format=raw"
         self.runtime.logger.info(f"Checking OSH Scan for issues: {url}")
 
         try:
@@ -189,7 +192,7 @@ class ScanOshCli:
         return self.jira_client.search_issues(query)
 
     def get_scan_defects(self, scan_id, scan_nvr):
-        url = SCAN_RESULTS_URL_TEMPLATE.format(task_id=scan_id, nvr=scan_nvr)
+        url = f"{SCAN_RESULTS_URL_TEMPLATE.format(task_id=scan_id, nvr=scan_nvr)}?format=raw"
         self.runtime.logger.info(f"Checking Scan defects for url: {url}")
 
         scan_response = requests.get(url)
