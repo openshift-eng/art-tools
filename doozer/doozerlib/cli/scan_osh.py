@@ -83,11 +83,11 @@ class ScanOshCli:
 
     def get_brew_distgit_mapping(self, kind: BuildType = BuildType.IMAGE):
         # By default lets assume its image
-        cmd = f"doozer --disable-gssapi -g {self.runtime.group} images:print --show-base --show-non-release " \
+        cmd = f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} images:print --show-base --show-non-release " \
               f"--short '{{component}}: {{name}}'"
 
         if kind == BuildType.RPM:
-            cmd = f"doozer --disable-gssapi -g {self.runtime.group} rpms:print --include-disabled " \
+            cmd = f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} rpms:print " \
                   f"--short '{{component}}: {{name}}'"
 
         _, output, _ = cmd_gather(cmd)
