@@ -407,13 +407,14 @@ class ScanOshCli:
         return nvrs_with_scan_issues
 
     @staticmethod
-    def is_sast_jira_enabled(meta):
+    def is_sast_jira_disabled(meta):
         """
         Check if the OCPBUGS workflow is enabled in ocp-build-data config
         """
         flag = meta.config.get("external_scanners", {}).get("sast_scanning", {}).get("jira_integration", {}).get("enabled")
 
-        return flag in [True, "True", "true", "yes"]
+        # Disable only if specifically defined in config
+        return flag in [False, "False", "false", "no"]
 
     async def ocp_bugs_workflow_run(self, brew_components: dict):
         # List of brew components to check
@@ -446,7 +447,7 @@ class ScanOshCli:
             if not meta:
                 self.runtime.logger.error(f"Looks like ART is not building image/rpm with distgit name: {distgit_name}")
                 continue
-            if not self.is_sast_jira_enabled(meta):
+            if self.is_sast_jira_disabled(meta):
                 self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
                                          f"since disabled in image metadata")
                 continue
