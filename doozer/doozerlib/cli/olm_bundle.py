@@ -288,7 +288,6 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
         else:
             runtime.logger.error('Error building bundle for %s: %s', record['operator_nvr'], record['message'])
 
-
     rc = 0 if all(map(lambda i: i['status'] == 0, results)) else 1
 
     if rc:
