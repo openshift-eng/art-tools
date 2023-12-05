@@ -1079,14 +1079,13 @@ def images_show_tree(runtime, imagename, yml):
               help='Include images which have been marked as non-release.')
 @click.option('--show-base', default=False, is_flag=True,
               help='Include images which have been marked as base images.')
-@click.option("--show-disabled", default=False, is_flag=True, help="Include images marked as disabled")
 @click.option("--output", "-o", default=None,
               help="Write data to FILE instead of STDOUT")
 @click.option("--label", "-l", default=None,
               help="The label you want to print if it exists. Empty string if n/a")
 @click.argument("pattern", default="{build}", nargs=1)
 @pass_runtime
-def images_print(runtime, short, show_non_release, show_base, show_disabled, output, label, pattern):
+def images_print(runtime, short, show_non_release, show_base, output, label, pattern):
     """
     Prints data from each distgit. The pattern specified should be a string
     with replacement fields:
@@ -1114,7 +1113,7 @@ def images_print(runtime, short, show_non_release, show_base, show_disabled, out
     "build" will be treated as "{build}"
     """
 
-    runtime.initialize(clone_distgits=False, disabled=show_disabled)
+    runtime.initialize(clone_distgits=False)
 
     # If user omitted braces, add them.
     if "{" not in pattern:
