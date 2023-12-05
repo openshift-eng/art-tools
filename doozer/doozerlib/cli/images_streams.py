@@ -1,5 +1,7 @@
 import io
 import os
+from time import sleep
+
 import click
 import yaml
 import json
@@ -625,10 +627,15 @@ def images_upstreampulls(runtime):
         _, org, repo_name = split_git_url(public_repo_url)
         if public_repo_url in upstreams:
             continue
+
+        runtime.logger.info('Checking open PRs for image %s', image_meta.name)
         upstreams.add(public_repo_url)
         rateLimit = github_client.get_rate_limit()
         if rateLimit.core.remaining < 1000:
-            time.sleep((rateLimit.core.reset - datetime.datetime.now()).seconds)
+            sleep_time = (rateLimit.core.reset - datetime.datetime.now()).seconds
+            runtime.logger.info('Sleeping for %s seconds', sleep_time)
+            time.sleep(sleep_time)
+
         public_source_repo = github_client.get_repo(f'{org}/{repo_name}')
         pulls = public_source_repo.get_pulls(state='open', sort='created')
         for pr in pulls:
