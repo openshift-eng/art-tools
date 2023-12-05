@@ -409,7 +409,7 @@ class ScanOshCli:
     @staticmethod
     def is_sast_jira_disabled(meta):
         """
-        Check if the OCPBUGS workflow is enabled in ocp-build-data config
+        Check if the OCPBUGS workflow is enabled in ocp-build-data image meta config
         """
         flag = meta.config.get("external_scanners", {}).get("sast_scanning", {}).get("jira_integration", {}).get("enabled")
 
