@@ -83,7 +83,8 @@ class ScanOshCli:
 
     def get_brew_distgit_mapping(self, kind: BuildType = BuildType.IMAGE):
         # By default lets assume its image
-        cmd = f"doozer --disable-gssapi -g {self.runtime.group} images:print --short '{{component}}: {{name}}'"
+        cmd = f"doozer --disable-gssapi -g {self.runtime.group} images:print --show-base --show-non-release " \
+              f"--short '{{component}}: {{name}}'"
 
         if kind == BuildType.RPM:
             cmd = f"doozer --disable-gssapi -g {self.runtime.group} rpms:print --include-disabled " \
@@ -673,6 +674,12 @@ class ScanOshCli:
             for nvr in all_nvrs:
                 if nvr.endswith(".test"):
                     # Exclude all test builds
+                    self.runtime.logger.info(f"Skipping test build: {nvr}")
+                    continue
+
+                if "bundle-container" in nvr or "metadata-container" in nvr:
+                    # Exclude all bundle builds
+                    self.runtime.logger.info(f"Skipping bundle build: {nvr}")
                     continue
 
                 brew_info = self.koji_session.getBuild(nvr)
