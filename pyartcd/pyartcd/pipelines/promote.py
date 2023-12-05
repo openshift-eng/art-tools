@@ -416,10 +416,8 @@ class PromotePipeline:
             from_release = release_info.get("references", {}).get("metadata", {}).get("annotations", {}).get("release.openshift.io/from-release")
             if from_release:
                 data["content"][arch]["from_release"] = from_release
-            rhcos_name = get_primary_container_name(self.group_runtime)
-            rhcos = next((t for t in release_info.get("references", {}).get("spec", {}).get("tags", []) if t["name"] == rhcos_name), None)
-            if rhcos:
-                rhcos_version = rhcos["annotations"]["io.openshift.build.versions"].split("=")[1]  # machine-os=48.84.202112162302-0 => 48.84.202112162302-0
+            rhcos_version = release_info.get("displayVersions", {}).get("machine-os", {}).get("Version", "")
+            if rhcos_version:
                 data["content"][arch]["rhcos_version"] = rhcos_version
         # sync rhcos srpms
         await self.sync_rhcos_srpms(assembly_type, data)
