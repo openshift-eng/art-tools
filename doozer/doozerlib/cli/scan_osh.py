@@ -40,14 +40,12 @@ class BuildType(Enum):
 
 
 class ScanOshCli:
-    def __init__(self, runtime: Runtime, last_brew_event: int, dry_run: bool, nvrs: Optional[list],
-                 check_triggered: Optional[bool], all_builds: Optional[bool], create_jira_tickets: Optional[bool],
-                 skip_diff_check: Optional[bool]):
+    def __init__(self, runtime: Runtime, last_brew_event: int, dry_run: bool, check_triggered: Optional[bool],
+                 all_builds: Optional[bool], create_jira_tickets: Optional[bool], skip_diff_check: Optional[bool]):
         self.runtime = runtime
         self.last_brew_event = last_brew_event
         self.dry_run = dry_run
         self.brew_tags = []
-        self.specific_nvrs = nvrs
         self.check_triggered = check_triggered
         self.all_builds = all_builds
         self.create_jira_tickets = create_jira_tickets
@@ -581,6 +579,10 @@ class ScanOshCli:
         self.runtime.logger.info(f"Total number of build scans kicked off: {len(cmds)}")
 
     def brew_candidate_workflow(self):
+        """
+        Collect all the builds since the previous run. If this is the first run, get all the builds in the candidate
+        tags
+        """
         tags = self.runtime.get_errata_config()["brew_tag_product_version_mapping"].keys()
         for tag in tags:
             major, minor = self.runtime.get_major_minor_fields()
@@ -638,13 +640,7 @@ class ScanOshCli:
         return nvrs_for_scans
 
     async def run(self):
-        if not self.specific_nvrs:
-            # Brew candidate workflow
-            nvrs_for_scans = self.brew_candidate_workflow()
-        else:
-            # Specific NVRs workflow
-            self.runtime.logger.info(f"Triggering scans for this particular list of NVRs: {self.specific_nvrs}")
-            nvrs_for_scans = self.specific_nvrs
+        nvrs_for_scans = self.brew_candidate_workflow()
 
         if not nvrs_for_scans:
             self.runtime.logger.info("No new builds to scan")
@@ -663,12 +659,6 @@ class ScanOshCli:
         if self.runtime.group_config.external_scanners.sast_scanning.jira_integration.enabled not in [True, "True", "true", "yes"]:
             self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for "
                                      f"{self.version}")
-            return
-
-        if self.specific_nvrs:
-            # Only run for the scheduled variant of this job
-            # We use self.specific_nvrs for kicking off scans for images that ART is building
-            self.runtime.logger.info("Detecting that this is not a scheduled job. Skipping OCPBUGS workflow run.")
             return
 
         if self.create_jira_tickets:
@@ -701,8 +691,6 @@ class ScanOshCli:
 @click.option("--since", required=False, help="Builds after this brew event. If empty, latest builds will retrieved")
 @click.option("--dry-run", default=False, is_flag=True,
               help="Do not trigger anything, but only print build operations.")
-@click.option("--nvrs", required=False,
-              help="Comma separated list to trigger scans specifically. Will not check candidate tags")
 @click.option("--check-triggered", required=False, is_flag=True, default=False,
               help="Triggers scans for NVRs only after checking if they haven't already")
 @click.option("--all-builds", required=False, is_flag=True, default=False, help="Check all builds in candidate tags")
@@ -712,12 +700,11 @@ class ScanOshCli:
               help="Used along with --create-jira-tickets. Skip checking the diff between current and previous scan")
 @pass_runtime
 @click_coroutine
-async def scan_osh(runtime: Runtime, since: str, dry_run: bool, nvrs: str, check_triggered: bool, all_builds: bool,
+async def scan_osh(runtime: Runtime, since: str, dry_run: bool, check_triggered: bool, all_builds: bool,
                    create_jira_tickets: bool, skip_diff_check: bool):
     cli_pipeline = ScanOshCli(runtime=runtime,
                               last_brew_event=int(since) if since else None,
                               dry_run=dry_run,
-                              nvrs=nvrs.split(",") if nvrs else None,
                               check_triggered=check_triggered,
                               all_builds=all_builds,
                               create_jira_tickets=create_jira_tickets,

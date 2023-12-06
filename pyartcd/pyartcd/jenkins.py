@@ -29,7 +29,6 @@ class Jobs(Enum):
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
-    SCAN_OSH = 'aos-cd-builds/build%2Fscan-osh'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
 
 
@@ -395,24 +394,6 @@ def update_description(description: str, append: bool = True):
         description = build.get_description() + description
 
     set_build_description(build, description)
-
-
-def start_scan_osh(nvrs: list, version: str, check_triggered: bool, create_jira_tickets: bool, email: Optional[str] = "", **kwargs):
-    params = {
-        "NVRS": ",".join(nvrs),
-        "BUILD_VERSION": version,
-        "CREATE_JIRA_TICKETS": create_jira_tickets,
-        "CHECK_TRIGGERED": check_triggered
-    }
-
-    if email:
-        params["EMAIL"] = email
-
-    return start_build(
-        job=Jobs.SCAN_OSH,
-        params=params,
-        **kwargs
-    )
 
 
 def is_api_reachable() -> bool:

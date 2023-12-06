@@ -543,7 +543,6 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("shutil.rmtree")
     @patch("builtins.open")
     @patch("pyartcd.jenkins.update_title")
-    @patch("pyartcd.jenkins.start_scan_osh")
     @patch("pyartcd.jenkins.update_description")
     @patch("pyartcd.util.default_release_suffix", return_value="2100123111.p?")
     @patch("pyartcd.exectools.cmd_gather_async", autospec=True, return_value=(0, "rhaos-4.13-rhel-8", ""))
