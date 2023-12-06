@@ -635,9 +635,8 @@ class PromotePipeline:
             else:
                 self._logger.error(f"Error get {release_component_tag_name} image from release pullspec")
 
-        # ART-7207 - upload baremetal installer binary to mirror
-        if build_arch == 'x86_64':
-            self.publish_baremetal_installer_binary(pullspec, client_mirror_dir)
+        # Upload baremetal installer binary to mirror
+        self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, build_arch)
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
@@ -684,7 +683,7 @@ class PromotePipeline:
         await util.mirror_to_s3(f"{base_to_mirror_dir}/{build_arch}", f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}", dry_run=self.runtime.dry_run)
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
-    def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str):
+    def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):
         _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, 'baremetal-installer')
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
@@ -694,11 +693,12 @@ class PromotePipeline:
 
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
         self._logger.info('Extracting baremetal-install')
-        extract_baremetal_installer(release_pullspec, client_mirror_dir)
+        go_arch = go_arch_for_brew_arch(build_arch)
+        extract_baremetal_installer(release_pullspec, client_mirror_dir, go_arch)
 
         # Create tarball
         binary_name = 'openshift-baremetal-install'
-        archive_name = f'openshift-install-{rhel_version}.tar.gz'
+        archive_name = f'openshift-install-{rhel_version}-{go_arch}.tar.gz'
         with tarfile.open(f'{client_mirror_dir}/{archive_name}', 'w:gz') as tar:
             tar.add(f'{client_mirror_dir}/{binary_name}')
         self._logger.info('Created tarball %s at %s', archive_name, client_mirror_dir)

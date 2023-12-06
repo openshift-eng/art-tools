@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+
 from pyartcd import exectools
 from pyartcd.runtime import Runtime
 import openshift as octool
@@ -94,15 +95,17 @@ def extract_release_client_tools(release_pullspec: str, path_arg: str, single_ar
     common_oc_wrapper("extract_tools", "adm", args, True, False)
 
 
-def extract_baremetal_installer(release_pullspec: str, path: str) -> (int, str):
+def extract_baremetal_installer(release_pullspec: str, path: str, arch: str) -> (int, str):
     """
     Extract baremetal-installer binary to specified location
     :param release_pullspec: e.g. quay.io/openshift-release-dev/ocp-release:4.14.0-ec.2-x86_64
     :param path: e.g. /path/to/extracted/binary
+    :param arch: "amd64", "s390x", "ppc64le", "arm64"
     """
 
     # oc adm release extract --command=openshift-baremetal-install -n=ocp --to <path> <pullspec>
-    args = ['release', 'extract', '--command=openshift-baremetal-install', '-n=ocp', release_pullspec, f'--to={path}']
+    args = ['release', 'extract', '--command=openshift-baremetal-install', '-n=ocp', '--from',
+            release_pullspec, '--command-os', f'linux/{arch}', f'--to={path}']
     return common_oc_wrapper(
         cmd_result_name='extract_baremetal',
         cli_verb='adm',
