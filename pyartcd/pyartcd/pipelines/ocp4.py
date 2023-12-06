@@ -666,16 +666,11 @@ class Ocp4Pipeline:
             assembly=self.assembly,
             doozer_data_path=self.data_path
         )
-        signing_mode = await util.get_signing_mode(
-            group=f'openshift-{self.version.stream}',
-            assembly=self.assembly,
-            group_config=group_config,
-        )
 
         # Doozer command
         cmd = self._doozer_base_command.copy()
         cmd.extend(self._include_exclude('images', self.build_plan.images_included, self.build_plan.images_excluded))
-        cmd.extend(['images:build', '--repo-type', signing_mode])
+        cmd.extend(['images:build', '--repo-type', group_config['software_lifecycle']['signing_mode']])
 
         if self.comment_on_pr:
             cmd.extend(['--comment-on-pr'])

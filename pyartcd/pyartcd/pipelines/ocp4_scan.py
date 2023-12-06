@@ -32,7 +32,7 @@ class Ocp4ScanPipeline:
         self.locked = False
 
         # Check if automation is frozen for current group
-        if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working), data_path=self.data_path):
+        if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
             self.logger.info('Skipping this build as it\'s not permitted')
             self.frozen = True
             return
@@ -170,18 +170,16 @@ class Ocp4ScanPipeline:
 
 @cli.command('ocp4-scan')
 @click.option('--version', required=True, help='OCP version to scan')
-@click.option('--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
-              help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan(runtime: Runtime, version: str, data_path: str):
+async def ocp4_scan(runtime: Runtime, version: str):
     lock = Lock.BUILD
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
-    pipeline = Ocp4ScanPipeline(runtime, version, data_path)
+    pipeline = Ocp4ScanPipeline(runtime, version)
     jenkins.init_jenkins()
 
     await locks.run_with_lock(
