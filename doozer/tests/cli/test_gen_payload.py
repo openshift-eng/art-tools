@@ -13,7 +13,7 @@ import openshift as oc
 from doozerlib.assembly import AssemblyIssueCode, AssemblyTypes, AssemblyIssue
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
-from doozerlib.image import BrewBuildImageInspector
+from doozerlib.image import BrewBuildImageInspector, ImageMetadata
 from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
@@ -187,6 +187,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_detect_non_latest_rpms(self):
         gpcli = rgp_cli.GenPayloadCli()
         bbii = AsyncMock(BrewBuildImageInspector)
+        bbii.get_image_meta.return_value = Mock(ImageMetadata, is_rpm_exempt=Mock(return_value=(False, None)))
         bbii.find_non_latest_rpms.return_value = {"x86_64": [("foo-0:1.2.0-1.el9.x86_64", "foo-0:1.2.1-1.el9.x86_64", "repo_name")], "s390x": []}
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images=dict(spam=bbii))
         await gpcli.detect_non_latest_rpms(ai)

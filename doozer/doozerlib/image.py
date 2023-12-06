@@ -408,16 +408,16 @@ class ImageMetadata(Metadata):
 
             # Populate all rpms contained in the image build
             arch_rpms: Dict[str, List[Dict]] = {}  # arch => list of rpm dicts to check for updates in configured repos
-            exempted_packages = self.config.scan_sources.exempted_packages or []
-            exempted_packages = set(exempted_packages)
             for arch, archive_inspector in arch_archives.items():
                 arch_rpms[arch] = []
                 # Example results of listing RPMs in an given imageID:
                 # https://gist.github.com/jupierce/a8798858104dcf6dfa4bd1d6dd99d2d8
                 rpm_entries = archive_inspector.get_installed_rpm_dicts()
                 for rpm_entry in rpm_entries:
-                    if rpm_entry["name"] in exempted_packages:
-                        self.logger.warning("Package %s is exempted from package change detection", to_nevra(rpm_entry))
+                    is_exempt, pattern = self.is_rpm_exempt(rpm_entry["name"])
+                    if is_exempt:
+                        self.logger.warning("%s is exempt from rpm change detection by '%s'",
+                                            to_nevra(rpm_entry), pattern)
                         continue
 
                     build_id = rpm_entry['build_id']

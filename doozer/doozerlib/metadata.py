@@ -2,17 +2,15 @@ import datetime
 import io
 import pathlib
 import re
+import fnmatch
 import sys
 import time
 import urllib.parse
-from collections import OrderedDict
+import dateutil.parser
+import requests
 from enum import Enum
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 from defusedxml import ElementTree
-
-import dateutil.parser
-import requests
-import yaml
 from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
@@ -875,3 +873,24 @@ class Metadata(object):
             raise IOError(f'Unable to determine KUBE vars for {self.name}')
 
         return envs
+
+    def is_rpm_exempt(self, rpm_name) -> Tuple[bool, Optional[str]]:
+        """ Check if the given rpm is exempt from scan_sources
+        Pattern matching is done using glob pattern and fnmatch module
+        https://docs.python.org/3/library/fnmatch.html
+        :param rpm_name: package name to check
+        :return: Tuple of (is_exempt, pattern)
+        """
+        exempt_rpms = self.config.scan_sources.exempt_rpms or []
+
+        # TODO: Remove this after scan_sources.exempted_packages is deprecated
+        exempt_packages = self.config.scan_sources.exempted_packages or []
+        exempt_rpms += exempt_packages
+
+        if not exempt_rpms:
+            return False, None
+
+        for pattern in exempt_rpms:
+            if fnmatch.fnmatch(rpm_name, pattern):
+                return True, pattern
+        return False, None

@@ -245,19 +245,19 @@ class OutdatedRPMFinder:
     def _find_candidate_non_modular_rpms(all_non_modular_rpms, candidate_modular_rpms, logger):
         """ Finds all candidate non-modular rpms.
         For each non-modular rpm, if there is another candidate modular rpm with the same package name,
-        the non-modular rpm will be exempted.
+        the non-modular rpm will be exempt.
         """
-        candidate_non_modulear_rpms: Dict[str, Tuple[str, Rpm]] = {}  # package_name => (repo_name, rpm)
+        candidate_non_modular_rpms: Dict[str, Tuple[str, Rpm]] = {}  # package_name => (repo_name, rpm)
         for nevra, repo in all_non_modular_rpms.items():
             rpm = Rpm.from_nevra(nevra)
-            _, candidate = candidate_non_modulear_rpms.get(rpm.name, (None, None))
+            _, candidate = candidate_non_modular_rpms.get(rpm.name, (None, None))
             if not candidate or rpm.compare(candidate) > 0:
                 if rpm.name in candidate_modular_rpms:
                     modular_repo, modular_rpm = candidate_modular_rpms[rpm.name]
                     logger.debug("Non-modular RPM %s from %s is shadowed by modular RPM %s from %s", nevra, repo, modular_rpm.nevra, modular_repo)
                     continue  # This non-modular rpm is shadowed by a modular rpm
-                candidate_non_modulear_rpms[rpm.name] = (repo, rpm)
-        return candidate_non_modulear_rpms
+                candidate_non_modular_rpms[rpm.name] = (repo, rpm)
+        return candidate_non_modular_rpms
 
     def find_non_latest_rpms(self, rpms_to_check: List[Dict], repodatas: List[Repodata], logger: Optional[Logger] = None) -> List[Tuple[str, str, str]]:
         """
