@@ -342,8 +342,9 @@ class ScanOshCli:
 
                     self.runtime.logger.info(f"Linked {previous_ticket_id.key} to {issue.key}")
 
-                # https://jira.readthedocs.io/examples.html#comments
-                self.jira_client.add_comment(issue.key, comment)
+                if not self.skip_diff_check:
+                    # https://jira.readthedocs.io/examples.html#comments
+                    self.jira_client.add_comment(issue.key, comment)
 
             elif len(open_issues) == 1:
                 issue = open_issues.pop()
