@@ -2,7 +2,6 @@ import click
 import datetime
 import elliottlib
 from elliottlib.cli.common import cli
-from elliottlib.cli.add_metadata_cli import add_metadata_cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.exectools import cmd_assert
 from elliottlib.exceptions import ElliottFatalError
@@ -114,23 +113,9 @@ advisory.
         green_prefix("Created new advisory: ")
         click.echo(str(erratum))
 
-        # This is a little strange, I grant you that. For reference you
-        # may wish to review the click docs
-        #
-        # https://click.pocoo.org/5/advanced/#invoking-other-commands
-        #
-        # You may be thinking, "But, add_metadata doesn't take keyword
-        # arguments!" and that would be correct. However, we're not
-        # calling that function directly. We actually use the context
-        # 'invoke' method to call the _command_ (remember, it's wrapped
-        # with click to create a 'command'). 'invoke' ensures the correct
-        # options/arguments are mapped to the right parameters.
-        ctx.invoke(add_metadata_cli, kind=kind, impetus=impetus, advisory=erratum.errata_id)
-        click.echo(str(erratum))
-
         if with_placeholder:
             click.echo("Creating and attaching placeholder bug...")
-            ctx.invoke(create_placeholder_cli, kind=kind, advisory=erratum.errata_id)
+            ctx.invoke(create_placeholder_cli, advisory=erratum.errata_id)
 
         if with_liveid:
             click.echo("Requesting Live ID...")
