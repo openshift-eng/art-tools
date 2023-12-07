@@ -505,6 +505,23 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
         yaml.dump_all(objects, f, default_flow_style=False)
 
     if apply:
+        print('Delete outdate buildconfigs...')
+        latest_configs = [bc['metadata']['name'] for bc in buildconfig_definitions]
+        cmd = f'oc -n ci get -o=name buildconfigs -l art-builder-group={group_label}'
+        if as_user:
+            cmd += f' --as {as_user}'
+        bc_stdout, bc_stderr = exectools.cmd_assert(cmd, retries=3)
+        bc_stdout = bc_stdout.strip()
+
+        if bc_stdout:
+            for name in bc_stdout.splitlines():
+                if name not in latest_configs:
+                    print(f'Deleting buildconfig {name}')
+                    cmd = f'oc -n ci delete buildconfig {name}'
+                    if as_user:
+                        cmd += f' --as {as_user}'
+                    exectools.cmd_assert(cmd, retries=3)
+
         if buildconfig_definitions:
             print('Applying buildconfigs...')
             cmd = f'oc apply -f {output}'
