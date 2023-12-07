@@ -51,6 +51,25 @@ class TestMetadata(TestCase):
         url = meta.cgit_file_url("some_path/some_file.txt", "abcdefg", "some-branch")
         self.assertEqual(url, "http://distgit.example.com/cgit/containers/foo/plain/some_path/some_file.txt?h=some-branch&id=abcdefg")
 
+    def test_is_rpm_exempt(self):
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        meta = Metadata("image", runtime, data_obj)
+        self.assertFalse(meta.is_rpm_exempt('bar')[0])
+
+        meta.config = Model(dict_to_model={
+            'scan_sources': {'exempt_rpms': ['bar', 'foo*', 'barfoo?']}
+        })
+        self.assertTrue(meta.is_rpm_exempt('bar')[0])
+        self.assertTrue(meta.is_rpm_exempt('foo')[0])
+        self.assertTrue(meta.is_rpm_exempt('foo123')[0])
+        self.assertFalse(meta.is_rpm_exempt('barfoo')[0])
+        self.assertTrue(meta.is_rpm_exempt('barfoo5')[0])
+        self.assertFalse(meta.is_rpm_exempt('barfoo52')[0])
+
+        meta.config = Model(dict_to_model={'scan_sources': {'exempt_rpms': ['*']}})
+        self.assertTrue(meta.is_rpm_exempt('anything_goes')[0])
+
     def build_record(self, creation_dt: datetime.datetime, assembly, name='foo-container',
                      version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
                      release_prefix=None, release_suffix='',
