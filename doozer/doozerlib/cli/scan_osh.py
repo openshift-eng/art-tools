@@ -172,15 +172,13 @@ class ScanOshCli:
 
         return False
 
-    def get_distgit_name_from_brew_nvr(self, nvr: str, kind: BuildType) -> str:
+    def get_distgit_name_from_brew_nvr(self, kind: BuildType, brew_package_name: str) -> str:
         """
             Returns the distgit name from the brew nvr
 
-            :param nvr: Full NVR eg: openshift-enterprise-pod-container-v4.14.0-202310031045.p0.g9ef6de6.assembly.stream
-            :param kind: Either IMAGE or RPM
+            :param kind: Metadata kind
+            :param brew_package_name: Name of the brew package
             """
-        brew_package_name = self.koji_session.getBuild(buildInfo=nvr, strict=True)["package_name"]
-
         if kind == BuildType.IMAGE:
             return self.brew_distgit_mapping.get(brew_package_name)
 
@@ -428,7 +426,7 @@ class ScanOshCli:
 
             self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr} for kind {kind.name}")
 
-            distgit_name = self.get_distgit_name_from_brew_nvr(nvr=nvr, kind=kind)
+            distgit_name = self.get_distgit_name_from_brew_nvr(kind=kind, brew_package_name=brew_info["package_name"])
             if not distgit_name:
                 self.runtime.logger.warning(f"Looks like we are not building: {nvr}")
 
@@ -661,6 +659,9 @@ class ScanOshCli:
                                      f"{self.version}")
             return
 
+        # Get the list of excluded package names from group.yml
+        excluded_components = self.runtime.group_config.external_scanners.sast_scanning.jira_integration.exclude_components
+
         if self.create_jira_tickets:
             brew_components = {}
             for nvr in all_nvrs:
@@ -676,6 +677,11 @@ class ScanOshCli:
 
                 brew_info = self.koji_session.getBuild(nvr)
                 package_name = brew_info["package_name"]
+
+                if package_name in excluded_components:
+                    # Skip components that we want to exclude
+                    self.runtime.logger.info(f"Skipping build: {nvr} (since it's in excluded components)")
+                    continue
 
                 # More than one build of a component can be present after the previous run,
                 # so lets get just the latest build. The nvrs are ordered from earliest to newest
