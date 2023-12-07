@@ -1,7 +1,6 @@
 import click
 import datetime
 import elliottlib
-from elliottlib.bzutil import BugzillaBugTracker
 from elliottlib.cli.common import cli
 from elliottlib.cli.add_metadata_cli import add_metadata_cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
@@ -52,11 +51,9 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
 @click.option('--yes', '-y', is_flag=True,
               default=False, type=bool,
               help="Create the advisory (by default only a preview is displayed)")
-@click.option("--bug", "--bugs", "-b", 'bugs', type=int, multiple=True,
-              help="Bug IDs for attaching to the advisory on creation. Required for creating a security advisory.")
 @click.pass_obj
 @click.pass_context
-def create_cli(ctx, runtime, errata_type, kind, impetus, art_advisory_key, date, assigned_to, manager, package_owner, with_placeholder, with_liveid, yes, bugs):
+def create_cli(ctx, runtime, errata_type, kind, impetus, art_advisory_key, date, assigned_to, manager, package_owner, with_placeholder, with_liveid, yes):
     """Create a new advisory. The kind of advisory must be specified with
 '--kind'. Valid choices are 'rpm' and 'image'.
 
@@ -78,9 +75,6 @@ The --assigned-to, --manager and --package-owner options are required.
 They are the email addresses of the parties responsible for managing and
 approving the advisory.
 
-Adding a list of bug ids with one or more --bugs arguments attaches those bugs to the
-advisory on creation.
-
 Provide the '--yes' or '-y' option to confirm creation of the
 advisory.
 
@@ -100,25 +94,10 @@ advisory.
     # User entered a valid value for --date, set the release date
     release_date = datetime.datetime.strptime(date, YMD)
 
-    ######################################################################
-
-    unique_bugs = set(bugs)
-
-    if bugs:
-        bug_tracker = BugzillaBugTracker(BugzillaBugTracker.get_config(runtime))
-        LOGGER.info("Fetching bugs {} from Bugzilla...".format(
-            " ".join(map(str, bugs))))
-        bug_objects = bug_tracker.get_bugs(bugs)
-        # assert bugs are viable for a new advisory.
-        _assert_bugs_are_viable(bugs, bug_objects)
-
-    ######################################################################
-
     try:
         erratum = elliottlib.errata.new_erratum(
             et_data,
             errata_type=errata_type,
-            kind=kind,
             boilerplate_name=(art_advisory_key if art_advisory_key else kind),
             release_date=release_date.strftime(YMD),
             assigned_to=assigned_to,
@@ -129,8 +108,6 @@ advisory.
         exit_unauthorized()
     except elliottlib.exceptions.ErrataToolError as ex:
         raise ElliottFatalError(getattr(ex, 'message', repr(ex)))
-
-    erratum.addBugs(unique_bugs)
 
     if yes:
         erratum.commit()
@@ -163,24 +140,7 @@ advisory.
                 retries=3,
                 pollrate=10,
             )
-
     else:
         green_prefix("Would have created advisory: ")
         click.echo("")
         click.echo(erratum)
-
-
-def _assert_bugs_are_viable(bugs, bug_objects):
-    for index, bug in enumerate(bug_objects):
-        bug_id = bugs[index]
-        if not bug:
-            raise ElliottFatalError("Couldn't find bug {}. Did you log in?".format(bug_id))
-        if not elliottlib.bzutil.is_viable_bug(bug):
-            raise ElliottFatalError("Bug {} is not viable: Status is {}.".format(bug_id, bug.status))
-        LOGGER.info("Checking if bug {} is already attached to an advisory...".format(bug_id))
-        advisories = elliottlib.errata.get_advisories_for_bug(bug_id)
-        if advisories:
-            raise ElliottFatalError(
-                "Bug {} is already attached to advisories: {}"
-                .format(bug_id, " ".join([str(item["id"]) for item in advisories])))
-        LOGGER.info("Bug {} is viable.".format(bug_id))

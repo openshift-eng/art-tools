@@ -195,21 +195,19 @@ def get_erratum_content_type(advisory_id: str):
     return None
 
 
-def new_erratum(et_data, errata_type=None, boilerplate_name=None, kind=None, release_date=None, create=False,
-                assigned_to=None, manager=None, package_owner=None, impact=None, cves=None):
+def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, create=False,
+                assigned_to=None, manager=None, package_owner=None):
     """5.2.1.1. POST /api/v1/erratum
 
     Create a new advisory.
     Takes an unrealized advisory object and related attributes using the following format:
 
-    https://errata.devel.redhat.com/developer-guide/api-http-api.html#api-post-apiv1erratum
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
 
     :param et_data: The ET data dump we got from our erratatool.yaml file
-    :param errata_type: The type of advisory to create (RHBA, RHSA, or RHEA)
-    :param string kind: One of [rpm, image].
-        Only used for backward compatibility.
-    :param string boilerplate_name: One of [rpm, image, extras, metadata, cve].
-        The name of boilerplate for creating this advisory
+    :param errata_type: The type of advisory to create (RHBA or RHEA)
+    :param string boilerplate_name: The name of boilerplate template to use
+        It is looked up from the erratatool.yaml file
     :param string release_date: A date in the form YYYY-Mon-DD
     :param bool create: If true, create the erratum in the Errata
         tool, by default just the DATA we would have POSTed is
@@ -220,31 +218,23 @@ def new_erratum(et_data, errata_type=None, boilerplate_name=None, kind=None, rel
         managing the contents and status of this advisory
     :param string package_owner: The email address of the person who is handling
         the details and status of this advisory
-    :param impact: The security impact. Only applies to RHSA
-    :param cves: The CVE(s) to attach to the advisory. Separate multiple CVEs with a space. Only applies to RHSA
 
     :return: An Advisory object
     :raises: exceptions.ErrataToolUnauthenticatedException if the user is not authenticated to make the request
     """
+    if errata_type not in ['RHBA', 'RHEA']:
+        raise ValueError("errata_type must be one of 'RHBA' or 'RHEA'")
+
     if not release_date:
         release_date = datetime.datetime.now() + datetime.timedelta(days=21)
 
-    if not kind:
-        kind = 'rpm'
+    if "boilerplates" not in et_data:
+        raise ValueError("`boilerplates` is required in erratatool.yaml")
 
-    if not boilerplate_name:
-        boilerplate_name = kind
+    if boilerplate_name not in et_data["boilerplates"]:
+        raise ValueError(f"Boilerplate {boilerplate_name} not found in erratatool.yaml")
 
-    if "boilerplates" in et_data and boilerplate_name in et_data["boilerplates"]:
-        boilerplate = et_data['boilerplates'][boilerplate_name]
-    else:  # FIXME: For backward compatibility.
-        boilerplate = {
-            "synopsis": (et_data['synopsis'].get(boilerplate_name, 'rpm') if boilerplate_name != "cve"
-                         else et_data['synopsis'][kind]),
-            "topic": et_data["topic"],
-            "description": et_data["description"],
-            "solution": et_data["solution"],
-        }
+    boilerplate = et_data['boilerplates'][boilerplate_name]
 
     e = Advisory(
         product=et_data['product'],
@@ -260,10 +250,6 @@ def new_erratum(et_data, errata_type=None, boilerplate_name=None, kind=None, rel
         manager_email=manager,
         date=release_date
     )
-
-    if errata_type == 'RHSA':
-        e.security_impact = impact
-        e.cve_names = cves
 
     if create:
         # THIS IS NOT A DRILL
