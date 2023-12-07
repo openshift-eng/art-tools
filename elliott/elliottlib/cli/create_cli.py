@@ -12,20 +12,11 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
 
 
 @cli.command("create", short_help="Create a new advisory")
-@click.option("--type", '-t', 'errata_type',
+@click.option("--type", '-t', 'errata_type', required=True,
               type=click.Choice(['RHBA', 'RHEA']),
-              default='RHBA',
               help="Type of Advisory to create.")
-@click.option("--kind", '-k', required=True,
-              type=click.Choice(['rpm', 'image']),
-              help="Kind of artifacts that will be attached to Advisory. Affects boilerplate text.")
-@click.option("--impetus",
-              type=click.Choice(elliottlib.constants.errata_valid_impetus),
-              default='standard',
-              help="Impetus for the advisory creation. 'standard' by default")
-@click.option("--art-advisory-key",
-              type=click.Choice(['rpm', 'microshift', 'metadata', 'image', 'extras']),
-              help="Class of the advisory. Should be one of [rpm, microshift, metadata, image, extras].")
+@click.option("--art-advisory-key", required=True,
+              help="Boilerplate for the advisory. This will be looked up from erratatool.yml")
 @click.option("--date", required=True,
               callback=validate_release_date,
               help="Release date for the advisory. Format: YYYY-Mon-DD.")
@@ -52,9 +43,9 @@ LOGGER = elliottlib.logutil.getLogger(__name__)
               help="Create the advisory (by default only a preview is displayed)")
 @click.pass_obj
 @click.pass_context
-def create_cli(ctx, runtime, errata_type, kind, impetus, art_advisory_key, date, assigned_to, manager, package_owner, with_placeholder, with_liveid, yes):
-    """Create a new advisory. The kind of advisory must be specified with
-'--kind'. Valid choices are 'rpm' and 'image'.
+def create_cli(ctx, runtime, errata_type, art_advisory_key, date, assigned_to, manager, package_owner, with_placeholder, with_liveid, yes):
+    """Create a new advisory. The boilerplate to use for the advisory must be specified with
+'--art-advisory-key'. This will be looked up from erratatool.yml.
 
     You MUST specify a group (ex: "openshift-3.9") manually using the
     --group option. See examples below.
@@ -67,9 +58,6 @@ advisory would look like. The raw JSON used to create the advisory
 will be printed to the screen instead of posted to the Errata Tool
 API.
 
-The impetus option only affects the metadata added to the new
-advisory and its synopsis.
-
 The --assigned-to, --manager and --package-owner options are required.
 They are the email addresses of the parties responsible for managing and
 approving the advisory.
@@ -77,14 +65,14 @@ approving the advisory.
 Provide the '--yes' or '-y' option to confirm creation of the
 advisory.
 
-    PREVIEW an RPM Advisory 21 days from now (the default release date) for OSE 3.9:
+    PREVIEW RPM Advisory:
 
-    $ elliott --group openshift-3.9 create
+    $ elliott -g openshift-4.14 create --art-advisory-key rpm --date 2018-Mar-05
 
-    CREATE Image Advisory for the 3.5 series on the first Monday in March:
+    CREATE Image Advisory:
 
 \b
-    $ elliott --group openshift-3.5 create --yes -k image --date 2018-Mar-05
+    $ elliott -g openshift-4.14 create --art-advisory-key image --date 2018-Mar-05 --yes
 """
     runtime.initialize()
 
@@ -97,7 +85,7 @@ advisory.
         erratum = elliottlib.errata.new_erratum(
             et_data,
             errata_type=errata_type,
-            boilerplate_name=(art_advisory_key if art_advisory_key else kind),
+            boilerplate_name=art_advisory_key,
             release_date=release_date.strftime(YMD),
             assigned_to=assigned_to,
             manager=manager,

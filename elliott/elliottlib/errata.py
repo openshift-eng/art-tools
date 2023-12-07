@@ -204,10 +204,10 @@ def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, creat
 
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
 
-    :param et_data: The ET data dump we got from our erratatool.yaml file
+    :param et_data: The ET data dump we got from our erratatool.yml file
     :param errata_type: The type of advisory to create (RHBA or RHEA)
     :param string boilerplate_name: The name of boilerplate template to use
-        It is looked up from the erratatool.yaml file
+        It is looked up from the erratatool.yml file
     :param string release_date: A date in the form YYYY-Mon-DD
     :param bool create: If true, create the erratum in the Errata
         tool, by default just the DATA we would have POSTed is
@@ -229,10 +229,10 @@ def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, creat
         release_date = datetime.datetime.now() + datetime.timedelta(days=21)
 
     if "boilerplates" not in et_data:
-        raise ValueError("`boilerplates` is required in erratatool.yaml")
+        raise ValueError("`boilerplates` is required in erratatool.yml")
 
     if boilerplate_name not in et_data["boilerplates"]:
-        raise ValueError(f"Boilerplate {boilerplate_name} not found in erratatool.yaml")
+        raise ValueError(f"Boilerplate {boilerplate_name} not found in erratatool.yml")
 
     boilerplate = et_data['boilerplates'][boilerplate_name]
 
