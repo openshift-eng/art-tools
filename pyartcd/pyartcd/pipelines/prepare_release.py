@@ -312,7 +312,7 @@ class PrepareReleasePipeline:
             r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
         )
         advisory_num = int(match[1])
-        _LOGGER.info("Created %s advisory %s", impetus, advisory_num)
+        _LOGGER.info("Created %s advisory %s", art_advisory_key, advisory_num)
         return advisory_num
 
     async def clone_build_data(self, local_path: Path):
