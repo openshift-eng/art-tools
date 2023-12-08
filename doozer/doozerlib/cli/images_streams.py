@@ -29,6 +29,30 @@ from doozerlib.util import get_docker_config_json, green_print, \
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
 
 
+transform_rhel_7_base_repos = 'rhel-7/base-repos'
+transform_rhel_8_base_repos = 'rhel-8/base-repos'
+transform_rhel_9_base_repos = 'rhel-9/base-repos'
+transform_rhel_7_golang = 'rhel-7/golang'
+transform_rhel_8_golang = 'rhel-8/golang'
+transform_rhel_9_golang = 'rhel-9/golang'
+transform_rhel_7_ci_build_root = 'rhel-7/ci-build-root'
+transform_rhel_8_ci_build_root = 'rhel-8/ci-build-root'
+transform_rhel_9_ci_build_root = 'rhel-9/ci-build-root'
+
+# The set of valid transforms
+transforms = set([
+    transform_rhel_7_base_repos,
+    transform_rhel_8_base_repos,
+    transform_rhel_9_base_repos,
+    transform_rhel_7_golang,
+    transform_rhel_8_golang,
+    transform_rhel_9_golang,
+    transform_rhel_7_ci_build_root,
+    transform_rhel_8_ci_build_root,
+    transform_rhel_9_ci_build_root,
+])
+
+
 @cli.group("images:streams", short_help="Manage ART equivalent images in upstream CI.")
 def images_streams():
     """
@@ -194,11 +218,35 @@ def images_streams_check_upstream(runtime, live_test_mode):
         print()
 
 
+def get_eligible_buildconfigs(runtime, streams, live_test_mode):
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
+    buildconfig_names = []
+    for upstream_entry_name, config in upstreaming_entries.items():
+        transform = config.transform
+        if transform is Missing or transform not in transforms:
+            continue
+
+        upstream_dest = config.upstream_image
+        upstream_intermediate_image = config.upstream_image_base
+        if upstream_dest is Missing or upstream_intermediate_image is Missing:
+            continue
+
+        _, dest_ns, dest_istag = upstream_dest.rsplit('/', maxsplit=2)
+        if live_test_mode:
+            dest_istag += '.test'
+        dest_imagestream, dest_tag = dest_istag.split(':')
+        name = f'{dest_imagestream}-{dest_tag}--art-builder'
+        buildconfig_names.append(name)
+    return buildconfig_names
+
+
 @images_streams.command('start-builds', short_help='Triggers a build for each buildconfig associated with this group.')
+@click.option('--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, only these stream names will be processed.')
 @click.option('--as', 'as_user', metavar='CLUSTER_USERNAME', required=False, default=None, help='Specify --as during oc start-build')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Act on live-test mode buildconfigs')
+@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
-def images_streams_start_buildconfigs(runtime, as_user, live_test_mode):
+def images_streams_start_buildconfigs(runtime, streams, as_user, live_test_mode, dry_run):
     runtime.initialize(clone_distgits=False, clone_source=False)
 
     group_label = runtime.group_config.name
@@ -211,12 +259,21 @@ def images_streams_start_buildconfigs(runtime, as_user, live_test_mode):
     bc_stdout, bc_stderr = exectools.cmd_assert(cmd, retries=3)
     bc_stdout = bc_stdout.strip()
 
+    eligible_bcs = get_eligible_buildconfigs(runtime, streams, live_test_mode)
+
     if bc_stdout:
         for name in bc_stdout.splitlines():
+            #  buildconfig.build.openshift.io/release-rhel-8-release-golang-1.20-openshift-4.16--art-builder
+            if name.split('/')[-1] not in eligible_bcs:
+                print(f'Skipping outdated buildconfig: {name}')
+                continue
             print(f'Triggering: {name}')
             cmd = f'oc -n ci start-build {name}'
             if as_user:
                 cmd += f' --as {as_user}'
+            if dry_run:
+                print(f'Would have run: {cmd}')
+                continue
             stdout, stderr = exectools.cmd_assert(cmd, retries=3)
             print('   ' + stdout or stderr)
     else:
@@ -295,29 +352,6 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     """
     runtime.initialize(clone_distgits=False, clone_source=False)
     runtime.assert_mutation_is_permitted()
-
-    transform_rhel_7_base_repos = 'rhel-7/base-repos'
-    transform_rhel_8_base_repos = 'rhel-8/base-repos'
-    transform_rhel_9_base_repos = 'rhel-9/base-repos'
-    transform_rhel_7_golang = 'rhel-7/golang'
-    transform_rhel_8_golang = 'rhel-8/golang'
-    transform_rhel_9_golang = 'rhel-9/golang'
-    transform_rhel_7_ci_build_root = 'rhel-7/ci-build-root'
-    transform_rhel_8_ci_build_root = 'rhel-8/ci-build-root'
-    transform_rhel_9_ci_build_root = 'rhel-9/ci-build-root'
-
-    # The set of valid transforms
-    transforms = set([
-        transform_rhel_7_base_repos,
-        transform_rhel_8_base_repos,
-        transform_rhel_9_base_repos,
-        transform_rhel_7_golang,
-        transform_rhel_8_golang,
-        transform_rhel_9_golang,
-        transform_rhel_7_ci_build_root,
-        transform_rhel_8_ci_build_root,
-        transform_rhel_9_ci_build_root,
-    ])
 
     major = runtime.group_config.vars['MAJOR']
     minor = runtime.group_config.vars['MINOR']
