@@ -1,11 +1,13 @@
 # stdlib
 import collections
 import datetime
-import yaml
 import time
+import urllib.parse
+import re
 
 # external
 import click
+import yaml
 
 # doozerlib
 from doozerlib.cli import cli, pass_runtime
@@ -16,6 +18,24 @@ BuildInfo = collections.namedtuple('BuildInfo', 'record_name, task_id task_state
 millis_hour = 1000 * 60 * 60
 millis_day = millis_hour * 24
 now_unix_ts = int(round(time.time() * 1000))  # millis since the epoch
+
+
+def generate_art_dash_history_link(dg_name, runtime):
+    base_url = "https://art-dash.engineering.redhat.com/dashboard/build/history"
+
+    # Validating essential parameters
+    if not dg_name or not runtime or not runtime.group_config or not runtime.group_config.name:
+        raise ValueError("Missing essential parameters for generating Art-Dash link")
+
+    formatted_dg_name = dg_name.split("/")[-1]
+
+    params = {
+        "group": runtime.group_config.name,
+        "dg_name": formatted_dg_name,
+    }
+
+    query_string = urllib.parse.urlencode(params)
+    return f"{base_url}?{query_string}"
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")
@@ -37,7 +57,14 @@ def images_health(runtime, limit, url_markup):
         runtime.logger.info('No concerns to report!')
         return
 
-    print(yaml.dump(concerns, default_flow_style=False, width=10000))
+    # Dump the YAML to a string
+    yaml_output = yaml.dump(concerns, default_flow_style=False, width=10000)
+
+    # Use a regular expression to remove single quotes from the start and end of lines starting with a hyphen
+    pattern = re.compile(r"^-\s+'(.*?)'$", re.MULTILINE)
+    modified_yaml_output = pattern.sub(r"- \1", yaml_output)
+
+    print(modified_yaml_output)
 
 
 def get_concerns(image, runtime, limit, url_markup):
@@ -66,7 +93,6 @@ def get_concerns(image, runtime, limit, url_markup):
     latest_success_bi_dt = ''
 
     for idx, record in enumerate(records):
-        # record=( jobid, state, timestamp, joburl)
         if record[1] == 'success':
             latest_success_idx = idx
             latest_success_bi = record
@@ -79,8 +105,12 @@ def get_concerns(image, runtime, limit, url_markup):
     latest_attempt_task_url = f"{BREWWEB_URL}/taskinfo?taskID={records[0][0]}"
     oldest_attempt_bi_dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(records[-1][2] / 1000))
 
+    # Generate the Art-Dash link
+    art_dash_link = generate_art_dash_history_link(image, runtime)
+
     if latest_success_idx != 0:
         msg = f'Latest attempt {url_text(latest_attempt_task_url, "failed")} ({url_text(latest_attempt_build_url, "jenkins job")}); '
+
         # The latest attempt was a failure
         if latest_success_idx == -1:
             # No success record was found
@@ -88,6 +118,8 @@ def get_concerns(image, runtime, limit, url_markup):
         else:
             msg += f'Last {url_text(latest_success_bi_task_url, "success")} was {latest_success_idx} attempts ago on {latest_success_bi_dt}'
 
+        # Append the Art-Dash link to the message
+        msg += f'. See more details: {url_text(art_dash_link, "art-dashboard link")}'
         add_concern(msg)
 
     else:

@@ -1,7 +1,13 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, Mock
 
 from doozerlib.cli import images_health
+
+
+class MockRuntime:
+    def __init__(self):
+        self.group_config = Mock()
+        self.group_config.name = 'testgroup'
 
 
 def add_record(image, state, task_id=123, build_url='link', time=1617641142670, name='name'):
@@ -13,7 +19,8 @@ def add_record(image, state, task_id=123, build_url='link', time=1617641142670, 
 
 def get_concerns(image):
     '''Interface for the real get_concerns function, with inconsequential options filled in'''
-    return images_health.get_concerns(image, {}, 5, 'slack')
+    mock_runtime = MockRuntime()
+    return images_health.get_concerns(image, mock_runtime, 5, 'slack')
 
 
 data = {}
