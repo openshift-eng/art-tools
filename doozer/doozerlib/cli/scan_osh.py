@@ -24,7 +24,7 @@ One or more software security scan issues have been detected for the package *{p
 *Important scan results*: [html|https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}/log/{nvr}/scan-results-imp.html] / [json|https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}/log/{nvr}/scan-results-imp.js] (Check 'defects')
 *All scan results*: https://cov01.lab.eng.brq2.redhat.com/osh/task/{scan_id}
 *Build record*: [{nvr}|https://brewweb.engineering.redhat.com/brew/buildinfo?buildID={brew_build_id}]
-*Upstream commit*: [{upstream_git_commit}|{upstream_repo_url}/commit/{upstream_git_commit}]
+*Upstream commit*: {upstream_commit}
 
 Once these issues are addressed, the Bug can be closed. But a new one will be opened if new issues are found in the next build.
 
@@ -112,6 +112,10 @@ class ScanOshCli:
 
         finished_tasks = result.strip().split("\n")
 
+        if finished_tasks == ['']:
+            # Skip components that have no scans
+            return None, None, None, None
+
         successful_scan_task_id = None
         successful_scan_nvr = None
         previous_scan_nvr = None
@@ -129,19 +133,27 @@ class ScanOshCli:
 
             _, result, _ = cmd_gather(cmd)
 
+            result_parsed_yml = yaml.safe_load(result.replace(" =", ":"))
+
+            owner = result_parsed_yml["owner"]
+            if owner != "exd-ocp-buildvm-bot-prod":
+                # Owner here is the one who kicked off the OSH scan
+                # We only need to look at scans that our bot sent out
+                continue
+
             if "state_label = CLOSED" in result:
                 # Reset counter since we found a successful scan
                 failed_counter = 0
                 if not successful_scan_task_id:
                     # Found the first successful scan.
                     successful_scan_task_id = task_id
-                    successful_scan_nvr = yaml.safe_load(result.replace(" =", ":"))["label"]
+                    successful_scan_nvr = result_parsed_yml["label"]
 
                     # Need to find the previous successful scan as well
                     continue
 
                 # Found the latest and previous successful scan
-                previous_scan_nvr = yaml.safe_load(result.replace(" =", ":"))["label"]  # returns NVR
+                previous_scan_nvr = result_parsed_yml["label"]  # returns NVR
 
                 if previous_scan_nvr == successful_scan_nvr:
                     # Sometimes we have two scans with the same NVR
@@ -172,7 +184,7 @@ class ScanOshCli:
 
         return False
 
-    def get_distgit_name_from_brew_nvr(self, kind: BuildType, brew_package_name: str) -> str:
+    def get_distgit_name_from_brew(self, kind: BuildType, brew_package_name: str) -> str:
         """
             Returns the distgit name from the brew nvr
 
@@ -249,7 +261,12 @@ class ScanOshCli:
             data = packages[brew_package_name]
 
             # Check if ticket exits
-            summary = f"{self.version} SAST scan issues for {brew_package_name}"
+            summary = f"SAST scan issues for {brew_package_name}"
+
+            if data["kind"] == BuildType.IMAGE or (data["kind"] == BuildType.RPM and not data["version_independent"]):
+                # Only images have version specific builds for sure
+                # RPMs may or may not have versions in them. Check if it is NOT version independent
+                summary = f"{self.version} {summary}"
 
             # Find if there is already a "OPEN" ticket for this component.
             # A ticket is said to be "OPEN" if status <= 'Assigned'.
@@ -279,14 +296,23 @@ class ScanOshCli:
                     # previous_ticket_id is already set to None, so no action needed
                     pass
 
-            upstream_git_commit = self.get_upstream_git_commit(nvr=data["latest_coverity_scan_nvr"])
+            upstream_repo_url = data["upstream_repo_url"]
+            if "github.com" in upstream_repo_url:
+                # ART built components will have the GitHub URL which are almost all images and a handful of RPMs
+                upstream_github_commit = self.get_upstream_git_commit(nvr=data["latest_coverity_scan_nvr"])
+                upstream_commit = f"[{upstream_github_commit}|{data['upstream_repo_url']}/commit/{upstream_github_commit}]"
+            else:
+                # non-ART components will have distgit URLs
+                distgit_url = data["upstream_repo_url"]
+                distgit_commit = distgit_url.split("#")[-1]
+
+                upstream_commit = f"[{distgit_commit}|{distgit_url}]"
 
             description = MESSAGE.format(package_name=brew_package_name,
                                          scan_id=data["latest_coverity_scan"],
                                          nvr=data["latest_coverity_scan_nvr"],
                                          brew_build_id=data["brew_build_id"],
-                                         upstream_repo_url=data["upstream_repo_url"],
-                                         upstream_git_commit=upstream_git_commit)
+                                         upstream_commit=upstream_commit)
 
             fields = {
                 "project": {"key": f"{self.jira_project}"},
@@ -415,81 +441,117 @@ class ScanOshCli:
 
     async def ocp_bugs_workflow_run(self, brew_components: dict):
         # List of brew components to check
-        brew_package_names = []
+        processed_components = []
 
-        # We only care about the value
-        for build in brew_components.values():
-            nvr = build["nvr"]
-            brew_info = build["brew_info"]
+        for component in brew_components.values():
+            nvr = component["nvr"]
+            brew_info = component["brew_info"]
 
-            kind: BuildType = BuildType.IMAGE if "container" in nvr else BuildType.RPM
-
+            kind: BuildType = BuildType.IMAGE if "container" in nvr and nvr.endswith(".stream") else BuildType.RPM
             self.runtime.logger.info(f"[OCPBUGS] Checking build: {nvr} for kind {kind.name}")
 
-            distgit_name = self.get_distgit_name_from_brew_nvr(kind=kind, brew_package_name=brew_info["package_name"])
-            if not distgit_name:
-                self.runtime.logger.warning(f"Looks like we are not building: {nvr}")
+            distgit_name = self.get_distgit_name_from_brew(kind=kind, brew_package_name=brew_info["package_name"])
 
-                # Go to the next NVR
-                continue
+            # Either ART is building this component or not
+            if distgit_name:
+                # ART is building this component
 
-            meta = None
-            # Metadata can be that of images or RPMs.
+                meta = None
+                # Metadata can be that of images or RPMs.
+                if kind == BuildType.IMAGE:
+                    meta: ImageMetadata = self.runtime.image_map.get(distgit_name)
+                elif kind == BuildType.RPM:
+                    meta: RPMMetadata = self.runtime.rpm_map.get(distgit_name)
+
+                # To make sure that the image metadata is correctly loaded at runtime.
+                # Choosing to assert, instead of assuming
+                assert meta is not None
+
+                if self.is_sast_jira_disabled(meta):
+                    self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
+                                             f"since disabled in component metadata")
+                    continue
+
+                # Upstream repo URL from image config
+                upstream_repo_url = meta.config.get("content", {}).get("source", {}).get("git", {}).get("web")
+
+                # Returns project and component name
+                _, potential_component = meta.get_jira_info()
+
+            else:
+                # ART is NOT building this component
+                # If no GitHub url, mention the distgit URL instead
+                upstream_repo_url, potential_component = self.get_non_art_upstream_repo_and_jira_component(brew_info)
+
+            # Steps common to both ART and non-ART components
+            parsed_nvr = parse_nvr(brew_info["nvr"])
+
+            # Sometimes components can be version independent.
+            # The same build can be tagged into multiple versions
+            # By default, its version dependent
+            version_independent = False
             if kind == BuildType.IMAGE:
-                meta: ImageMetadata = self.runtime.image_map.get(distgit_name)
-            elif kind == BuildType.RPM:
-                meta: RPMMetadata = self.runtime.rpm_map.get(distgit_name)
+                # Get ose-network-tools-container-v4.15.0 from ose-network-tools-container-v4.15.0-202310170244.p0.gdf85e45.assembly.stream
+                pkg_name_to_search = f"{parsed_nvr['name']}-v{self.version}.0"
+            else:
+                # RPMs may or may not be version specific
+                # Lets search if {major}.{minor} is in the URL
+                if self.version in nvr:
+                    # Search with the package name having the version in it
+                    # Eg for conmon-2.1.7-3.1.rhaos4.14.el9 search with regex conmon.+4.14.+
+                    # fr = f-string and raw string
+                    pkg_name_to_search = fr"{brew_info['package_name']}.+{self.version}.+"
+                else:
+                    # Keep it version independent
+                    version_independent = True
+                    pkg_name_to_search = brew_info["package_name"]
 
-            # If there is no metadata for the component, the ART might not be building it
-            if not meta:
-                self.runtime.logger.error(f"Looks like ART is not building image/rpm with distgit name: {distgit_name}")
-                continue
-            if self.is_sast_jira_disabled(meta):
-                self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
-                                         f"since disabled in image metadata")
-                continue
-
-            # Upstream repo URL from image config
-            upstream_repo_url = meta.config.get("content", {}).get("source", {}).get("git", {}).get("web")
-
-            # Returns project and component name
-            _, potential_component = meta.get_jira_info()
-
-            nvr = parse_nvr(brew_info["nvr"])
-
-            # Get ose-network-tools-container-v4.15.0 from ose-network-tools-container-v4.15.0-202310170244.p0.gdf85e45.assembly.stream
-            pkg_name_w_version = f"{nvr['name']}-v{self.version}.0"
-
-            # For RPMS, the nvr doesn't have a 'v' in them
-            # Egs: microshift-4.15.0~0.nightly_2023_11_20_004519-202311200428.p0.ged001ce.assembly.microshift.el9 or
-            # openshift-ansible-4.10.0-202310200811.p0.g72c7be6.assembly.stream.el7
-            if kind == BuildType.RPM:
-                pkg_name_w_version = pkg_name_w_version.replace("v", "")
-
-            self.runtime.logger.info(f"Package name with version: {pkg_name_w_version}")
-
-            brew_package_names.append({
-                "package_name_with_version": pkg_name_w_version,
+            processed_components.append({
+                "package_name_to_search": pkg_name_to_search,
                 "nvr": brew_info["nvr"],
                 "brew_build_id": brew_info["id"],
                 "package_name": brew_info["package_name"],
                 "jira_potential_component": potential_component,
-                "upstream_repo_url": upstream_repo_url
+                "upstream_repo_url": upstream_repo_url,
+                "kind": kind,
+                "version_independent": version_independent
             })
 
         # Get latest scan results
         brew_coverity_mapping = {}
+        for component in processed_components:
+            component["latest_coverity_scan"], component["latest_coverity_scan_nvr"], component["previous_scan_id"], \
+                component["previous_scan_nvr"] = self.get_scan_info(component["package_name_to_search"])
 
-        for package in brew_package_names:
-            package["latest_coverity_scan"], package["latest_coverity_scan_nvr"], package["previous_scan_id"], \
-                package["previous_scan_nvr"] = self.get_scan_info(package["package_name_with_version"])
-            brew_coverity_mapping[package["package_name"]] = package
+            brew_coverity_mapping[component["package_name"]] = component
 
         # Collect packages that have scan issues detected
         packages_with_scan_issues = self.get_packages_with_scan_issues(brew_coverity_mapping)
 
         # Create or update OCPBUGS ticket
         self.create_update_ocpbugs_ticket(packages_with_scan_issues)
+
+    def get_non_art_upstream_repo_and_jira_component(self, brew_info):
+        """
+        Get upstream repo URL for images or RPMs not built by ART
+        """
+        distgit_url = brew_info["source"]
+        upstream_repo_url = distgit_url
+
+        if distgit_url.startswith("git:"):
+            distgit_url = distgit_url.replace("git:", "git+https:")
+            upstream_repo_url = distgit_url.split("git+")[1]
+
+            # Find JIRA component
+        product_config = self.runtime.get_product_config()
+        component_mapping = product_config.bug_mapping.components
+        component_entry = component_mapping[brew_info["package_name"]]
+        potential_component = component_entry.issue_component
+
+        if not potential_component:
+            potential_component = "Unknown"
+
+        return upstream_repo_url, potential_component
 
     @staticmethod
     async def get_untriggered_nvrs(nvrs):
