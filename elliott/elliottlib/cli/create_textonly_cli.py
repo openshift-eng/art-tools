@@ -108,10 +108,6 @@ def create_textonly(runtime, errata_type, date, assigned_to, manager, package_ow
         erratum.commit()
         green_prefix("Created new text only advisory: ")
         click.echo(str(erratum))
-        bug = bug_tracker.create_textonly(bug_title, bug_description)
-        click.echo(f"Created placeholder bug: {bug.id} {bug.webur}")
-        click.echo("Attaching placeholder bug...")
-        bug_tracker.attach_bugs([bug.id], advisory_obj=erratum)
     else:
         green_prefix("Would have created advisory: ")
         click.echo("")

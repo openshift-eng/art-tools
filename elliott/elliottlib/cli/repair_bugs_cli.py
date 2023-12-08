@@ -32,17 +32,13 @@ from elliottlib.cli.common import cli, use_default_advisory_option, find_default
 @click.option("--comment", "comment",
               required=False,
               help="Add comment to bug")
-@click.option("--close-placeholder", "close_placeholder",
-              required=False,
-              default=False, is_flag=True,
-              help="When checking bug state, close the bug if it's a placehoder bug.")
 @click.option("--noop", "--dry-run",
               required=False,
               default=False, is_flag=True,
               help="Check bugs attached, print what would change, but don't change anything")
 @use_default_advisory_option
 @click.pass_obj
-def repair_bugs_cli(runtime, advisory_id, auto, id, original_state, new_state, comment, close_placeholder, noop,
+def repair_bugs_cli(runtime, advisory_id, auto, id, original_state, new_state, comment, noop,
                     default_advisory_type):
     """Move bugs attached to the advisory from one state to another
 state. This is useful if the bugs have changed states *after* they
@@ -113,14 +109,14 @@ providing an advisory with the -a/--advisory option.
         jira_ids, bz_ids = get_jira_bz_bug_ids(id)
 
     if jira_ids:
-        repair_bugs(jira_ids, original_state, new_state, comment, close_placeholder, noop,
+        repair_bugs(jira_ids, original_state, new_state, comment, noop,
                     runtime.get_bug_tracker('jira'))
     if bz_ids:
-        repair_bugs(bz_ids, original_state, new_state, comment, close_placeholder, noop,
+        repair_bugs(bz_ids, original_state, new_state, comment, noop,
                     runtime.get_bug_tracker('bugzilla'))
 
 
-def repair_bugs(bug_ids, original_state, new_state, comment, close_placeholder, noop, bug_tracker: BugTracker):
+def repair_bugs(bug_ids, original_state, new_state, comment, noop, bug_tracker: BugTracker):
     changed_bug_count = 0
 
     # Fetch bugs in parallel because it can be really slow doing it
@@ -140,16 +136,10 @@ def repair_bugs(bug_ids, original_state, new_state, comment, close_placeholder, 
     click.echo(']')
 
     for bug in attached_bugs:
-        if close_placeholder and "Placeholder" in bug.summary:
-            # if set close placeholder, ignore bug state
-            bug_tracker.update_bug_status(bug, "CLOSED")
+        if bug.status in original_state:
+            bug_tracker.update_bug_status(bug, new_state)
+            if comment and not noop:
+                bug_tracker.add_comment(bug, comment, private=False)
             changed_bug_count += 1
-        else:
-            if bug.status in original_state:
-                bug_tracker.update_bug_status(bug, new_state)
-                # only add comments for non-placeholder bug
-                if comment and not noop:
-                    bug_tracker.add_comment(bug, comment, private=False)
-                changed_bug_count += 1
 
     green_print("{} bugs successfully modified (or would have been)".format(changed_bug_count))

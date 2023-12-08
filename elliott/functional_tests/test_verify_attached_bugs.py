@@ -124,7 +124,6 @@ class VerifyBugs(unittest.TestCase):
         self.assertTrue(any(bug.id == 1875259 for bug in bbf(1875258)), "1875259 blocks 1875258")
         self.assertTrue(bbf(1878798), "regular bug with blocking bug")
         self.assertTrue(any(bug.id == 1872337 for bug in bbf(1878798)), "1872337 blocks 1878798")
-        self.assertFalse(bbf(1881212), "placeholder bug w/o blocking")
         self.assertTrue(bbf(1869790), "bug with several blocking bugs, one DUPLICATE")
         self.assertTrue(any(bug.id == 1868735 for bug in bbf(1869790)), "DUPLICATE 1868735 blocks 1869790")
         self.assertTrue(all(bug.id != 1868158 for bug in bbf(1869790)), "4.6 1868158 blocks 1869790")
