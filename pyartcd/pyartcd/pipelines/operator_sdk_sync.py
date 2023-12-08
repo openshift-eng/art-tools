@@ -42,7 +42,7 @@ class OperatorSDKPipeline:
                 self._jira_client.complete_subtask(self.parent_jira_key, "pushes advisory content to production CDN", "Advisory status already in SHIPPED_LIVE")
                 # check fast channel to decide if released on customer portal
                 res = requests.get("https://github.com/openshift/cincinnati-graph-data/raw/master/internal-channels/fast.yaml")
-                if self.assembly in yaml.load(res.content, Loader=yaml.FullLoader):
+                if self.assembly in yaml.load(res.content, Loader=yaml.FullLoader)['versions']:
                     self._jira_client.complete_subtask(self.parent_jira_key, "pushes release content to customer portal", "Release pushed to fast channel")
             self._logger.info("Advisory status already in post REL_PREP, update subtask 7 ...")
             self._jira_client.complete_subtask(self.parent_jira_key, "moves advisories to REL_PREP", "Advisory status already in REL_PREP")
