@@ -1394,9 +1394,65 @@ class ImageDistGitRepo(DistGitRepo):
                 if changed:
                     dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
 
-    def _mapped_image_from_member(self, image, original_parents, count):
+    def _resolve_parent(self, original_parent, dfp):
+        try:
+            self.logger.debug('Retrieving image info for image %s', original_parent)
+            cmd = f'oc image info {original_parent} -o json'
+            out, _ = exectools.cmd_assert(cmd, retries=3)
+            labels = json.loads(out)['config']['config']['Labels']
+
+            # Get the exact build NVR
+            build_nvr = f'{labels["com.redhat.component"]}-{labels["version"]}-{labels["release"]}'
+
+            # Query Brew for build info
+            self.logger.debug('Retrieving info for Brew build %s', build_nvr)
+            with self.runtime.shared_koji_client_session() as koji_api:
+                if not koji_api.logged_in:
+                    koji_api.gssapi_login()
+                build = koji_api.getBuild(build_nvr, strict=True)
+
+            # Get the pullspec for the upstream equivalent
+            upstream_equivalent_pullspec = build['extra']['image']['index']['pull'][1]
+
+            # Verify whether the image exists
+            self.logger.debug('Checking for upstream equivalent existence, pullspec: %s', upstream_equivalent_pullspec)
+            cmd = f'oc image info {upstream_equivalent_pullspec} --filter-by-os linux/amd64 -o json'
+            out, _ = exectools.cmd_assert(cmd, retries=3)
+
+            # It does. Use this to rebase FROM directive
+            mapped_image_data = json.loads(out)
+            mapped_image_data_labels = mapped_image_data['config']['config']['Labels']
+            mapped_image = f'{labels["name"]}:{mapped_image_data_labels["version"]}-{mapped_image_data_labels["release"]}'
+
+            dfp.add_lines_at(0,
+                             f"# Rebased {original_parent} with {mapped_image} to follow upstream config")
+            return mapped_image
+
+        except (KeyError, ChildProcessError) as e:
+            # We could get:
+            #   - a ChildProcessError when the upstream equivalent is not found
+            #   - a ChildProcessError when trying to rebase our base images
+            #   - a KeyError when 'com.redhat.component' label is undefined
+            # In all of the above, we'll just do typical stream resolution
+
+            self.logger.warning(f'Could not match upstream parent {original_parent}: {e}')
+            dfp.add_lines_at(
+                0,
+                "",
+                "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
+                ""
+            )
+
+            return None
+
+    def _mapped_image_from_member(self, image, original_parent, dfp):
         base = image.member
         from_image_metadata = self.runtime.resolve_image(base, False)
+
+        if self.should_match_upstream:
+            parent = self._resolve_parent(original_parent, dfp)
+            if parent:
+                return parent
 
         if from_image_metadata is None:
             if not self.runtime.ignore_missing_base:
@@ -1416,7 +1472,7 @@ class ImageDistGitRepo(DistGitRepo):
                 return "{}:{}-{}".format(base_meta.config.name, v, r)
             # Otherwise, the user is not expecting the FROM field to be updated in this Dockerfile.
             else:
-                return original_parents[count]
+                return original_parent
         else:
             if self.runtime.local:
                 return '{}:latest'.format(from_image_metadata.config.name)
@@ -1533,63 +1589,22 @@ class ImageDistGitRepo(DistGitRepo):
             return stream.image
 
         # canonical_builders_from_upstream flag is either True, or 'auto' and we are before feature freeze
-        try:
-            self.logger.debug('Retrieving image info for image %s', original_parent)
-            cmd = f'oc image info {original_parent} -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
-            labels = json.loads(out)['config']['config']['Labels']
-
-            # Get the exact build NVR
-            build_nvr = f'{labels["com.redhat.component"]}-{labels["version"]}-{labels["release"]}'
-
-            # Query Brew for build info
-            self.logger.debug('Retrieving info for Brew build %s', build_nvr)
-            with self.runtime.shared_koji_client_session() as koji_api:
-                if not koji_api.logged_in:
-                    koji_api.gssapi_login()
-                build = koji_api.getBuild(build_nvr, strict=True)
-
-            # Get the pullspec for the upstream equivalent
-            upstream_equivalent_pullspec = build['extra']['image']['index']['pull'][1]
-
-            # Verify whether the image exists
-            self.logger.debug('Checking for upstream equivalent existence, pullspec: %s', upstream_equivalent_pullspec)
-            cmd = f'oc image info {upstream_equivalent_pullspec} --filter-by-os linux/amd64 -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
-
-            # It does. Use this to rebase FROM directive
-            mapped_image_data = json.loads(out)
-
-            # if upstream equivalent does not match ART's config, add a warning to the Dockerfile
-            mapped_image = f'{labels["name"]}@{mapped_image_data["digest"]}'
-            if mapped_image_data['name'].split(':')[-1] != stream.image.split(":")[-1]:
-                dfp.add_lines_at(
-                    0,
-                    "",
-                    "# Parent images were rebased matching upstream equivalent that didn't match ART's config",
-                    "")
-                self.logger.info('Will override %s with upsteam equivalent %s', stream.image, mapped_image)
-            return mapped_image
-
-        except (KeyError, ChildProcessError) as e:
-            # We could get:
-            #   - a ChildProcessError when the upstream equivalent is not found
-            #   - a ChildProcessError when trying to rebase our base images
-            #   - a KeyError when 'com.redhat.component' label is undefined
-            # In all of the above, we'll just do typical stream resolution
-
-            self.logger.warning(f'Could not match upstream parent {original_parent}: {e}')
-            dfp.add_lines_at(
-                0,
-                "",
-                "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
-                ""
-            )
+        parent = self._resolve_parent(original_parent, dfp)
+        if not parent:
             return stream.image
+        else:
+            return parent
 
     def _rebase_from_directives(self, dfp):
-        image_from = Model(self.config.get('from', None))
         self.should_match_upstream = self._should_match_upstream()
+        if self.should_match_upstream:
+            # ART-8476 override image config with upstream
+            alt_upstream = self.config.get('alternative_upstream', None)
+            if alt_upstream:
+                self.config.update(alt_upstream)
+                del self.config['alternative_upstream']
+
+        image_from = Model(self.config.get('from', None))
 
         # Collect all the parent images we're supposed to use
         parent_images = image_from.builder if image_from.builder is not Missing else []
@@ -1612,7 +1627,7 @@ class ImageDistGitRepo(DistGitRepo):
         for i, image in enumerate(parent_images):
             # Does this image inherit from an image defined in a different group member distgit?
             if image.member is not Missing:
-                mapped_images.append(self._mapped_image_from_member(image, original_parents, count))
+                mapped_images.append(self._mapped_image_from_member(image, original_parents[i], dfp))
 
             # Is this image FROM another literal image name:tag?
             elif image.image is not Missing:
