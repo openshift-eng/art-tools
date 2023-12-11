@@ -1558,11 +1558,11 @@ class ImageDistGitRepo(DistGitRepo):
             out, _ = exectools.cmd_assert(cmd, retries=3)
 
             # It does. Use this to rebase FROM directive
-            digest = json.loads(out)['digest']
+            mapped_image_data = json.loads(out)
 
-            mapped_image = f'{labels["name"]}@{digest}'
             # if upstream equivalent does not match ART's config, add a warning to the Dockerfile
-            if mapped_image != stream.image:
+            mapped_image = f'{labels["name"]}@{mapped_image_data["digest"]}'
+            if mapped_image_data['name'].split(':')[-1] != stream.image.split(":")[-1]:
                 dfp.add_lines_at(
                     0,
                     "",
