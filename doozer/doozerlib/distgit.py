@@ -1528,7 +1528,7 @@ class ImageDistGitRepo(DistGitRepo):
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
 
-        if not self._should_match_upstream():
+        if not self.should_match_upstream:
             # Do typical stream resolution.
             return stream.image
 
@@ -1558,11 +1558,11 @@ class ImageDistGitRepo(DistGitRepo):
             out, _ = exectools.cmd_assert(cmd, retries=3)
 
             # It does. Use this to rebase FROM directive
-            digest = json.loads(out)['digest']
+            mapped_image_data = json.loads(out)
 
-            mapped_image = f'{labels["name"]}@{digest}'
             # if upstream equivalent does not match ART's config, add a warning to the Dockerfile
-            if mapped_image != stream.image:
+            mapped_image = f'{labels["name"]}@{mapped_image_data["digest"]}'
+            if mapped_image_data['name'].split(':')[-1] != stream.image.split(":")[-1]:
                 dfp.add_lines_at(
                     0,
                     "",
@@ -1589,6 +1589,7 @@ class ImageDistGitRepo(DistGitRepo):
 
     def _rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
+        self.should_match_upstream = self._should_match_upstream()
 
         # Collect all the parent images we're supposed to use
         parent_images = image_from.builder if image_from.builder is not Missing else []
@@ -1825,6 +1826,16 @@ class ImageDistGitRepo(DistGitRepo):
                     filtered_content.append(line)
 
             df_lines = filtered_content
+
+            # ART-8476 assert rhel version equivalence
+            if self.should_match_upstream:
+                el_version = util.isolate_el_version_in_brew_tag(self.branch)
+                df_lines.extend([
+                    '',
+                    '# RHEL version in final image must match the one in ART\'s config',
+                    f'RUN source /etc/os-release && [[ "$PLATFORM_ID" == platform:el{el_version} ]]'
+                ])
+
             df_content = "\n".join(df_lines)
 
             if release:
