@@ -523,6 +523,8 @@ class ScanOshCli:
 
                 # Not the same NVR
                 # Pass the description from the previous NVR to be processed
+                self.runtime.logger.info("Retrieving OSH task ID and NVR, from the previous ticket: "
+                                         f"{previous_ticket.key}")
                 previous_task_id, previous_nvr = self.get_scan_id_from_ticket(
                     description=previous_ticket.fields.description)
 
