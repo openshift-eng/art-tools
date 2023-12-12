@@ -523,6 +523,8 @@ class ScanOshCli:
 
                 # Not the same NVR
                 # Pass the description from the previous NVR to be processed
+                self.runtime.logger.info("Retrieving OSH task ID and NVR, from the previous ticket: "
+                                         f"{previous_ticket.key}")
                 previous_task_id, previous_nvr = self.get_scan_id_from_ticket(
                     description=previous_ticket.fields.description)
 
@@ -795,7 +797,7 @@ class ScanOshCli:
 
         # Create rhel mapping
         for tag in self.brew_tags:
-            pattern = r"rhaos-\d.\d+(-ironic){0,1}-(?P<rhel_version>rhel-\d+)-candidate"
+            pattern = r"rhaos-\d.\d+(-ironic){0,1}-(?P<rhel_version>rhel-\d+)-(candidate|hotfix)"
             match = re.search(pattern=pattern, string=tag)
             rhel_version = None
             if match:
