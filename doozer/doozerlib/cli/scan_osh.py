@@ -515,7 +515,7 @@ class ScanOshCli:
                     previous_ticket = closed_issues.pop()  # Returned in LIFO (last-in, first-out) order.
                 except IndexError:
                     # If it's an empty list, pop will fail
-                    self.runtime.logger.error("Previous ticket retrival failed.")
+                    self.runtime.logger.info(f"No previous ticket exists for NVR: {nvr}")
                     continue
 
                 # Check if the current NVR is in the ticket description
