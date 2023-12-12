@@ -795,7 +795,7 @@ class ScanOshCli:
 
         # Create rhel mapping
         for tag in self.brew_tags:
-            pattern = r"rhaos-\d.\d+(-ironic){0,1}-(?P<rhel_version>rhel-\d+)-candidate"
+            pattern = r"rhaos-\d.\d+(-ironic){0,1}-(?P<rhel_version>rhel-\d+)-(candidate|hotfix)"
             match = re.search(pattern=pattern, string=tag)
             rhel_version = None
             if match:
