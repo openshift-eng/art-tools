@@ -144,12 +144,10 @@ class PrepareReleasePipeline:
                 advisories = group_config.get("advisories", {}).copy()
 
             is_ga = self.release_version[2] == 0
+            advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
-                    if ad == "microshift":
-                        advisories[ad] = self.create_advisory("RHEA" if is_ga else "RHBA", "rpm", ad, ad)
-                    else:
-                        advisories[ad] = self.create_advisory("RHEA" if is_ga else "RHBA", "rpm" if ad == "rpm" else "image", "ga" if is_ga else "standard", ad)
+                    advisories[ad] = self.create_advisory(advisory_type=advisory_type, art_advisory_key=ad)
 
         await self.set_advisory_dependencies(advisories)
 
@@ -287,17 +285,15 @@ class PrepareReleasePipeline:
         if match and int(match[1]) != 0:
             _LOGGER.info(f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release.")
 
-    def create_advisory(self, type: str, kind: str, impetus: str, art_advisory_key: str) -> int:
-        _LOGGER.info("Creating advisory with type %s, kind %s, and impetus %s art_advisory_key %s ...", type, kind, impetus, art_advisory_key)
+    def create_advisory(self, advisory_type: str, art_advisory_key: str) -> int:
+        _LOGGER.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
         create_cmd = [
             "elliott",
             f"--working-dir={self.elliott_working_dir}",
             f"--group={self.group_name}",
             "--assembly", self.assembly,
             "create",
-            f"--type={type}",
-            f"--kind={kind}",
-            f"--impetus={impetus}",
+            f"--type={advisory_type}",
             f"--art-advisory-key={art_advisory_key}",
             f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
             f"--manager={self.runtime.config['advisory']['manager']}",
@@ -316,7 +312,7 @@ class PrepareReleasePipeline:
             r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
         )
         advisory_num = int(match[1])
-        _LOGGER.info("Created %s advisory %s", impetus, advisory_num)
+        _LOGGER.info("Created %s advisory %s", art_advisory_key, advisory_num)
         return advisory_num
 
     async def clone_build_data(self, local_path: Path):

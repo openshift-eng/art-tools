@@ -478,8 +478,8 @@ class BugTracker:
     def id_convert(id_string):
         raise NotImplementedError
 
-    def create_placeholder(self, kind, noop=False):
-        title = f"Placeholder bug for OCP {self.config.get('target_release')[0]} {kind} release"
+    def create_placeholder(self, noop=False):
+        title = f"Placeholder bug for OCP {self.config.get('target_release')[0]} release"
         return self.create_bug(title, title, "VERIFIED", ["Automation"], noop)
 
     def create_textonly(self, bug_title, bug_description, noop=False):
