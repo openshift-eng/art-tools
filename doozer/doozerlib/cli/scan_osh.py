@@ -245,7 +245,9 @@ class ScanOshCli:
         """
         Get upstream repo URL for images or RPMs not built by ART
         """
-        distgit_url = brew_info["source"]
+        # The source URL can be retrieved only with getBuild
+        distgit_url = self.koji_session.getBuild(brew_info["nvr"])["source"]
+
         upstream_repo_url = distgit_url
 
         if distgit_url.startswith("git:"):
