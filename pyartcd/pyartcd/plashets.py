@@ -163,7 +163,7 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
     logger.info("Building plashet repos: %s", ", ".join(plashet_config.keys()))
 
     # Check release state
-    signing_mode = group_config['software_lifecycle']['signing_mode']
+    signing_mode = await util.get_signing_mode(group_config=group_config)
 
     # Create plashet repos on ocp-artifacts
     # We can't safely run doozer config:plashet from-tags in parallel as this moment.
