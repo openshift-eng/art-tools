@@ -1,5 +1,15 @@
 #!/bin/bash
 
+EL_VERSION=$(grep -E '^PLATFORM_ID=' /etc/os-release | sed 's/[^0-9]*//g')
+case $EL_VERSION in
+    7)
+        EL_SUFFIX=""
+        ;;
+    *)
+        EL_SUFFIX="-rhel${EL_VERSION}"
+        ;;
+esac
+
 ARCH=$(rpm --eval '%{_arch}')
 case $ARCH in
     x86_64)
@@ -20,7 +30,7 @@ case $ARCH in
         ;;
 esac
 
-if curl "http://base-${OS_GIT_MAJOR}-${OS_GIT_MINOR}.ocp${ARCH_SUFFIX}.svc" > /etc/yum.repos.d/art.repo ; then
+if curl "http://base-${MAJOR}-${MINOR}-${EL_SUFFIX}.ocp${ARCH_SUFFIX}.svc" > /etc/yum.repos.d/art.repo ; then
 	echo "Injected ART repos"
 	cat /etc/yum.repos.d/art.repo
 else
