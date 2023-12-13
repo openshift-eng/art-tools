@@ -1846,7 +1846,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # ART-8476 assert rhel version equivalence
             if self.should_match_upstream:
-                el_version = util.isolate_el_version_in_brew_tag(self.branch)
+                el_version = util.isolate_el_version_in_brew_tag(self.config.distgit.branch)
                 df_lines.extend([
                     '',
                     '# RHEL version in final image must match the one in ART\'s config',
