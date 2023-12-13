@@ -1412,6 +1412,7 @@ class ImageDistGitRepo(DistGitRepo):
                 build = koji_api.getBuild(build_nvr, strict=True)
 
             # Get the pullspec for the upstream equivalent
+            # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.20.10-202310161945.el8.gdc4b478
             upstream_equivalent_pullspec = build['extra']['image']['index']['pull'][1]
 
             # Verify whether the image exists
