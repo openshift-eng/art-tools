@@ -1630,7 +1630,6 @@ class ImageDistGitRepo(DistGitRepo):
         mapped_images = []
 
         original_parents = dfp.parent_images
-        count = 0
         for i, image in enumerate(parent_images):
             # Does this image inherit from an image defined in a different group member distgit?
             if image.member is not Missing:
@@ -1650,8 +1649,6 @@ class ImageDistGitRepo(DistGitRepo):
 
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
-
-            count += 1
 
         # Write rebased from directives
         dfp.parent_images = mapped_images
