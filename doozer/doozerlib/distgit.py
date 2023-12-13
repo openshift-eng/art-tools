@@ -1427,9 +1427,7 @@ class ImageDistGitRepo(DistGitRepo):
             out, _ = exectools.cmd_assert(cmd, retries=3)
 
             # It does. Use this to rebase FROM directive
-            mapped_image_data = json.loads(out)
-            mapped_image_data_labels = mapped_image_data['config']['config']['Labels']
-            mapped_image = f'{labels["name"]}:{mapped_image_data_labels["version"]}-{mapped_image_data_labels["release"]}'
+            mapped_image = f'{labels["name"]}:{labels["version"]}-{labels["release"]}'
 
             dfp.add_lines_at(0,
                              f"# Rebased {original_parent} with {mapped_image} to follow upstream config")
