@@ -1394,7 +1394,13 @@ class ImageDistGitRepo(DistGitRepo):
                 if changed:
                     dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
 
-    def _resolve_parent(self, original_parent, dfp):
+    def _resolve_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
+        """
+        Resolve the upstream image (CI) to its equivalent image downstream (brew).
+        :param original_parent: The upstream image e.g.
+        registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.20-openshift-4.15
+        :param dfp: DockerfileParser object for the image
+        """
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
             cmd = f'oc image info {original_parent} -o json'
