@@ -1612,26 +1612,26 @@ class ImageDistGitRepo(DistGitRepo):
         image_from = Model(self.config.get('from', None))
 
         # Collect all the parent images we're supposed to use
-        parent_images = image_from.builder if image_from.builder is not Missing else []
-        parent_images.append(image_from)
-        if len(parent_images) != len(dfp.parent_images):
+        downstream_parents = image_from.builder if image_from.builder is not Missing else []
+        downstream_parents.append(image_from)
+        if len(downstream_parents) != len(dfp.parent_images):
             raise IOError(
                 "Build metadata for {name} expected {count1} image parent(s), but the upstream Dockerfile "
                 "contains {count2} FROM statements. These counts must match. Detail: '{meta_parents}' vs "
                 "'{upstream_parents}'.".format(
                     name=self.config.name,
-                    count1=len(parent_images),
+                    count1=len(downstream_parents),
                     count2=len(dfp.parent_images),
-                    meta_parents=parent_images,
+                    meta_parents=downstream_parents,
                     upstream_parents=dfp.parent_images,
                 ))
         mapped_images = []
 
-        original_parents = dfp.parent_images
-        for i, image in enumerate(parent_images):
+        upstream_parents = dfp.parent_images
+        for i, image in enumerate(downstream_parents):
             # Does this image inherit from an image defined in a different group member distgit?
             if image.member is not Missing:
-                mapped_images.append(self._mapped_image_from_member(image, original_parents[i], dfp))
+                mapped_images.append(self._mapped_image_from_member(image, upstream_parents[i], dfp))
 
             # Is this image FROM another literal image name:tag?
             elif image.image is not Missing:
@@ -1640,10 +1640,10 @@ class ImageDistGitRepo(DistGitRepo):
             elif image.stream is not Missing:
                 if self.runtime.assembly_basis_event:
                     # Rebasing for an assembly build
-                    mapped_images.append(self._mapped_image_for_assembly_build(parent_images, i))
+                    mapped_images.append(self._mapped_image_for_assembly_build(downstream_parents, i))
                 else:
                     # Rebasing for a stream/test build
-                    mapped_images.append(self._mapped_image_from_stream(image, original_parents[i], dfp))
+                    mapped_images.append(self._mapped_image_from_stream(image, upstream_parents[i], dfp))
 
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
