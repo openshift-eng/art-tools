@@ -1557,10 +1557,16 @@ class ImageDistGitRepo(DistGitRepo):
         return unique_pullspec
 
     def _should_match_upstream(self) -> bool:
-        if self.runtime.group_config.canonical_builders_from_upstream is Missing:
+        # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
+        if self.config.canonical_builders_from_upstream is not Missing:
+            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
+        else:
+            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
+
+        if canonical_builders_from_upstream is Missing:
             # Default case: override using ART's config
             return False
-        elif self.runtime.group_config.canonical_builders_from_upstream == 'auto':
+        elif canonical_builders_from_upstream == 'auto':
             # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
             try:
                 feature_freeze_date = ReleaseSchedule(self.runtime).get_ff_date()
@@ -1573,16 +1579,16 @@ class ImageDistGitRepo(DistGitRepo):
                 # A GITLAB token env var was not provided: display a warning and fallback to default
                 self.logger.warning(f'Fallback to default ART config: {e}')
                 return False
-        elif self.runtime.group_config.canonical_builders_from_upstream in ['on', True]:
+        elif canonical_builders_from_upstream in ['on', True]:
             # yaml parser converts bare 'on' to True, same for 'off' and False
             return True
-        elif self.runtime.group_config.canonical_builders_from_upstream in ['off', False]:
+        elif canonical_builders_from_upstream in ['off', False]:
             return False
         else:
             # Invalid value
             self.logger.warning(
                 'Invalid value provided for "canonical_builders_from_upstream": %s',
-                self.runtime.group_config.canonical_builders_from_upstream
+                canonical_builders_from_upstream
             )
             return False
 
