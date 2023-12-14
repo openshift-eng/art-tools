@@ -14,14 +14,14 @@ from doozerlib.runtime import Runtime
 @cli.command("rpms:print", short_help="Print data for each rpm metadata")
 @click.option("--short", default=False, is_flag=True, help="Suppress all output other than the data itself")
 @click.option("--output", "-o", default=None, help="Write data to FILE instead of STDOUT")
-@click.argument("pattern", default="{build}", nargs=1)
+@click.argument("pattern", default="{name}", nargs=1)
 @pass_runtime
 def rpms_print(runtime, short, output, pattern):
     # If user omitted braces, add them.
     if "{" not in pattern:
         pattern = "{%s}" % pattern.strip()
 
-    runtime.initialize(mode="rpms", clone_distgits=False)
+    runtime.initialize(mode="rpms", clone_distgits=False, clone_source=False)
     rpms = list(runtime.rpm_metas())
 
     if short:
