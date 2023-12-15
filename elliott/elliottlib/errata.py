@@ -278,41 +278,15 @@ def build_signed(build):
             msg=res.text))
 
 
-def get_filtered_list(filter_id=constants.errata_default_filter, limit=5):
-    """return a list of Advisory() objects from results using the provided
-    filter_id
-
-    :param filter_id: The ID number of the pre-defined filter
-    :param int limit: How many erratum to list
-    :return: A list of Advisory objects
-
-    :raises exceptions.ErrataToolUnauthenticatedException: If the user is not authenticated to make the request
-    :raises exceptions.ErrataToolError: If the given filter does not exist, and, any other unexpected error
-
-    Note: Errata filters are defined in the ET web interface
-    """
-    filter_endpoint = constants.errata_filter_list_url.format(id=filter_id)
-    res = requests.get(filter_endpoint,
-                       verify=ssl.get_default_verify_paths().openssl_cafile,
-                       auth=HTTPSPNEGOAuth())
-    if res.status_code == 200:
-        # When asked for an advisory list which does not exist
-        # normally you would expect a code like '404' (not
-        # found). However, the Errata Tool sadistically returns a 200
-        # response code. That leaves us with one option: Decide that
-        # successfully parsing the response as a JSONinfo object indicates
-        # a successful API call.
-        try:
-            return [Advisory(errata_id=advs['id']) for advs in res.json()][:limit]
-        except Exception:
-            raise exceptions.ErrataToolError("Could not locate the given advisory filter: {fid}".format(
-                fid=filter_id))
-    elif res.status_code == 401:
-        raise exceptions.ErrataToolUnauthenticatedException(res.text)
-    else:
-        raise exceptions.ErrataToolError("Other error (status_code={code}): {msg}".format(
-            code=res.status_code,
-            msg=res.text))
+def get_art_release_from_erratum(advisory_id):
+    erratum = get_raw_erratum(advisory_id)['errata']
+    advisory_type_key = list(erratum.keys())[0]
+    synopsis = erratum[advisory_type_key]['synopsis']
+    # OpenShift Container Platform 4.14.z bug fix update
+    match = re.search(r'OpenShift Container Platform (\d\.\d+)', synopsis)
+    if match:
+        return match.group(1)
+    return None
 
 
 def add_comment(advisory_id, comment):
@@ -334,78 +308,6 @@ def add_comment(advisory_id, comment):
                          verify=ssl.get_default_verify_paths().openssl_cafile,
                          auth=HTTPSPNEGOAuth(),
                          data=data)
-
-
-def get_comments(advisory_id):
-    """5.2.10.2. GET /api/v1/comments?filter[key]=value
-
-    Retrieve all advisory comments
-    Example request body:
-
-        {"filter": {"errata_id": 11112, "type": "AutomatedComment"}}
-
-    Returns an array of comments ordered in descending order
-    (newest first). The array may be empty depending on the filters
-    used. The meaning of each attribute is documented under GET
-    /api/v1/comments/{id} (see Erratum.get_comment())
-
-    Included for reference:
-    5.2.10.2.1. Filtering
-
-    The list of comments can be filtered by applying
-    filter[key]=value as a query parameter. All attributes of a
-    comment - except advisory_state - can be used as a filter.
-
-    This is a paginated API. Reference documentation:
-    https://errata.devel.redhat.com/developer-guide/api-http-api.html#api-pagination
-    """
-    body = {
-        "filter": {
-            "errata_id": advisory_id,
-            "type": "Comment"
-        }
-    }
-    # This is a paginated API, we need to increment page[number] until an empty array is returned.
-    params = {
-        "page[number]": 1
-    }
-    while True:
-        res = requests.get(
-            constants.errata_get_comments_url,
-            params=params,
-            verify=ssl.get_default_verify_paths().openssl_cafile,
-            auth=HTTPSPNEGOAuth(),
-            json=body)
-        if res.ok:
-            data = res.json().get('data', [])
-            if not data:
-                break
-            for comment in data:
-                yield comment
-            params["page[number]"] += 1
-        elif res.status_code == 401:
-            raise exceptions.ErrataToolUnauthorizedException(res.text)
-        else:
-            return False
-
-
-def get_metadata_comments_json(advisory_id):
-    """
-    Fetch just the comments that look like our metadata JSON comments from the advisory.
-    Returns a list, oldest first.
-    """
-    comments = get_comments(advisory_id)
-    metadata_json_list = []
-    # they come out in (mostly) reverse order, start at the beginning
-    for c in reversed(list(comments)):
-        try:
-            metadata = json.loads(c['attributes']['text'])
-        except Exception:
-            pass
-        else:
-            if 'release' in metadata and 'kind' in metadata and 'impetus' in metadata:
-                metadata_json_list.append(metadata)
-    return metadata_json_list
 
 
 def get_builds(advisory_id, session=None):

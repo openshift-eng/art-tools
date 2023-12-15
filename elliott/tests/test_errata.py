@@ -77,38 +77,6 @@ class TestErrata(unittest.TestCase):
         d_out = datetime.datetime.strptime(test_structures.example_erratum['errata']['rhba']['created_at'], '%Y-%m-%dT%H:%M:%SZ')
         self.assertEqual(str(d_out), d_expected)
 
-    def test_get_filtered_list(self):
-        """Ensure we can generate an Erratum List"""
-        flexmock(errata).should_receive("Advisory").and_return(None)
-
-        response = flexmock(status_code=200)
-        response.should_receive("json").and_return(test_structures.example_erratum_filtered_list)
-
-        flexmock(errata.requests).should_receive("get").and_return(response)
-
-        res = errata.get_filtered_list()
-        self.assertEqual(2, len(res))
-
-    def test_get_filtered_list_limit(self):
-        """Ensure we can generate a trimmed Erratum List"""
-        flexmock(errata).should_receive("Advisory").and_return(None)
-
-        response = flexmock(status_code=200)
-        response.should_receive("json").and_return(test_structures.example_erratum_filtered_list)
-
-        flexmock(errata.requests).should_receive("get").and_return(response)
-
-        res = errata.get_filtered_list(limit=1)
-        self.assertEqual(1, len(res))
-
-    def test_get_filtered_list_fail(self):
-        """Ensure we notice invalid erratum lists"""
-        (flexmock(errata.requests)
-            .should_receive("get")
-            .and_return(flexmock(status_code=404, text="_irrelevant_")))
-
-        self.assertRaises(exceptions.ErrataToolError, errata.get_filtered_list)
-
     def test_parse_exception_error_message(self):
         self.assertEqual([1685398], errata.parse_exception_error_message('Bug #1685398 The bug is filed already in RHBA-2019:1589.'))
 
