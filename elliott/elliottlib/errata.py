@@ -27,7 +27,6 @@ import xmlrpc.client
 logger = logutil.getLogger(__name__)
 
 ErrataConnector._url = constants.errata_url
-errata_xmlrpc = xmlrpc.client.ServerProxy(constants.errata_xmlrpc_url)
 
 
 class Advisory(Erratum):
@@ -528,7 +527,7 @@ def add_jira_bugs_with_retry(advisory: Erratum, bugids: List[str], noop: bool = 
 
 
 def get_image_cdns(advisory_id):
-    return errata_xmlrpc.get_advisory_cdn_docker_file_list(advisory_id)
+    return ErrataConnector()._get(f'/api/v1/push_metadata/cdn_docker_file_list/{advisory_id}.json')
 
 
 @lru_cache()  # advisories slow to look up, and not expected to change during a run

@@ -6,10 +6,9 @@ from unittest import mock
 import json
 from flexmock import flexmock
 import errata_tool
-import bugzilla
 
 import unittest
-from unittest.mock import MagicMock, patch, Mock
+from unittest.mock import patch, Mock
 from tests import test_structures
 from elliottlib import errata, constants, brew, exceptions
 
@@ -205,7 +204,7 @@ class TestAdvisoryImages(unittest.TestCase):
     }
 
     def test_get_doctored_advisory_images_ocp_3(self):
-        errata.errata_xmlrpc.get_advisory_cdn_docker_file_list = lambda *_: self.mocked_ocp3_response
+        flexmock(errata).should_receive("get_image_cdns").and_return(self.mocked_ocp3_response)
 
         expected = """#########
 openshift3/jenkins-subordinate-base-rhel7:v3.11.154-1
@@ -216,7 +215,7 @@ openshift3/ose-pod:v3.11.154-1
         self.assertEqual(actual, expected)
 
     def test_get_raw_advisory_images_ocp_3(self):
-        errata.errata_xmlrpc.get_advisory_cdn_docker_file_list = lambda *_: self.mocked_ocp3_response
+        flexmock(errata).should_receive("get_image_cdns").and_return(self.mocked_ocp3_response)
 
         expected = """kube-rbac-proxy-container-v3.11.154-1
 jenkins-subordinate-base-rhel7-container-v3.11.154-1
@@ -225,7 +224,7 @@ openshift-enterprise-pod-container-v3.11.154-1"""
         self.assertEqual(actual, expected)
 
     def test_get_raw_advisory_images_ocp_4(self):
-        errata.errata_xmlrpc.get_advisory_cdn_docker_file_list = lambda *_: self.mocked_ocp4_response
+        flexmock(errata).should_receive("get_image_cdns").and_return(self.mocked_ocp4_response)
 
         expected = """atomic-openshift-cluster-autoscaler-container-v4.2.5-201911121709
 cluster-monitoring-operator-container-v4.2.5-201911121709

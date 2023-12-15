@@ -2,7 +2,6 @@ import glob
 import itertools
 import logging
 import os
-import re
 import ssl
 import sys
 import time
@@ -23,8 +22,8 @@ from doozerlib.runtime import Runtime
 from doozerlib.brew import get_builds_tags
 from doozerlib.util import (find_latest_builds, isolate_el_version_in_brew_tag,
                             mkdirs, strip_epoch, to_nvre, isolate_el_version_in_release)
+from elliottlib import errata
 
-ERRATA_URL = "http://errata-xmlrpc.devel.redhat.com/errata/errata_service"
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"
 
 logger: logging.Logger = None
@@ -35,10 +34,10 @@ logger: logging.Logger = None
 plashet_concerns = []
 
 
-def update_advisory_builds(config, errata_proxy, advisory_id, nvres, nvr_product_version):
+def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_product_version):
     """
     Attempts to get a specific set of RPM nvrs attached to an advisory
-    :param errata_proxy: proxy
+    :param errata_session: session object to use for errata queries
     :param advisory_id: The advisory to modify (should be in NEW_FILES)
     :param product_version: Product version to attach RPMs for (e.g. RHEL-7-OSE-4.5)
     :param nvres: A list of RPM nvrs
@@ -49,8 +48,8 @@ def update_advisory_builds(config, errata_proxy, advisory_id, nvres, nvr_product
 
     desired_nvrs = set([strip_epoch(n) for n in nvres])
     errata_nvrs = set()
-    for build in errata_proxy.getErrataBrewBuilds(advisory_id):
-        nvr = build["brew_build_nvr"]
+    for build in errata.get_brew_builds(advisory_id, errata_session):
+        nvr = build["nvr"]
         errata_nvrs.add(nvr)
 
     to_remove = errata_nvrs.difference(desired_nvrs)
@@ -380,7 +379,6 @@ def setup_logging(dest_dir: str):
 @click.option('--arch', multiple=True, metavar='ARCH <signed|unsigned>',
               required=True, nargs=2,
               help='For each arch to include in the plashet. Each arch will be a repo beneath the plashet dir.')
-@click.option('--errata-xmlrpc-url', default=ERRATA_URL, help='The errata xmlrpmc url')
 @click.option('--brew-root', metavar='PATH', default='/mnt/redhat/brewroot', help='Filesystem location of brew root')
 @click.option('-x', '--exclude-package', metavar='NAME',
               multiple=True, default=[], help='Exclude one or more package names')
@@ -492,7 +490,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     koji_proxy.gssapi_login()
     event = runtime.brew_event
     event_info = koji_proxy.getEvent(event)
-    errata_proxy = xmlrpclib.ServerProxy(config.errata_xmlrpc_url)
+    errata_session = requests.session()
     builder = PlashetBuilder(koji_proxy, logger=logger)
 
     # Gather up all nvrs tagged in the embargoed brew tags into a set.
@@ -676,7 +674,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
 
             if signing_advisory_id:
                 # Remove all builds attached to advisory before attempting signing
-                update_advisory_builds(config, errata_proxy, signing_advisory_id, [], nvr_product_version)
+                update_advisory_builds(config, errata_session, signing_advisory_id, [], nvr_product_version)
                 nvres_for_advisory = []
 
                 for nvre in nvre_set:
@@ -686,7 +684,8 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                         nvres_for_advisory.append(nvre)
 
                 logger.info(f'Updating advisory to get nvre set {set_name} signed: {signing_advisory_id}')
-                update_advisory_builds(config, errata_proxy, signing_advisory_id, nvres_for_advisory, nvr_product_version)
+                update_advisory_builds(config, errata_session, signing_advisory_id, nvres_for_advisory,
+                                       nvr_product_version)
 
             else:
                 logger.warning(f'No signing advisory specified; will simply poll and hope for nvre set {set_name}')
@@ -699,7 +698,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
 
     if possible_signing_needed and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
-        update_advisory_builds(config, errata_proxy, signing_advisory_id, [], nvr_product_version)
+        update_advisory_builds(config, errata_session, signing_advisory_id, [], nvr_product_version)
 
     extra_embargo_info = {  # Data related to embargoes that will be written into the plashet.yml
         'embargoed_permitted': include_embargoed,  # Whether we included or excluded these nvrs in the plashet
@@ -751,7 +750,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
     koji_proxy = runtime.build_retrying_koji_client()
     koji_proxy.gssapi_login()
     event_info = koji_proxy.getEvent(event)
-    errata_proxy = xmlrpclib.ServerProxy(config.errata_xmlrpc_url)
+    errata_session = requests.session()
     builder = PlashetBuilder(koji_proxy, logger=logger)
 
     desired_nvres = set()  # The final set of rpm build NVREs that will be included in the plashet repo
@@ -822,7 +821,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
 
         if signing_advisory_id:
             # Remove all builds attached to advisory before attempting signing
-            update_advisory_builds(config, errata_proxy, signing_advisory_id, [], nvr_product_version)
+            update_advisory_builds(config, errata_session, signing_advisory_id, [], nvr_product_version)
             nvres_for_advisory = []
 
             for nvre in desired_nvres:
@@ -831,7 +830,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
                     nvres_for_advisory.append(nvre)
 
             logger.info(f'Updating advisory to get {len(nvres_for_advisory)} nvre(s) signed: {signing_advisory_id}')
-            update_advisory_builds(config, errata_proxy, signing_advisory_id, nvres_for_advisory, nvr_product_version)
+            update_advisory_builds(config, errata_session, signing_advisory_id, nvres_for_advisory, nvr_product_version)
 
         else:
             logger.warning(f'No signing advisory specified; will simply poll and hope for {len(desired_nvres)} nvre(s)')
@@ -844,7 +843,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
 
     if signed_desired(config) and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
-        update_advisory_builds(config, errata_proxy, signing_advisory_id, [], nvr_product_version)
+        update_advisory_builds(config, errata_session, signing_advisory_id, [], nvr_product_version)
 
     assemble_repo(config, desired_nvres, event_info)
 
@@ -876,7 +875,7 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
     runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True)
     koji_proxy = runtime.build_retrying_koji_client()
     koji_proxy.gssapi_login()
-    errata_proxy = xmlrpclib.ServerProxy(config.errata_xmlrpc_url)
+    errata_session = requests.session()
 
     package_nvrs: Dict[str, str] = dict()  # maps package name to nvr
 
@@ -911,9 +910,9 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
             for product_version, nvr_list in sign_using.items():
                 logger.info(f'Attempting to sign {nvr_list} using product: {product_version} and advisory {signing_advisory_id}')
                 # Remove all builds attached to advisory before attempting signing
-                update_advisory_builds(config, errata_proxy, signing_advisory_id, [],
+                update_advisory_builds(config, errata_session, signing_advisory_id, [],
                                        product_version)
-                update_advisory_builds(config, errata_proxy, signing_advisory_id, nvr_list,
+                update_advisory_builds(config, errata_session, signing_advisory_id, nvr_list,
                                        product_version)
         else:
             logger.warning('No signing advisory specified; will poll for any unsigned NVRs')
@@ -969,13 +968,13 @@ def from_advisories(config, advisory_id, module_builds, poll_for):
     Creates a directory containing arch specific yum repository subdirectories based on RPMs
     attached to one or more advisories.
     """
-    errata_proxy = xmlrpclib.ServerProxy(config.errata_xmlrpc_url)
+    errata_session = requests.session()
 
     nvrs = set()
     for id in advisory_id:
         # https://gist.github.com/jupierce/7157d5620b7eb218f73542b3f9fec305
-        for build in errata_proxy.getErrataBrewBuilds(id):
-            nvr = build["brew_build_nvr"]
+        for build in errata.get_brew_builds(id, session=errata_session):
+            nvr = build["nvr"]
             is_module = build["is_module"]
 
             if module_builds and not is_module:
