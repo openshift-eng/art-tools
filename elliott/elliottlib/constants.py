@@ -30,25 +30,8 @@ BUG_ATTACH_CHUNK_SIZE = 100
 # https://jira.coreos.com/browse/ART-1192
 SECURITY_IMPACT = ["Low", "Low", "Moderate", "Important", "Critical"]
 security_impact_map = {'Critical': 4, 'Important': 3, 'Moderate': 2, 'Low': 1}
-errata_xmlrpc_url = 'https://errata.engineering.redhat.com/errata/xmlrpc.cgi'
 errata_url = "https://errata.devel.redhat.com"
 # errata_url = "https://errata.stage.engineering.redhat.com"
-
-# 1965 => (RHBA; Active; Product: RHOSE; Devel Group: ENG OpenShift
-#          Enterprise; sorted by newest)
-# https://errata.devel.redhat.com/filter/1965
-errata_default_filter = '1965'
-# 1991 => (Active; Product: RHOSE; Devel Group: ENG OpenShift
-#          Enterprise; sorted by newest)
-# https://errata.devel.redhat.com/filter/1991
-errata_live_advisory_filter = '1991'
-# https://errata.devel.redhat.com/filter/2507
-errata_puddle_advisory_filter = '2507'
-# 2051 => (RHBA; State REL PREP, PUSH READY, IN PUSH, SHIPPED;
-#          Product: RHOSE; Devel Group: ENG OpenShift Enterprise;
-#          sorted by newest)
-# https://errata.devel.redhat.com/filter/2051
-errata_immutable_advisory_filter = '2051'
 
 errata_active_advisory_labels = [
     "NEW_FILES",
@@ -118,20 +101,6 @@ ET_BAD_EXTERNAL_TEST_STATUSES = {
     "NEEDS_INSPECTION",
     "FAILED",
 }
-
-# Valid RPMDiff scores (statuses) can be found from its source: https://gitlab.cee.redhat.com/rpmdiff/rpmdiff/blob/master/src/rpmdiff/common/db/models.py
-# Here we don't need all of them
-RPMDIFF_SCORE_NAMES = {
-    0: "PASSED",
-    1: "INFO",
-    2: "WAIVED",
-    3: "NEEDS_INSPECTION",
-    4: "FAILED",
-    499: "RUNNING",
-}
-
-RPMDIFF_WEB_URL = "https://rpmdiff.engineering.redhat.com"
-RPMDIFF_HUB_URL = "https://rpmdiff-hub.host.prod.eng.bos.redhat.com"
 
 ADVISORY_TYPES = ('rhba', 'rhea', 'rhsa')
 
