@@ -37,17 +37,13 @@ from elliottlib.util import progress_func, pbar_header
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory, click_coroutine
 
 # cli commands
-from elliottlib.cli.list_cli import list_cli
 from elliottlib.cli.tarball_sources_cli import tarball_sources_cli
 from elliottlib.cli.find_builds_cli import find_builds_cli
 from elliottlib.cli.find_bugs_sweep_cli import find_bugs_sweep_cli
 from elliottlib.cli.create_cli import create_cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.cli.change_state_cli import change_state_cli
-from elliottlib.cli.puddle_advisories_cli import puddle_advisories_cli
-from elliottlib.cli.rpmdiff_cli import rpmdiff_cli
 from elliottlib.cli.advisory_images_cli import advisory_images_cli
-from elliottlib.cli.advisory_impetus_cli import advisory_impetus_cli
 from elliottlib.cli.tag_builds_cli import tag_builds_cli
 from elliottlib.cli.verify_cvp_cli import verify_cvp_cli
 from elliottlib.cli.advisory_drop_cli import advisory_drop_cli
@@ -453,15 +449,11 @@ unsigned builds.
 
 # Register additional commands / groups
 cli.add_command(advisory_images_cli)
-cli.add_command(advisory_impetus_cli)
 cli.add_command(create_placeholder_cli)
 cli.add_command(create_cli)
 cli.add_command(change_state_cli)
 cli.add_command(find_bugs_sweep_cli)
 cli.add_command(find_builds_cli)
-cli.add_command(list_cli)
-cli.add_command(puddle_advisories_cli)
-cli.add_command(rpmdiff_cli)
 cli.add_command(tag_builds_cli)
 cli.add_command(tarball_sources_cli)
 cli.add_command(verify_cvp_cli)

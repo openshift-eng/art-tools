@@ -188,7 +188,7 @@ PRESENT advisory. Here are some examples:
         unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds)
         if len(unshipped_builds) != previous:
             click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
-                       f'these advisories: {attached_to_advisories}')
+                       f'these ART advisories: {attached_to_advisories}')
 
         _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
 
@@ -504,16 +504,13 @@ def _filter_out_attached_builds(build_objects):
         in_same_version = False
         for eid in [e['id'] for e in b.all_errata]:
             if eid not in errata_version_cache:
-                metadata_comments_json = errata.get_metadata_comments_json(eid)
-                if not metadata_comments_json:
+                release = errata.get_art_release_from_erratum(eid)
+                if not release:
                     # Does not contain ART metadata; consider it unversioned
                     red_print("Errata {} Does not contain ART metadata\n".format(eid))
                     errata_version_cache[eid] = ''
                     continue
-                # it's possible for an advisory to have multiple metadata comments,
-                # though not very useful (there's a command for adding them,
-                # but not much point in doing it). just looking at the first one is fine.
-                errata_version_cache[eid] = metadata_comments_json[0]['release']
+                errata_version_cache[eid] = release
             if errata_version_cache[eid] == get_release_version(b.product_version):
                 in_same_version = True
                 attached_to_advisories.add(eid)
