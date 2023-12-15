@@ -13,7 +13,7 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import date, datetime
+from datetime import datetime
 from multiprocessing import Event, Lock
 from typing import Dict, List, Optional, Tuple, Union, Set
 
@@ -456,6 +456,7 @@ class ImageDistGitRepo(DistGitRepo):
         self.rebase_status = False
         self.logger: logging.Logger = metadata.logger
         self.source_modifier_factory = source_modifier_factory
+        self.upstream_intended_el_version = None
 
     def clone(self, distgits_root_dir, distgit_branch):
         super(ImageDistGitRepo, self).clone(distgits_root_dir, distgit_branch)
@@ -1556,7 +1557,13 @@ class ImageDistGitRepo(DistGitRepo):
         unique_pullspec += f':{parent_build_nvr["version"]}-{parent_build_nvr["release"]}'
         return unique_pullspec
 
-    def _should_match_upstream(self) -> bool:
+    def _should_match_upstream(self, dfp: DockerfileParser) -> bool:
+        # To match upstream, we need to be able to infer upstream intended RHEL version
+        el_version = self._determine_upstream_rhel_version(dfp)
+        if not el_version:
+            return False
+        self.upstream_intended_el_version = el_version
+
         # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
         if self.config.canonical_builders_from_upstream is not Missing:
             canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
@@ -1606,15 +1613,56 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             return parent
 
-    def _rebase_from_directives(self, dfp):
-        self.should_match_upstream = self._should_match_upstream()
-        if self.should_match_upstream:
-            # ART-8476 override image config with upstream
-            alt_upstream = self.config.get('alternative_upstream', None)
-            if alt_upstream:
-                self.config.update(alt_upstream)
-                del self.config['alternative_upstream']
+    def _determine_upstream_rhel_version(self, dfp: DockerfileParser) -> Optional[str]:
+        version = None
 
+        try:
+            # We will infer the rhel version from the last build layer in the upstream Dockerfile
+            last_layer = dfp.parent_images[-1]
+            cmd = ['oc', 'image', 'info', '-o', 'json', last_layer]
+            out, _ = exectools.cmd_assert(cmd)
+            tags = json.loads(out)['config']['config']['Labels']['io.openshift.tags']
+
+            # tags will be something like 'base rhel8'
+            pattern = r'el(\d)'
+            match = re.search(pattern, tags)
+            if match:
+                version = match.group()
+
+        except (KeyError, ChildProcessError) as e:
+            # We could get:
+            #   - a ChildProcessError when the upstream equivalent is not found
+            #   - a KeyError when 'io.openshift.tags' label is undefined
+            self.logger.warning('Failed determining upstream rhel version: %s', e)
+
+        if not version:
+            self.logger.warning('Could not determine rhel version from upstream %s', self.name)
+        return version
+
+    def _update_image_config(self):
+        """
+        If we're trying to match upstream, check if there's a 'when' clause in image alternative_config field
+        that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
+        """
+
+        if self.should_match_upstream:
+            # Check if there is an alternative configuration matching upstream RHEL version
+            alt_configs = self.config.get('alternative_upstream', None)
+            matched = False
+            for alt_config in alt_configs:
+                if alt_config['when'] == self.upstream_intended_el_version:
+                    self.logger.info('Merging %s alternative config to match upstream', self.upstream_intended_el_version)
+                    self.config.update(alt_config)
+                    matched = True
+                    break
+            if not matched:
+                # there's no 'when' clause matching upstream intended RHEL version: fallback to default ART's config
+                self.logger.warning('Could not match upstream because "%s" version is not mapped in alternative_config',
+                                    self.upstream_intended_el_version)
+
+    def _rebase_from_directives(self, dfp):
+        self.should_match_upstream = self._should_match_upstream(dfp)
+        self._update_image_config()
         image_from = Model(self.config.get('from', None))
 
         # Collect all the parent images we're supposed to use
