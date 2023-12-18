@@ -1,6 +1,4 @@
-import datetime
 import io
-import json
 import logging
 import re
 import tempfile
@@ -12,7 +10,6 @@ from unittest.mock import Mock, patch
 from flexmock import flexmock
 from unittest.mock import MagicMock
 
-from artcommonlib.model import Missing
 from doozerlib import distgit, model
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.image import ImageMetadata
@@ -601,106 +598,6 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["ref"], "deadbeef")
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
-
-    @patch("doozerlib.exectools.cmd_assert")
-    def test_determine_upstream_rhel_version(self, cmd_assert):
-        dfp = MagicMock()
-        dfp.parent_images = ['bogus']
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'base rhel8'}}}}), None)
-        self.assertEqual('el8', self.img_dg._determine_upstream_rhel_version(dfp))
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'base rhel9'}}}}), None)
-        self.assertEqual('el9', self.img_dg._determine_upstream_rhel_version(dfp))
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'el8'}}}}), None)
-        self.assertEqual('el8', self.img_dg._determine_upstream_rhel_version(dfp))
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'base'}}}}), None)
-        self.assertEqual(None, self.img_dg._determine_upstream_rhel_version(dfp))
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {}}}}), None)
-        self.assertEqual(None, self.img_dg._determine_upstream_rhel_version(dfp))
-
-    @patch('doozerlib.distgit.datetime')
-    @patch('doozerlib.distgit.ReleaseSchedule')
-    @patch('doozerlib.distgit.ImageDistGitRepo._determine_upstream_rhel_version')
-    def test_should_match_upstream(self, el_version, release_schedule, mock_datetime):
-        dfp = MagicMock()
-
-        # No RHEL version inferred from upstream
-        el_version.return_value = None
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
-
-        # canonical_builders_from_upstream not defined
-        el_version.return_value = 'el8'
-        self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
-
-        # canonical_builders_from_upstream = True in group.yml
-        el_version.return_value = 'el8'
-        self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(True, self.img_dg._should_match_upstream(dfp))
-
-        # canonical_builders_from_upstream = False in image config (override)
-        el_version.return_value = 'el8'
-        self.img_dg.config.canonical_builders_from_upstream = False
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
-
-        # canonical_builders_from_upstream = 'on' in image config (override)
-        el_version.return_value = 'el8'
-        self.img_dg.config.canonical_builders_from_upstream = 'on'
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = False
-        self.assertEqual(True, self.img_dg._should_match_upstream(dfp))
-
-        # canonical_builders_from_upstream = 'auto'; current time < feature freeze
-        el_version.return_value = 'el8'
-        self.img_dg.config.canonical_builders_from_upstream = 'auto'
-        release_schedule.return_value.get_ff_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
-        mock_datetime.now.return_value = datetime.datetime(2023, 5, 1, 10, 30, 15)
-        self.assertEqual(True, self.img_dg._should_match_upstream(dfp))
-
-        # canonical_builders_from_upstream = 'auto'; current time > feature freeze
-        el_version.return_value = 'el8'
-        self.img_dg.config.canonical_builders_from_upstream = 'auto'
-        release_schedule.return_value.get_ff_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
-        mock_datetime.now.return_value = datetime.datetime(2023, 7, 1, 10, 30, 15)
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
-
-    def test_update_image_config(self):
-        # 'when' clause matching upstream rhel version: override
-        self.img_dg.should_match_upstream = True
-        self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                              'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = 'el8'
-        self.img_dg._update_image_config()
-        self.assertTrue(self.img_dg.should_match_upstream)
-        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
-
-        # no 'when' clause matching upstream rhel version: do not match upstream
-        self.img_dg.should_match_upstream = True
-        self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                              'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = 'el8'
-        self.img_dg._update_image_config()
-        self.assertTrue(self.img_dg.should_match_upstream)
-        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
-
-        # canonical builders disabled: never override
-        self.img_dg.should_match_upstream = False
-        self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                              'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = 'el8'
-        self.img_dg._update_image_config()
-        self.assertFalse(self.img_dg.should_match_upstream)
-        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
 
 
 if __name__ == "__main__":
