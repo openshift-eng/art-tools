@@ -477,6 +477,10 @@ class GenAssemblyCli:
             'metadata': -1,
         }
 
+        # ECs should always have an associated prerelease advisory
+        if self.assembly_type == AssemblyTypes.PREVIEW:
+            advisories['prerelease'] = -1
+
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
         if (major, minor) >= (4, 14):
@@ -484,22 +488,47 @@ class GenAssemblyCli:
 
         release_jira = "ART-0"
 
-        if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-            # if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
-            # pick advisories and release ticket from there
-            split = re.split(r'(\d+)', self.gen_assembly_name)
-            # ['rc.', '2', '']
-            current_v = int(split[1])
-            if current_v != 0:
-                previous_assembly = f"{split[0]}{current_v - 1}"
-                releases_config = self.runtime.get_releases_config()
-                if previous_assembly in releases_config.releases:
-                    previous_group = releases_config.releases[previous_assembly].assembly.group
-                    advisories = previous_group.advisories.primitive()
-                    release_jira = previous_group.release_jira
-                    self.logger.info(f"Reusing advisories and release ticket from previous assembly {previous_assembly}, {previous_group.advisories}, {previous_group.release_jira}")
-                else:
-                    self.logger.info("No matching previous assembly found")
+        if self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            return advisories, release_jira
+
+        # if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
+        # or if this assembly is rc.0 then check if there is a previously defined ec.X
+        # pick advisories and release ticket from there
+
+        split = re.split(r'(\d+)', self.gen_assembly_name)  # ['rc.', '2', '']
+        current_v = int(split[1])
+
+        if self.assembly_type == AssemblyTypes.PREVIEW and current_v == 0:
+            return advisories, release_jira
+
+        # For RCs
+
+        releases_config = self.runtime.get_releases_config()
+
+        if current_v == 0 and self.assembly_type == AssemblyTypes.CANDIDATE:
+            ec_assemblies = sorted([a for a in releases_config.releases if a.startswith("ec.")])
+            if not ec_assemblies:
+                self.logger.info("No matching previous assembly found")
+                return advisories, release_jira
+            previous_assembly = ec_assemblies[-1]
+        else:
+            previous_assembly = f"{split[0]}{current_v - 1}"
+            if previous_assembly not in releases_config.releases:
+                self.logger.info("No matching previous assembly found")
+                return advisories, release_jira
+
+        previous_group = releases_config.releases[previous_assembly].assembly.group
+        advisories = previous_group.advisories.primitive()
+
+        # prerelease advisory already associated with an assembly should be shipped, or dropped
+        # do not reuse it
+        # RCs can be designated as prerelease, but not always
+        # see https://docs.google.com/document/d/1S_ivD8Sh85LuZKnClqvoRvIhn4hNJQA76jpfUaFZjUA/edit
+        if 'prerelease' in advisories:
+            advisories.pop('prerelease')
+
+        release_jira = previous_group.release_jira
+        self.logger.info(f"Reusing advisories and release ticket from previous assembly {previous_assembly}, {previous_group.advisories}, {previous_group.release_jira}")
 
         return advisories, release_jira
 
@@ -515,8 +544,10 @@ class GenAssemblyCli:
                 'arches!': list(self.rhcos_by_tag[self.primary_rhcos_tag].keys())
             }
 
-        if self.assembly_type not in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
+        if self.assembly_type != AssemblyTypes.CUSTOM:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
+            if 'prerelease' in group_info['advisories']:
+                group_info['operator_index_mode'] = 'pre-release'
 
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
