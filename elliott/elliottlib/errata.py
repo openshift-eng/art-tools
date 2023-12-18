@@ -566,6 +566,24 @@ def get_advisory_images(image_advisory_id, raw=False):
     return '#########\n{}\n#########'.format('\n'.join(image_list))
 
 
+def get_advisory_builds(advisory, session=None):
+    """
+    :return: list of build dicts
+    """
+    try:
+        builds = get_builds(advisory, session=session)
+    except exceptions.ErrataToolError as ex:
+        raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
+
+    advisory_builds = []
+    for tag in builds.keys():
+        for build in builds[tag]['builds']:
+            for name in build.keys():
+                advisory_builds.append(build[name])
+
+    return advisory_builds
+
+
 def get_advisory_nvrs(advisory):
     """
     :return: dict, with keys as package names and values as strs in the form: '{version}-{release}'
