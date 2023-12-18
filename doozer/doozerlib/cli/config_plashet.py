@@ -48,7 +48,7 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
 
     desired_nvrs = set([strip_epoch(n) for n in nvres])
     errata_nvrs = set()
-    for build in errata.get_brew_builds(advisory_id, errata_session):
+    for build in errata.get_advisory_builds(advisory_id, session=errata_session):
         nvr = build["nvr"]
         errata_nvrs.add(nvr)
 
@@ -973,7 +973,7 @@ def from_advisories(config, advisory_id, module_builds, poll_for):
     nvrs = set()
     for id in advisory_id:
         # https://gist.github.com/jupierce/7157d5620b7eb218f73542b3f9fec305
-        for build in errata.get_brew_builds(id, session=errata_session):
+        for build in errata.get_advisory_builds(id, session=errata_session):
             nvr = build["nvr"]
             is_module = build["is_module"]
 
