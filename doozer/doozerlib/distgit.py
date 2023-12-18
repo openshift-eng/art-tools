@@ -1647,7 +1647,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         if self.should_match_upstream:
             # Check if there is an alternative configuration matching upstream RHEL version
-            alt_configs = self.config.get('alternative_upstream', None)
+            alt_configs = self.config.get('alternative_upstream', [])
             matched = False
             for alt_config in alt_configs:
                 if alt_config['when'] == self.upstream_intended_el_version:
