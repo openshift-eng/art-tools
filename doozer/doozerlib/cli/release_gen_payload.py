@@ -644,18 +644,8 @@ class GenPayloadCli:
 
         # record issues found in assembly list and per payload entry
         rhcos_build = cast(RHCOSBuildInspector, payload_entry.rhcos_build)
-        self.assembly_issues.extend(assembly_inspector.check_rhcos_issues(rhcos_build))
+        self.assembly_issues.extend(await assembly_inspector.check_rhcos_issues(rhcos_build))
         payload_entry.issues.extend(ai for ai in self.assembly_issues if ai.component == "rhcos")
-
-        if self.runtime.assembly_type is AssemblyTypes.STREAM:
-            # For stream alone, we want to verify that the very latest RPMs are installed.
-            for installed_nvr, newest_nvr, repo in await rhcos_build.find_non_latest_rpms():
-                self.assembly_issues.append(AssemblyIssue(
-                    f"Found outdated RPM ({installed_nvr}) "
-                    f"installed in {payload_entry.rhcos_build} ({rhcos_build.brew_arch})"
-                    f" when {newest_nvr} is available in repo {repo}",
-                    component="rhcos", code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD
-                ))
 
     def detect_rhcos_inconsistent_rpms(self, targeted_rhcos_builds: Dict[bool, List[RHCOSBuildInspector]]):
         """

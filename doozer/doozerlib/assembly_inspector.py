@@ -1,10 +1,11 @@
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, cast
+from doozerlib.plashet import PlashetBuilder
 
 from koji import ClientSession
 
 import artcommonlib.util as artutil
 from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
-from doozerlib.rpm_utils import parse_nvr
+from doozerlib.rpm_utils import compare_nvr, parse_nvr
 
 from doozerlib import brew, util, Runtime
 from doozerlib.image import BrewBuildImageInspector
@@ -36,6 +37,7 @@ class AssemblyInspector:
         self.assembly_rhcos_config = assembly_rhcos_config(self.runtime.releases_config, self.runtime.assembly)
         self.assembly_type: AssemblyTypes = assembly_type(self.runtime.releases_config, self.runtime.assembly)
         self._rpm_build_cache: Dict[int, Dict[str, Optional[Dict]]] = {}  # Dict[rhel_ver] -> Dict[distgit_key] -> Optional[BuildDict]
+        self._external_rpm_build_cache: Dict[str, Dict[str, Optional[Dict]]] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
         self._permits = assembly_permits(self.runtime.releases_config, self.runtime.assembly)
 
         if not lookup_mode:  # do no lookups
@@ -124,7 +126,7 @@ class AssemblyInspector:
         issues.extend(self._check_installed_packages_for_rpm_delivery(dg_key, f'Image build {build_inspector.get_nvr()}', installed_packages))
         return issues
 
-    def check_rhcos_issues(self, rhcos_build: RHCOSBuildInspector) -> List[AssemblyIssue]:
+    async def check_rhcos_issues(self, rhcos_build: RHCOSBuildInspector) -> List[AssemblyIssue]:
         """
         Analyzes an RHCOS build to check whether the installed packages are consistent with:
         1. package NVRs defined at the group dependency level
@@ -145,18 +147,48 @@ class AssemblyInspector:
         installed_packages: Dict[str, Dict[str, Any]] = dict()  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
 
         self.runtime.logger.info("Getting rpms in RHCOS build %s...", rhcos_build.build_id)
+        rhel_base_version = rhcos_build.get_rhel_base_version()
+        el_tag = f'el{rhel_base_version}'
         installed_packages = rhcos_build.get_package_build_objects()
 
         # If rpm_deliveries is configured, check if the RHCOS build has rpms with the stop-ship/ship-ok tag
         issues.extend(self._check_installed_packages_for_rpm_delivery('rhcos', f'RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch})', installed_packages))
 
-        el_tag = f'el{rhcos_build.get_rhel_base_version()}'
+        # If the assembly has a basis event, check if all external rpms in rhaos tag match those installed in RHCOS
+        brew_tag = "rhaos-{MAJOR}.{MINOR}-rhel-{RHCOS_EL_MAJOR}-candidate".format_map(self.runtime.group_config.vars)
+        check_external_packages = self.runtime.group_config.check_external_packages
+
+        if check_external_packages and self.runtime.assembly_basis_event:
+            external_rpms = self.get_external_rpm_build_dicts()
+            for entry in check_external_packages:
+                if entry["tag"] != brew_tag:
+                    continue
+                package_name = entry["name"]
+                build_dict = external_rpms.get(entry["tag"], {}).get(package_name)
+                if not build_dict:
+                    continue
+                if entry["condition"] == "match":
+                    desired_packages[package_name] = build_dict["nvr"]
+                elif entry["condition"] == "greater_equal":
+                    # installed_rpm = installed_packages.get(package_name)
+                    # desired_packages[package_name] = build_dict["nvr"] if not installed_rpm or compare_nvr(build_dict, installed_rpm) > 0 else installed_rpm["nvr"]
+                    installed_rpm = installed_packages.get(package_name)
+                    if not installed_rpm or compare_nvr(build_dict, installed_rpm) >= 0:
+                        desired_packages[package_name] = build_dict["nvr"]
+                    else:
+                        self.runtime.logger.warning("Found newer rpm %s in RHCOS %s (%s) than the rpm %s in Brew tag %s", installed_rpm["nvr"], rhcos_build.build_id, rhcos_build.brew_arch, build_dict["nvr"], brew_tag)
+                        desired_packages[package_name] = installed_rpm["nvr"]
+                else:
+                    raise ValueError(f'Unknown check_external_packages condition: {entry["condition"]}')
+
+        # Honor group dependencies
         for package_entry in (self.runtime.get_group_config().dependencies or []):
             if el_tag in package_entry:
                 nvr = package_entry[el_tag]
                 package_name = parse_nvr(nvr)['name']
                 desired_packages[package_name] = nvr
 
+        # Honor RHCOS dependencies
         for package_entry in (self.assembly_rhcos_config.dependencies or []):
             if el_tag in package_entry:
                 nvr = package_entry[el_tag]
@@ -165,11 +197,10 @@ class AssemblyInspector:
                 desired_packages[package_name] = nvr  # Override if something else was at the group level
 
         for package_name, desired_nvr in desired_packages.items():
-
             if package_name in required_packages and package_name not in installed_packages:
                 # If the dependency is specified in the 'rhcos' section of the assembly, we must find it or raise an issue.
                 # This is impermissible because it can simply be fixed in the assembly definition.
-                issues.append(AssemblyIssue(f'Expected assembly defined rhcos dependency {desired_nvr} to be installed in {rhcos_build.build_id} but that package was not installed', component='rhcos'))
+                issues.append(AssemblyIssue(f'Expected assembly defined rhcos dependency {desired_nvr} to be installed in {rhcos_build.build_id} ({rhcos_build.brew_arch}) but that package was not installed', component='rhcos'))
 
             if package_name in installed_packages:
                 installed_build_dict = installed_packages[package_name]
@@ -177,7 +208,7 @@ class AssemblyInspector:
                 if installed_nvr != desired_nvr:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
-                    issues.append(AssemblyIssue(f'Expected {desired_nvr} to be installed in RHCOS build {rhcos_build.build_id} but found {installed_nvr}', component='rhcos', code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY))
+                    issues.append(AssemblyIssue(f'Expected {desired_nvr} to be installed in RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch}) but found {installed_nvr}', component='rhcos', code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY))
 
         """
         If the rhcos build has RPMs from this group installed, make sure they match the NVRs associated with this assembly.
@@ -193,6 +224,16 @@ class AssemblyInspector:
                     # We could consider permitting this in AssemblyTypes.CUSTOM, but it means that the RHCOS build
                     # could not be effectively reproduced by the rebuild job.
                     issues.append(AssemblyIssue(f'Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed', component='rhcos', code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED))
+
+        if self.runtime.assembly_type is AssemblyTypes.STREAM:
+            # For stream alone, we want to verify that the very latest RPMs are installed.
+            for installed_nvr, newest_nvr, repo in await rhcos_build.find_non_latest_rpms():
+                issues.append(AssemblyIssue(
+                    f"Found outdated RPM ({installed_nvr}) "
+                    f"installed in {rhcos_build.build_id} ({rhcos_build.brew_arch})"
+                    f" when {newest_nvr} is available in repo {repo}",
+                    component="rhcos", code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD
+                ))
 
         return issues
 
@@ -263,8 +304,10 @@ class AssemblyInspector:
         image_meta = build_inspector.get_image_meta()
         self.runtime.logger.info(f'Checking group image for consistency: {image_meta.distgit_key}...')
         issues: List[AssemblyIssue] = []
+        required_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at image-specific level
+        desired_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at group level
 
-        installed_packages = build_inspector.get_all_installed_package_build_dicts()
+        installed_packages = build_inspector.get_all_installed_package_build_dicts()  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
         dgk = build_inspector.get_image_meta().distgit_key
 
         """
@@ -276,37 +319,65 @@ class AssemblyInspector:
         individual RPMs.
         """
         member_package_overrides, all_package_overrides = image_meta.get_assembly_rpm_package_dependencies(el_ver=image_meta.branch_el_target())
-        if member_package_overrides or all_package_overrides:
-            for package_name, required_nvr in all_package_overrides.items():
-                if package_name in member_package_overrides and package_name not in installed_packages:
-                    # A dependency was defined explicitly in an assembly member, but it is not installed.
-                    # i.e. the artists expected something to be installed, but it wasn't found in the final image.
-                    # Raise an issue. In rare circumstances the RPM may be used by early stage of the Dockerfile
-                    # and not in the final. In this case, it should be permitted in the assembly definition.
-                    issues.append(AssemblyIssue(f'Expected image to contain assembly member override dependencies NVR {required_nvr} but it was not installed', component=dgk, code=AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY))
+        desired_packages.update(all_package_overrides)
+        required_packages.update(member_package_overrides)
 
-                if package_name in installed_packages:
-                    installed_build_dict: Dict = installed_packages[package_name]
-                    installed_nvr = installed_build_dict['nvr']
-                    if required_nvr != installed_nvr:
-                        issues.append(AssemblyIssue(f'Expected image to contain assembly override dependencies NVR {required_nvr} but found {installed_nvr} installed', component=dgk, code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY))
+        # If the assembly has a basis event, check if all external rpms in rhaos tag match those installed in this image
+        check_external_packages = image_meta.config.check_external_packages or self.runtime.group_config.check_external_packages
+        if check_external_packages and self.runtime.assembly_basis_event:
+            external_rpms = self.get_external_rpm_build_dicts()
+            brew_tag = image_meta.candidate_brew_tag()
+            for entry in check_external_packages:
+                if entry["tag"] != brew_tag:
+                    continue
+                package_name = entry["name"]
+                build_dict = external_rpms.get(entry["tag"], {}).get(package_name)
+                if not build_dict:
+                    continue
+                if entry["condition"] == "match":
+                    desired_packages[package_name] = build_dict["nvr"]
+                elif entry["condition"] == "greater_equal":
+                    installed_rpm = installed_packages.get(package_name)
+                    if not installed_rpm or compare_nvr(build_dict, installed_rpm) >= 0:
+                        desired_packages[package_name] = build_dict["nvr"]
+                    else:
+                        image_meta.logger.warning("Found newer rpm %s in image %s than the rpm %s in Brew tag %s", installed_rpm["nvr"], dgk, build_dict["nvr"], brew_tag)
+                        desired_packages[package_name] = installed_rpm["nvr"]
+                else:
+                    raise ValueError(f'Unknown check_external_packages condition: {entry["condition"]}')
 
         """
         If an image contains an RPM from the doozer group, make sure it is the current
         RPM for the assembly.
         """
         el_ver = build_inspector.get_rhel_base_version()
+        group_rpm_package_names = set()
         if el_ver:  # We might not find an el_ver for an image (e.g. FROM scratch)
-            for rpm_dgk, assembly_rpm_build in self.get_group_rpm_build_dicts(el_ver).items():
+            for _, assembly_rpm_build in self.get_group_rpm_build_dicts(el_ver).items():
                 if not assembly_rpm_build:
                     # The RPM doesn't claim to build for this image's RHEL base, so ignore it.
                     continue
                 package_name = assembly_rpm_build['package_name']
+                group_rpm_package_names.add(package_name)
                 assembly_nvr = assembly_rpm_build['nvr']
-                if package_name in installed_packages:
-                    installed_nvr = installed_packages[package_name]['nvr']
-                    if installed_nvr != assembly_nvr:
-                        issues.append(AssemblyIssue(f'Expected image to contain assembly RPM build {assembly_nvr} but found {installed_nvr} installed', component=rpm_dgk, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED))
+                desired_packages[package_name] = assembly_nvr
+
+        for package_name, desired_nvr in desired_packages.items():
+            if package_name in required_packages and package_name not in installed_packages:
+                # A dependency was defined explicitly in an assembly member, but it is not installed.
+                # i.e. the artists expected something to be installed, but it wasn't found in the final image.
+                # Raise an issue. In rare circumstances the RPM may be used by early stage of the Dockerfile
+                # and not in the final. In this case, it should be permitted in the assembly definition.
+                issues.append(AssemblyIssue(f'Expected image to contain assembly member override dependencies NVR {desired_nvr} but it was not installed', component=dgk, code=AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY))
+
+            if package_name in installed_packages:
+                installed_build_dict = installed_packages[package_name]
+                installed_nvr = installed_build_dict['nvr']
+                if installed_nvr != desired_nvr:
+                    if package_name not in group_rpm_package_names:
+                        issues.append(AssemblyIssue(f'Expected image to contain assembly override dependencies NVR {desired_nvr} but found {installed_nvr} installed', component=dgk, code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY))
+                    else:
+                        issues.append(AssemblyIssue(f'Expected image to contain assembly RPM build {desired_nvr} but found {installed_nvr} installed', component=dgk, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED))
 
         """
         Assess whether the image build has the upstream
@@ -371,6 +442,37 @@ class AssemblyInspector:
             self._rpm_build_cache[el_ver] = assembly_rpm_dicts
 
         return self._rpm_build_cache[el_ver]
+
+    def get_external_rpm_build_dicts(self):
+        """ Get external rpm build dicts from rhaos candidate Brew tags.
+        :return: a dict. key is Brew tag name, value is another (component_name, rpm_build) dict
+        """
+        replace_vars = self.runtime.group_config.vars.primitive() if self.runtime.group_config.vars else {}
+        et_data = self.runtime.get_errata_config(replace_vars=replace_vars)
+        tag_pv_map = cast(Optional[Dict[str, str]], et_data.get('brew_tag_product_version_mapping'))
+        if not tag_pv_map:
+            return {}
+        cache = self._external_rpm_build_cache
+        member_rpm_names = {meta.rpm_name for meta in self.runtime.rpm_map.values()}
+        with self.runtime.pooled_koji_client_session() as koji_api:
+            builder = PlashetBuilder(koji_api, logger=self.runtime.logger)
+            for tag in tag_pv_map.keys():
+                if tag in cache:
+                    continue
+                # Get tagged rpm builds in rhaos tag
+                component_builds: Dict[str, Dict] = builder.from_tag(tag, inherit=True, assembly=self.runtime.assembly, event=self.runtime.brew_event)
+                el_version = util.isolate_el_version_in_brew_tag(tag)
+                if not el_version:
+                    continue
+                # Remove member rpms
+                for rpm_name in member_rpm_names:
+                    if rpm_name in component_builds:
+                        component_builds.pop(rpm_name)
+                # Honor group dependencies
+                group_deps = builder.from_group_deps(el_version, self.runtime.group_config, self.runtime.rpm_map)
+                component_builds.update(group_deps)
+                cache[tag] = component_builds
+        return cache
 
     def get_rhcos_build(self, arch: str, private: bool = False, custom: bool = False) -> RHCOSBuildInspector:
         """

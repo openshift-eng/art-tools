@@ -246,7 +246,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_detect_rhcos_issues(self):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
         rhcos_issue = Mock(AssemblyIssue, component='rhcos')
-        ai = flexmock(Mock(AssemblyInspector), check_rhcos_issues=[rhcos_issue])
+        ai = flexmock(Mock(AssemblyInspector), check_rhcos_issues=AsyncMock(return_value=[rhcos_issue]))
         rhcos_build = flexmock(
             Mock(rhcos.RHCOSBuildInspector, brew_arch="x86_64"),
             find_non_latest_rpms=AsyncMock(return_value=[("installed", "newest", "repo_name")]))
@@ -255,7 +255,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
         await gpcli.detect_rhcos_issues(rhcos_entry, ai)
         self.assertEqual(gpcli.assembly_issues[0], rhcos_entry.issues[0])
-        self.assertEqual(gpcli.assembly_issues[1].code, AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD)
 
         # make the if statement false
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="standard"))
