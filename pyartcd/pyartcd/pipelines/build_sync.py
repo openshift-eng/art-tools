@@ -14,7 +14,7 @@ from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
 from pyartcd.redis import RedisError
 from pyartcd.runtime import Runtime, GroupRuntime
-from pyartcd import exectools, constants, redis
+from pyartcd import exectools, constants, redis, locks
 from pyartcd.telemetry import start_as_current_span_async
 from pyartcd.util import branch_arches
 from pyartcd.jenkins import get_build_url
@@ -477,7 +477,22 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         "pyartcd.param.assembly": assembly,
     })
     try:
-        await pipeline.run()
+        # Only for stream assembly, lock the build to avoid parallel runs
+        if assembly == 'stream':
+            # https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
+            # will return job/aos-cd-builds/job/build%252Fbuild-sync/40333
+            lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
+            runtime.logger.info('Lock identifier: %s', lock_identifier)
+
+            await locks.run_with_lock(
+                coro=pipeline.run(),
+                lock=locks.Lock.BUILD_SYNC,
+                lock_name=locks.Lock.BUILD_SYNC.value.format(version=version),
+                lock_id=lock_identifier
+            )
+        else:
+            await pipeline.run()
+
         await pipeline.handle_success()
         span.set_status(trace.StatusCode.OK)
 
