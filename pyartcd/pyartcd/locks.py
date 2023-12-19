@@ -15,6 +15,7 @@ class Lock(enum.Enum):
     BUILD = 'lock:build:{version}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
+    BUILD_SYNC = 'lock:build-sync:{version}'
 
 
 # This constant defines for each lock type:
@@ -57,7 +58,13 @@ LOCK_POLICY = {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': 60 * 60 * 1,  # 1 hour
-    }
+    },
+    # build-sync: give up after 1 hour
+    Lock.BUILD_SYNC: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': 60 * 60 * 1,  # 1 hour
+    },
 }
 
 
