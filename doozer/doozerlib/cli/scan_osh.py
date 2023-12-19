@@ -70,6 +70,9 @@ class ScanOshCli:
         # Initialize JIRA client
         self.jira_client: JIRA = self.runtime.build_jira_client()
 
+        # record run as unstable if any errors occur
+        self.unstable = False
+
     # Static functions
     @staticmethod
     def is_jira_workflow_component_disabled(meta):
@@ -450,143 +453,142 @@ class ScanOshCli:
 
         return components_with_closed_scans, nvrs_to_retrigger_scans
 
-    def create_update_jira_ticket(self, components):
-        for component in components:
-            build = component["build"]
-            metadata = component["metadata"]
-            task_id = component["osh_task_id"]
-            summary = component["jira_search_summary"]
-            nvr = build["nvr"]
+    def create_update_jira_ticket(self, component):
+        build = component["build"]
+        metadata = component["metadata"]
+        task_id = component["osh_task_id"]
+        summary = component["jira_search_summary"]
+        nvr = build["nvr"]
 
-            if metadata:
-                # ART is building this component
-                # Upstream repo URL from image config
-                upstream_repo_url = metadata.config.content.source.git.web
+        if metadata:
+            # ART is building this component
+            # Upstream repo URL from image config
+            upstream_repo_url = metadata.config.content.source.git.web
 
-                # Returns project and component name
-                _, potential_component = metadata.get_jira_info()
-            else:
-                # ART is NOT building this component
-                # If no GitHub url, mention the distgit URL instead
-                upstream_repo_url, potential_component = self.get_non_art_upstream_repo_and_jira_component(build)
+            # Returns project and component name
+            _, potential_component = metadata.get_jira_info()
+        else:
+            # ART is NOT building this component
+            # If no GitHub url, mention the distgit URL instead
+            upstream_repo_url, potential_component = self.get_non_art_upstream_repo_and_jira_component(build)
 
-            jira_commit_text = self.get_commit_text(upstream_repo_url, nvr)
+        jira_commit_text = self.get_commit_text(upstream_repo_url, nvr)
 
-            description = MESSAGE.format(package_name=build["package_name"],
-                                         scan_id=task_id,
-                                         nvr=nvr,
-                                         brew_build_id=build["id"],
-                                         upstream_commit=jira_commit_text)
+        description = MESSAGE.format(package_name=build["package_name"],
+                                     scan_id=task_id,
+                                     nvr=nvr,
+                                     brew_build_id=build["id"],
+                                     upstream_commit=jira_commit_text)
 
-            fields = {
-                "project": {"key": f"{self.jira_project}"},
-                "issuetype": {"name": "Bug"},
-                "versions": [{"name": self.jira_target_version}],  # Affects Version/s
-                "components": [{"name": potential_component}],
-                "security": {"id": "11697"},  # Restrict to Red Hat Employee
-                "summary": summary,
-                "description": description
-            }
+        fields = {
+            "project": {"key": f"{self.jira_project}"},
+            "issuetype": {"name": "Bug"},
+            "versions": [{"name": self.jira_target_version}],  # Affects Version/s
+            "components": [{"name": potential_component}],
+            "security": {"id": "11697"},  # Restrict to Red Hat Employee
+            "summary": summary,
+            "description": description
+        }
 
-            # Get the latest OPEN tickets (if any) for the component
-            # Find if there is already a "OPEN" ticket for this component.
-            # A ticket is said to be "OPEN" if status <= 'Assigned'.
-            # If we detect a net-new security issue, we should open a new ticket instead of updating the one
-            # that is in the process of being fixed.
-            open_issues = self.get_jira_issues(summary, JiraStatus.OPEN)
+        # Get the latest OPEN tickets (if any) for the component
+        # Find if there is already a "OPEN" ticket for this component.
+        # A ticket is said to be "OPEN" if status <= 'Assigned'.
+        # If we detect a net-new security issue, we should open a new ticket instead of updating the one
+        # that is in the process of being fixed.
+        open_issues = self.get_jira_issues(summary, JiraStatus.OPEN)
 
-            if len(open_issues) == 0:
-                # Check if there are any closed tickets
+        if len(open_issues) == 0:
+            # Check if there are any closed tickets
 
-                closed_issues = self.get_jira_issues(summary, JiraStatus.CLOSED)
+            closed_issues = self.get_jira_issues(summary, JiraStatus.CLOSED)
 
-                if len(closed_issues) == 0:
-                    # This is the first time we are raising a ticket for this component
-                    # Create a new JIRA ticket
-                    if not self.dry_run:
-                        _: Issue = self.jira_client.create_issue(fields)
-                    else:
-                        self.runtime.logger.info(f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
-                                                 f"JIRA project with fields {fields}")
-                        continue
-
-                # There are closed issues.
-                try:
-                    previous_ticket = closed_issues.pop()  # Returned in LIFO (last-in, first-out) order.
-                except IndexError:
-                    # If it's an empty list, pop will fail
-                    self.runtime.logger.info(f"No previous ticket exists for NVR: {nvr}")
-                    continue
-
-                # Check if the current NVR is in the ticket description
-                if nvr in previous_ticket.fields.description:
-                    # Looks like it's the same NVR
-                    continue
-
-                # Not the same NVR
-                # Pass the description from the previous NVR to be processed
-                self.runtime.logger.info("Retrieving OSH task ID and NVR, from the previous ticket: "
-                                         f"{previous_ticket.key}")
-                previous_task_id, previous_nvr = self.get_scan_id_from_ticket(
-                    description=previous_ticket.fields.description)
-
-                # We should always be able to retrieve the scan ID from the ticket
-                assert previous_task_id is not None
-                assert previous_nvr is not None
-
-                if previous_task_id == task_id:
-                    # It's the same task
-                    continue
-
-                # Check the diff
-                if not self.is_latest_scan_different_from_previous(latest_scan_id=task_id,
-                                                                   latest_scan_nvr=nvr,
-                                                                   previous_scan_id=previous_task_id,
-                                                                   previous_scan_nvr=previous_nvr):
-                    # No diff
-                    continue
-
-                # There is a diff
-                # Since it's different, raise a ticket and link the old ticket to the new one
+            if len(closed_issues) == 0:
+                # This is the first time we are raising a ticket for this component
+                # Create a new JIRA ticket
                 if not self.dry_run:
-                    issue: Issue = self.jira_client.create_issue(fields)
-                    self.runtime.logger.info(f"Created new issue: {issue.key}")
-
-                    # Create a "Relates to" link to the previously closed ticket, if it exists
-                    self.jira_client.create_issue_link(
-                        type="Related",
-                        inwardIssue=previous_ticket.key,
-                        outwardIssue=issue.key,
-                    )
-
-                    self.runtime.logger.info(f"Linked {previous_ticket.key} to {issue.key}")
+                    _: Issue = self.jira_client.create_issue(fields)
                 else:
                     self.runtime.logger.info(f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
                                              f"JIRA project with fields {fields}")
-                    if previous_ticket:
-                        self.runtime.logger.info(f"Would have linked {previous_ticket.key} to the issue")
-                    continue
+                    return
 
-            elif len(open_issues) == 1:
-                issue = open_issues.pop()
-                self.runtime.logger.info(f"A {self.jira_project} ticket already exists: {issue.key}")
+            # There are closed issues.
+            try:
+                previous_ticket = closed_issues.pop()  # Returned in LIFO (last-in, first-out) order.
+            except IndexError:
+                # If it's an empty list, pop will fail
+                self.runtime.logger.info(f"No previous ticket exists for NVR: {nvr}")
+                return
 
-                # Check if the current NVR is in the ticket description
-                if nvr in issue.fields.description:
-                    # Looks like it's the same NVR
-                    continue
+            # Check if the current NVR is in the ticket description
+            if nvr in previous_ticket.fields.description:
+                # Looks like it's the same NVR
+                return
 
-                if not self.dry_run:
-                    # Keep notify as False since this description will constantly be updated everytime there's a
-                    # new build
-                    issue.update(fields={"description": fields["description"]}, notify=False)
-                    self.runtime.logger.info(f"The fields of {issue.key} has been updated to {fields}")
-                else:
-                    self.runtime.logger.info(f"[DRY RUN]: Would have updated {issue.key} with new description: "
-                                             f"{fields['description']}")
+            # Not the same NVR
+            # Pass the description from the previous NVR to be processed
+            self.runtime.logger.info("Retrieving OSH task ID and NVR, from the previous ticket: "
+                                     f"{previous_ticket.key}")
+            previous_task_id, previous_nvr = self.get_scan_id_from_ticket(
+                description=previous_ticket.fields.description)
 
+            # We should always be able to retrieve the scan ID from the ticket
+            assert previous_task_id is not None
+            assert previous_nvr is not None
+
+            if previous_task_id == task_id:
+                # It's the same task
+                return
+
+            # Check the diff
+            if not self.is_latest_scan_different_from_previous(latest_scan_id=task_id,
+                                                               latest_scan_nvr=nvr,
+                                                               previous_scan_id=previous_task_id,
+                                                               previous_scan_nvr=previous_nvr):
+                # No diff
+                return
+
+            # There is a diff
+            # Since it's different, raise a ticket and link the old ticket to the new one
+            if not self.dry_run:
+                issue: Issue = self.jira_client.create_issue(fields)
+                self.runtime.logger.info(f"Created new issue: {issue.key}")
+
+                # Create a "Relates to" link to the previously closed ticket, if it exists
+                self.jira_client.create_issue_link(
+                    type="Related",
+                    inwardIssue=previous_ticket.key,
+                    outwardIssue=issue.key,
+                )
+
+                self.runtime.logger.info(f"Linked {previous_ticket.key} to {issue.key}")
             else:
-                self.runtime.logger.error(f"More than one JIRA ticket exists: {open_issues}")
+                self.runtime.logger.info(f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
+                                         f"JIRA project with fields {fields}")
+                if previous_ticket:
+                    self.runtime.logger.info(f"Would have linked {previous_ticket.key} to the issue")
+                return
+
+        elif len(open_issues) == 1:
+            issue = open_issues.pop()
+            self.runtime.logger.info(f"A {self.jira_project} ticket already exists: {issue.key}")
+
+            # Check if the current NVR is in the ticket description
+            if nvr in issue.fields.description:
+                # Looks like it's the same NVR
+                return
+
+            if not self.dry_run:
+                # Keep notify as False since this description will constantly be updated everytime there's a
+                # new build
+                issue.update(fields={"description": fields["description"]}, notify=False)
+                self.runtime.logger.info(f"The fields of {issue.key} has been updated to {fields}")
+            else:
+                self.runtime.logger.info(f"[DRY RUN]: Would have updated {issue.key} with new description: "
+                                         f"{fields['description']}")
+
+        else:
+            self.runtime.logger.error(f"More than one JIRA ticket exists: {open_issues}")
 
     async def ocp_bugs_workflow(self, components: dict):
         # Get components that has successful scans. If no scans, retrigger
@@ -608,7 +610,12 @@ class ScanOshCli:
                 else:
                     self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
 
-        self.create_update_jira_ticket(components_with_issues)
+        for c in components_with_issues:
+            try:
+                self.create_update_jira_ticket(c)
+            except Exception as e:
+                self.runtime.logger.error(f"Error while creating/updating JIRA ticket: {e}")
+                self.unstable = True
 
     def trigger_scans(self, nvrs: list):
         cmds = self.generate_commands(nvrs=nvrs)
@@ -819,6 +826,9 @@ class ScanOshCli:
             return
 
         await self.process_data_for_ocpbugs_workflow()
+
+        if self.unstable:
+            raise Exception("One or more errors occurred during execution. Details in log.")
 
 
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
