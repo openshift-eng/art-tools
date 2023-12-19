@@ -1123,7 +1123,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
 
             yellow_print(f'Upstream dockerfile does not match desired state in {public_repo_url}/blob/{public_branch}/{dockerfile_name}')
 
-            first_commit_line = f"Updating {image_meta.get_component_name()} image to be consistent with ART"
+            first_commit_line = f"Updating {image_meta.get_component_name()} image to be consistent with ART for {runtime.group_config.name}"
             reconcile_url = f'{convert_remote_git_to_https(runtime.gitdata.origin_url)}/tree/{runtime.gitdata.commit_hash}/images/{os.path.basename(image_meta.config_filename)}'
             reconcile_info = f"Reconciling with {reconcile_url}"
 
