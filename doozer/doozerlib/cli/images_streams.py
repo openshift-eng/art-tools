@@ -648,43 +648,24 @@ def prs():
 @pass_runtime
 def prs_list(runtime, as_user, include_master):
     runtime.initialize(clone_distgits=False, clone_source=False)
+    major = runtime.group_config.vars['MAJOR']
+    minor = runtime.group_config.vars['MINOR']
     retdata = {}
-    upstreams = set()
     github_client = Github(os.getenv(constants.GITHUB_TOKEN))
-    total_prs = 0
-    for image_meta in runtime.ordered_image_metas():
-        source_repo_url, source_repo_branch = _get_upstream_source(runtime, image_meta, skip_branch_check=True)
-        if not source_repo_url or 'github.com' not in source_repo_url:
-            runtime.logger.info('Skipping PR check since there is no configured github source URL')
-            continue
-
-        public_repo_url, public_branch = runtime.get_public_upstream(source_repo_url)
-        if not public_branch:
-            public_branch = source_repo_branch
-        _, org, repo_name = split_git_url(public_repo_url)
-        if public_repo_url in upstreams:
-            continue
-
-        runtime.logger.info('Checking open PRs for image %s', image_meta.name)
-        upstreams.add(public_repo_url)
-        rateLimit = github_client.get_rate_limit()
-        if rateLimit.core.remaining < 1000:
-            sleep_time = (rateLimit.core.reset - datetime.datetime.now()).seconds
-            runtime.logger.info('Sleeping for %s seconds', sleep_time)
-            time.sleep(sleep_time)
-
-        public_source_repo = github_client.get_repo(f'{org}/{repo_name}')
-        pulls = public_source_repo.get_pulls(state='open', sort='created')
-        eligible_branches = [source_repo_branch]
-        if include_master:
-            eligible_branches.append('master')
-        for pr in pulls:
-            if pr.user.login == as_user and pr.base.ref in eligible_branches:
-                total_prs += 1
-                for owners_email in image_meta.config['owners']:
-                    retdata.setdefault(owners_email, {}).setdefault(public_repo_url, []).append(dict(pr_url=pr.html_url, created_at=pr.created_at))
+    pr_query = f'org:openshift author:{as_user} type:pr state:open ART in:title'
+    query = f'{pr_query} base:release-{major}.{minor}'
+    if include_master:
+        query = f'{query} OR {pr_query} base:master OR {pr_query} base:main'
+    runtime.logger.info(f'Search with query: {query}')
+    prs = github_client.search_issues(query=query)
+    runtime.logger.info(f'Total PRs: {prs.totalCount}')
+    for pr in prs:
+        current_pr = pr.repository.get_pull(pr.number)
+        branch = current_pr.head.ref  # forked branch name art-consistency-{runtime.group_config.name}-{dgk}
+        if runtime.group_config.name in branch:
+            owners_email = next((image_meta.config['owners'][0] for image_meta in runtime.ordered_image_metas() if image_meta.distgit_key in branch), None)
+            retdata.setdefault(owners_email, {}).setdefault(current_pr.base.repo.html_url, []).append(dict(pr_url=pr.html_url, created_at=pr.created_at))
     print(yaml.dump(retdata, default_flow_style=False, width=10000))
-    runtime.logger.info('Total PRs: %s', total_prs)
 
 
 def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
