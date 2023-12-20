@@ -1,7 +1,5 @@
 import io
 import os
-from time import sleep
-
 import click
 import yaml
 import json
@@ -13,11 +11,10 @@ import re
 from typing import Dict, Set
 
 from github import Github, UnknownObjectException, GithubException, PullRequest
-
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
-
 from dockerfile_parse import DockerfileParser
+
 from doozerlib.model import Model, Missing
 from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
@@ -642,13 +639,19 @@ def prs():
     pass
 
 
-@prs.command('list', short_help='List all open prs for upstream repos (requires GITHUB_TOKEN env var to be set.')
+@prs.command('list', short_help='List all open reconciliation prs for upstream repos (requires GITHUB_TOKEN env var to be set.')
+@click.option('--as', 'as_user', metavar='GITHUB_USERNAME', required=False, default="openshift-bot",
+              help='Github username to check PRs against. Defaults to openshift-bot.')
+@click.option('--include-master', default=False, is_flag=True,
+              help='Also include master branch as base ref when checking for PRs, '
+                   'useful when master is fast forwarded to the release branch.')
 @pass_runtime
-def images_upstreampulls(runtime):
+def prs_list(runtime, as_user, include_master):
     runtime.initialize(clone_distgits=False, clone_source=False)
     retdata = {}
     upstreams = set()
     github_client = Github(os.getenv(constants.GITHUB_TOKEN))
+    total_prs = 0
     for image_meta in runtime.ordered_image_metas():
         source_repo_url, source_repo_branch = _get_upstream_source(runtime, image_meta, skip_branch_check=True)
         if not source_repo_url or 'github.com' not in source_repo_url:
@@ -672,11 +675,16 @@ def images_upstreampulls(runtime):
 
         public_source_repo = github_client.get_repo(f'{org}/{repo_name}')
         pulls = public_source_repo.get_pulls(state='open', sort='created')
+        eligible_branches = [source_repo_branch]
+        if include_master:
+            eligible_branches.append('master')
         for pr in pulls:
-            if pr.user.login == github_client.get_user().login and pr.base.ref == source_repo_branch:
+            if pr.user.login == as_user and pr.base.ref in eligible_branches:
+                total_prs += 1
                 for owners_email in image_meta.config['owners']:
                     retdata.setdefault(owners_email, {}).setdefault(public_repo_url, []).append(dict(pr_url=pr.html_url, created_at=pr.created_at))
     print(yaml.dump(retdata, default_flow_style=False, width=10000))
+    runtime.logger.info('Total PRs: %s', total_prs)
 
 
 def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
