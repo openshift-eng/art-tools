@@ -146,7 +146,7 @@ class BuildSyncPipeline:
         #  All good: delete fail counter
         if self.assembly == 'stream' and not self.runtime.dry_run:
             current_count = await redis.get_value(self.fail_count_name)
-            if current_count > 1:
+            if current_count and current_count > 1:
                 await self.slack_client.say(f"<{self.job_run}|build-sync> succeeded!")
 
             res = await redis.delete_key(self.fail_count_name)
