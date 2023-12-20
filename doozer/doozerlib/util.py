@@ -249,7 +249,11 @@ def what_is_in_master() -> str:
     content = exectools.urlopen_assert(ci_config_url).read()
     ci_config = yaml.safe_load(content)
     # Look for something like: https://github.com/openshift/release/blob/251cb12e913dcde7be7a2b36a211650ed91c45c4/ci-operator/config/openshift/images/openshift-images-master.yaml#L64
-    target_release = ci_config.get('promotion', {}).get('name', None)
+    promotion_to = ci_config.get('promotion', {}).get('to', [])
+    if promotion_to:
+        target_release = promotion_to[0].get('name', None)
+    else:
+        target_release = None
     if not target_release:
         red_print(content)
         raise IOError('Unable to find which openshift release resides in master')
