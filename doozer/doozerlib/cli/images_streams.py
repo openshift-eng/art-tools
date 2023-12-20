@@ -6,6 +6,7 @@ import json
 import hashlib
 import time
 import datetime
+from pathlib import Path
 import random
 import re
 from typing import Dict, Set
@@ -886,6 +887,31 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
     checked_upstream_images = set()  # A PR will not be opened unless the upstream image exists; keep track of ones we have checked.
     errors_raised = False  # If failures are found when opening a PR, won't break the loop but will return an exit code to signal this event
 
+    def update_gomod(desired_ci_build_root_image, repo_dir, image_config):
+        # See if go.mod needs a change
+        golang = ''
+        try:
+            image_info = json.loads(exectools.cmd_assert(f'oc image info -o json {desired_ci_build_root_image}')[0])
+        except (KeyError, ChildProcessError):
+            logger.exception(f'Did not manage to look up {desired_ci_build_root_image}. Continuing')
+            return
+
+        for env in image_info.get('config', {}).get('config', {}).get('Env', []):
+            key, val = env.split(sep='=', maxsplit=1)
+            if key == 'VERSION' and re.match(r'^[0-9]+\.[0-9]+$', val):
+                golang = val
+
+        if not golang:
+            return
+
+        gomods = [Path(repo_dir, f'{p}/go.mod') for p in image_config.cachito.packages.gomod]
+        if not gomods:
+            gomods = [Path(repo_dir, 'go.mod')]
+        for gomod in gomods:
+            if gomod.is_file():
+                exectools.cmd_assert(f'go mod edit -go={golang} {gomod}')
+                exectools.cmd_assert(f'git add --force {gomod}')
+
     for image_meta in runtime.ordered_image_metas():
         dgk = image_meta.distgit_key
         logger = image_meta.logger
@@ -949,6 +975,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
         logger.info(f'Found desired FROM state of: {desired_parents} with digest: {desired_parent_digest}')
 
         desired_ci_build_root_coordinate = None
+        desired_ci_build_root_image = ''
         if streams_pr_config.ci_build_root is not Missing:
             desired_ci_build_root_image = resolve_upstream_from(runtime, streams_pr_config.ci_build_root)
             check_if_upstream_image_exists(desired_ci_build_root_image)
@@ -1173,6 +1200,9 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                     yaml.safe_dump(ci_operator_config, config_file, default_flow_style=False)
 
                 exectools.cmd_assert(f'git add -f {str(ci_operator_config_path)}')
+
+                if desired_ci_build_root_image and 'golang' in desired_ci_build_root_image:
+                    update_gomod(desired_ci_build_root_image, Dir.getpath(), image_meta.config)
 
             desired_df_digest = compute_dockerfile_digest(df_path)
 
