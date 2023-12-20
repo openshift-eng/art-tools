@@ -1202,7 +1202,13 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                 exectools.cmd_assert(f'git add -f {str(ci_operator_config_path)}')
 
                 if desired_ci_build_root_image and 'golang' in desired_ci_build_root_image:
-                    update_gomod(desired_ci_build_root_image, Dir.getpath(), image_meta.config)
+                    try:
+                        # Only potentially update go.mod if there is already a diff. No need to open a PR
+                        # to fix this specifically, but if there is one open for other reasons, then take
+                        # this into account.
+                        exectools.cmd_assert('git diff --exit-code --quiet')
+                    except ChildProcessError:
+                        update_gomod(desired_ci_build_root_image, Dir.getpath(), image_meta.config)
 
             desired_df_digest = compute_dockerfile_digest(df_path)
 
