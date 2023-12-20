@@ -24,7 +24,7 @@ from doozerlib.util import get_docker_config_json, green_print, \
     yellow_print, \
     what_is_in_master, extract_version_fields
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
-
+from pyartcd import jenkins
 
 transform_rhel_7_base_repos = 'rhel-7/base-repos'
 transform_rhel_8_base_repos = 'rhel-8/base-repos'
@@ -1354,6 +1354,10 @@ If you have any questions about this pull request, please reach out to `@release
                     pr_title = f'Bug {bug}: {pr_title}'
                 try:
                     new_pr = public_source_repo.create_pull(title=pr_title, body=pr_body, base=public_branch, head=fork_branch_head, draft=draft_prs)
+                    build_url = jenkins.get_build_url()
+                    if build_url:
+                        new_pr.create_comment(f"Created by job run {build_url}")
+
                 except GithubException as ge:
                     if 'already exists' in json.dumps(ge.data):
                         # In one execution to date, get_pulls did not find the open PR and the code repeatedly hit this
