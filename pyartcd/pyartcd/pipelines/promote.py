@@ -22,7 +22,7 @@ from tenacity import (RetryCallState, RetryError, retry,
                       stop_after_attempt, wait_fixed)
 
 from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, \
-                                   go_suffix_for_arch, go_arch_for_brew_arch
+    go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import assembly
 from pyartcd.locks import Lock
