@@ -1373,7 +1373,7 @@ If you have any questions about this pull request, please reach out to `@release
                     new_pr = public_source_repo.create_pull(title=pr_title, body=pr_body, base=public_branch, head=fork_branch_head, draft=draft_prs)
                     build_url = jenkins.get_build_url()
                     if build_url:
-                        new_pr.create_comment(f"Created by job run {build_url}")
+                        new_pr.create_issue_comment(f"Created by job run {build_url}")
 
                 except GithubException as ge:
                     if 'already exists' in json.dumps(ge.data):
