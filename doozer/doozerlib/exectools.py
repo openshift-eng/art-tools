@@ -16,16 +16,16 @@ import threading
 import platform
 import sys
 from multiprocessing.pool import ThreadPool, MapResult
-from typing import Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Dict, List, Optional, Tuple, Union
 import urllib
 import errno
 
 from fcntl import fcntl, F_GETFL, F_SETFL
 from os import O_NONBLOCK, read
 
+from artcommonlib import assertion
 from . import logutil
 from . import pushd
-from . import assertion
 from .exceptions import WrapException
 from .util import green_print, yellow_print, timer
 
