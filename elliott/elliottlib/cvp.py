@@ -12,10 +12,11 @@ from aiohttp.client_exceptions import (ClientResponseError,
 from tenacity import (before_sleep_log, retry, retry_if_exception_type,
                       stop_after_attempt, wait_exponential)
 
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from elliottlib.exectools import limit_concurrency
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.resultsdb import ResultsDBAPI
-from elliottlib.util import all_same, brew_arch_for_go_arch, parse_nvr
+from elliottlib.util import all_same, parse_nvr
 
 
 class CVPInspector:

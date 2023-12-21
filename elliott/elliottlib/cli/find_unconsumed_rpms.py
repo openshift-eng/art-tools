@@ -1,8 +1,9 @@
-
 import asyncio
 from typing import Dict, List, Optional
 import click
-from elliottlib import brew, exectools, rhcos, util
+
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from elliottlib import brew, exectools, rhcos
 from elliottlib.assembly import assembly_rhcos_config, AssemblyTypes, assembly_type
 from elliottlib.build_finder import BuildFinder
 
@@ -63,7 +64,7 @@ class FindUnconsumedRpms:
                 assembly_rhcos_arch_pullspec = rhcos_config[container_conf.name].images[brew_arch]
                 if assembly_rhcos_arch_pullspec:
                     rhcos_build_id, arch = rhcos.get_build_from_pullspec(assembly_rhcos_arch_pullspec)
-                    if util.brew_arch_for_go_arch(arch) != brew_arch:
+                    if brew_arch_for_go_arch(arch) != brew_arch:
                         raise ValueError(f"Pullspec {assembly_rhcos_arch_pullspec} is not {brew_arch}")
                     rhcos_build_ids[brew_arch] = rhcos_build_id
                     continue

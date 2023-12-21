@@ -13,3 +13,21 @@ class TestArchUtil(unittest.TestCase):
         }
         for arch, suffix in expectations.items():
             self.assertEqual(arch_util.brew_suffix_for_arch(arch), suffix)
+
+    def test_brew_arch_for_go_arch(self):
+        expectations = {
+            "x86_64": "amd64",
+            "s390x": "s390x",
+            "ppc64le": "ppc64le",
+            "aarch64": "arm64",
+            "multi": "multi"
+        }
+
+        for brew_arch, go_arch in expectations.items():
+            self.assertEqual(arch_util.brew_arch_for_go_arch(go_arch), brew_arch)
+
+        for brew_arch in expectations.keys():
+            self.assertEqual(arch_util.brew_arch_for_go_arch(brew_arch), brew_arch)
+
+        with self.assertRaises(Exception):
+            self.assertEqual(arch_util.brew_arch_for_go_arch('wrong'), 'bogus')

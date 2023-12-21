@@ -1,4 +1,6 @@
 from typing import Any, List, Dict, Optional, cast
+
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib.plashet import PlashetBuilder
 
 from koji import ClientSession
@@ -484,7 +486,7 @@ class AssemblyInspector:
                  in the app.ci imagestream for ART's release/arch (e.g. ocp-s390x:is/4.7-art-latest-s390x).
         """
         runtime = self.runtime
-        brew_arch = util.brew_arch_for_go_arch(arch)
+        brew_arch = brew_arch_for_go_arch(arch)
         build_id = None
         runtime.logger.info(f"Getting latest RHCOS source for {brew_arch}...")
 

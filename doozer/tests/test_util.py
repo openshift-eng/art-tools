@@ -1,5 +1,6 @@
 import unittest
 
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib import util
 from doozerlib.model import Model
 
@@ -79,7 +80,7 @@ class TestUtil(unittest.TestCase):
         with self.assertRaises(Exception):
             util.go_arch_for_brew_arch("bogus")
         with self.assertRaises(Exception):
-            util.brew_arch_for_go_arch("bogus")
+            brew_arch_for_go_arch("bogus")
 
     def test_find_latest_builds(self):
         builds = [

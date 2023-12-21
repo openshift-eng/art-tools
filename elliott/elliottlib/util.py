@@ -602,14 +602,6 @@ def go_arch_for_brew_arch(brew_arch: str) -> str:
     raise Exception(f"no such brew arch '{brew_arch}' - cannot translate to golang arch")
 
 
-def brew_arch_for_go_arch(go_arch: str) -> str:
-    if go_arch in brew_arches:
-        return go_arch  # allow to already be a brew arch, just keep same
-    if go_arch in go_arches:
-        return brew_arches[go_arches.index(go_arch)]
-    raise Exception(f"no such golang arch '{go_arch}' - cannot translate to brew arch")
-
-
 # imagestreams and such often began without consideration for multi-arch and then
 # added a suffix everywhere to accommodate arches (but kept the legacy location for x86).
 def go_suffix_for_arch(arch: str) -> str:

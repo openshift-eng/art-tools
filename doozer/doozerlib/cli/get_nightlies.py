@@ -5,6 +5,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 import aiohttp
 import click
 
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib import constants, exectools, logutil, util
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.model import Model
@@ -146,7 +147,7 @@ def determine_arch_list(runtime: Runtime, exclude_arches: Set[str]) -> Set[str]:
     #     available_arches.add("multi")
 
     try:
-        exclude_arches = set(util.brew_arch_for_go_arch(arch) for arch in exclude_arches)
+        exclude_arches = set(brew_arch_for_go_arch(arch) for arch in exclude_arches)
     except Exception as ex:
         raise ValueError(f"invalid --exclude-arch: {ex}")
 

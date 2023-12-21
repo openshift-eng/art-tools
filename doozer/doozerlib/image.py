@@ -8,6 +8,7 @@ from typing import (Any, Awaitable, Dict, List, Optional, Set, Tuple, Union,
 from copy import deepcopy
 
 import doozerlib
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib import brew, coverity, exectools
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import pull_image
@@ -16,8 +17,7 @@ from doozerlib.model import Missing, Model
 from doozerlib.pushd import Dir
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.rpm_utils import parse_nvr, to_nevra
-from doozerlib.util import (brew_arch_for_go_arch, go_arch_for_brew_arch,
-                            isolate_el_version_in_release)
+from doozerlib.util import (go_arch_for_brew_arch, isolate_el_version_in_release)
 
 
 class ImageMetadata(Metadata):

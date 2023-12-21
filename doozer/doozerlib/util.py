@@ -19,6 +19,7 @@ import click
 import semver
 import yaml
 
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib.model import Missing, Model
 
 try:
@@ -483,14 +484,6 @@ def go_arch_for_brew_arch(brew_arch: str) -> str:
     if brew_arch in brew_arches:
         return go_arches[brew_arches.index(brew_arch)]
     raise Exception(f"no such brew arch '{brew_arch}' - cannot translate to golang arch")
-
-
-def brew_arch_for_go_arch(go_arch: str) -> str:
-    if go_arch in brew_arches:
-        return go_arch  # allow to already be a brew arch, just keep same
-    if go_arch in go_arches:
-        return brew_arches[go_arches.index(go_arch)]
-    raise Exception(f"no such golang arch '{go_arch}' - cannot translate to brew arch")
 
 
 def go_suffix_for_arch(arch: str, is_private: bool = False) -> str:

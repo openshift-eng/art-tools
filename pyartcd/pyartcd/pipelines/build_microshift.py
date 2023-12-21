@@ -11,9 +11,10 @@ from tempfile import TemporaryDirectory
 from typing import Dict, Iterable, List, Optional, Tuple, cast
 
 import click
+
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib.assembly import AssemblyTypes
-from doozerlib.util import (brew_arch_for_go_arch,
-                            isolate_nightly_name_components)
+from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
 from semver import VersionInfo

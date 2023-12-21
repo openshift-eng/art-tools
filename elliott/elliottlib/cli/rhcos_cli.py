@@ -1,5 +1,7 @@
 import click
 import json
+
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util, exectools
 from artcommonlib.rhcos import get_primary_container_name
@@ -138,7 +140,7 @@ def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
     if not build_id:
         Exception('Cannot find build_id')
 
-    arch = util.brew_arch_for_go_arch(arch)
+    arch = brew_arch_for_go_arch(arch)
     util.green_print(f'Build: {build_id} Arch: {arch}')
     nvrs = rhcos.get_rpm_nvrs(runtime, build_id, version, arch)
     if not nvrs:

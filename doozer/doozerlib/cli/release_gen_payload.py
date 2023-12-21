@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 
 import aiofiles
 import click
+
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib import rpm_utils
 import yaml
 from artcommonlib import rhcos
@@ -27,7 +29,7 @@ from doozerlib.image import ImageMetadata, BrewBuildImageInspector, ArchiveImage
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async
-from doozerlib.util import red_print, go_suffix_for_arch, brew_arch_for_go_arch, isolate_nightly_name_components, \
+from doozerlib.util import red_print, go_suffix_for_arch, isolate_nightly_name_components, \
     go_arch_for_brew_arch
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.assembly import AssemblyTypes, assembly_basis, AssemblyIssue, AssemblyIssueCode

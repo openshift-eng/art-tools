@@ -6,11 +6,12 @@ import yaml
 import click
 import koji
 from errata_tool import Erratum
+
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB
 from pyartcd import constants, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from doozerlib.util import brew_arch_for_go_arch
 
 
 class OperatorSDKPipeline:
