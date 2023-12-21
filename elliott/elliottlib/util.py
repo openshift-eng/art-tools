@@ -587,21 +587,6 @@ def pretty_print_nvrs_go(go_nvr_map):
             print(pretty_nvr)
 
 
-# some of our systems refer to golang's architecture nomenclature; translate between that and brew arches
-brew_arches = ["x86_64", "s390x", "ppc64le", "aarch64"]
-brew_arch_suffixes = ["", "-s390x", "-ppc64le", "-aarch64"]
-go_arches = ["amd64", "s390x", "ppc64le", "arm64"]
-go_arch_suffixes = ["", "-s390x", "-ppc64le", "-arm64"]
-
-
-def go_arch_for_brew_arch(brew_arch: str) -> str:
-    if brew_arch in go_arches:
-        return brew_arch   # allow to already be a go arch, just keep same
-    if brew_arch in brew_arches:
-        return go_arches[brew_arches.index(brew_arch)]
-    raise Exception(f"no such brew arch '{brew_arch}' - cannot translate to golang arch")
-
-
 def chunk(a_sequence: Sequence[Any], chunk_size: int) -> List[Any]:
     for i in range(0, len(a_sequence), chunk_size):
         yield a_sequence[i:i + chunk_size]

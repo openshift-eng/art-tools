@@ -1,6 +1,6 @@
 import unittest
 
-from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from doozerlib import util
 from doozerlib.model import Model
 
@@ -68,7 +68,7 @@ class TestUtil(unittest.TestCase):
 
     def test_bogus_arch_xlate(self):
         with self.assertRaises(Exception):
-            util.go_arch_for_brew_arch("bogus")
+            go_arch_for_brew_arch("bogus")
         with self.assertRaises(Exception):
             brew_arch_for_go_arch("bogus")
 
