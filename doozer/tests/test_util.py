@@ -75,16 +75,6 @@ class TestUtil(unittest.TestCase):
         for arch, suffix in expectations.items():
             self.assertEqual(util.go_suffix_for_arch(arch), suffix)
 
-    def test_brew_arch_suffixes(self):
-        expectations = {
-            "x86_64": "",
-            "amd64": "",
-            "aarch64": "-aarch64",
-            "arm64": "-aarch64"
-        }
-        for arch, suffix in expectations.items():
-            self.assertEqual(util.brew_suffix_for_arch(arch), suffix)
-
     def test_bogus_arch_xlate(self):
         with self.assertRaises(Exception):
             util.go_arch_for_brew_arch("bogus")

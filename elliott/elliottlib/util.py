@@ -617,11 +617,6 @@ def go_suffix_for_arch(arch: str) -> str:
     return go_arch_suffixes[go_arches.index(arch)]
 
 
-def brew_suffix_for_arch(arch: str) -> str:
-    arch = brew_arch_for_go_arch(arch)  # translate either incoming arch style
-    return brew_arch_suffixes[brew_arches.index(arch)]
-
-
 def chunk(a_sequence: Sequence[Any], chunk_size: int) -> List[Any]:
     for i in range(0, len(a_sequence), chunk_size):
         yield a_sequence[i:i + chunk_size]

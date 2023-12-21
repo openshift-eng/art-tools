@@ -511,11 +511,6 @@ def go_suffix_for_arch(arch: str, is_private: bool = False) -> str:
     return suffix
 
 
-def brew_suffix_for_arch(arch: str) -> str:
-    arch = brew_arch_for_go_arch(arch)  # translate either incoming arch style
-    return brew_arch_suffixes[brew_arches.index(arch)]
-
-
 def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[Dict]:
     """ Find the latest build specific to the assembly in a list of builds belonging to the same component and brew tag
     :param builds: a list of build dicts sorted by tagging event in descending order

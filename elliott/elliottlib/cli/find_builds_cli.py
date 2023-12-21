@@ -9,11 +9,10 @@ import koji
 import requests
 from errata_tool import ErrataException
 
-import elliottlib
-from elliottlib import Runtime, brew, constants, errata, logutil
+from artcommonlib.rhcos import get_container_configs
+from elliottlib import Runtime, brew, errata, logutil
 from elliottlib import exectools
 from elliottlib.assembly import assembly_metadata_config, assembly_rhcos_config
-from elliottlib.rhcos import get_container_configs
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option, click_coroutine)
