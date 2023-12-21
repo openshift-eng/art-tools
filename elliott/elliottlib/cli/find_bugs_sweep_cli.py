@@ -78,6 +78,10 @@ class FindBugsSweep(FindBugsMode):
 @click.option("--cve-only",
               is_flag=True,
               help="Only find CVE trackers")
+@click.option("--permissive",
+              is_flag=True, default=False,
+              required=False,
+              help="Ignore bugs that are determined to be invalid and continue")
 @click.option("--noop", "--dry-run",
               is_flag=True,
               default=False,
@@ -85,7 +89,7 @@ class FindBugsSweep(FindBugsMode):
 @click.pass_obj
 @click_coroutine
 async def find_bugs_sweep_cli(runtime: Runtime, advisory_id, default_advisory_type, include_status, exclude_status,
-                              report, output, into_default_advisories, brew_event, cve_only, noop):
+                              report, output, into_default_advisories, brew_event, cve_only, permissive, noop):
     """Find OCP bugs and (optional) add them to ADVISORY.
 
  The --group automatically determines the correct target-releases to search
@@ -130,7 +134,10 @@ advisory with the --add option.
     for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
         try:
             bugs.extend(await find_and_attach_bugs(runtime, advisory_id, default_advisory_type, major_version, find_bugs_obj,
-                        output, brew_event, noop, count_advisory_attach_flags, b))
+                        output, brew_event,
+                        noop=noop, permissive=permissive,
+                        count_advisory_attach_flags=count_advisory_attach_flags,
+                        bug_tracker=b))
         except Exception as e:
             errors.append(e)
             logger.error(traceback.format_exc())
@@ -199,7 +206,8 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
 
 
 async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_type, major_version,
-                               find_bugs_obj, output, brew_event, noop, count_advisory_attach_flags, bug_tracker):
+                               find_bugs_obj, output, brew_event, noop, permissive, count_advisory_attach_flags,
+                               bug_tracker):
     if output == 'text':
         statuses = sorted(find_bugs_obj.status)
         tr = bug_tracker.target_release()
@@ -210,6 +218,7 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     bugs_by_type = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
+                                           permissive=permissive,
                                            major_version=major_version)
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
@@ -251,7 +260,7 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, major_version: int = 4):
+                            permitted_bug_ids, permissive=False, major_version: int = 4):
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -289,7 +298,11 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     bugs_by_type["image"] = remaining
 
     if fake_trackers:
-        raise ElliottFatalError(f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not. Please fix.")
+        message = f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not."
+        if permissive:
+            logger.warning(f"{message} Ignoring them.")
+        else:
+            raise ElliottFatalError(f"{message} Please fix.")
 
     if not tracker_bugs:
         return bugs_by_type
@@ -341,19 +354,21 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         logger.warning('No attached builds found in advisories for tracker bugs (bug, package):'
                        f' {not_found_with_component}.')
 
-        not_permitted = not_found
+        still_not_found = not_found
         if permitted_bug_ids:
             logger.warning('The following bugs will be attached because they are '
                            f'explicitly included in the assembly config: {permitted_bug_ids}')
-            not_permitted = {b for b in not_found if b.id not in permitted_bug_ids}
+            still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
-        if not_permitted:
-            not_permitted_with_component = [(b.id, b.whiteboard_component) for b in not_found]
+        if still_not_found:
+            still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
             message = ('No attached builds found in advisories for tracker bugs (bug, package): '
-                       f'{not_permitted_with_component}. Either attach builds or explicitly include/exclude the bug '
+                       f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
                        f'ids in the assembly definition')
-            logger.error(message)
-            raise ValueError(message)
+            if permissive:
+                logger.warning(f"{message} Ignoring them for now.")
+            else:
+                raise ValueError(message)
 
     return bugs_by_type
 

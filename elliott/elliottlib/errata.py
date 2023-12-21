@@ -235,9 +235,14 @@ def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, creat
 
     boilerplate = et_data['boilerplates'][boilerplate_name]
 
+    if 'release' in boilerplate:
+        release = boilerplate['release']
+    else:
+        release = et_data['release']
+
     e = Advisory(
         product=et_data['product'],
-        release=et_data['release'],
+        release=release,
         errata_type=errata_type,
         synopsis=boilerplate['synopsis'],
         topic=boilerplate['topic'],

@@ -21,6 +21,7 @@ class SlackClient:
         self.dry_run = dry_run
         self.as_user = "art-release-bot"
         self.icon_emoji = ":robot_face:"
+        self._thread_ts = None
         self._client = AsyncWebClient(token=token)
 
     def bind_channel(self, channel_or_release: Optional[str]):
@@ -40,6 +41,14 @@ class SlackClient:
             self.channel = f"#art-release-{match[1]}-{match[2]}"
         else:
             raise ValueError(f"Invalid channel_or_release value: {channel_or_release}")
+
+    async def say_in_thread(self, message: str):
+        if not self._thread_ts:
+            response = await self.say(message)
+            self._thread_ts = response.data["ts"]
+            return self._thread_ts
+        else:
+            return await self.say(message, self._thread_ts)
 
     async def say(self, message: str, thread_ts: Optional[str] = None):
         attachments = []
