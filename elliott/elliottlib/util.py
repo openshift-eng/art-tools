@@ -1,3 +1,5 @@
+import asyncio
+import json
 import datetime, re, click
 from collections import deque
 from itertools import chain
@@ -6,7 +8,7 @@ from multiprocessing.dummy import Pool as ThreadPool
 from sys import getsizeof, stderr
 from typing import Dict, Iterable, List, Optional, Tuple, Sequence, Any
 
-from elliottlib import brew
+from elliottlib import brew, exectools
 from elliottlib.exceptions import BrewBuildException
 
 from errata_tool import Erratum
@@ -578,13 +580,32 @@ def get_golang_rpm_nvrs(nvrs, logger):
     return go_nvr_map
 
 
-def pretty_print_nvrs_go(go_nvr_map):
+def pretty_print_nvrs_go(go_nvr_map, report=False):
     for go_version in sorted(go_nvr_map.keys()):
         nvrs = go_nvr_map[go_version]
-        green_print(f'Following nvrs are built with {go_version}:')
-        for nvr in sorted(nvrs):
-            pretty_nvr = '-'.join(nvr)
-            print(pretty_nvr)
+        if report:
+            green_print(f'Builds built with {go_version}: {len(nvrs)}')
+        else:
+            green_print(f'* Following nvrs ({len(nvrs)}) are built with {go_version}:')
+            for nvr in sorted(nvrs):
+                pretty_nvr = '-'.join(nvr)
+                print(pretty_nvr)
+
+
+def pretty_print_nvrs_go_json(go_nvr_map, report=False):
+    out = []
+    for go_nvr in go_nvr_map.keys():
+        if report:
+            out.append({"builder_nvr": go_nvr, "building_count": len(go_nvr_map[go_nvr])})
+        else:
+            nvrs = ['-'.join(n) for n in sorted(go_nvr_map[go_nvr])]
+            out.append({"builder_nvr": go_nvr, "building_nvrs": nvrs})
+    # sort
+    if report:
+        out = sorted(out, key=lambda x: x['building_count'], reverse=True)
+    else:
+        out = sorted(out, key=lambda x: len(x['building_nvrs']), reverse=True)
+    print(json.dumps(out, indent=4))
 
 
 # some of our systems refer to golang's architecture nomenclature; translate between that and brew arches
@@ -632,3 +653,52 @@ def all_same(items: Iterable[Any]):
     it = iter(items)
     first = next(it, None)
     return all(x == first for x in it)
+
+
+async def get_nvrs_from_payload(pullspec, rhcos_images, logger):
+    all_payload_nvrs = {}
+    logger.info("Fetching release info...")
+    release_export_cmd = f'oc adm release info {pullspec} -o json'
+
+    rc, stdout, stderr = exectools.cmd_gather(release_export_cmd)
+    if rc != 0:
+        # Probably no point in continuing.. can't contact brew?
+        msg = f"Unable to run oc release info: out={stdout}  ; err={stderr}"
+        logger.error(msg)
+        raise RuntimeError(msg)
+
+    payload_json = json.loads(stdout)
+    logger.info("Looping over payload images...")
+    logger.info(f"{len(payload_json['references']['spec']['tags'])} images to check")
+    cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
+            payload_json['references']['spec']['tags']]
+
+    logger.info("Querying image infos...")
+    cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
+
+    for image, cmd, cmd_result in zip(payload_json['references']['spec']['tags'], cmds, cmd_results):
+        image_name = image['name']
+        rc, stdout, stderr = cmd_result
+        if rc != 0:
+            # Probably no point in continuing.. can't contact brew?
+            msg = f"Unable to run oc image info: cmd={cmd!r}, out={stdout}  ; err={stderr}"
+            logger.error(msg)
+            raise RuntimeError(msg)
+
+        image_info = json.loads(stdout)
+        labels = image_info['config']['config']['Labels']
+
+        # RHCOS images are not built in brew, so skip them
+        if image_name in rhcos_images:
+            logger.info(f"Skipping rhcos image {image_name}")
+            continue
+
+        if not labels or any(i not in labels for i in ['version', 'release', 'com.redhat.component']):
+            msg = f"For image {image_name} expected labels don't exist"
+            logger.error(msg)
+            raise ValueError(msg)
+        component = labels['com.redhat.component']
+        v = labels['version']
+        r = labels['release']
+        all_payload_nvrs[component] = (v, r)
+    return all_payload_nvrs
