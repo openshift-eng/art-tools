@@ -1187,7 +1187,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                         # Only potentially update go.mod if there is already a diff. No need to open a PR
                         # to fix this specifically, but if there is one open for other reasons, then take
                         # this into account.
-                        exectools.cmd_assert('git diff --exit-code --quiet')
+                        exectools.cmd_assert('git diff --cached --exit-code --quiet')
                     except ChildProcessError:
                         update_gomod(desired_ci_build_root_image, Dir.getpath(), image_meta.config)
 
