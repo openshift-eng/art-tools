@@ -8,6 +8,7 @@ import sys
 from typing import Dict, List, Optional, Set, Tuple
 import yaml
 
+from artcommonlib.arch_util import go_suffix_for_arch
 from doozerlib import util
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.cli import cli, pass_runtime, click_coroutine
@@ -189,7 +190,7 @@ class GenAssemblyCli:
             if major_minor != self.runtime.get_minor_version():
                 self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
-            rc_suffix = util.go_suffix_for_arch(brew_cpu_arch, priv)
+            rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
             nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/release{rc_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(

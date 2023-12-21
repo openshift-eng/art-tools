@@ -1,7 +1,7 @@
 import click
 import json
 
-from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util, exectools
 from artcommonlib.rhcos import get_primary_container_name
@@ -105,7 +105,7 @@ def get_pullspec(release, arch):
 
 
 def get_nightly_pullspec(release, arch):
-    suffix = util.go_suffix_for_arch(arch)
+    suffix = go_suffix_for_arch(arch)
     return f'registry.ci.openshift.org/ocp{suffix}/release{suffix}:{release}'
 
 

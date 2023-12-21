@@ -5,7 +5,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 import aiohttp
 import click
 
-from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch
 from doozerlib import constants, exectools, logutil, util
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.model import Model
@@ -239,7 +239,7 @@ def rc_api_url(tag: str, arch: str) -> str:
     @return e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
     """
     arch = util.go_arch_for_brew_arch(arch)
-    arch_suffix = util.go_suffix_for_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch)
     return f"{constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
 

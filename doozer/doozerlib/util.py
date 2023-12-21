@@ -486,24 +486,6 @@ def go_arch_for_brew_arch(brew_arch: str) -> str:
     raise Exception(f"no such brew arch '{brew_arch}' - cannot translate to golang arch")
 
 
-def go_suffix_for_arch(arch: str, is_private: bool = False) -> str:
-    """
-    Imagestreams and namespaces for the release controller indicate
-    a CPU architecture and whether the release is part of the private release controller.
-    using [-<arch>][-priv] as a suffix. This method calculates that suffix
-    based on what arch and privacy you are trying to reach.
-    :param arch: The CPU architecture
-    :param is_private: True if you are looking for a private release controller
-    :return: A suffix to use when address release controller imagestreams/namespaces.
-             x86 arch is never included in the suffix (i.e. '' is used).
-    """
-    arch = go_arch_for_brew_arch(arch)  # translate either incoming arch style
-    suffix = go_arch_suffixes[go_arches.index(arch)]
-    if is_private:
-        suffix += '-priv'
-    return suffix
-
-
 def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[Dict]:
     """ Find the latest build specific to the assembly in a list of builds belonging to the same component and brew tag
     :param builds: a list of build dicts sorted by tagging event in descending order

@@ -9,6 +9,7 @@ from opentelemetry import trace
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import rhcos
+from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.util import split_git_url
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
@@ -18,7 +19,6 @@ from pyartcd import exectools, constants, redis, locks
 from pyartcd.telemetry import start_as_current_span_async
 from pyartcd.util import branch_arches
 from pyartcd.jenkins import get_build_url
-from doozerlib.util import go_suffix_for_arch
 from ghapi.all import GhApi
 
 

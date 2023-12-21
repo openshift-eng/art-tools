@@ -31,3 +31,17 @@ class TestArchUtil(unittest.TestCase):
 
         with self.assertRaises(Exception):
             self.assertEqual(arch_util.brew_arch_for_go_arch('wrong'), 'bogus')
+
+    def test_go_arch_suffixes(self):
+        expectations = {
+            "x86_64": "",
+            "amd64": "",
+            "aarch64": "-arm64",
+            "arm64": "-arm64"
+        }
+
+        for arch, suffix in expectations.items():
+            self.assertEqual(arch_util.go_suffix_for_arch(arch), suffix)
+
+        for arch, suffix in expectations.items():
+            self.assertEqual(arch_util.go_suffix_for_arch(arch, is_private=True), f'{suffix}-priv')
