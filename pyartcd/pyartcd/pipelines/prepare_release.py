@@ -19,6 +19,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from doozerlib.assembly import AssemblyTypes
 from elliottlib.assembly import assembly_group_config
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
+from elliottlib.errata import get_brew_builds
 from elliottlib.model import Model
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -111,7 +112,6 @@ class PrepareReleasePipeline:
         shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
         shutil.rmtree(self.doozer_working_dir, ignore_errors=True)
 
-        release_config = None
         group_config = await self.load_group_config()
         releases_config = await self.load_releases_config()
         assembly_type = get_assembly_type(releases_config, self.assembly)
@@ -195,21 +195,23 @@ class PrepareReleasePipeline:
         for impetus, advisory in advisories.items():
             if not advisory:
                 continue
-            if impetus == "metadata":
+            elif impetus == "metadata":
                 await self.build_and_attach_bundles(advisory)
-                continue
-            await self.sweep_builds_async(impetus, advisory)
+            elif impetus == "prerelease":
+                await self.build_and_attach_prerelease_bundles(advisory)
+            else:
+                await self.sweep_builds_async(impetus, advisory)
 
-        # bugs should be swept after builds to have validation
-        # for only those bugs to be attached which have corresponding brew builds
-        # attached to the advisory
-        # currently for rpm advisory and cves only
+        # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
-        self.sweep_bugs()
-
-        _LOGGER.info("Processing attached Security Trackers")
-        for _, advisory in advisories.items():
-            self.attach_cve_flaws(advisory)
+        if assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
+            self.sweep_bugs(permissive=True)
+            _LOGGER.info("Skipping flaw processing during pre-releases")
+        else:
+            self.sweep_bugs(permissive=False)
+            _LOGGER.info("Processing attached Security Trackers")
+            for _, advisory in advisories.items():
+                self.attach_cve_flaws(advisory)
 
         # Verify the swept builds match the nightlies
         if self.release_version[0] < 4:
@@ -219,20 +221,34 @@ class PrepareReleasePipeline:
             for _, payload in self.candidate_nightlies.items():
                 self.verify_payload(payload, advisories["image"])
 
-        # Move advisories to QE
-        self._slack_client.bind_channel(self.release_name)
-        for impetus, advisory in advisories.items():
+        # Verify attached operators
+        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
             try:
-                if impetus in ("metadata", "prerelease", "advance"):
-                    # Verify attached operators
-                    await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories["metadata"])
-                self.change_advisory_state(advisory, "QE")
-            except CalledProcessError as ex:
-                _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
+                if 'advance' in advisories:
+                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
+                elif 'prerelease' in advisories:
+                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
+                elif 'metadata' in advisories:
+                    await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories['metadata'])
+            except Exception as ex:
+                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
+                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
 
+        # Verify greenwave tests
+        for impetus, advisory in advisories.items():
             if impetus in ("image", "extras", "metadata", "prerelease", "advance"):
                 if not is_greenwave_all_pass_on_advisory(advisory):
-                    await self._slack_client.say(f"Some greenwave tests failed on https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists")
+                    await self._slack_client.say_in_thread(
+                        "Some greenwave tests failed on "
+                        f"https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists")
+
+        # Move advisories to QE
+        for impetus, advisory in advisories.items():
+            try:
+                self.change_advisory_state(advisory, "QE")
+            except Exception as ex:
+                _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
+                await self._slack_client.say_in_thread(f"Unable to move {impetus} advisory {advisory} to QE. Details in log.")
 
     async def load_releases_config(self) -> Optional[None]:
         repo = self.working_dir / "ocp-build-data-push"
@@ -394,6 +410,7 @@ class PrepareReleasePipeline:
     def sweep_bugs(
         self,
         advisory: Optional[int] = None,
+        permissive: bool = False,
     ):
         cmd = [
             "elliott",
@@ -406,6 +423,8 @@ class PrepareReleasePipeline:
             cmd.append(f"--add={advisory}")
         else:
             cmd.append("--into-default-advisories")
+        if permissive:
+            cmd.append("--permissive")
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
@@ -575,7 +594,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
                     set_blocking_advisory(target_advisory_id, blocking_advisory_id, "SHIPPED_LIVE")
                 except Exception as ex:
                     _LOGGER.warning(f"Unable to set blocking advisories ({expected_blocking}) for {target_advisory_id}: {ex}")
-                    await self._slack_client.say(f"Unable to set blocking advisories ({expected_blocking}) for {target_advisory_id}. Details in log.")
+                    await self._slack_client.say_in_thread(f"Unable to set blocking advisories ({expected_blocking}) for {target_advisory_id}. Details in log.")
 
     def update_release_jira(self, issue: Issue, subtasks: List[Issue], template_vars: Dict[str, int]):
         template_issue_key = self.runtime.config["jira"]["templates"][f"ocp{self.release_version[0]}"]
@@ -616,7 +635,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         return jira_changed
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def build_and_attach_bundles(self, metadata_advisory: int):
+    async def build_and_attach_bundles(self, metadata_advisory: int, force=False):
         _LOGGER.info("Finding OLM bundles (will rebuild if not present)...")
         cmd = [
             "doozer",
@@ -624,6 +643,8 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             "--assembly", self.assembly,
             "olm-bundle:rebase-and-build",
         ]
+        if force:
+            cmd.append("--force")
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
@@ -652,15 +673,27 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
+    async def build_and_attach_prerelease_bundles(self, prerelease_advisory: int):
+        _LOGGER.info("Checking if prerelease advisory is populated (will rebuild if not present)...")
+        advisory_builds = get_brew_builds(prerelease_advisory)
+        if advisory_builds:
+            _LOGGER.info("Prerelease advisory %s already has %s builds attached. Skipping rebuild.",
+                         prerelease_advisory, len(advisory_builds))
+            return
+
+        return await self.build_and_attach_bundles(prerelease_advisory, force=True)
+
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def verify_attached_operators(self, *advisories: List[int]):
+    async def verify_attached_operators(self, *advisories: List[int], gather_dependencies=False):
         cmd = [
             "elliott",
             f"--group={self.group_name}",
             f"--assembly={self.assembly}",
             "verify-attached-operators",
-            "--"
         ]
+        if gather_dependencies:
+            cmd.append("--gather-dependencies")
+        cmd.append("--")
         for advisory in advisories:
             cmd.append(f"{advisory}")
         _LOGGER.info("Running command: %s", cmd)
@@ -690,7 +723,8 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
                           package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool, include_shipped: bool):
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
-    await slack_client.say(f":construction: prepare-release for {name if name else assembly} :construction:")
+    await slack_client.say_in_thread(f":construction: prepare-release for {name if name else assembly} "
+                                     ":construction:")
     try:
         # parse environment variables for credentials
         jira_token = os.environ.get("JIRA_TOKEN")
@@ -711,7 +745,7 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             include_shipped=include_shipped,
         )
         await pipeline.run()
-        await slack_client.say(f":white_check_mark: prepare-release for {name if name else assembly} completes.")
+        await slack_client.say_in_thread(f":white_check_mark: prepare-release for {name if name else assembly} completes.")
     except Exception as e:
-        await slack_client.say(f":warning: prepare-release for {name if name else assembly} has result FAILURE.")
+        await slack_client.say_in_thread(f":warning: prepare-release for {name if name else assembly} has result FAILURE.")
         raise e  # return failed status to jenkins
