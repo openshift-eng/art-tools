@@ -4,7 +4,7 @@ from flexmock import flexmock
 from elliottlib.cli import get_golang_versions_cli
 from elliottlib import errata as erratalib
 from elliottlib import util as utillib
-from elliottlib import rhcos
+from artcommonlib import rhcos
 from elliottlib.cli.common import cli, Runtime
 from click.testing import CliRunner
 
@@ -73,7 +73,7 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
         flexmock(utillib). \
             should_receive("pretty_print_nvrs_go").with_args(go_map, report=False)
 
-        result = runner.invoke(cli, ['go', '--release',
+        result = runner.invoke(cli, ['--group=openshift-4.14', 'go', '--release',
                                      'registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-04-24-145153'])
         self.assertEqual(result.exit_code, 0)
 

@@ -1,6 +1,7 @@
 import click
-import json
-from elliottlib import util, errata, logutil, rhcos
+
+from artcommonlib import rhcos
+from elliottlib import util, errata, logutil
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option)
 from elliottlib.cli.common import click_coroutine
