@@ -19,6 +19,7 @@ import click
 import semver
 import yaml
 
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, GO_ARCHES
 from doozerlib.model import Missing, Model
 
 try:
@@ -364,7 +365,7 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     is_private = ('priv' in components)
     pos = components.index('nightly')
     possible_arch = components[pos + 1]
-    if possible_arch not in go_arches:
+    if possible_arch not in GO_ARCHES:
         go_arch = 'x86_64'  # for historical reasons, amd64 is not included in the release name
     else:
         go_arch = possible_arch
@@ -468,52 +469,6 @@ def total_size(o, handlers=None, verbose=False):
         return s
 
     return sizeof(o)
-
-
-# some of our systems refer to golang's architecture nomenclature; translate between that and brew arches
-brew_arches = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
-brew_arch_suffixes = ["", "-s390x", "-ppc64le", "-aarch64", "-multi"]
-go_arches = ["amd64", "s390x", "ppc64le", "arm64", "multi"]
-go_arch_suffixes = ["", "-s390x", "-ppc64le", "-arm64", "-multi"]
-
-
-def go_arch_for_brew_arch(brew_arch: str) -> str:
-    if brew_arch in go_arches:
-        return brew_arch  # allow to already be a go arch, just keep same
-    if brew_arch in brew_arches:
-        return go_arches[brew_arches.index(brew_arch)]
-    raise Exception(f"no such brew arch '{brew_arch}' - cannot translate to golang arch")
-
-
-def brew_arch_for_go_arch(go_arch: str) -> str:
-    if go_arch in brew_arches:
-        return go_arch  # allow to already be a brew arch, just keep same
-    if go_arch in go_arches:
-        return brew_arches[go_arches.index(go_arch)]
-    raise Exception(f"no such golang arch '{go_arch}' - cannot translate to brew arch")
-
-
-def go_suffix_for_arch(arch: str, is_private: bool = False) -> str:
-    """
-    Imagestreams and namespaces for the release controller indicate
-    a CPU architecture and whether the release is part of the private release controller.
-    using [-<arch>][-priv] as a suffix. This method calculates that suffix
-    based on what arch and privacy you are trying to reach.
-    :param arch: The CPU architecture
-    :param is_private: True if you are looking for a private release controller
-    :return: A suffix to use when address release controller imagestreams/namespaces.
-             x86 arch is never included in the suffix (i.e. '' is used).
-    """
-    arch = go_arch_for_brew_arch(arch)  # translate either incoming arch style
-    suffix = go_arch_suffixes[go_arches.index(arch)]
-    if is_private:
-        suffix += '-priv'
-    return suffix
-
-
-def brew_suffix_for_arch(arch: str) -> str:
-    arch = brew_arch_for_go_arch(arch)  # translate either incoming arch style
-    return brew_arch_suffixes[brew_arches.index(arch)]
 
 
 def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[Dict]:

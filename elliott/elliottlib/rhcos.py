@@ -1,9 +1,10 @@
 import json
 from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
-from elliottlib.model import ListModel
+
+from artcommonlib.arch_util import brew_suffix_for_arch
 from elliottlib import util, exectools, constants
-from artcommonlib.rhcos import get_container_configs, get_primary_container_name
+from artcommonlib.rhcos import get_primary_container_name
 
 
 def release_url(runtime, version, arch="x86_64", private=False):
@@ -28,7 +29,7 @@ def release_url(runtime, version, arch="x86_64", private=False):
     if bucket_url:
         return bucket_url
 
-    bucket_suffix = util.brew_suffix_for_arch(arch)
+    bucket_suffix = brew_suffix_for_arch(arch)
     return f"{constants.RHCOS_RELEASES_BASE_URL}/rhcos-{version}{bucket_suffix}"
 
 

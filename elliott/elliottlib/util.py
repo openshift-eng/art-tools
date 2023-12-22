@@ -608,41 +608,6 @@ def pretty_print_nvrs_go_json(go_nvr_map, report=False):
     print(json.dumps(out, indent=4))
 
 
-# some of our systems refer to golang's architecture nomenclature; translate between that and brew arches
-brew_arches = ["x86_64", "s390x", "ppc64le", "aarch64"]
-brew_arch_suffixes = ["", "-s390x", "-ppc64le", "-aarch64"]
-go_arches = ["amd64", "s390x", "ppc64le", "arm64"]
-go_arch_suffixes = ["", "-s390x", "-ppc64le", "-arm64"]
-
-
-def go_arch_for_brew_arch(brew_arch: str) -> str:
-    if brew_arch in go_arches:
-        return brew_arch   # allow to already be a go arch, just keep same
-    if brew_arch in brew_arches:
-        return go_arches[brew_arches.index(brew_arch)]
-    raise Exception(f"no such brew arch '{brew_arch}' - cannot translate to golang arch")
-
-
-def brew_arch_for_go_arch(go_arch: str) -> str:
-    if go_arch in brew_arches:
-        return go_arch  # allow to already be a brew arch, just keep same
-    if go_arch in go_arches:
-        return brew_arches[go_arches.index(go_arch)]
-    raise Exception(f"no such golang arch '{go_arch}' - cannot translate to brew arch")
-
-
-# imagestreams and such often began without consideration for multi-arch and then
-# added a suffix everywhere to accommodate arches (but kept the legacy location for x86).
-def go_suffix_for_arch(arch: str) -> str:
-    arch = go_arch_for_brew_arch(arch)  # translate either incoming arch style
-    return go_arch_suffixes[go_arches.index(arch)]
-
-
-def brew_suffix_for_arch(arch: str) -> str:
-    arch = brew_arch_for_go_arch(arch)  # translate either incoming arch style
-    return brew_arch_suffixes[brew_arches.index(arch)]
-
-
 def chunk(a_sequence: Sequence[Any], chunk_size: int) -> List[Any]:
     for i in range(0, len(a_sequence), chunk_size):
         yield a_sequence[i:i + chunk_size]

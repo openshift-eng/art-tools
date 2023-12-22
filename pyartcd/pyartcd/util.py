@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Union, Iterable
 
 import yaml
+
+from artcommonlib.arch_util import go_suffix_for_arch
 from doozerlib import assembly, model
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
@@ -668,7 +670,7 @@ def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
             arch = "x86_64"
         if ":" not in nightly:
             # prepend pullspec URL to nightly name
-            arch_suffix = doozerutil.go_suffix_for_arch(arch)
+            arch_suffix = go_suffix_for_arch(arch)
             nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
         arch_nightlies[arch] = nightly
     return arch_nightlies

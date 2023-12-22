@@ -9,18 +9,18 @@ import koji
 import requests
 from errata_tool import ErrataException
 
-import elliottlib
-from elliottlib import Runtime, brew, constants, errata, logutil
+from artcommonlib.arch_util import BREW_ARCHES
+from artcommonlib.rhcos import get_container_configs
+from elliottlib import Runtime, brew, errata, logutil
 from elliottlib import exectools
 from elliottlib.assembly import assembly_metadata_config, assembly_rhcos_config
-from elliottlib.rhcos import get_container_configs
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option, click_coroutine)
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.cli.rhcos_cli import get_build_id_from_rhcos_pullspec
-from elliottlib.util import (ensure_erratatool_auth, brew_arches,
+from elliottlib.util import (ensure_erratatool_auth,
                              get_release_version, green_prefix, green_print,
                              isolate_el_version_in_brew_tag,
                              parallel_results_with_progress, pbar_header, progress_func,
@@ -280,7 +280,7 @@ def ensure_rhcos_file_meta(advisory_id):
         if f['title'] or 'rhcos' not in f['file']['path']:
             continue
 
-        arch = next((a for a in brew_arches if a in f['file']['path']), None)
+        arch = next((a for a in BREW_ARCHES if a in f['file']['path']), None)
         if not arch:
             raise ValueError(f'Unable to determine arch from rhcos file path: {f["file"]["path"]}. Please investigate.')
 

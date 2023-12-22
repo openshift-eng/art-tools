@@ -1,9 +1,9 @@
 import click
 import yaml
 
-from doozerlib import util
+from artcommonlib.arch_util import brew_arch_for_go_arch
 from doozerlib.cli import cli
-from doozerlib.rhcos import RHCOSBuildFinder, RHCOSBuildInspector
+from doozerlib.rhcos import RHCOSBuildFinder
 from artcommonlib.rhcos import get_container_configs, get_container_pullspec
 
 
@@ -19,7 +19,7 @@ def gen_assembly_rhcos(runtime, build_id):
     runtime.initialize(clone_distgits=False)
     rhcos_info = {}
     for arch in runtime.group_config.arches:
-        brew_arch = util.brew_arch_for_go_arch(arch)
+        brew_arch = brew_arch_for_go_arch(arch)
         runtime.logger.info(f"Getting RHCOS pullspecs for build {build_id}-{brew_arch}...")
         for container_conf in get_container_configs(runtime):
             version = runtime.get_minor_version()

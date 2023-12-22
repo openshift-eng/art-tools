@@ -5,6 +5,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 import aiohttp
 import click
 
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
 from doozerlib import constants, exectools, logutil, util
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.model import Model
@@ -146,7 +147,7 @@ def determine_arch_list(runtime: Runtime, exclude_arches: Set[str]) -> Set[str]:
     #     available_arches.add("multi")
 
     try:
-        exclude_arches = set(util.brew_arch_for_go_arch(arch) for arch in exclude_arches)
+        exclude_arches = set(brew_arch_for_go_arch(arch) for arch in exclude_arches)
     except Exception as ex:
         raise ValueError(f"invalid --exclude-arch: {ex}")
 
@@ -237,8 +238,8 @@ def rc_api_url(tag: str, arch: str) -> str:
     @param arch  architecture we are interested in (e.g. "s390x")
     @return e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
     """
-    arch = util.go_arch_for_brew_arch(arch)
-    arch_suffix = util.go_suffix_for_arch(arch)
+    arch = go_arch_for_brew_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch)
     return f"{constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
 

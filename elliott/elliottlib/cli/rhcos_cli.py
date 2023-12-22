@@ -1,5 +1,7 @@
 import click
 import json
+
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BREW_ARCHES, GO_ARCHES
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util, exectools
 from artcommonlib.rhcos import get_primary_container_name
@@ -10,7 +12,7 @@ from artcommonlib.rhcos import get_primary_container_name
               help='Show details for this OCP release. Can be a full pullspec or a named release ex: 4.8.4')
 @click.option('--arch', 'arch',
               default='x86_64',
-              type=click.Choice(util.brew_arches + ['all']),
+              type=click.Choice(BREW_ARCHES + ['all']),
               help='Specify architecture. Default is x86_64. "all" to get all arches. aarch64 only works for 4.8+')
 @click.option('--packages', '-p', 'packages',
               help='Show details for only these package names (comma-separated)')
@@ -63,7 +65,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
     runtime.initialize()
     major, minor = runtime.get_major_minor()
     if nightly:
-        for a in util.go_arches:
+        for a in GO_ARCHES:
             if a in release:
                 arch = a
                 break
@@ -72,7 +74,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
     logger = runtime.logger
 
     if arch == 'all':
-        target_arches = util.brew_arches
+        target_arches = BREW_ARCHES
         if major == 4 and minor < 9:
             target_arches.remove("aarch64")
     else:
@@ -103,7 +105,7 @@ def get_pullspec(release, arch):
 
 
 def get_nightly_pullspec(release, arch):
-    suffix = util.go_suffix_for_arch(arch)
+    suffix = go_suffix_for_arch(arch)
     return f'registry.ci.openshift.org/ocp{suffix}/release{suffix}:{release}'
 
 
@@ -138,7 +140,7 @@ def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
     if not build_id:
         Exception('Cannot find build_id')
 
-    arch = util.brew_arch_for_go_arch(arch)
+    arch = brew_arch_for_go_arch(arch)
     util.green_print(f'Build: {build_id} Arch: {arch}')
     nvrs = rhcos.get_rpm_nvrs(runtime, build_id, version, arch)
     if not nvrs:

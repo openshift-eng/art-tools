@@ -1,10 +1,11 @@
 import unittest
-from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds
-from elliottlib.brew import Build
-from elliottlib import errata as erratalib
-from flexmock import flexmock
-import json
 from unittest import mock
+
+from flexmock import flexmock
+
+from elliottlib import errata as erratalib
+from elliottlib.brew import Build
+from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds
 
 
 class TestFindBuildsCli(unittest.TestCase):
