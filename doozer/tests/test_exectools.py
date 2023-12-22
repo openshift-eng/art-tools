@@ -18,7 +18,7 @@ import os
 import shutil
 import tempfile
 
-from doozerlib import exectools, assertion
+from doozerlib import exectools
 
 
 class RetryTestCase(IsolatedAsyncioTestCase):

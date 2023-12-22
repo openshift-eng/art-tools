@@ -1,6 +1,7 @@
 from future import standard_library
 
 import artcommonlib.util
+from artcommonlib import assertion
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -28,7 +29,6 @@ from jira import JIRA
 from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
 from . import logutil
-from . import assertion
 from . import exectools
 from . import dblib
 from .pushd import Dir
