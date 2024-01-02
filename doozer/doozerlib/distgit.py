@@ -27,6 +27,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
 
 import doozerlib
 from artcommonlib import assertion
+from artcommonlib.format_util import yellow_print
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import constants, exectools, logutil, state, util
 from doozerlib.assembly import AssemblyTypes
@@ -39,7 +40,6 @@ from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from doozerlib.util import yellow_print
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.comment_on_pr import CommentOnPr
 

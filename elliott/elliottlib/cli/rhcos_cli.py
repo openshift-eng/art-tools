@@ -2,6 +2,7 @@ import click
 import json
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BREW_ARCHES, GO_ARCHES
+from artcommonlib.format_util import green_print
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util, exectools
 from artcommonlib.rhcos import get_primary_container_name
@@ -120,7 +121,7 @@ def get_rhcos_pullspecs_from_assembly(runtime):
 
 
 def get_build_id_from_image_pullspec(runtime, pullspec):
-    util.green_print(f"Image pullspec: {pullspec}")
+    green_print(f"Image pullspec: {pullspec}")
     build_id, arch = rhcos.get_build_from_payload(runtime, pullspec)
     return build_id, arch
 
@@ -141,7 +142,7 @@ def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
         Exception('Cannot find build_id')
 
     arch = brew_arch_for_go_arch(arch)
-    util.green_print(f'Build: {build_id} Arch: {arch}')
+    green_print(f'Build: {build_id} Arch: {arch}')
     nvrs = rhcos.get_rpm_nvrs(runtime, build_id, version, arch)
     if not nvrs:
         return

@@ -1,6 +1,8 @@
 import asyncio
 import json
-import datetime, re, click
+import datetime
+import re
+import click
 from collections import deque
 from itertools import chain
 from multiprocessing import cpu_count
@@ -8,6 +10,7 @@ from multiprocessing.dummy import Pool as ThreadPool
 from sys import getsizeof, stderr
 from typing import Dict, Iterable, List, Optional, Tuple, Sequence, Any
 
+from artcommonlib.format_util import red_prefix, green_prefix, green_print
 from elliottlib import brew, exectools
 from elliottlib.exceptions import BrewBuildException
 
@@ -19,45 +22,6 @@ from errata_tool import Erratum
 default_release_date = datetime.datetime(1970, 1, 1, 0, 0)
 now = datetime.datetime.now()
 YMD = '%Y-%b-%d'
-
-
-def red_prefix(msg, file=None):
-    """Print out a message prefix in bold red letters, like for "Error: "
-messages"""
-    click.secho(msg, nl=False, bold=True, fg='red', file=file)
-
-
-def green_prefix(msg, file=None):
-    """Print out a message prefix in bold green letters, like for "Success: "
-messages"""
-    click.secho(msg, nl=False, bold=True, fg='green', file=file)
-
-
-def yellow_prefix(msg, file=None):
-    """Print out a message prefix in bold yellow letters, like for "Warning: "
-or Notice: messages"""
-    click.secho(msg, nl=False, bold=True, fg='yellow', file=file)
-
-
-def red_print(msg, file=None):
-    """Print out a message in red text"
-messages"""
-    click.secho(msg, nl=True, bold=False, fg='red', file=file)
-
-
-def green_print(msg, file=None):
-    """Print out a message in green text"""
-    click.secho(msg, nl=True, bold=False, fg='green', file=file)
-
-
-def yellow_print(msg, file=None):
-    """Print out a message in yellow text"""
-    click.secho(msg, nl=True, bold=False, fg='yellow', file=file)
-
-
-def cprint(msg):
-    """Wrapper for click.echo"""
-    click.echo(msg)
 
 
 def exit_unauthenticated():

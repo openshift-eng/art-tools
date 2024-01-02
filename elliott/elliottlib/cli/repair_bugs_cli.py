@@ -3,9 +3,11 @@ import elliottlib
 
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
+
+from artcommonlib.format_util import green_print
 from elliottlib import errata
 from elliottlib.bzutil import BugTracker, JIRABugTracker, BugzillaBugTracker, get_jira_bz_bug_ids
-from elliottlib.util import green_print, progress_func, pbar_header
+from elliottlib.util import progress_func, pbar_header
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
 
 

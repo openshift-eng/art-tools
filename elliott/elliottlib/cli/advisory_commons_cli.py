@@ -1,9 +1,8 @@
+from artcommonlib.format_util import green_prefix
 from elliottlib import logutil
 from elliottlib.cli.common import cli
-from elliottlib.util import green_prefix
 from errata_tool import Erratum, ErrataException
 import click
-import string
 import re
 
 LOGGER = logutil.getLogger(__name__)

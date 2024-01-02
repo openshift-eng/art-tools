@@ -1,12 +1,13 @@
 import click
 import datetime
 import elliottlib
+from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.exectools import cmd_assert
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import YMD, validate_release_date, \
-    validate_email_address, exit_unauthorized, green_prefix
+    validate_email_address, exit_unauthorized
 
 LOGGER = elliottlib.logutil.getLogger(__name__)
 

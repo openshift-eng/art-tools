@@ -10,6 +10,8 @@ import io
 import urllib
 import pathlib
 from future import standard_library
+
+from artcommonlib.format_util import green_print, yellow_print, color_print
 from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.pushd import Dir
@@ -20,7 +22,6 @@ from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
 from doozerlib import coverity
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import exectools
-from doozerlib.util import green_print, yellow_print, color_print
 from typing import Optional
 from numbers import Number
 from dockerfile_parse import DockerfileParser

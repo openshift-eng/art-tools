@@ -7,11 +7,13 @@ import io
 import pathlib
 from typing import Dict
 from ghapi.core import GhApi
+
+from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
 from doozerlib import metadata, gitdata, Runtime
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.config import MetaDataConfig as mdc
 from doozerlib.rhcos import RHCOSBuildInspector
-from doozerlib.util import green_print, red_print, yellow_print, color_print, dict_get
+from doozerlib.util import dict_get
 from doozerlib.exceptions import DoozerFatalError
 
 

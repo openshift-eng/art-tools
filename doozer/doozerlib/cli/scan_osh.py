@@ -5,10 +5,11 @@ import asyncio
 import requests
 import yaml
 from enum import Enum
+
+from artcommonlib.format_util import cprint
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.runtime import Runtime
 from doozerlib.exectools import fire_and_forget, cmd_gather_async, limit_concurrency, cmd_gather
-from doozerlib.util import cprint
 from doozerlib.image import ImageMetadata
 from doozerlib.rpmcfg import RPMMetadata
 from typing import Optional

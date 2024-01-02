@@ -16,14 +16,13 @@ from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 from dockerfile_parse import DockerfileParser
 
+from artcommonlib.format_util import green_print, yellow_print
 from doozerlib.model import Model, Missing
 from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import exectools, constants
 from doozerlib.image import ImageMetadata
-from doozerlib.util import get_docker_config_json, green_print, \
-    yellow_print, \
-    what_is_in_master, extract_version_fields
+from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
 from pyartcd import jenkins
 

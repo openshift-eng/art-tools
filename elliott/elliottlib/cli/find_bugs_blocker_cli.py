@@ -2,11 +2,11 @@ import click
 import sys
 import traceback
 
+from artcommonlib.format_util import green_prefix
 from elliottlib.cli.find_bugs_sweep_cli import print_report, FindBugsMode
 from elliottlib.bzutil import BugTracker
 from elliottlib import (Runtime, constants)
 from elliottlib.cli.common import cli
-from elliottlib.util import green_prefix
 
 
 class FindBugsBlocker(FindBugsMode):

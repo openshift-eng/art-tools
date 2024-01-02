@@ -10,13 +10,13 @@ from urllib.parse import urljoin
 import click
 from ruamel.yaml import YAML
 
+from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_print
 from elliottlib import Runtime, brew, exectools
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cvp import CVPInspector
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.util import (green_prefix, green_print, parse_nvr, pbar_header,
-                             progress_func, red_prefix, red_print,
-                             yellow_print)
+from elliottlib.util import (parse_nvr, pbar_header,
+                             progress_func)
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False

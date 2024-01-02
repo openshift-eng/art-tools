@@ -1,5 +1,5 @@
+from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
-from elliottlib.util import green_prefix
 from errata_tool import Erratum, ErrataException
 import click
 

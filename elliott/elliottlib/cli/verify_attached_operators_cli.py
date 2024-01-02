@@ -10,12 +10,12 @@ from zipfile import ZipFile
 
 from errata_tool import Erratum
 
+from artcommonlib.format_util import red_print, green_print
 from elliottlib import brew, constants, exectools, errata
 from elliottlib.cli.find_builds_cli import find_builds_cli
 from elliottlib.cli.common import cli, pass_runtime, move_builds
 from elliottlib.exceptions import ElliottFatalError, BrewBuildException
 from elliottlib.runtime import Runtime
-from elliottlib.util import red_print, green_print
 
 
 @cli.command("verify-attached-operators", short_help="Verify attached operator bundle references are (being) shipped")

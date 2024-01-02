@@ -14,8 +14,10 @@ import re
 import click
 import requests
 from functools import lru_cache
+
+from artcommonlib.format_util import green_print
 from elliottlib import exceptions, constants, brew, logutil
-from elliottlib.util import green_print, chunk
+from elliottlib.util import chunk
 from elliottlib import bzutil
 from requests_gssapi import HTTPSPNEGOAuth
 from errata_tool import Erratum, ErrataException, ErrataConnector

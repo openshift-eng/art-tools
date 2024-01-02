@@ -1,11 +1,12 @@
 from errata_tool import Erratum
 import click
 
+from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
 from elliottlib import logutil
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import BugTracker
-from elliottlib.util import exit_unauthorized, green_prefix, validate_release_date, \
+from elliottlib.util import exit_unauthorized, validate_release_date, \
     validate_email_address
 import elliottlib
 

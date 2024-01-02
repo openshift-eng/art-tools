@@ -2,11 +2,11 @@ from typing import List, Tuple
 import click
 import requests
 import koji
-import time
+
+from artcommonlib.format_util import red_print, green_print, yellow_print
 from elliottlib import Runtime
 from elliottlib import errata, brew, constants, exceptions
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
-from elliottlib.util import green_print, red_print, yellow_print
 
 pass_runtime = click.make_pass_decorator(Runtime)
 

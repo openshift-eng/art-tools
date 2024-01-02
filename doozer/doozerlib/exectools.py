@@ -24,10 +24,11 @@ from fcntl import fcntl, F_GETFL, F_SETFL
 from os import O_NONBLOCK, read
 
 from artcommonlib import assertion
+from artcommonlib.format_util import green_print, yellow_print
 from . import logutil
 from . import pushd
 from .exceptions import WrapException
-from .util import green_print, yellow_print, timer
+from .util import timer
 
 SUCCESS = 0
 
