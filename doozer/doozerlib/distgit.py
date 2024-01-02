@@ -27,6 +27,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
 
 import doozerlib
 from artcommonlib import assertion
+from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import constants, exectools, logutil, state, util
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.brew import BuildStates
@@ -1024,7 +1025,7 @@ class ImageDistGitRepo(DistGitRepo):
                 if 'member' in builder:
                     self._set_wait_for(builder['member'], terminate_event)
 
-            if self.runtime.assembly and util.isolate_assembly_in_release(release) != self.runtime.assembly:
+            if self.runtime.assembly and isolate_assembly_in_release(release) != self.runtime.assembly:
                 # Assemblies should follow its naming convention
                 raise ValueError(f"Image {self.name} is not rebased with assembly '{self.runtime.assembly}'.")
 

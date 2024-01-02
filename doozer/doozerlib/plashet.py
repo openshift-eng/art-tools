@@ -3,6 +3,7 @@ from collections import OrderedDict
 from logging import Logger
 from typing import Dict, Iterable, List, Optional, Union
 
+from artcommonlib.build_util import find_latest_builds
 from doozerlib.rpm_utils import parse_nvr
 from koji import ClientSession
 
@@ -11,7 +12,7 @@ from doozerlib.brew import get_build_objects, list_archives_by_builds
 from doozerlib.image import ImageMetadata
 from doozerlib.model import Model
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.util import find_latest_builds, strip_epoch, to_nvre
+from doozerlib.util import strip_epoch, to_nvre
 
 
 class PlashetBuilder:

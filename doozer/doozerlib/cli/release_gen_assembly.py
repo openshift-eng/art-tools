@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import yaml
 
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import util
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.cli import cli, pass_runtime, click_coroutine
@@ -421,7 +422,7 @@ class GenAssemblyCli:
                 rpm_build_nvr = ref_releases_rpm_build['nvr']
 
                 # If so, what RHEL version is this build for?
-                el_ver = util.isolate_el_version_in_release(ref_releases_rpm_build['release'])
+                el_ver = isolate_el_version_in_release(ref_releases_rpm_build['release'])
                 if not el_ver:
                     self._exit_with_error(f'Unable to isolate el? version in {rpm_build_nvr}')
 

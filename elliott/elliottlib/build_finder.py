@@ -1,3 +1,4 @@
+from artcommonlib.build_util import find_latest_builds
 from elliottlib.imagecfg import ImageMetadata
 import logging
 from logging import Logger
@@ -9,7 +10,7 @@ from elliottlib.assembly import assembly_metadata_config, assembly_rhcos_config
 from elliottlib.brew import get_build_objects
 from elliottlib.model import Model
 from elliottlib.rpmcfg import RPMMetadata
-from elliottlib.util import find_latest_builds, parse_nvr, strip_epoch, to_nvre
+from elliottlib.util import parse_nvr, strip_epoch, to_nvre
 
 
 class BuildFinder:

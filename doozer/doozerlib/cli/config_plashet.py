@@ -5,13 +5,15 @@ import os
 import ssl
 import sys
 import time
-import xmlrpc.client as xmlrpclib
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 
 import click
 import requests
 import yaml
+
+from artcommonlib.build_util import find_latest_builds
+from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib.rpm_utils import compare_nvr, parse_nvr
 from requests_kerberos import HTTPKerberosAuth
 
@@ -20,8 +22,7 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.runtime import Runtime
 from doozerlib.brew import get_builds_tags
-from doozerlib.util import (find_latest_builds, isolate_el_version_in_brew_tag,
-                            mkdirs, strip_epoch, to_nvre, isolate_el_version_in_release)
+from doozerlib.util import (isolate_el_version_in_brew_tag, mkdirs, strip_epoch, to_nvre)
 from elliottlib import errata
 
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"

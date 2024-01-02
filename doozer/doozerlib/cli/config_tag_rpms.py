@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, Union, cast
 import click
 import koji
 
+from artcommonlib.release_util import split_el_suffix_in_release
 from doozerlib import brew, exectools
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.cli import cli, click_coroutine, pass_runtime
@@ -12,7 +13,6 @@ from doozerlib.constants import BREWWEB_URL
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_delivery import RPMDeliveries
 from doozerlib.runtime import Runtime
-from doozerlib.util import split_el_suffix_in_release
 
 
 class TagRPMsCli:
