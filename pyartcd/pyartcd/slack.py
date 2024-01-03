@@ -44,8 +44,8 @@ class SlackClient:
 
     async def say_in_thread(self, message: str):
         if not self._thread_ts:
-            response = await self.say(message)
-            self._thread_ts = response.data["ts"]
+            response_data = await self.say(message)
+            self._thread_ts = response_data["ts"]
             return self._thread_ts
         else:
             return await self.say(message, self._thread_ts)
