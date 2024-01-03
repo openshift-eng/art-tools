@@ -13,7 +13,7 @@ from itertools import chain
 from os.path import abspath
 from pathlib import Path
 from sys import getsizeof, stderr
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import click
 import semver
@@ -333,22 +333,6 @@ def isolate_pflag_in_release(release: str) -> Optional[str]:
     return None
 
 
-def split_el_suffix_in_release(release: str) -> Tuple[str, Optional[str]]:
-    """
-    Given a release field, this will method will split out any
-    .el### or +el### suffix and return (prefix, el_suffix) where el_suffix
-    is None if there .el### is not detected.
-    """
-
-    el_suffix_match = re.match(r'(.*)[.+](el\d+)(?:.*|$)', release)
-    if el_suffix_match:
-        prefix = el_suffix_match.group(1)
-        el_suffix = el_suffix_match.group(2)
-        return prefix, el_suffix
-    else:
-        return release, None
-
-
 def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     """
     Given a release name (e.g. 4.8.0-0.nightly-s390x-2021-07-02-143555, 4.1.0-0.nightly-priv-2019-11-08-213727),
@@ -371,39 +355,6 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
         go_arch = possible_arch
     brew_arch = brew_arch_for_go_arch(go_arch)
     return major_minor, brew_arch, is_private
-
-
-def isolate_assembly_in_release(release: str) -> Optional[str]:
-    """
-    Given a release field, determines whether is contains
-    an assembly name. If it does, it returns the assembly
-    name. If it is not found, None is returned.
-    """
-    assembly_prefix = '.assembly.'
-    asm_pos = release.rfind(assembly_prefix)
-    if asm_pos == -1:
-        return None
-
-    # Our rpm release fields will usually have ".el?" after ".assembly.name"
-    # But some of our base images can have ".el?" before ".assembly.name"
-    # If ".el?" appears after assembly name, then strip it off
-    el_pos = release.rfind('.el')
-    if el_pos > asm_pos:
-        release, _ = split_el_suffix_in_release(release)
-
-    return release[asm_pos + len(assembly_prefix):]
-
-
-def isolate_el_version_in_release(release: str) -> Optional[int]:
-    """
-    Given a release field, determines whether is contains
-    a RHEL version. If it does, it returns the version value as an int.
-    If it is not found, None is returned.
-    """
-    _, el_suffix = split_el_suffix_in_release(release)
-    if el_suffix:
-        return int(el_suffix[2:])
-    return None
 
 
 def isolate_el_version_in_brew_tag(tag: Union[str, int]) -> Optional[int]:
@@ -469,47 +420,6 @@ def total_size(o, handlers=None, verbose=False):
         return s
 
     return sizeof(o)
-
-
-def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[Dict]:
-    """ Find the latest build specific to the assembly in a list of builds belonging to the same component and brew tag
-    :param builds: a list of build dicts sorted by tagging event in descending order
-    :param assembly: the name of assembly; None if assemblies support is disabled
-    :return: a brew build dict or None
-    """
-    chosen_build = None
-    if not assembly:  # if assembly is not enabled, choose the true latest tagged
-        chosen_build = builds[0] if builds else None
-    else:  # assembly is enabled
-        # find the newest build containing ".assembly.<assembly-name>" in its RELEASE field
-        chosen_build = next((build for build in builds if isolate_assembly_in_release(build["release"]) == assembly),
-                            None)
-        if not chosen_build and assembly != "stream":
-            # If no such build, fall back to the newest build containing ".assembly.stream"
-            chosen_build = next(
-                (build for build in builds if isolate_assembly_in_release(build["release"]) == "stream"), None)
-        if not chosen_build:
-            # If none of the builds have .assembly.stream in the RELEASE field, fall back to the latest build without .assembly in the RELEASE field
-            chosen_build = next((build for build in builds if isolate_assembly_in_release(build["release"]) is None),
-                                None)
-    return chosen_build
-
-
-def find_latest_builds(brew_builds: Iterable[Dict], assembly: Optional[str]) -> Iterable[Dict]:
-    """ Find latest builds specific to the assembly in a list of brew builds.
-    :param brew_builds: a list of build dicts sorted by tagging event in descending order
-    :param assembly: the name of assembly; None if assemblies support is disabled
-    :return: an iterator of latest brew build dicts
-    """
-    # group builds by component name
-    grouped_builds = {}  # key is component_name, value is a list of Brew build dicts
-    for build in brew_builds:
-        grouped_builds.setdefault(build["name"], []).append(build)
-
-    for builds in grouped_builds.values():  # builds are ordered from newest tagged to oldest tagged
-        chosen_build = find_latest_build(builds, assembly)
-        if chosen_build:
-            yield chosen_build
 
 
 def to_nvre(build_record: Dict):

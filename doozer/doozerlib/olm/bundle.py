@@ -13,7 +13,8 @@ import yaml
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 
-from doozerlib import brew, exectools, pushd, util
+from artcommonlib.build_util import find_latest_build
+from doozerlib import brew, exectools, pushd
 from doozerlib.runtime import Runtime
 
 
@@ -78,7 +79,7 @@ class OLMBundle(object):
             return build
         builds = list(map(lambda build: _apply_hack(build), builds))
 
-        latest_build = util.find_latest_build(builds, self.runtime.assembly)
+        latest_build = find_latest_build(builds, self.runtime.assembly)
 
         # revert the hack
         latest_build["release"] = latest_build["_release"]

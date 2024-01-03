@@ -9,11 +9,11 @@ import koji
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib.arch_util import brew_suffix_for_arch
+from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import brew, exectools, logutil
 from doozerlib.model import Model
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
-from doozerlib.util import isolate_el_version_in_release
 from artcommonlib import rhcos
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 

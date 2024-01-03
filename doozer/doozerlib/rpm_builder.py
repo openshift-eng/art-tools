@@ -11,13 +11,14 @@ from typing import Dict, List, Optional
 import aiofiles
 import aiofiles.os
 
+from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import brew, exectools
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.model import Missing
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
-from doozerlib.util import is_in_directory, isolate_assembly_in_release
+from doozerlib.util import is_in_directory
 
 
 class RPMBuilder:
