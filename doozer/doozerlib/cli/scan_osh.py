@@ -226,7 +226,7 @@ class ScanOshCli:
         if match:
             task_id = match.group("task_id")
 
-        pattern = r"\*Build record\*: \[(?P<nvr>.+)\|.+"
+        pattern = r"\*Build record\*: \[(?P<nvr>[a-z0-9.-]+)\|.+"
         match = re.search(pattern=pattern, string=description)
         nvr = None
         if match:
