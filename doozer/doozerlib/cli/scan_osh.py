@@ -241,7 +241,7 @@ class ScanOshCli:
             condition = "not in"
 
         query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
-                f"status {condition} ('New', 'Assigned')"
+                f"status {condition} ('New', 'Assigned') order by created ASC"
         return [i for i in self.search_issues(query) if i.fields.summary == summary]
 
     def get_non_art_upstream_repo_and_jira_component(self, brew_info):
