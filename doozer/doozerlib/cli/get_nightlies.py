@@ -6,7 +6,8 @@ import aiohttp
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
-from doozerlib import constants, exectools, logutil, util
+from artcommonlib.format_util import green_print, yellow_print, red_print
+from doozerlib import constants, exectools, logutil
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.model import Model
 from doozerlib.rhcos import RHCOSBuildInspector
@@ -100,7 +101,7 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
             for arch, nightlies in nightlies.items()
         }
     except NoMatchingNightlyException as ex:
-        util.red_print(ex)
+        red_print(ex)
         exit(1)
 
     # retrieve release info for each nightly image (with concurrency)
@@ -117,7 +118,7 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
         # check for deeper equivalence
         await nightly_set.populate_nightly_content(runtime)
         if await nightly_set.deeper_equivalence():
-            util.green_print(nightly_set.details() if details else nightly_set)
+            green_print(nightly_set.details() if details else nightly_set)
             remaining -= 1
             if not remaining:
                 break  # don't spend time checking more than were requested
@@ -126,11 +127,11 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
 
     if allow_inconsistency and remaining:
         for nightly_set in inconsistent_nightly_sets[:remaining]:
-            util.yellow_print(nightly_set.details() if details else nightly_set)
+            yellow_print(nightly_set.details() if details else nightly_set)
             remaining -= 1
 
     if remaining == limit:
-        util.red_print("No sets of equivalent nightlies found for given parameters.")
+        red_print("No sets of equivalent nightlies found for given parameters.")
         exit(1)
 
 

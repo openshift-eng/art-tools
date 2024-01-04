@@ -3,11 +3,14 @@ import os
 import errno
 import shutil
 import koji
-import errata_tool
+
 import tempfile
 import pipes
 import click
-from typing import List, Set, Dict, Tuple, Text, Optional
+from typing import Set, Dict
+
+from artcommonlib import format_util
+from artcommonlib.format_util import green_print, yellow_print
 from elliottlib import constants, tarball_sources, util, logutil, brew
 
 LOGGER = logutil.getLogger(__name__)
@@ -37,7 +40,7 @@ def create(ctx, advisories, out_dir, out_layout, components, force):
     """
 
     if not force and os.path.isdir(out_dir) and os.listdir(out_dir):
-        util.red_print(
+        format_util.red_print(
             "Output directory {} is not empty.\n\
 Use --force to add new tarball sources to an existing directory.".format(os.path.abspath(out_dir)))
         exit(1)
@@ -74,13 +77,13 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
         builds = tarball_sources.find_builds_from_advisory(
             advisory, components)
         if not builds:
-            util.yellow_print(
+            yellow_print(
                 "No matched builds found from advisory {}. Wrong advisory number?".format(advisory))
             continue
-        util.green_print(
+        green_print(
             "Found {} matched build(s) from advisory {}".format(len(builds), advisory))
         for nvr, product, product_version in builds:
-            util.green_print("\t{}\t{}\t{}".format(
+            green_print("\t{}\t{}\t{}".format(
                 nvr, product, product_version))
 
         for nvr, product, product_version in builds:
@@ -93,7 +96,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
                     out_dir, product_version, str(advisory), "release"))
 
     if not nvr_dirs:
-        util.red_print("Exiting because no matched builds from all specified advisories.")
+        format_util.red_print("Exiting because no matched builds from all specified advisories.")
         exit(1)
 
     # Check build infos from Koji/Brew
@@ -123,14 +126,14 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
                 tarball_abspath = os.path.abspath(
                     os.path.join(dest_dir, tarball_filename))
                 if os.path.exists(tarball_abspath):
-                    util.yellow_print(
+                    yellow_print(
                         "File {} will be overwritten.".format(tarball_abspath))
 
                 LOGGER.debug("Copying {} to {}...".format(
                     temp_tarball_path, tarball_abspath))
                 shutil.copyfile(temp_tarball_path, tarball_abspath)  # `shutil.copyfile` uses default umask
                 tarball_sources_list.append(tarball_abspath)
-                util.green_print(
+                green_print(
                     "Created tarball source {}.".format(tarball_abspath))
 
     print_success_message(tarball_sources_list, out_dir)
@@ -153,7 +156,7 @@ def print_success_message(tarball_sources_list, out_dir):
         path), out_dir), os.path.basename(path)) for path in tarball_sources_list]
     relative_paths.sort()
 
-    util.green_print("""
+    green_print("""
 
 All tarball sources are successfully created.
 

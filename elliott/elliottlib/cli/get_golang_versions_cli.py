@@ -1,6 +1,7 @@
 import click
 
-from artcommonlib import rhcos
+from artcommonlib import rhcos, format_util
+from artcommonlib.format_util import green_print
 from elliottlib import util, errata, logutil
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option)
@@ -85,7 +86,7 @@ async def get_golang_versions_cli(runtime, release, advisory_id, default_advisor
         nvrs = [n.strip() for n in nvrs.split(',')]
         return print_nvrs_golang(nvrs, output, report)
     else:
-        util.red_print('The input value is not valid.')
+        format_util.red_print('The input value is not valid.')
 
 
 def print_nvrs_golang(nvrs, output, report):
@@ -105,7 +106,7 @@ def print_nvrs_golang(nvrs, output, report):
         go_nvr_map.update(util.get_golang_container_nvrs(container_nvrs, _LOGGER))
 
     if not go_nvr_map:
-        util.green_print('No golang builds detected')
+        green_print('No golang builds detected')
 
     if output == 'json':
         util.pretty_print_nvrs_go_json(go_nvr_map, report)
@@ -118,7 +119,7 @@ def print_advisory_golang(advisory_id, components, output, report):
     _LOGGER.debug(f'{len(nvrs)} builds found in advisory')
     if not nvrs:
         _LOGGER.debug('No golang builds found. exiting')
-        util.green_print(f'No golang builds found in advisory {advisory_id}')
+        green_print(f'No golang builds found in advisory {advisory_id}')
         return
     if components:
         if 'openshift' in components:
@@ -144,7 +145,7 @@ async def print_release_golang(pullspec, rhcos_images, components, output, repor
     _LOGGER.debug(f'{len(nvrs)} builds found in {pullspec}')
     if not nvrs:
         _LOGGER.debug('No golang builds found. exiting')
-        util.green_print(f'No golang builds found in release {pullspec}')
+        green_print(f'No golang builds found in release {pullspec}')
         return
     if components:
         nvrs = [p for p in nvrs if p[0] in components]

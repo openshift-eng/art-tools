@@ -9,12 +9,12 @@ from bugzilla.bug import Bug
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt
 
+from artcommonlib.format_util import green_print
 from elliottlib import Runtime, constants, early_kernel
 from elliottlib.assembly import AssemblyTypes
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import green_print
 from elliottlib.bzutil import JIRABugTracker
 
 

@@ -6,6 +6,8 @@ import yaml
 import sys
 import tempfile
 from future import standard_library
+
+from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
 from doozerlib import state, cli as cli_package
 from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
@@ -34,7 +36,6 @@ from doozerlib.cli.images import images_clone, images_list, images_push_distgit,
 
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import exectools
-from doozerlib.util import green_print, red_print, yellow_print, color_print
 from doozerlib.util import analyze_debug_timing
 from doozerlib.util import get_release_calc_previous
 

@@ -3,7 +3,8 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
 
 from artcommonlib.arch_util import brew_suffix_for_arch
-from elliottlib import util, exectools, constants
+from artcommonlib.format_util import red_print
+from elliottlib import exectools, constants
 from artcommonlib.rhcos import get_primary_container_name
 
 
@@ -133,7 +134,7 @@ def get_rpm_nvrs(runtime, build_id, version, arch, private=''):
 
     except Exception as ex:
         problem = f"{stream_name}: {ex}"
-        util.red_print(f"error finding RHCOS {problem}")
+        red_print(f"error finding RHCOS {problem}")
         return None
 
     rpms = [(r[0], r[2], r[3]) for r in rpm_list]

@@ -10,6 +10,7 @@ import requests
 from errata_tool import ErrataException
 
 from artcommonlib.arch_util import BREW_ARCHES
+from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
 from artcommonlib.rhcos import get_container_configs
 from elliottlib import Runtime, brew, errata, logutil
 from elliottlib import exectools
@@ -21,10 +22,9 @@ from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.cli.rhcos_cli import get_build_id_from_rhcos_pullspec
 from elliottlib.util import (ensure_erratatool_auth,
-                             get_release_version, green_prefix, green_print,
+                             get_release_version,
                              isolate_el_version_in_brew_tag,
-                             parallel_results_with_progress, pbar_header, progress_func,
-                             red_print, yellow_print)
+                             parallel_results_with_progress, pbar_header, progress_func)
 
 LOGGER = logutil.getLogger(__name__)
 

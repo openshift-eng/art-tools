@@ -17,6 +17,7 @@ import json
 import sys
 from typing import Dict, List
 
+from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_prefix, yellow_print
 # ours
 from elliottlib import util
 from elliottlib import Runtime
@@ -28,10 +29,6 @@ import elliottlib.errata
 import elliottlib.exceptions
 
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import exit_unauthenticated, green_prefix
-from elliottlib.util import red_print
-from elliottlib.util import green_print, red_prefix
-from elliottlib.util import yellow_print, yellow_prefix
 from elliottlib.util import progress_func, pbar_header
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory, click_coroutine
 

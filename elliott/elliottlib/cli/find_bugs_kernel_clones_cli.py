@@ -7,12 +7,12 @@ import koji
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from elliottlib import Runtime, brew, early_kernel
+from artcommonlib.format_util import green_print
+from elliottlib import Runtime, early_kernel
 from elliottlib.assembly import AssemblyTypes
-from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.cli.common import cli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.util import green_print
 from elliottlib.bzutil import JIRABugTracker
 
 
