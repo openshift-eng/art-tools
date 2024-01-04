@@ -21,7 +21,7 @@ from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_
 # ours
 from elliottlib import util
 from elliottlib import Runtime
-from elliottlib import rhcos
+from artcommonlib import rhcos
 import elliottlib.constants
 import elliottlib.bzutil
 import elliottlib.brew
