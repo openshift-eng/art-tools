@@ -195,6 +195,10 @@ class PrepareReleasePipeline:
         for impetus, advisory in advisories.items():
             if not advisory:
                 continue
+            elif impetus == "rpm" and "prerelease" in advisories.keys():
+                # Skip populating RPM advisory if prerelease is detected, for ECs and RCs
+                _LOGGER.info("Skipping populating rpm advisory, since prerelease detected")
+                continue
             elif impetus == "metadata":
                 await self.build_and_attach_bundles(advisory)
             elif impetus == "prerelease":
