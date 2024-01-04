@@ -255,8 +255,24 @@ class GenAssemblyCli:
                 # We want the releases to be populated with identical builds.
                 existing_nvr = self.component_image_builds[package_name].get_nvr()
                 if build_nvr != existing_nvr:
-                    self._exit_with_error(f'Found disparate nvrs between releases; '
-                                          f'{existing_nvr} in processed and {build_nvr} in {pullspec}')
+                    # Ignore possible outdated payload tag if one is explicitly defined
+                    image_meta = brew_build_inspector.get_image_meta()
+                    payload_name, explicit = image_meta.get_payload_tag_info()
+                    if explicit:
+                        if payload_name != payload_tag_name:
+                            self.logger.warning(
+                                f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is '
+                                'explicitly defined in image config')
+                            continue
+                        else:
+                            # override the build for this package
+                            self.logger.warning(
+                                f'Selecting payload tag {payload_tag_name} since payload_name={payload_name} is '
+                                'explicitly defined in image config')
+                            self.component_image_builds[package_name] = brew_build_inspector
+                    else:
+                        self._exit_with_error('Found disparate nvrs between releases; '
+                                              f'{existing_nvr} in processed and {build_nvr} in {pullspec}')
             else:
                 # Otherwise, record the build as the first time we've seen an NVR for this
                 # package.
