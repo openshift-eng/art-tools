@@ -345,17 +345,21 @@ class JIRABug(Bug):
     def whiteboard_component(self):
         """Get whiteboard component value of a bug.
 
-        An OCP cve tracker has a whiteboard value "component:<component_name>"
+        An OCP cve tracker has a label "pscomponent:<component_name>"
         to indicate which component the bug belongs to.
+
+        Note ART has the ability to overwrite this field for ART's build pipeline
+        with label "art:pscomponent:<component_name>.
 
         :returns: a string if a value is found, otherwise None
         """
-        marker = r'component:\s*(\S+)'
+        markers = [r'^art:pscomponent:\s*(\S+)', r'^pscomponent:\s*(\S+)']
         for label in self.bug.fields.labels:
-            tmp = re.search(marker, label)
-            if tmp and len(tmp.groups()) == 1:
-                component_name = tmp.groups()[0]
-                return component_name
+            for marker in markers:
+                tmp = re.search(marker, label)
+                if tmp and len(tmp.groups()) == 1:
+                    component_name = tmp.groups()[0]
+                    return component_name
         return None
 
     def _get_release_blocker(self):
