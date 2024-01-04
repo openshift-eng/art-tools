@@ -226,7 +226,7 @@ class ScanOshCli:
         if match:
             task_id = match.group("task_id")
 
-        pattern = r"\*Build record\*: \[(?P<nvr>.+)\|.+"
+        pattern = r"\*Build record\*: \[(?P<nvr>[a-z0-9.-]+)\|.+"
         match = re.search(pattern=pattern, string=description)
         nvr = None
         if match:
@@ -241,7 +241,7 @@ class ScanOshCli:
             condition = "not in"
 
         query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
-                f"status {condition} ('New', 'Assigned')"
+                f"status {condition} ('New', 'Assigned') order by created ASC"
         return [i for i in self.search_issues(query) if i.fields.summary == summary]
 
     def get_non_art_upstream_repo_and_jira_component(self, brew_info):
