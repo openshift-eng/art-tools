@@ -281,10 +281,11 @@ class PromotePipeline:
             # we can start microshift build
             await self._build_microshift(releases_config)
 
+            release_jira = group_config.get("release_jira", '')
+
             # Send notification to QE if it hasn't been sent yet
             # Skip ECs and RCs
             if assembly_type not in [assembly.AssemblyTypes.PREVIEW, assembly.AssemblyTypes.CANDIDATE]:
-                release_jira = group_config.get("release_jira", '')
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories, reference_releases.values())
 
             if not tag_stable:
