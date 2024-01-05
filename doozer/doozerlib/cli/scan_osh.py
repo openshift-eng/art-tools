@@ -615,7 +615,7 @@ class ScanOshCli:
             try:
                 self.create_update_jira_ticket(c)
             except Exception as e:
-                self.runtime.logger.error(f"Error while creating/updating JIRA ticket: {e}")
+                self.runtime.logger.error(f"Error while creating/updating JIRA ticket for component {c}: {e}")
                 self.unstable = True
 
     def trigger_scans(self, nvrs: list):
