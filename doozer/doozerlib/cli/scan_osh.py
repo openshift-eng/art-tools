@@ -65,7 +65,7 @@ class ScanOshCli:
         self.jira_target_version = self.get_target_version()
 
         # Initialize runtime and brewhub session
-        self.runtime.initialize(mode="both", disabled=True, clone_distgits=False)
+        self.runtime.initialize(mode="both", disabled=True, clone_distgits=False, clone_source=False)
         self.koji_session = koji.ClientSession(self.runtime.group_config.urls.brewhub)
 
         # Initialize JIRA client
