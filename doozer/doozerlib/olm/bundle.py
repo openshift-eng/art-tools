@@ -570,7 +570,9 @@ class OLMBundle(object):
 
     @property
     def redhat_delivery_tags(self):
-        versions = 'v{MAJOR}.{MINOR}' if self.operator_index_mode == 'ga-plus' else '=v{MAJOR}.{MINOR}'
+        # If enabling ga-plus in the future for stage push of the non-pre-release bundles
+        # versions = 'v{MAJOR}.{MINOR}' if self.operator_index_mode == 'ga-plus' else '=v{MAJOR}.{MINOR}'
+        versions = '=v{MAJOR}.{MINOR}'
 
         labels = {
             'com.redhat.delivery.operator.bundle': 'true',
