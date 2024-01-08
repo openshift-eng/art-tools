@@ -35,15 +35,12 @@ LOGGER = logging.getLogger(__name__)
 @click.option(
     '--include-content-set-check', "include_content_set_check", is_flag=True,
     help="Include content_set_check")
-@click.option('--include-bundle', "include_bundle_check", is_flag=True,
-              help='Include CVP tests for bundle nvrs')
 @click.option(
     '--output', '-o', 'output', metavar='FORMAT', default="text", type=click.Choice(['text', 'json', 'yaml']),
     help='Output format. One of: text|json|yaml')
 @pass_runtime
 @click_coroutine
-async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set_check: bool,
-                         include_bundle_check: bool, output: str):
+async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set_check: bool, output: str):
     """ Verify CVP test results
 
     Example 1: Verify CVP test results for all latest 4.12 image builds, including optional content_set_check
@@ -80,6 +77,17 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
     nvr_builds = {build["nvr"]: build for build in builds}  # a dict mapping NVRs to build dicts
     runtime.logger.info(f"Found {len(builds)} image builds.")
 
+    bundle_nvrs = []
+    non_bundle_nvrs = []
+    for nvr in nvr_builds.keys():
+        if 'metadata-container' in nvr or 'bundle-container' in nvr:
+            bundle_nvrs.append(nvr)
+        else:
+            non_bundle_nvrs.append(nvr)
+
+    if bundle_nvrs:
+        runtime.logger.info(f"Found {len(bundle_nvrs)} bundle/metadata builds out of {len(builds)} total builds")
+
     inspector = None
     try:
         inspector = CVPInspector(group_config=runtime.group_config, image_metas=runtime.image_metas(), logger=runtime.logger)
@@ -114,15 +122,25 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
             }
         }
 
-        if include_bundle_check:
+        if bundle_nvrs:
             bundle_report = report["bundle_checks"] = {}
-            bundle_nvrs = [] # any nvr package name which has metadata or bundle in it's name
             bundle_check_results = await inspector.get_bundle_test_results(bundle_nvrs)
+            bundle_check_results = OrderedDict(sorted(bundle_check_results.items(), key=lambda t: t[0]))
+
+            passed_bundle, failed_bundle, missing_bundle = inspector.categorize_test_results(bundle_check_results)
+            print("passed bundle test cases", passed_bundle)
+            print("failed bundle test cases", failed_bundle)
+            print("missing bundle test cases", missing_bundle)
+            # bundle_report["passed"], bundle_report["failed"], bundle_report["missing"] = await asyncio.gather(
+            #     _reconstruct_test_results(passed_bundle),
+            #     _reconstruct_test_results(failed_bundle),
+            #     _reconstruct_test_results(missing_bundle),
+            # )
 
         if include_content_set_check:
             optional_report = report["sanity_test_optional_checks"] = {}
 
-            # Find failed optional CVP checks in case some of the tiem *will* become required.
+            # Find failed optional CVP checks in case some of them *will* become required.
             completed = sorted(passed.keys() | failed.keys())
             runtime.logger.info(f"Getting optional checks for {len(completed)} CVP tests...")
 

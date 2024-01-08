@@ -79,15 +79,18 @@ class CVPInspector:
         return passed, failed, missing
 
 
-    async def get_bundle_test_results(self, test_results):
-        urls = []
-        for cvp_result in test_results:
-            # Each CVP test result stored in ResultsDB has a link to an external storage with more CVP test details
-            # e.g. https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/
-            url = urljoin(cvp_result["ref_url"], "sanity-tests-optional-results.json")
-            # example results https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/sanity-tests-optional-results.json
-            urls.append(url)
-        return _get_test_results(urls)
+    async def get_bundle_test_results(self, nvrs):
+        nvr_results = {}
+        nvrs = set(nvrs)
+        results = await self._resultsdb_api.get_latest_results(test_cases=['cvp.redhat.detailed.operator-image-source-bundle-image'],items=nvrs)
+        for r in results:
+            nvr = r["data"]["item"][0]
+            if nvr in nvr_results:
+                raise KeyError(f"Found duplicated CVP test results for NVR {nvr}: {r}, {nvr_results[nvr]}")
+            nvr_results[nvr] = r
+        for nvr in nvrs - nvr_results.keys():
+            nvr_results[nvr] = None  # missing result
+        return nvr_results
 
     async def _get_test_results(self, urls):
         @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -115,10 +118,12 @@ class CVPInspector:
         for cvp_result in test_results:
             # Each CVP test result stored in ResultsDB has a link to an external storage with more CVP test details
             # e.g. https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/
+            print(cvp_result["ref_url"])
             url = urljoin(cvp_result["ref_url"], "sanity-tests-optional-results.json")
             # example results https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/sanity-tests-optional-results.json
+            print(url)
             urls.append(url)
-        return _get_test_results(urls)
+        return await self._get_test_results(urls)
 
     def categorize_sanity_test_optional_results(self, nvr_results: Dict[str, Optional[Dict]], included_checks: Set[str] = set()):
         """ Categorize CVP sanity test optional results
