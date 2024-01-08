@@ -564,15 +564,18 @@ class OLMBundle(object):
             # pre-release: label for pre-release operator index (unsupported)
             # ga: label for only this release's operator index
             # ga-plus: label for this release's operator index and future release indexes as well
+            # [lmeyer 20240108] ref https://chat.google.com/room/AAAAZrx3KlI/6tf0phEdCF8
+            # We may never use ga-plus, since the original motivation no longer seems important, and
+            # it results in a problem: stage pushes for ga-plus v4.y fail when there is staged
+            # v4.(y+1) content already with `skipVersion: v4.y` (because new v4.y content would be
+            # immediately pruned). If we need `ga-plus` again, we can likely find a way around it.
             return mode
         self.runtime.logger.warning(f'{mode} is not a valid group_config.operator_index_mode')
         return 'ga'
 
     @property
     def redhat_delivery_tags(self):
-        # If enabling ga-plus in the future for stage push of the non-pre-release bundles
-        # versions = 'v{MAJOR}.{MINOR}' if self.operator_index_mode == 'ga-plus' else '=v{MAJOR}.{MINOR}'
-        versions = '=v{MAJOR}.{MINOR}'
+        versions = 'v{MAJOR}.{MINOR}' if self.operator_index_mode == 'ga-plus' else '=v{MAJOR}.{MINOR}'
 
         labels = {
             'com.redhat.delivery.operator.bundle': 'true',
