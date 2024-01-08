@@ -35,12 +35,15 @@ LOGGER = logging.getLogger(__name__)
 @click.option(
     '--include-content-set-check', "include_content_set_check", is_flag=True,
     help="Include content_set_check")
+@click.option('--include-bundle', "include_bundle_check", is_flag=True,
+              help='Include CVP tests for bundle nvrs')
 @click.option(
     '--output', '-o', 'output', metavar='FORMAT', default="text", type=click.Choice(['text', 'json', 'yaml']),
     help='Output format. One of: text|json|yaml')
 @pass_runtime
 @click_coroutine
-async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set_check, output: str):
+async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set_check: bool,
+                         include_bundle_check: bool, output: str):
     """ Verify CVP test results
 
     Example 1: Verify CVP test results for all latest 4.12 image builds, including optional content_set_check
@@ -87,14 +90,16 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
         nvr_results = OrderedDict(sorted(nvr_results.items(), key=lambda t: t[0]))
 
         # process and populate dict `report` for output
-        runtime.logger.info("Processing CVP test results...")
+        runtime.logger.info(f"Processing {len(nvr_results)} CVP test results...")
         passed, failed, missing = inspector.categorize_test_results(nvr_results)
 
         def _reconstruct_test_results(test_results: Dict):
             results = {}
             for nvr, test_result in test_results.items():
                 r = results[nvr] = {}
-                r["dg_key"] = inspector.component_distgit_keys[parse_nvr(nvr)["name"]]
+                package_name = parse_nvr(nvr)["name"]
+                if package_name in inspector.component_distgit_keys:
+                    r["dg_key"] = inspector.component_distgit_keys[package_name]
                 r["build_url"] = f"https://brewweb.devel.redhat.com/buildinfo?buildID={nvr_builds[nvr]['id']}"
                 if test_result:
                     r["ref_url"] = test_result['ref_url']
@@ -108,6 +113,11 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                 "missing": _reconstruct_test_results(missing),
             }
         }
+
+        if include_bundle_check:
+            bundle_report = report["bundle_checks"] = {}
+            bundle_nvrs = [] # any nvr package name which has metadata or bundle in it's name
+            bundle_check_results = await inspector.get_bundle_test_results(bundle_nvrs)
 
         if include_content_set_check:
             optional_report = report["sanity_test_optional_checks"] = {}
