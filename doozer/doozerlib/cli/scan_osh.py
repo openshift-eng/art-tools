@@ -220,7 +220,7 @@ class ScanOshCli:
             self.runtime.logger.error("Regex match not found")
 
     @staticmethod
-    def get_scan_id_from_ticket(description):
+    def get_scan_details_from_ticket(description):
         pattern = r"\*All scan results\*: https://cov01.lab.eng.brq2.redhat.com/osh/task/(?P<task_id>[0-9]+)"
         match = re.search(pattern=pattern, string=description)
         task_id = None
@@ -459,6 +459,7 @@ class ScanOshCli:
         metadata = component["metadata"]
         task_id = component["osh_task_id"]
         summary = component["jira_search_summary"]
+        kind = component["kind"]
         nvr = build["nvr"]
 
         if metadata:
@@ -530,7 +531,7 @@ class ScanOshCli:
             # Pass the description from the previous NVR to be processed
             self.runtime.logger.info("Retrieving OSH task ID and NVR, from the previous ticket: "
                                      f"{previous_ticket.key}")
-            previous_task_id, previous_nvr = self.get_scan_id_from_ticket(
+            previous_task_id, previous_nvr = self.get_scan_details_from_ticket(
                 description=previous_ticket.fields.description)
 
             # We should always be able to retrieve the scan ID from the ticket
@@ -578,6 +579,18 @@ class ScanOshCli:
             if nvr in issue.fields.description:
                 # Looks like it's the same NVR
                 return
+
+            if kind == BuildType.RPM:
+                # Get the build in the currently "open" ticket
+                _, build_nvr_on_ticket = self.get_scan_details_from_ticket(description=issue.fields.description)
+                build_on_ticket = self.koji_session.getBuild(build_nvr_on_ticket)
+
+                if int(build_on_ticket["build_id"]) > int(build["build_id"]):
+                    # We do not want to update the ticket with an older build, even if its of a later OCP version
+                    # A higher build ID will mean a newer build
+                    self.runtime.logger.info(f"Ticket {issue.key} has the newer build, "
+                                             f"compared to {build['nvr']}")
+                    return
 
             if not self.dry_run:
                 # Keep notify as False since this description will constantly be updated everytime there's a
@@ -787,6 +800,7 @@ class ScanOshCli:
 
             component["metadata"] = metadata
             component["jira_search_summary"] = jira_search_summary
+            component["kind"] = kind
 
             components_under_consideration[package_name] = component
 
