@@ -188,7 +188,10 @@ class BugValidator:
         bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids)
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
-            expected = bugs_by_type[kind]
+            expected = bugs_by_type.get(kind)
+            if not expected:
+                # Looks like impetus is not part of the ones we care about. Skipping bug attachment
+                continue
             if actual != expected:
                 bugs_not_found = expected - actual
                 extra_bugs = actual - expected
