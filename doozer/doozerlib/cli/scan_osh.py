@@ -585,7 +585,7 @@ class ScanOshCli:
                 _, build_nvr_on_ticket = self.get_scan_details_from_ticket(description=issue.fields.description)
                 build_on_ticket = self.koji_session.getBuild(build_nvr_on_ticket)
 
-                if build_on_ticket["build_id"] > build["build_id"]:
+                if int(build_on_ticket["build_id"]) > int(build["build_id"]):
                     # We do not want to update the ticket with an older build, even if its of a later OCP version
                     # A higher build ID will mean a newer build
                     self.runtime.logger.info(f"Ticket {issue.key} has the newer build, "
