@@ -22,6 +22,7 @@ from elliottlib.util import all_same, parse_nvr
 class CVPInspector:
 
     CVP_TEST_CASE_SANITY = "cvp.rhproduct.default.sanity"
+    CVP_TEST_CASE_BUNDLE = "cvp.redhat.detailed.operator-valid-subscriptions-bundle-image"
 
     def __init__(self, group_config: Dict, image_metas: Iterable[ImageMetadata],
                  logger: Optional[logging.Logger] = None) -> None:
@@ -55,6 +56,22 @@ class CVPInspector:
             nvr_results[nvr] = None  # missing result
         return nvr_results
 
+    async def latest_bundle_test_results(self, bundle_nvrs: Iterable[str]) -> Dict[str, Optional[Dict]]:
+        """ Get latest CVP test results for specified bundle build NVRs
+        """
+        bundle_nvr_results = {}
+        bundle_nvrs = set(bundle_nvrs)
+        results = await self._resultsdb_api.get_latest_results((self.CVP_TEST_CASE_BUNDLE, ), bundle_nvrs)
+
+        for r in results:
+            nvr = r["data"]["item"][0]
+            if nvr in bundle_nvr_results:
+                raise KeyError(f"Found duplicated CVP test results for NVR {nvr}: {r}, {bundle_nvr_results[nvr]}")
+            bundle_nvr_results[nvr] = r
+        for nvr in bundle_nvrs - bundle_nvr_results.keys():
+            bundle_nvr_results[nvr] = None  # missing result
+        return bundle_nvr_results
+
     def categorize_test_results(self, nvr_results: Dict[str, Optional[Dict]]):
         """ Categorize CVP sanity test results
         :return: (passed, failed, missing)
@@ -78,7 +95,18 @@ class CVPInspector:
                 raise ValueError(f"Unrecognized CVP test result outcome: {outcome}")
         return passed, failed, missing
 
-    async def get_sanity_test_optional_results(self, test_results: Iterable[Dict]):
+
+    async def get_bundle_test_results(self, test_results):
+        urls = []
+        for cvp_result in test_results:
+            # Each CVP test result stored in ResultsDB has a link to an external storage with more CVP test details
+            # e.g. http://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-redhat-operator-bundle-image-validation-test/ose-cluster-kube-descheduler-operator-metadata-container-v4.14.0.202311211133.p0.gc3ddfd6.assembly.stream-3/1abdf002-7366-4c3e-8ada-cfc84639bd1c/
+            url = urljoin(cvp_result["ref_url"], "sanity-tests-optional-results.json")
+            # http://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-redhat-operator-bundle-image-validation-test/ose-cluster-kube-descheduler-operator-metadata-container-v4.14.0.202311211133.p0.gc3ddfd6.assembly.stream-3/1abdf002-7366-4c3e-8ada-cfc84639bd1c/sanity-tests-optional-results.json
+            urls.append(url)
+        return get_test_results(urls)
+
+    async def _get_test_results(self, urls):
         @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
                retry=(retry_if_exception_type((ServerDisconnectedError, ClientResponseError))),
                before_sleep=before_sleep_log(self._logger, logging.WARNING))
@@ -93,14 +121,21 @@ class CVPInspector:
 
         async with aiohttp.ClientSession() as session:
             futures = []
-            for cvp_result in test_results:
-                # Each CVP test result stored in ResultsDB has a link to an external storage with more CVP test details
-                # e.g. https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/
-                url = urljoin(cvp_result["ref_url"], "sanity-tests-optional-results.json")
-                # example results https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/sanity-tests-optional-results.json
+            for url in urls:
                 futures.append(_fetch(url))
             optional_results = await asyncio.gather(*futures)
         return optional_results
+
+
+    async def get_sanity_test_optional_results(self, test_results: Iterable[Dict]):
+        urls = []
+        for cvp_result in test_results:
+            # Each CVP test result stored in ResultsDB has a link to an external storage with more CVP test details
+            # e.g. https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/
+            url = urljoin(cvp_result["ref_url"], "sanity-tests-optional-results.json")
+            # example results https://external-ci-coldstorage.datahub.redhat.com/cvp/cvp-product-test/openshift-enterprise-console-container-v4.9.0-202205181110.p0.ge43e6e7.assembly.art2675/edef5ab1-62fb-480e-b0da-f63ce6d19d28/sanity-tests-optional-results.json
+            urls.append(url)
+        return _get_test_results(urls)
 
     def categorize_sanity_test_optional_results(self, nvr_results: Dict[str, Optional[Dict]], included_checks: Set[str] = set()):
         """ Categorize CVP sanity test optional results
