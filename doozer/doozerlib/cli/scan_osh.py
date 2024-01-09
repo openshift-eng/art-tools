@@ -227,7 +227,7 @@ class ScanOshCli:
         if match:
             task_id = match.group("task_id")
 
-        pattern = r"\*Build record\*: \[(?P<nvr>[a-z0-9.-]+)\|.+"
+        pattern = r"\*Build record\*: \[(?P<nvr>[a-z0-9~._-]+)\|.+"
         match = re.search(pattern=pattern, string=description)
         nvr = None
         if match:
@@ -583,6 +583,9 @@ class ScanOshCli:
             if kind == BuildType.RPM:
                 # Get the build in the currently "open" ticket
                 _, build_nvr_on_ticket = self.get_scan_details_from_ticket(description=issue.fields.description)
+
+                assert build_nvr_on_ticket is not None
+
                 build_on_ticket = self.koji_session.getBuild(build_nvr_on_ticket)
 
                 if int(build_on_ticket["build_id"]) > int(build["build_id"]):
