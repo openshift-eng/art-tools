@@ -770,7 +770,7 @@ class ScanOshCli:
                 self.runtime.logger.debug(f"Skipping build: {nvr} (since it's in excluded components)")
                 continue
 
-            kind: BuildType = BuildType.IMAGE if "container" in nvr and nvr.endswith(".stream") else BuildType.RPM
+            kind: BuildType = BuildType.IMAGE if "-container" in nvr and nvr.endswith(".stream") else BuildType.RPM
             component["kind"] = kind
 
             distgit_name = self.get_distgit_name_from_brew(kind=kind, brew_package_name=build["package_name"])
