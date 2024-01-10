@@ -90,7 +90,7 @@ class UpdateGolangPipeline:
             for el_v, nvr in el_nvr_map.items():
                 if self.is_latest_build(el_v, nvr):
                     raise ValueError(f'{nvr} is already the latest build, run '
-                                     'only with nvrs that are not latest or run without --create-ticket')
+                                     'only with nvrs that are not latest or run without --create-tagging-ticket')
                 # check if all the necessary tags exist
                 if not self.has_necessary_tags(nvr):
                     if self.permit_missing_qe_tag:
@@ -101,7 +101,7 @@ class UpdateGolangPipeline:
             _LOGGER.info('Creating Jira ticket to tag golang builds in buildroots')
             self.create_jira_ticket(el_nvr_map, go_version)
         else:
-            _LOGGER.info('Not creating Jira ticket, run with --create-ticket to create one if one does not exist')
+            _LOGGER.info('Not creating Jira ticket, run with --create-tagging-ticket to create one if one does not exist')
 
         _LOGGER.info('Checking if builds are tagged and available in buildroots')
         tasks = []
@@ -294,7 +294,9 @@ class UpdateGolangPipeline:
 
         # If regen repo has been run this would take a few seconds
         # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
-        cmd = f'brew wait-repo rhaos-{self.ocp_version}-rhel-{el_v}-build --build {nvr} --timeout=1'
+        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
+        _LOGGER.info(f'Checking build root {build_tag}')
+        cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1'
         rc, _, _ = await exectools.cmd_gather_async(cmd)
         return rc == 0
 
@@ -332,13 +334,13 @@ The new NVRs are:
 {el_instructions}
 '''
 
-        _LOGGER.info(f'Creating Jira ticket with the following content:\n{template}')
+        _LOGGER.info(f'Please create https://issues.redhat.com/browse/CWFCONF Jira ticket with the following content:\n{template}')
 
 
 @cli.command('update-golang')
 @click.option('--ocp-version', required=True, help='OCP version to update golang for')
-@click.option('--create-ticket', is_flag=True, default=False,
-              help='Create SP Jira ticket for tagging request')
+@click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
+              help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--permit-missing-qe-tag', is_flag=True, default=False,
               help='Permit missing qe tags on builds')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
