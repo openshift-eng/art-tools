@@ -143,6 +143,9 @@ class DistGitRepo(object):
         if autoclone:
             self.clone(self.runtime.distgits_dir, self.branch)
 
+    def __repr__(self):
+        return self.name
+
     def pull_sources(self):
         """
         Pull any distgit sources (use only after after clone)
