@@ -347,7 +347,7 @@ class ScanOshCli:
 
         cmd_template = "osh-cli mock-build --config={config} --brew-build {nvr} --nowait"
         for nvr in nvrs:
-            if "-container" in nvr and nvr.endswith(".stream"):
+            if "-container" in nvr:
                 cmds.append(cmd_template.format(config="cspodman", nvr=nvr))
 
             else:
