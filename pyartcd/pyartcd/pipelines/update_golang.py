@@ -15,6 +15,7 @@ from tenacity import (RetryCallState, RetryError, retry,
                       stop_after_attempt, wait_fixed)
 
 from artcommonlib.constants import BREW_HUB
+from artcommonlib.format_util import green_print, yellow_print, red_print
 from pyartcd import jenkins
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -129,7 +130,7 @@ class UpdateGolangPipeline:
         if not package_info:
             raise IOError(f'No brew package is defined for {component}')
         package_id = package_info['id']
-        builder_nvrs = []
+        builder_nvrs = {}
         for el_v in el_nvr_map.keys():
             pattern = f"{component}-v{go_version}-*el{el_v}*"
             builds = self.koji_session.listBuilds(packageID=package_id,
@@ -138,9 +139,9 @@ class UpdateGolangPipeline:
                                          queryOpts={'limit': 1, 'order': '-creation_event_id'})
             if builds:
                 nvr = [b['nvr'] for b in builds][0]
-                builder_nvrs.append(nvr)
+                builder_nvrs[el_v] = nvr
 
-        found = False
+        need_update = False
         if builder_nvrs:
             _LOGGER.info(f"Found builder nvrs for this version {builder_nvrs}. Checking if they are being used in "
                          "streams.yml")
@@ -154,6 +155,7 @@ class UpdateGolangPipeline:
             api = GhApi(owner=owner, repo=repo, token=github_token)
             blob = api.repos.get_content(filename, ref=branch)
             group_config = yaml.safe_load(base64.b64decode(blob['content']))
+            major_go, minor_go, _ = go_version.split('.')
             for stream_name, info in group_config.items():
                 if 'golang' not in stream_name:
                     continue
@@ -162,14 +164,22 @@ class UpdateGolangPipeline:
                     continue
                 name, vr = image_nvr_like.split(':')
                 nvr = f"{name.replace('/', '-')}-container-{vr}"
-                if nvr in builder_nvrs:
-                    _LOGGER.info(f'Found stream:{stream_name} to have nvr:{nvr}')
-                    found = True
+                pattern = f"{component}-v{major_go}.{minor_go}"
+                if not nvr.startswith(pattern):
+                    continue
 
-            if found:
-                _LOGGER.info("Builders don't need update since nvr are built and pinned in streams.yml")
+                _, el_version = split_el_suffix_in_release(vr)
+                el_version = int(el_version[2:])
+                if nvr == builder_nvrs[el_version]:
+                    _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{nvr}')
+                else:
+                    yellow_print(f'update stream:{stream_name}:image to {builder_nvrs[el_version]}')
+                    need_update = True
+
+            if not need_update:
+                green_print("Builders don't need update since nvr are built and pinned in streams.yml")
             else:
-                _LOGGER.info(f"Please update streams.yml with existing nvrs {builder_nvrs}")
+                red_print(f"Please update streams.yml")
         else:
             # Make sure builder branches are updated for building
             _LOGGER.info("Did not find any existing builder images. Verifying builder branches are updated for "
