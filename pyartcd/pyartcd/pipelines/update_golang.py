@@ -5,7 +5,10 @@ import logging
 import re
 import asyncio
 import os
+import yaml
+import base64
 from typing import List
+from fnmatch import fnmatch
 from ghapi.all import GhApi
 from specfile import Specfile
 from tenacity import (RetryCallState, RetryError, retry,
@@ -19,7 +22,9 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.util import split_el_suffix_in_release
 from doozerlib.rpm_utils import parse_nvr
+from doozerlib.brew import BuildStates
 from elliottlib import util as elliottutil
+from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -103,20 +108,81 @@ class UpdateGolangPipeline:
         else:
             _LOGGER.info('Not creating Jira ticket, run with --create-tagging-ticket to create one if one does not exist')
 
-        _LOGGER.info('Checking if builds are tagged and available in buildroots')
-        tasks = []
-        for el_v, nvr in el_nvr_map.items():
-            tasks.append(self.wait_for_nvr_to_be_latest(el_v, nvr))
-        try:
-            await asyncio.gather(*tasks)
-        except RetryError as err:
-            message = f"Timeout waiting for builds to show up in buildroots: {err}"
-            _LOGGER.error(message)
-            _LOGGER.exception(err)
-            raise TimeoutError(message)
-        finally:
-            _LOGGER.info("Golang builds are tagged and are available")
+        # Make sure builds are tagged and available
+        # _LOGGER.info('Checking if builds are tagged and available in buildroots')
+        # tasks = []
+        # for el_v, nvr in el_nvr_map.items():
+        #     tasks.append(self.wait_for_nvr_to_be_latest(el_v, nvr))
+        # try:
+        #     await asyncio.gather(*tasks)
+        # except RetryError as err:
+        #     message = f"Timeout waiting for builds to show up in buildroots: {err}"
+        #     _LOGGER.error(message)
+        #     _LOGGER.exception(err)
+        #     raise TimeoutError(message)
+        # finally:
+        #     _LOGGER.info("Golang builds are tagged and are available")
 
+        # Make a sanity check if a builder nvr exists for this version and if it's already pinned
+        _LOGGER.info(f"Checking if any builder image builds exist for {go_version} in brew")
+        component = GOLANG_BUILDER_CVE_COMPONENT
+        package_info = self.koji_session.getPackage(component)
+        if not package_info:
+            raise IOError(f'No brew package is defined for {component}')
+        package_id = package_info['id']
+        builder_nvrs = []
+        for el_v in el_nvr_map.keys():
+            pattern = f"{component}-v{go_version}-*el{el_v}*"
+            builds = self.koji_session.listBuilds(packageID=package_id,
+                                         state=BuildStates.COMPLETE.value, # complete
+                                         pattern=pattern,
+                                         queryOpts={'limit': 1, 'order': '-creation_event_id'})
+            if builds:
+                nvr = [b['nvr'] for b in builds][0]
+                builder_nvrs.append(nvr)
+
+        found = False
+        if builder_nvrs:
+            _LOGGER.info(f"Found builder nvrs for this version {builder_nvrs}. Checking if they are being used in "
+                         "streams.yml")
+            github_token = os.environ.get('GITHUB_TOKEN')
+            if not github_token:
+                raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
+
+            owner, repo = 'openshift-eng', 'ocp-build-data'
+            branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
+
+            api = GhApi(owner=owner, repo=repo, token=github_token)
+            blob = api.repos.get_content(filename, ref=branch)
+            group_config = yaml.safe_load(base64.b64decode(blob['content']))
+            for stream_name, info in group_config.items():
+                if 'golang' not in stream_name:
+                    continue
+                image_nvr_like = info['image']
+                if 'golang-builder' not in image_nvr_like:
+                    continue
+                name, vr = image_nvr_like.split(':')
+                nvr = f"{name.replace('/', '-')}-container-{vr}"
+                if nvr in builder_nvrs:
+                    _LOGGER.info(f'Found stream:{stream_name} to have nvr:{nvr}')
+                    found = True
+
+            if found:
+                _LOGGER.info("Builders don't need update since nvr are built and pinned in streams.yml")
+            else:
+                _LOGGER.info(f"Please update streams.yml with existing nvrs {builder_nvrs}")
+        else:
+            # Make sure builder branches are updated for building
+            _LOGGER.info("Did not find any existing builder images. Verifying builder branches are updated for "
+                         "building")
+            for el_v, nvr in el_nvr_map.items():
+                self.verify_golang_builder_repo(nvr, el_v, go_version)
+                _LOGGER.info(
+                    "Please trigger job at https://saml.buildvm.openshift.eng.bos.redhat.com:8888/job/aos-cd-builds"
+                    "/job/build%252Fgolang-builder/ "
+                    f"with params GOLANG_VERSION={go_version} RHEL_VERSION={el_v}")
+
+        # Check which rpms need to be rebuilt
         _LOGGER.info('Checking if rpms need to be rebuilt')
         _LOGGER.info('Will ignore microshift rpm since it is special and rebuilds for payload image')
 
@@ -165,8 +231,56 @@ class UpdateGolangPipeline:
                         _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
                         continue
 
-        # _LOGGER.info('Rebuilding ART rpms')
-        # self.rebuild_art_rpms(art_rpms_for_rebuild)
+    def verify_golang_builder_repo(self, nvr, el_v, go_version):
+        # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
+        github_token = os.environ.get('GITHUB_TOKEN')
+        if not github_token:
+            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
+
+        owner, repo = 'openshift-eng', 'ocp-build-data'
+        major_go, minor_go, patch_go = go_version.split('.')
+        go_v = f"{major_go}.{minor_go}"
+        branch, filename = f'rhel-{el_v}-golang-{go_v}', 'group.yml'
+
+        api = GhApi(owner=owner, repo=repo, token=github_token)
+        blob = api.repos.get_content(filename, ref=branch)
+        group_config = yaml.safe_load(base64.b64decode(blob['content']))
+        content_repo_url = self.get_content_repo_url(el_v)
+
+        golang_repo = f'rhel-{el_v}-golang-rpms'
+        if golang_repo not in group_config['repos']:
+            raise ValueError(f"Did not find {golang_repo} defined at "
+                             f"https://github.com/{owner}/{repo}/blob/{branch}/{filename}. If it's with a different "
+                             "name please correct it.")
+
+        expected = {arch: f'{content_repo_url}/{arch}/'
+                       for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()}
+
+        major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
+        actual = {arch: val.format(MAJOR=major, MINOR=minor)
+                  for arch, val in group_config['repos'][golang_repo]['conf']['baseurl'].items()}
+
+        if expected != actual:
+            raise ValueError(f"Did not find repo {golang_repo} to have the expected urls. \nexpected="
+                             f"{expected}\nactual={actual}")
+
+        _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
+
+        # # create a new branch rhel-{el_v}-golang-{go_v}-update using ghapi
+        # branch = f'rhel-{el_v}-golang-{go_v}-update'
+        # title = f'Update golang rpms for {nvr}'
+        # body = f'Update golang rpms for {nvr} by updating group.yml'
+        # api.repos.create_branch(branch, 'rhel-{el_v}-golang-{go_v}')
+        #
+        # # create a pull request with the updated group.yml using ghapi
+        # branch = f'rhel-{el_v}-golang-{go_v}-update'
+        # title = f'Rebuild golang rpms for {nvr}'
+        # body = f'Rebuild golang rpms for {nvr} by updating group.yml'
+        # api.repos.create_pull(title=title, body=body, head=branch, base=branch)
+
+    def get_content_repo_url(self, el_v):
+        url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
+        return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
 
     def get_art_built_rpms(self):
         github_token = os.environ.get('GITHUB_TOKEN')
