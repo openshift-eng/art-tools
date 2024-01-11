@@ -19,6 +19,7 @@ previous_packages = [
     "cri-o",
     "cri-tools",
     "crun",
+    "fmt",
     "haproxy",
     "ignition",
     "kernel",
