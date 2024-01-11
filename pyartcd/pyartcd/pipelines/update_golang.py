@@ -149,6 +149,7 @@ class UpdateGolangPipeline:
 
         if art_rpms_for_rebuild:
             _LOGGER.info(f'These ART rpms are on older golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}')
+            self.rebuild_art_rpms(art_rpms_for_rebuild)
 
         if non_art_rpms_for_rebuild and click.confirm("Rebuild non-ART rpms?"):
             _LOGGER.info('Rebuilding non-ART rpms')
@@ -177,12 +178,14 @@ class UpdateGolangPipeline:
         return [c['name'].rstrip('.yml') for c in content if c['name'].endswith('.yml')]
 
     def rebuild_art_rpms(self, rpms):
-        jenkins.start_ocp4(
-            build_version=self.ocp_version,
-            assembly='stream',
-            rpm_list=rpms,
-            dry_run=self.runtime.dry_run
-        )
+        _LOGGER.info(f"Trigger job at https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/build with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
+                     f"PIN_BUILDS=True BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}")
+        # jenkins.start_ocp4(
+        #     build_version=self.ocp_version,
+        #     assembly='stream',
+        #     rpm_list=rpms,
+        #     dry_run=self.runtime.dry_run
+        # )
 
     async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
         branch = f'rhaos-{self.ocp_version}-rhel-{el_v}'
