@@ -48,6 +48,7 @@ class PrepareReleasePipeline:
         nightlies: List[str],
         package_owner: str,
         jira_token: str,
+        exclude_builds: List[str],
         default_advisories: bool = False,
         include_shipped: bool = False,
     ) -> None:
@@ -62,6 +63,7 @@ class PrepareReleasePipeline:
                 raise ValueError(f"Invalid group name: {group}")
         self.group_name = group
         self.candidate_nightlies = {}
+        self.exclude_builds = exclude_builds
         if self.assembly == "stream":
             if not name:
                 raise ValueError("Release name is required to prepare a release from stream assembly.")
@@ -487,6 +489,9 @@ class PrepareReleasePipeline:
             cmd.append("--member-only")
         if not self.dry_run:
             cmd.append(f"--attach={advisory}")
+        if self.exclude_builds:
+            cmd.append(f"--exclude-builds={self.exclude_builds}")
+
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
@@ -721,10 +726,11 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="don't create advisories/jira; pick them up from ocp-build-data")
 @click.option("--include-shipped", is_flag=True, required=False,
               help="Do not filter our shipped builds, attach all builds to advisory")
+@click.option("--exclude-builds", multiple=True, help="[MULTIPLE] Exclude builds from being attached to any advisory")
 @pass_runtime
 @click_coroutine
 async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Optional[str], date: str,
-                          package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool, include_shipped: bool):
+                          package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool, include_shipped: bool, exclude_builds: Tuple[str, ...]):
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     await slack_client.say_in_thread(f":construction: prepare-release for {name if name else assembly} "
@@ -747,6 +753,7 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             jira_token=jira_token,
             default_advisories=default_advisories,
             include_shipped=include_shipped,
+            exclude_builds=exclude_builds,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: prepare-release for {name if name else assembly} completes.")

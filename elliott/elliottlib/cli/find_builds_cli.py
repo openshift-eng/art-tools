@@ -74,12 +74,17 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @click.option(
     '--member-only', is_flag=True,
     help='(For rpms) Only sweep member rpms')
+@click.option(
+    '--exclude-builds',
+    multiple=True,
+    help='Exclude builds from being attached to any advisory [MULTIPLE]')
 @click_coroutine
 @pass_runtime
 # # # NOTE: if you change the method signature, be aware that verify_attached_operators_cli.py # # #
 # # # invokes find_builds_cli so please avoid breaking it.                                     # # #
 async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds, kind, as_json,
-                          remove, clean, no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
+                          remove, clean, no_cdn_repos, payload, non_payload, include_shipped, member_only: bool,
+                          exclude_builds):
     '''Automatically or manually find or attach/remove viable rpm or image builds
 to ADVISORY. Default behavior searches Brew for viable builds in the
 given group. Provide builds manually by giving one or more --build
@@ -212,18 +217,24 @@ PRESENT advisory. Here are some examples:
         # Do not change advisory state unless strictly necessary
         return
 
+    filtered_builds = []
+    for build in unshipped_builds:
+        if build.nvr in exclude_builds:
+            continue
+        filtered_builds.append(build)
+
     try:
         erratum = errata.Advisory(errata_id=advisory_id)
         erratum.ensure_state('NEW_FILES')
         if remove:
             to_remove = [f"{nvrp[0]}-{nvrp[1]}-{nvrp[2]}" for nvrp in unshipped_nvrps]
         elif clean:
-            to_remove = [b.nvr for b in unshipped_builds]
+            to_remove = [b.nvr for b in filtered_builds]
 
         if to_remove:
             erratum.remove_builds(to_remove)
         else:  # attach
-            erratum.attach_builds(unshipped_builds, kind)
+            erratum.attach_builds(filtered_builds, kind)
             cdn_repos = et_data.get('cdn_repos')
             if kind == 'image':
                 ensure_rhcos_file_meta(advisory_id)
