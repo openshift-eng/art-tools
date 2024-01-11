@@ -8,7 +8,6 @@ import os
 import yaml
 import base64
 from typing import List
-from fnmatch import fnmatch
 from ghapi.all import GhApi
 from specfile import Specfile
 from tenacity import (RetryCallState, RetryError, retry,
@@ -176,7 +175,7 @@ class UpdateGolangPipeline:
             _LOGGER.info("Did not find any existing builder images. Verifying builder branches are updated for "
                          "building")
             for el_v, nvr in el_nvr_map.items():
-                self.verify_golang_builder_repo(nvr, el_v, go_version)
+                self.verify_golang_builder_repo(el_v, go_version)
                 _LOGGER.info(
                     "Please trigger job at https://saml.buildvm.openshift.eng.bos.redhat.com:8888/job/aos-cd-builds"
                     "/job/build%252Fgolang-builder/ "
@@ -231,7 +230,7 @@ class UpdateGolangPipeline:
                         _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
                         continue
 
-    def verify_golang_builder_repo(self, nvr, el_v, go_version):
+    def verify_golang_builder_repo(self, el_v, go_version):
         # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
         github_token = os.environ.get('GITHUB_TOKEN')
         if not github_token:
