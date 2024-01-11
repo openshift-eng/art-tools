@@ -617,15 +617,18 @@ class ScanOshCli:
         components_with_issues, components_without_issues = self.categorize_components(components_with_closed_scans)
         for component in components_without_issues:
             summary = component["jira_search_summary"]
+            kind = component["kind"]
 
-            open_issues = self.get_jira_issues(summary, status=JiraStatus.OPEN)
-            # Close open issues, if they exist
-            for open_issue in open_issues:
-                if not self.dry_run:
-                    self.jira_client.transition_issue(open_issue.key, "Closed")
-                    self.runtime.logger.info(f"Closed issue {open_issue.key}")
-                else:
-                    self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
+            if kind == BuildType.IMAGE:
+                # Close open issues, if they exist, for Images.
+                # For RPMs, its OCP version independent, so skipping
+                open_issues = self.get_jira_issues(summary, status=JiraStatus.OPEN)
+                for open_issue in open_issues:
+                    if not self.dry_run:
+                        self.jira_client.transition_issue(open_issue.key, "Closed")
+                        self.runtime.logger.info(f"Closed issue {open_issue.key}")
+                    else:
+                        self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
 
         for c in components_with_issues:
             try:
