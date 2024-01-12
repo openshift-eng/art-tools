@@ -255,8 +255,13 @@ class PromotePipeline:
                 #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
                 logger.info("Verifying attached bugs...")
                 advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
+
+                verify_flaws = True
+                if "prerelease" in impetus_advisories.keys() or assembly_type == assembly.AssemblyTypes.PREVIEW:
+                    verify_flaws = False
                 try:
-                    await self.verify_attached_bugs(advisories, no_verify_blocking_bugs=no_verify_blocking_bugs)
+                    await self.verify_attached_bugs(advisories, no_verify_blocking_bugs=no_verify_blocking_bugs,
+                                                    verify_flaws=verify_flaws)
                 except ChildProcessError as err:
                     logger.warn("Error verifying attached bugs: %s", err)
                     justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
@@ -881,7 +886,8 @@ class PromotePipeline:
         if advisory_info["status"] not in {"QE", "REL_PREP", "PUSH_READY", "IN_PUSH", "SHIPPED_LIVE"}:
             raise VerificationError(f"Advisory {advisory_info['id']} should not be in {advisory_info['status']} state.")
 
-    async def verify_attached_bugs(self, advisories: Iterable[int], no_verify_blocking_bugs: bool):
+    async def verify_attached_bugs(self, advisories: Iterable[int], no_verify_blocking_bugs: bool,
+                                   verify_flaws: bool = True):
         advisories = list(advisories)
         if not advisories:
             self._logger.warning("No advisories to verify.")
@@ -890,9 +896,10 @@ class PromotePipeline:
             "elliott",
             f"--assembly={self.assembly}",
             f"--group={self.group}",
-            "verify-attached-bugs",
-            "--verify-flaws"
+            "verify-attached-bugs"
         ]
+        if verify_flaws:
+            cmd.append("--verify-flaws")
         if no_verify_blocking_bugs:
             cmd.append("--no-verify-blocking-bugs")
         async with self._elliott_lock:
