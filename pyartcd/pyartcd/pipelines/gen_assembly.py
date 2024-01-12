@@ -145,10 +145,12 @@ class GenAssemblyPipeline:
         cmd.append("from-releases")
         for nightly in candidate_nightlies:
             cmd.append(f"--nightly={nightly}")
-        if self.custom:
-            cmd.append("--custom")
+
         if self.prerelease:
             cmd.append("--prerelease")
+
+        if self.custom:
+            cmd.append("--custom")
         else:
             if self.in_flight:
                 cmd.append(f"--in-flight={self.in_flight}")
