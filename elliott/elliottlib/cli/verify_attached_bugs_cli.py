@@ -409,7 +409,7 @@ class BugValidator:
                     self._complain(message)
                 if blocker.status in ['CLOSED', 'Closed'] and \
                     blocker.resolution not in ['CURRENTRELEASE', 'NEXTRELEASE', 'ERRATA', 'DUPLICATE', 'NOTABUG', 'WONTFIX',
-                                               'Done', 'Fixed', 'Done-Errata',
+                                               'Done', 'Fixed', 'Done-Errata', 'Obsolete',
                                                'Current Release', 'Errata', 'Next Release',
                                                "Won't Do", "Won't Fix",
                                                'Duplicate', 'Duplicate Issue',
