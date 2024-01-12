@@ -30,11 +30,6 @@ LOGGER = logutil.getLogger(__name__)
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
-#
-# Attach Builds
-# advisory:find-builds
-#
-
 
 @cli.command('find-builds', short_help='Find or attach builds to ADVISORY')
 @click.option(
@@ -53,12 +48,6 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @click.option(
     '--json', 'as_json', metavar='FILE_NAME',
     help='Dump new builds as JSON array to a file (or "-" for stdout)')
-@click.option(
-    '--remove', required=False, is_flag=True,
-    help='Remove builds from advisories instead of adding (default to False)')
-@click.option(
-    '--clean', required=False, is_flag=True,
-    help='Clean up all the builds from advisories(default to False)')
 @click.option(
     '--no-cdn-repos', required=False, is_flag=True,
     help='Do not configure CDN repos after attaching images (default to False)')
@@ -79,8 +68,8 @@ pass_runtime = click.make_pass_decorator(Runtime)
 # # # NOTE: if you change the method signature, be aware that verify_attached_operators_cli.py # # #
 # # # invokes find_builds_cli so please avoid breaking it.                                     # # #
 async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds, kind, as_json,
-                          remove, clean, no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
-    '''Automatically or manually find or attach/remove viable rpm or image builds
+                          no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
+    """Automatically or manually find or attach viable rpm or image builds
 to ADVISORY. Default behavior searches Brew for viable builds in the
 given group. Provide builds manually by giving one or more --build
 (-b) options. Manually provided builds are verified against the Errata
@@ -88,7 +77,6 @@ Tool API.
 
 \b
   * Attach the builds to ADVISORY by giving --attach
-  * Remove the builds to ADVISORY by giving --remove
   * Specify the build type using --kind KIND
 
 Example: Assuming --group=openshift-3.7, then a build is a VIABLE
@@ -117,17 +105,8 @@ PRESENT advisory. Here are some examples:
     ID are viable builds:
 
     $ elliott --group openshift-3.6 find-builds -k rpm -b megafrobber-1.0.1-2.el7 -a 93170
+"""
 
-\b
-    Remove specific RPM NVR and build ID from advisory:
-
-    $ elliott --group openshift-4.3 find-builds -k image -b oauth-server-container-v4.3.22-202005212137 -a 55017 --remove
-'''
-
-    if clean and (remove or builds):
-        raise click.BadParameter('Option --clean cannot be used with --build or --remove.')
-    if remove and not builds:
-        raise click.BadParameter('Option --remove only supports removing specific builds with -b.')
     if advisory_id and default_advisory_type:
         raise click.BadParameter('Use only one of --use-default-advisory or --attach')
     if payload and non_payload:
@@ -144,17 +123,13 @@ PRESENT advisory. Here are some examples:
     ensure_erratatool_auth()  # before we waste time looking up builds we can't process
 
     unshipped_nvrps = []
-    unshipped_builds = []
-    to_remove = []
 
     # get the builds we want to add
     brew_session = runtime.build_retrying_koji_client(caching=True)
     if builds:
         green_prefix('Fetching builds...')
         unshipped_nvrps = _fetch_nvrps_by_nvr_or_id(builds, tag_pv_map, include_shipped=include_shipped,
-                                                    ignore_product_version=remove, brew_session=brew_session)
-    elif clean:
-        unshipped_builds = errata.get_brew_builds(advisory_id)
+                                                    brew_session=brew_session)
     else:
         if kind == 'image':
             unshipped_nvrps = await _fetch_builds_by_kind_image(runtime, tag_pv_map, brew_session, payload,
@@ -170,66 +145,46 @@ PRESENT advisory. Here are some examples:
     pbar_header(
         'Fetching builds from Errata: ',
         'Hold on a moment, fetching buildinfos from Errata Tool...',
-        unshipped_builds if clean else unshipped_nvrps)
+        unshipped_nvrps)
 
-    if not (clean or remove):
-        # if is --clean then batch fetch from Erratum no need to fetch them individually
-        # if is not for --clean fetch individually using nvrp tuples then get specific
-        # elliottlib.brew.Build Objects by get_brew_build()
-        # e.g. :
-        # ('atomic-openshift-descheduler-container', 'v4.3.23', '202005250821', 'RHEL-7-OSE-4.3').
-        # Build(atomic-openshift-descheduler-container-v4.3.23-202005250821).
-        unshipped_builds = parallel_results_with_progress(
-            unshipped_nvrps,
-            lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
-                                               nvrp[3], session=requests.Session())
-        )
-        previous = len(unshipped_builds)
-        unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds)
-        if len(unshipped_builds) != previous:
-            click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
-                       f'these ART advisories: {attached_to_advisories}')
+    unshipped_builds = parallel_results_with_progress(
+        unshipped_nvrps,
+        lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
+                                           nvrp[3], session=requests.Session())
+    )
+    previous = len(unshipped_builds)
+    unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds)
+    if len(unshipped_builds) != previous:
+        click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
+                   f'these ART advisories: {attached_to_advisories}')
 
-        _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
+    _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
 
-        if not unshipped_builds:
-            green_print('No builds needed to be attached.')
-            return
+    if not unshipped_builds:
+        green_print('No builds needed to be attached.')
+        return
 
     if not advisory_id:
         click.echo('The following {n} builds '.format(n=len(unshipped_builds)), nl=False)
-        if not (remove or clean):
-            click.secho('may be attached', bold=True, nl=False)
-            click.echo(' to an advisory:')
-        else:
-            click.secho('may be removed from', bold=True, nl=False)
-            click.echo(' from an advisory:')
+        click.secho('may be attached', bold=True, nl=False)
+        click.echo(' to an advisory:')
         for b in sorted(unshipped_builds):
             click.echo(' ' + b.nvr)
         return
 
-    if not unshipped_builds and not (remove and unshipped_nvrps):
+    if not unshipped_builds:
         # Do not change advisory state unless strictly necessary
         return
 
     try:
         erratum = errata.Advisory(errata_id=advisory_id)
         erratum.ensure_state('NEW_FILES')
-        if remove:
-            to_remove = [f"{nvrp[0]}-{nvrp[1]}-{nvrp[2]}" for nvrp in unshipped_nvrps]
-        elif clean:
-            to_remove = [b.nvr for b in unshipped_builds]
-
-        if to_remove:
-            erratum.remove_builds(to_remove)
-        else:  # attach
-            erratum.attach_builds(unshipped_builds, kind)
-            cdn_repos = et_data.get('cdn_repos')
-            if kind == 'image':
-                ensure_rhcos_file_meta(advisory_id)
-                if cdn_repos and not no_cdn_repos:
-                    erratum.set_cdn_repos(cdn_repos)
-
+        erratum.attach_builds(unshipped_builds, kind)
+        cdn_repos = et_data.get('cdn_repos')
+        if kind == 'image':
+            ensure_rhcos_file_meta(advisory_id)
+            if cdn_repos and not no_cdn_repos:
+                erratum.set_cdn_repos(cdn_repos)
     except ErrataException as e:
         red_print(f'Cannot change advisory {advisory_id}: {e}')
         exit(1)
