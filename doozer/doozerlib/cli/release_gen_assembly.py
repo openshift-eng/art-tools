@@ -547,7 +547,7 @@ class GenAssemblyCli:
                 return advisories, release_jira
 
         previous_group = releases_config.releases[previous_assembly].assembly.group
-        advisories = previous_group.advisories.primitive()
+        advisories.update(previous_group.advisories.primitive())
 
         # prerelease advisory already associated with an assembly should be shipped, or dropped
         # do not reuse it
