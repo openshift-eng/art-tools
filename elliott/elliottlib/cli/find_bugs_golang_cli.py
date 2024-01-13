@@ -44,9 +44,8 @@ class FindBugsGolangCli:
                 return None
             self.flaw_bugs[flaw_id] = flaw_bug
         if 'golang:' not in flaw_bug.summary.lower():
-            self._logger.warning(f"{flaw_bug.id} doesn't have golang in title. Is it a golang cve? If not "
-                                 "why is it's tracker assigned to Release component? please investigate. Ignoring "
-                                 "flaw bug for now")
+            self._logger.warning(f"{flaw_bug.id} doesn't have `golang` in title. title=`{flaw_bug.summary}`. "
+                                 "Is it a golang compiler cve? Please investigate. Ignoring flaw bug for now")
             return None
 
         fixed_in = flaw_bug.fixed_in
@@ -103,12 +102,33 @@ class FindBugsGolangCli:
                         self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {existing_version}")
                         fixed_in_versions.add(existing_version)
 
+        fixed = False
+        if fixed_in_versions:
+            self._logger.info(f"Fix is found in versions {fixed_in_versions}")
+
+        not_fixed_in = set(versions_to_build_map.keys()) - fixed_in_versions
+        if not_fixed_in:
+            self._logger.info(f"Couldn't determine if fix is in builders for versions {not_fixed_in}")
+            vuln_builds = sum([versions_to_build_map[v] for v in not_fixed_in])
+            self._logger.info(f"Potentially vulnerable builds: {vuln_builds}")
+
+            # In case this is for builder image
+            # and if vulnerable builds make up for less than 10% of total builds, consider it fixed
+            # this is due to etcd and a few payload images lagging behind due to special reasons
+            if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT and vuln_builds / total_builds < 0.1:
+                self._logger.info("Vulnerable builds make up for less than 10% of total builds, considering it fixed")
+                fixed = True
+        else:
+            fixed = True
+
         if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
             build_artifacts = f"Images in release payload {self.pullspec}"
         else:
             nvrs = []
             for nvr_group in go_nvr_map.values():
                 nvrs.extend([f"{n[0]}-{n[1]}-{n[2]}" for n in nvr_group])
+            if fixed:
+                self._logger.info(f"Fix is in nvrs: {nvrs}")
             build_artifacts = f"These nvrs {sorted(nvrs)}"
 
         comment = f"{bug.id} is associated with flaw bug(s) {bug.corresponding_flaw_bug_ids} " \
@@ -116,27 +136,13 @@ class FindBugsGolangCli:
                   f"parent golang build versions {sorted(go_nvr_map.keys())}. " \
                   f"Fix is determined to be in builder versions {fixed_in_versions}."
 
-        not_fixed_in = set(versions_to_build_map.keys()) - fixed_in_versions
-        fixed = False
-        if not_fixed_in:
-            self._logger.info(f"Couldn't determine if fix is in builders for versions {not_fixed_in}")
-            vuln_builds = sum([versions_to_build_map[v] for v in not_fixed_in])
-            self._logger.info(f"Potentially vulnerable builds: {vuln_builds}")
-            # if vulnerable builds make up for less than 10% of total builds, consider it fixed
-            if vuln_builds / total_builds < 0.1:
-                self._logger.info("Vulnerable builds make up for less than 10% of total builds, considering it fixed")
-                fixed = True
-        else:
-            self._logger.info("Fix is determined to be in all builders in payload")
-            fixed = True
-
         return fixed, comment
 
     async def is_fixed_rpm(self, bug, tracker_fixed_in, rpm_name):
         if not self.rpm_nvrps:
             if self._runtime.assembly == 'stream':
                 self._logger.error("need --assembly set to non-stream to determine rpm fix")
-                return False
+                return False, None
 
             # fetch assembly selected nvrs
             replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
@@ -158,7 +164,7 @@ class FindBugsGolangCli:
                 nvrs.append((nvrp[0], nvrp[1], nvrp[2]))
         if not nvrs:
             self._logger.warning(f"rpm {rpm_name} not found for assembly {self._runtime.assembly}. Is it a valid rpm?")
-            return False
+            return False, None
 
         go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
         return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
@@ -185,13 +191,22 @@ class FindBugsGolangCli:
         logger = self._logger
         target_release = self.jira_tracker.target_release()
         tr = ','.join(target_release)
-        logger.info(f"Searching for open security trackers with target version {tr} assigned to ART")
+        logger.info(f"Searching for open golang security trackers with target version {tr}")
 
-        query = ('project = "OCPBUGS" and component = "Release" and statusCategory != done '
-                 f'and labels = "SecurityTracking" '
+        query = ('project = "OCPBUGS" and summary ~ "golang" and status in (NEW, ASSIGNED, POST) '
+                 'and labels = "SecurityTracking" '
                  f'and "Target Version" in ({tr})')
 
         bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
+
+        def belongs_to_art(b: JIRABug):
+            comp = b.whiteboard_component
+            not_art = ["sandboxed-containers"]
+            if comp in not_art:
+                return False
+            return not (comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT)
+
+        bugs = [b for b in bugs if belongs_to_art(b)]
         bugs = sorted(bugs, key=lambda b: b.id)
         logger.info(f"Found {len(bugs)} bugs")
         for b in bugs:
