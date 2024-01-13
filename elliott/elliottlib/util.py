@@ -502,25 +502,28 @@ def all_same(items: Iterable[Any]):
     return all(x == first for x in it)
 
 
-async def get_nvrs_from_payload(pullspec, rhcos_images, logger):
+async def get_nvrs_from_payload(pullspec, rhcos_images, logger=None):
+    def log(msg):
+        if logger:
+            logger.info(msg)
+
     all_payload_nvrs = {}
-    logger.info("Fetching release info...")
+    log("Fetching release info...")
     release_export_cmd = f'oc adm release info {pullspec} -o json'
 
     rc, stdout, stderr = exectools.cmd_gather(release_export_cmd)
     if rc != 0:
         # Probably no point in continuing.. can't contact brew?
         msg = f"Unable to run oc release info: out={stdout}  ; err={stderr}"
-        logger.error(msg)
         raise RuntimeError(msg)
 
     payload_json = json.loads(stdout)
-    logger.info("Looping over payload images...")
-    logger.info(f"{len(payload_json['references']['spec']['tags'])} images to check")
+    log("Looping over payload images...")
+    log(f"{len(payload_json['references']['spec']['tags'])} images to check")
     cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
             payload_json['references']['spec']['tags']]
 
-    logger.info("Querying image infos...")
+    log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
 
     for image, cmd, cmd_result in zip(payload_json['references']['spec']['tags'], cmds, cmd_results):
@@ -529,7 +532,6 @@ async def get_nvrs_from_payload(pullspec, rhcos_images, logger):
         if rc != 0:
             # Probably no point in continuing.. can't contact brew?
             msg = f"Unable to run oc image info: cmd={cmd!r}, out={stdout}  ; err={stderr}"
-            logger.error(msg)
             raise RuntimeError(msg)
 
         image_info = json.loads(stdout)
@@ -537,12 +539,11 @@ async def get_nvrs_from_payload(pullspec, rhcos_images, logger):
 
         # RHCOS images are not built in brew, so skip them
         if image_name in rhcos_images:
-            logger.info(f"Skipping rhcos image {image_name}")
+            log(f"Skipping rhcos image {image_name}")
             continue
 
         if not labels or any(i not in labels for i in ['version', 'release', 'com.redhat.component']):
             msg = f"For image {image_name} expected labels don't exist"
-            logger.error(msg)
             raise ValueError(msg)
         component = labels['com.redhat.component']
         v = labels['version']
