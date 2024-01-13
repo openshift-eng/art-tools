@@ -477,7 +477,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         for advisory in [1, 2, 3, 4]:
             pipeline.change_advisory_state.assert_any_await(advisory, "QE")
         pipeline.get_advisory_info.assert_awaited_once_with(2)
-        pipeline.verify_attached_bugs.assert_awaited_once_with([1, 2, 3, 4], no_verify_blocking_bugs=False)
+        pipeline.verify_attached_bugs.assert_awaited_once_with([1, 2, 3, 4], no_verify_blocking_bugs=False,
+                                                               verify_flaws=True)
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", raise_if_not_found=ANY)
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", raise_if_not_found=ANY)
         build_release_image.assert_any_await("4.10.99", "x86_64", ["4.10.98", "4.9.99"], {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", "registry.ci.openshift.org/ocp/release:nightly-x86_64", None, keep_manifest_list=False)

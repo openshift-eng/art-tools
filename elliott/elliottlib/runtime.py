@@ -52,6 +52,8 @@ class Runtime(GroupRuntime):
         self.verbose = False
         self.quiet = False
         self.data_path = None
+        self.load_wip = False
+        self.load_disabled = False
         self.use_jira = True
         if str(os.environ.get('USEJIRA')).lower() in ["false", "0"]:
             self.use_jira = False
@@ -113,8 +115,7 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none',
-                   no_group=False):
+    def initialize(self, mode='none', no_group=False, disabled=None):
 
         if self.initialized:
             return
@@ -141,6 +142,9 @@ class Runtime(GroupRuntime):
                 os.makedirs(self.working_dir)
 
         self.initialize_logging()
+
+        if disabled is not None:
+            self.load_disabled = disabled
 
         if no_group:
             return  # nothing past here should be run without a group
@@ -181,8 +185,14 @@ class Runtime(GroupRuntime):
             # flatten result and remove dupes
             return list(set([y for x in result for y in x]))
 
+        def filter_wip(n, d):
+            return d.get('mode', 'enabled') in ['wip', 'enabled']
+
         def filter_enabled(n, d):
             return d.get('mode', 'enabled') == 'enabled'
+
+        def filter_disabled(n, d):
+            return d.get('mode', 'enabled') in ['enabled', 'disabled']
 
         exclude_keys = flatten_list(self.exclude)
         image_ex = list(exclude_keys)
@@ -190,7 +200,15 @@ class Runtime(GroupRuntime):
         image_keys = flatten_list(self.images)
         rpm_keys = flatten_list(self.rpms)
 
-        filter_func = filter_enabled
+        filter_func = None
+        if self.load_wip and self.load_disabled:
+            pass  # use no filter, load all
+        elif self.load_wip:
+            filter_func = filter_wip
+        elif self.load_disabled:
+            filter_func = filter_disabled
+        else:
+            filter_func = filter_enabled
 
         replace_vars = self.group_config.vars.primitive() if self.group_config.vars else {}
         if self.assembly:
