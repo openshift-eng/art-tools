@@ -44,18 +44,27 @@ class FindBugsGolangCli:
                 return None
             self.flaw_bugs[flaw_id] = flaw_bug
         if 'golang:' not in flaw_bug.summary.lower():
-            self._logger.warning(f"{flaw_bug.id} doesn't have `golang` in title. title=`{flaw_bug.summary}`. "
-                                 "Is it a golang compiler cve? Please investigate. Ignoring flaw bug for now")
+            self._logger.info(f"{flaw_bug.id} doesn't have `golang:` in title. title=`{flaw_bug.summary}`. "
+                              "Is it a golang compiler cve? Ignoring flaw bug")
             return None
 
         fixed_in = flaw_bug.fixed_in
         # value can be "golang 1.20.9, golang 1.21.2"
         # or "Go 1.20.7, Go 1.19.12"
         # or "Go 1.20.2 and Go 1.19.7"
+        # or "golang 1.20" -> 1.20.0
         fixed_in_versions = re.findall(r'(\d+\.\d+\.\d+)', fixed_in)
         if not fixed_in_versions:
-            self._logger.warning(f"{flaw_bug.id} doesn't have any valid fixed in version values, fixed_in: {fixed_in}")
-            return None
+            # TODO: Sometimes bugzilla do not have accurate fixed_in version values
+            # See if you can query https://pkg.go.dev/vuln/GO-2023-2375
+            # or https://cveawg.mitre.org/api/cve/CVE-2023-45287
+            # to get accurate affected versions information
+            fixed_in_versions = re.findall(r'(\d+\.\d+)', fixed_in)
+            if fixed_in_versions:
+                fixed_in_versions = {f"{v}.0" for v in fixed_in_versions}
+            else:
+                self._logger.warning(f"{flaw_bug.id} doesn't have valid fixed_in value: {fixed_in}")
+                return None
         return set(fixed_in_versions)
 
     def tracker_fixed_in(self, bug):
@@ -199,14 +208,21 @@ class FindBugsGolangCli:
 
         bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
 
-        def belongs_to_art(b: JIRABug):
+        def is_valid(b: JIRABug):
+            # golang compiler cve title text always has `golang:`
+            # this ignores golang lib cves like `podman: net/http, golang.org/x/net/http2:`
+            if 'golang:' not in b.summary:
+                return False
+
             comp = b.whiteboard_component
+            if not comp:
+                return False
             not_art = ["sandboxed-containers"]
             if comp in not_art:
                 return False
             return not (comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT)
 
-        bugs = [b for b in bugs if belongs_to_art(b)]
+        bugs = [b for b in bugs if is_valid(b)]
         bugs = sorted(bugs, key=lambda b: b.id)
         logger.info(f"Found {len(bugs)} bugs")
         for b in bugs:
