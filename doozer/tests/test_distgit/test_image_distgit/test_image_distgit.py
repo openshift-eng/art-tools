@@ -1,13 +1,12 @@
 import datetime
 import io
-import json
 import logging
 import re
 import tempfile
 import unittest
 from pathlib import Path
 from threading import Lock
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, mock_open
 
 from flexmock import flexmock
 from unittest.mock import MagicMock
@@ -602,30 +601,28 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
+    @patch("artcommonlib.redis.set_value_sync")
     @patch("doozerlib.exectools.cmd_assert")
-    def test_determine_upstream_rhel_version(self, cmd_assert):
+    @patch("artcommonlib.redis.get_value_sync")
+    def test_determine_upstream_rhel_version(self, get_value, *_):
         dfp = MagicMock()
         dfp.parent_images = ['bogus']
 
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'base rhel8'}}}}), None)
-        self.assertEqual('el8', self.img_dg._determine_upstream_rhel_version(dfp))
+        # Already in Redis
+        get_value.return_value = '9'
+        self.assertEqual('9', self.img_dg._determine_upstream_rhel_version(dfp))
 
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'base rhel9'}}}}), None)
-        self.assertEqual('el9', self.img_dg._determine_upstream_rhel_version(dfp))
+        # Not in Redis yet: parsing os-release
+        get_value.return_value = None
+        with patch('builtins.open', new_callable=mock_open) as mocked_open:
+            mocked_open.return_value = io.StringIO('VERSION_ID="9.2"')
+            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version(dfp))
 
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'el8'}}}}), None)
-        self.assertEqual('el8', self.img_dg._determine_upstream_rhel_version(dfp))
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {'io.openshift.tags': 'base'}}}}), None)
-        self.assertEqual(None, self.img_dg._determine_upstream_rhel_version(dfp))
-
-        cmd_assert.return_value = (
-            json.dumps({'config': {'config': {'Labels': {}}}}), None)
-        self.assertEqual(None, self.img_dg._determine_upstream_rhel_version(dfp))
+        # Not in Redis yet: parsing error
+        get_value.return_value = None
+        with patch('builtins.open', new_callable=mock_open) as mocked_open:
+            mocked_open.return_value = io.StringIO('unparsable')
+            self.assertEqual(None, self.img_dg._determine_upstream_rhel_version(dfp))
 
     @patch('doozerlib.distgit.datetime')
     @patch('doozerlib.distgit.ReleaseSchedule')
@@ -679,7 +676,7 @@ COPY --from=builder /some/path/a /some/path/b
         self.img_dg.should_match_upstream = True
         self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
                               'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = 'el8'
+        self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-8')
@@ -688,7 +685,7 @@ COPY --from=builder /some/path/a /some/path/b
         self.img_dg.should_match_upstream = True
         self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
                               'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = 'el8'
+        self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
@@ -697,7 +694,7 @@ COPY --from=builder /some/path/a /some/path/b
         self.img_dg.should_match_upstream = False
         self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
                               'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = 'el8'
+        self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertFalse(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
