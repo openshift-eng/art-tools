@@ -16,6 +16,7 @@ from jira.resources import Issue
 from ruamel.yaml import YAML
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from artcommonlib.util import get_assembly_release_date
 from doozerlib.assembly import AssemblyTypes
 from elliottlib.assembly import assembly_group_config
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
@@ -85,7 +86,7 @@ class PrepareReleasePipeline:
             if default_advisories:
                 raise ValueError("default_advisories cannot be set for a non-stream assembly.")
 
-        self.release_date = date
+        self.release_date = date if date else get_assembly_release_date(assembly, group)
         self.package_owner = package_owner or self.runtime.config["advisory"]["package_owner"]
         self._slack_client = slack_client
         self.working_dir = self.runtime.working_dir.absolute()
@@ -711,7 +712,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="The name of an assembly to rebase & build for. e.g. 4.9.1")
 @click.option("--name", metavar="RELEASE_NAME",
               help="release name (e.g. 4.6.42)")
-@click.option("--date", metavar="YYYY-MMM-DD", required=True,
+@click.option("--date", metavar="YYYY-MMM-DD",
               help="Expected release date (e.g. 2020-11-25)")
 @click.option("--package-owner", metavar='EMAIL',
               help="Advisory package owner; Must be an individual email address; May be anyone who wants random advisory spam")

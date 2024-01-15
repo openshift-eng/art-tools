@@ -13,7 +13,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         runtime = MagicMock()
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
-                                       allow_inconsistency=False, custom=False, arches=(), in_flight=None,
+                                       allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
@@ -95,7 +95,7 @@ releases:
         }})
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
-                                       allow_inconsistency=False, custom=False, arches=(), in_flight=None,
+                                       allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
         pipeline._working_dir = Path("/path/to/working")
         yaml.load.return_value = OrderedDict([
@@ -144,7 +144,7 @@ releases:
 
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
-                                       allow_inconsistency=False, custom=False, arches=(), in_flight=None,
+                                       allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
         pipeline._working_dir = Path("/path/to/working")
         get_nightlies.return_value = ["nightly1", "nightly2", "nightly3", "nightly4"]

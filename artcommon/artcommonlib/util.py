@@ -1,4 +1,8 @@
 from typing import OrderedDict
+from datetime import datetime
+from artcommonlib.constants import RELEASE_SCHEDULES
+import requests
+import re
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -82,3 +86,55 @@ def merge_objects(a, b):
             # move new entry to the beginning
             c.move_to_end(k, last=False)
     return c
+
+
+def is_future_release_date(date_str):
+    """
+    If the input date is in future then return True elase False
+    """
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return False
+    current_date = datetime.now()
+    if target_date > current_date:
+        return True
+    else:
+        return False
+
+
+def get_assembly_release_date(assembly, group):
+    """
+    Get assembly release release date from release schedule API
+    """
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    for release in release_schedules.json()['all_ga_tasks']:
+        if assembly in release['name']:
+            assembly_release_data = release['date_start']
+            break
+    return assembly_release_data
+
+
+def get_infight(assembly, group):
+    """
+    Get infight release name from current assembly release
+    """
+    infight_release = None
+    assembly_release_date = get_assembly_release_date(assembly, group)
+    match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
+    if not match:
+        raise ValueError(f"Invalid group name: {group}")
+    previous_release = f"openshift-{int(match[1])}.{int(match[2])-1}"
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{previous_release}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    for release in release_schedules.json()['all_ga_tasks']:
+        is_future = is_future_release_date(release['date_start'])
+        if is_future:
+            days_diff = abs((datetime.strptime(assembly_release_date, "%Y-%m-%d") - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
+            if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
+                match = re.search(r'\d+\.\d+\.\d+', release['name'])
+                if match:
+                    infight_release = match.group()
+                    break
+                else:
+                    raise ValueError(f"Didn't find in_fight release in {release['name']}")
+    return infight_release
