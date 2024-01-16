@@ -6,14 +6,14 @@ metadata:
   name: art-cd-base
 spec:
   source:
-    dockerfile: art-cluster/apps/art-cd-image/Containerfile.base
+    dockerfile: art-cluster/pipelines/data/project/art-cd/image/Containerfile.base
     git:
       ref: master
-      uri: https://github.com/openshift-eng/aos-cd-jobs
+      uri: https://github.com/openshift-eng/art-tools
     type: Git
   strategy:
     dockerStrategy:
-      dockerfilePath: art-cluster/apps/art-cd-image/Containerfile.base
+      dockerfilePath: art-cluster/pipelines/data/project/art-cd/image/Containerfile.base
     type: Docker
   output:
     to:
