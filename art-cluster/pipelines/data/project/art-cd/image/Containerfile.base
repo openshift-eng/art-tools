@@ -10,7 +10,7 @@ RUN curl -fLo /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem https://certs
  && update-ca-trust extract
 
 # Copy repository configurations for software installations
-COPY art-cluster/data/projects/art-cd/image/files/etc/yum.repos.d /etc/yum.repos.d/
+COPY art-cluster/pipelines/data/project/art-cd/image/files/etc/yum.repos.d /etc/yum.repos.d/
 
 # Install necessary packages and Python libraries
 RUN dnf -y install python3 python3-pip python3-wheel python3-devel gcc krb5-devel wget tar gzip git krb5-workstation \
