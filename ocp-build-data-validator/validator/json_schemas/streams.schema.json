@@ -1,0 +1,46 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "streams.schema.json",
+    "title": "Streams",
+    "$defs": {
+        "stream": {
+            "type": "object",
+            "properties": {
+                "image": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "upstream_image_base": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "upstream_image": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "mirror": {
+                    "type": "boolean"
+                },
+                "mirror_manifest_list": {
+                    "type": "boolean"
+                },
+                "transform": {
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "required": [
+                "image",
+                "upstream_image"
+            ],
+            "additionalProperties": false
+        }
+    },
+    "type": "object",
+    "patternProperties": {
+        "^.+$": {
+            "$ref": "#/$defs/stream"
+        }
+    },
+    "additionalProperties": false
+}

@@ -1,0 +1,74 @@
+{
+    "type": "object",
+    "$id": "repos.schema.json",
+    "title": "Repositories",
+    "$defs": {
+        "repo": {
+            "type": "object",
+            "properties": {
+                "conf": {
+                    "type": "object",
+                    "properties": {
+                        "baseurl": {
+                            "$ref": "arches_dict.schema.json"
+                        },
+                        "baseurl!": {
+                            "$ref": "#/$defs/repo/properties/conf/properties/baseurl"
+                        },
+                        "baseurl?": {
+                            "$ref": "#/$defs/repo/properties/conf/properties/baseurl"
+                        }
+                    },
+                    "anyOf": [
+                        {
+                            "required": [
+                                "baseurl"
+                            ]
+                        },
+                        {
+                            "required": [
+                                "baseurl!"
+                            ]
+                        },
+                        {
+                            "required": [
+                                "baseurl?"
+                            ]
+                        }
+                    ],
+                    "additionalProperties": false
+                },
+                "conf!": {
+                    "$ref": "#/$defs/repo/properties/conf"
+                },
+                "conf?": {
+                    "$ref": "#/$defs/repo/properties/conf"
+                }
+            },
+            "anyOf": [
+                {
+                    "required": [
+                        "conf"
+                    ]
+                },
+                {
+                    "required": [
+                        "conf!"
+                    ]
+                },
+                {
+                    "required": [
+                        "conf?"
+                    ]
+                }
+            ],
+            "additionalProperties": false
+        }
+    },
+    "patternProperties": {
+        "^.+$": {
+            "$ref": "#/$defs/repo"
+        }
+    },
+    "additionalProperties": false
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assembly_dependencies.schema.json",
+  "title": "Assembly Dependencies",
+  "type": "object",
+  "properties": {
+    "rpms": {
+      "title": "RPM dependencies",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "why": {
+            "type": "string"
+          },
+          "non_gc_tag": {
+            "type": "string"
+          }
+        },
+        "patternProperties": {
+          "^el\\d+[!?-]?$": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "why",
+          "non_gc_tag"
+        ],
+        "minProperties": 3,
+        "additionalProperties": false
+      }
+    },
+    "rpms!": {
+      "$ref": "#/properties/rpms"
+    },
+    "rpms?": {
+      "$ref": "#/properties/rpms"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "rpms"
+      ]
+    },
+    {
+      "required": [
+        "rpms!"
+      ]
+    },
+    {
+      "required": [
+        "rpms?"
+      ]
+    }
+  ],
+  "additionalProperties": false
+}

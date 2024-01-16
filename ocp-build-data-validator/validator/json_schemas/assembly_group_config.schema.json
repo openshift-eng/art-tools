@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assembly_group_config.schema.json",
+  "title": "Assembly Group Configuration",
+  "type": "object",
+  "properties": {
+    "arches": {
+      "type": "array",
+      "items": {
+        "$ref": "arch.schema.json"
+      }
+    },
+    "arches!": {
+      "$ref": "#/properties/arches"
+    },
+    "arches?": {
+      "$ref": "#/properties/arches"
+    },
+    "arches-": {},
+    "repos": {
+      "$ref": "repos.schema.json"
+    },
+    "repos!": {
+      "$ref": "#/properties/repos"
+    },
+    "repos?": {
+      "$ref": "#/properties/repos"
+    },
+    "repos-": {},
+    "advisories": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "integer"
+        },
+        "image!": {
+          "$ref": "#/properties/advisories/properties/image"
+        },
+        "image?": {
+          "$ref": "#/properties/advisories/properties/image"
+        },
+        "image-": {},
+        "rpm": {
+          "type": "integer"
+        },
+        "rpm!": {
+          "$ref": "#/properties/advisories/properties/rpm"
+        },
+        "rpm?": {
+          "$ref": "#/properties/advisories/properties/rpm"
+        },
+        "rpm-": {},
+        "extras": {
+          "type": "integer"
+        },
+        "extras!": {
+          "$ref": "#/properties/advisories/properties/extras"
+        },
+        "extras?": {
+          "$ref": "#/properties/advisories/properties/extras"
+        },
+        "extras-": {},
+        "metadata": {
+          "type": "integer"
+        },
+        "metadata!": {
+          "$ref": "#/properties/advisories/properties/metadata"
+        },
+        "metadata?": {
+          "$ref": "#/properties/advisories/properties/metadata"
+        },
+        "metadata-": {},
+        "microshift": {
+          "type": "integer"
+        },
+        "microshift!": {
+          "$ref": "#/properties/advisories/properties/microshift"
+        },
+        "microshift?": {
+          "$ref": "#/properties/advisories/properties/microshift"
+        },
+        "microshift-": {},
+        "silentops": {
+          "type": "integer"
+        },
+        "silentops!": {
+          "$ref": "#/properties/advisories/properties/silentops"
+        },
+        "silentops?": {
+          "$ref": "#/properties/advisories/properties/silentops"
+        },
+        "silentops-": {},
+        "prerelease": {
+          "type": "integer"
+        },
+        "prerelease!": {
+          "$ref": "#/properties/advisories/properties/prerelease"
+        },
+        "prerelease?": {
+          "$ref": "#/properties/advisories/properties/prerelease"
+        },
+        "prerelease-": {},
+        "advance": {
+          "type": "integer"
+        },
+        "advance!": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "advance?": {
+          "$ref": "#/properties/advisories/properties/advance"
+        },
+        "advance-": {}
+      },
+      "additionalProperties": false
+    },
+    "advisories!": {
+      "$ref": "#/properties/advisories"
+    },
+    "advisories?": {
+      "$ref": "#/properties/advisories"
+    },
+    "advisories-": {},
+    "dependencies": {
+      "$ref": "assembly_dependencies.schema.json"
+    },
+    "dependencies!": {
+      "$ref": "#/properties/dependencies"
+    },
+    "dependencies?": {
+      "$ref": "#/properties/dependencies"
+    },
+    "dependencies-": {},
+    "release_jira": {
+      "type": "string",
+      "minLength": 1
+    },
+    "release_jira!": {
+      "$ref": "#/properties/release_jira"
+    },
+    "release_jira?": {
+      "$ref": "#/properties/release_jira"
+    },
+    "release_jira-": {},
+    "upgrades": {
+      "type": "string"
+    },
+    "upgrades!": {
+      "$ref": "#/properties/upgrades"
+    },
+    "upgrades?": {
+      "$ref": "#/properties/upgrades"
+    },
+    "upgrades-": {},
+    "check_golang_versions": {
+      "type": "boolean"
+    },
+    "check_golang_versions!": {
+      "$ref": "#/properties/check_golang_versions"
+    },
+    "check_golang_versions?": {
+      "$ref": "#/properties/check_golang_versions"
+    },
+    "check_golang_versions-": {},
+    "cachito": {
+      "description": "Cachito integration configuration",
+      "$ref": "cachito.schema.json"
+    },
+    "cachito!": {
+      "$ref": "#/properties/cachito"
+    },
+    "cachito?": {
+      "$ref": "#/properties/cachito"
+    },
+    "cachito-": {},
+    "build_profiles": {},
+    "build_profiles?": {
+      "$ref": "#/properties/build_profiles"
+    },
+    "rhcos": {
+      "description": "RHCOS needs special config as it is a special build",
+      "type": "object",
+      "properties": {
+        "payload_tags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+               "name": {"type": "string"},
+               "build_metadata_key": {"type": "string"},
+               "primary": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "build_profiles-": {},
+    "urls": {
+      "description": "URLs",
+      "type": "object",
+      "properties": {
+        "brewhub": {"type": "string"},
+        "brew_image_host": {"type": "string"},
+        "brew_image_namespace": {"type": "string"},
+        "cgit": {"type": "string"},
+        "rhcos_release_base": {
+          "type": "object",
+          "properties": {
+            "multi": {"type": "string"}
+          },
+          "patternProperties": {
+            ".+": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "urls!": {
+      "$ref": "#/properties/urls"
+    },
+    "urls?": {
+      "$ref": "#/properties/urls"
+    },
+    "urls-": {},
+    "canonical_builders_from_upstream": {
+      "description": "Assert our base images, or listen to upstream",
+      "enum": [true, false, "auto", "off", "no", "on", "yes"]
+    },
+    "canonical_builders_from_upstream?": {
+      "$ref": "#/properties/canonical_builders_from_upstream"
+    },
+    "canonical_builders_from_upstream!": {
+      "$ref": "#/properties/canonical_builders_from_upstream"
+    },
+    "canonical_builders_from_upstream-": {},
+    "operator_index_mode": {
+      "type": "string",
+      "enum": ["pre-release", "pre-ga", "ga"]
+    }
+  },
+  "additionalProperties": false
+}

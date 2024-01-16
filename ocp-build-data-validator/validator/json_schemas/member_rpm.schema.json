@@ -1,0 +1,65 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "member_rpm.schema.json",
+    "title": "Assembly Member RPM",
+    "type": "object",
+    "properties": {
+        "distgit_key": {
+            "type": "string",
+            "minLength": 1
+        },
+        "why": {
+            "type": "string",
+            "minLength": 1
+        },
+        "metadata": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "object",
+                    "$comment": "TODO: Validate rpm content config",
+                    "additionalProperties": true
+                },
+                "content!": {
+                    "$ref": "#/properties/metadata/properties/content"
+                },
+                "content?": {
+                    "$ref": "#/properties/metadata/properties/content"
+                },
+                "content-": {},
+                "is": {
+                    "type": "object",
+                    "properties": {
+                        "el8": {
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "el7": {
+                            "$ref": "#/properties/metadata/properties/is/properties/el8"
+                        }
+                    },
+                    "patternProperties": {
+                        "^el\\d+[!?-]?$": {
+                            "$ref": "#/properties/metadata/properties/is/properties/el8"
+                        }
+                    },
+                    "minProperties": 1,
+                    "additionalProperties": false
+                },
+                "is!": {
+                    "$ref": "#/properties/metadata/properties/is"
+                },
+                "is?": {
+                    "$ref": "#/properties/metadata/properties/is"
+                },
+                "is-": {}
+            },
+            "additionalProperties": false
+        }
+    },
+    "required": [
+        "distgit_key",
+        "why"
+    ],
+    "additionalProperties": false
+}
