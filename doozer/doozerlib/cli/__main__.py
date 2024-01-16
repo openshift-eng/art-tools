@@ -223,7 +223,11 @@ def beta_reposync(runtime, output, cachedir, arch, repo_type, names, dry_run):
     """
     runtime.initialize(clone_distgits=False)
     repos = runtime.repos
-    enabled_repos = [repo for repo in repos.values() if repo.is_reposync_enabled()]
+
+    enabled_repos = []
+    for name, cfg in repos.items():
+        if cfg.is_reposync_enabled():
+            enabled_repos.append(name)
 
     yum_conf = """
 [main]
@@ -243,8 +247,9 @@ installonly_limit=3
     repos_content = repos.repo_file(repo_type, enabled_repos=enabled_repos, arch=arch)
     content = "{}\n\n{}".format(yum_conf, repos_content)
 
+    print("repo config:\n", content)
+
     if dry_run:
-        print(content)
         return
 
     if not os.path.isdir(cachedir):
