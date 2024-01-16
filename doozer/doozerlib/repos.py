@@ -297,8 +297,6 @@ class Repos(object):
             enabled = r.enabled  # If enabled in group.yml, it will always be enabled.
             if enabled_repos and (r.name in enabled_repos or '*' in enabled_repos):
                 enabled = True
-            if not enabled:
-                continue
 
             if arch:  # Generating a single arch?
                 # Just use the configured name for the set. This behavior needs to be preserved to
