@@ -7,8 +7,8 @@ class TestGitHub(unittest.TestCase):
 
     def setUp(self):
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .and_return(True))
+         .should_receive('resource_exists')
+         .and_return(True))
 
     def test_no_declared_repository(self):
         (url, err) = github.validate({}, {})
@@ -17,9 +17,9 @@ class TestGitHub(unittest.TestCase):
 
     def test_repository_doesnt_exist(self):
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args('https://github.com/openshift-priv/myrepo')
-            .and_return(False))
+         .should_receive('resource_exists')
+         .with_args('https://github.com/openshift-priv/myrepo')
+         .and_return(False))
 
         data = {
             'content': {
@@ -55,14 +55,14 @@ class TestGitHub(unittest.TestCase):
 
     def test_target_branch_doesnt_exist(self):
         (flexmock(github)
-            .should_receive('branch_exists')
-            .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
-            .and_return(False))
+         .should_receive('branch_exists')
+         .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
+         .and_return(False))
 
         (flexmock(github)
-            .should_receive('branch_exists')
-            .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
-            .and_return(True))
+         .should_receive('branch_exists')
+         .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
+         .and_return(True))
 
         data = {
             'content': {
@@ -84,14 +84,14 @@ class TestGitHub(unittest.TestCase):
 
     def test_target_nor_fallback_branches_exist(self):
         (flexmock(github)
-            .should_receive('branch_exists')
-            .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
-            .and_return(False))
+         .should_receive('branch_exists')
+         .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
+         .and_return(False))
 
         (flexmock(github)
-            .should_receive('branch_exists')
-            .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
-            .and_return(False))
+         .should_receive('branch_exists')
+         .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
+         .and_return(False))
 
         data = {
             'content': {
@@ -114,9 +114,9 @@ class TestGitHub(unittest.TestCase):
 
     def test_declared_dockerfile_doesnt_exist(self):
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args('https://github.com/openshift-priv/repo/blob/xyz/Dockerfile.rhel7')
-            .and_return(False))
+         .should_receive('resource_exists')
+         .with_args('https://github.com/openshift-priv/repo/blob/xyz/Dockerfile.rhel7')
+         .and_return(False))
 
         data = {
             'content': {
@@ -141,16 +141,16 @@ class TestGitHub(unittest.TestCase):
     def test_declared_dockerfile_on_custom_path(self):
         bad_file_url = 'https://github.com/org/repo/blob/xyz/Dockerfile.rhel7'
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args(bad_file_url)
-            .and_return(False))
+         .should_receive('resource_exists')
+         .with_args(bad_file_url)
+         .and_return(False))
 
         good_file_url = ('https://github.com/org/repo/blob/xyz/my/custom/path/'
                          'Dockerfile.rhel7')
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args(good_file_url)
-            .and_return(True))
+         .should_receive('resource_exists')
+         .with_args(good_file_url)
+         .and_return(True))
 
         data = {
             'content': {
@@ -174,9 +174,9 @@ class TestGitHub(unittest.TestCase):
 
     def test_declared_manifest_doesnt_exist(self):
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args('https://github.com/org/repo/blob/xyz/my-manifests')
-            .and_return(False))
+         .should_receive('resource_exists')
+         .with_args('https://github.com/org/repo/blob/xyz/my-manifests')
+         .and_return(False))
 
         data = {
             'content': {
@@ -202,16 +202,16 @@ class TestGitHub(unittest.TestCase):
     def test_declared_manifest_on_custom_path(self):
         bad_file_url = 'https://github.com/org/repo/blob/xyz/my-manifests'
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args(bad_file_url)
-            .and_return(False))
+         .should_receive('resource_exists')
+         .with_args(bad_file_url)
+         .and_return(False))
 
         good_file_url = ('https://github.com/org/repo/blob/xyz/my/custom/path/'
                          'my-manifests')
         (flexmock(github.support)
-            .should_receive('resource_exists')
-            .with_args(good_file_url)
-            .and_return(True))
+         .should_receive('resource_exists')
+         .with_args(good_file_url)
+         .and_return(True))
 
         data = {
             'content': {
@@ -248,20 +248,20 @@ class TestGitHub(unittest.TestCase):
                         'url': 'git@github.com:openshift-priv/repo',
                     }
                 }
-             }
+            }
         }
         group_cfg = {
-             'vars': {'MAJOR': 4, 'MINOR': 2},
-             'public_upstreams': [
-                 {
-                     'private': 'git@github.com:openshift-priv',
-                     'public': 'git@github.com:openshift',
-                 },
-                 {
-                     'private': 'git@github.com:openshift/ose',
-                     'public': 'git@github.com:openshift/origin',
-                 },
-             ],
+            'vars': {'MAJOR': 4, 'MINOR': 2},
+            'public_upstreams': [
+                {
+                    'private': 'git@github.com:openshift-priv',
+                    'public': 'git@github.com:openshift',
+                },
+                {
+                    'private': 'git@github.com:openshift/ose',
+                    'public': 'git@github.com:openshift/origin',
+                },
+            ],
         }
         (url, err) = github.validate(data, group_cfg)
         self.assertIsNone(err)
