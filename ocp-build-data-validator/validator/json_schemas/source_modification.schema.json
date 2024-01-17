@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source_modification.schema.json",
+  "title": "Source Modification",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "command",
+        "replace",
+        "add",
+        "remove"
+      ]
+    },
+    "action?": {
+      "$ref": "#/properties/action"
+    },
+    "action!": {
+      "$ref": "#/properties/action"
+    },
+    "action-": {},
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "update-console-sources",
+          "update-jenkins-label",
+          "upload-coreos-iso-to-lookaside-cache"
+        ]
+      }
+    },
+    "command?": {
+      "$ref": "#/properties/command"
+    },
+    "command!": {
+      "$ref": "#/properties/command"
+    },
+    "command-": {},
+    "match": {
+      "type": "string",
+      "minLength": 1
+    },
+    "match?": {
+      "$ref": "#/properties/match"
+    },
+    "match!": {
+      "$ref": "#/properties/match"
+    },
+    "match-": {},
+    "replacement": {
+      "type": "string"
+    },
+    "replacement?": {
+      "$ref": "#/properties/replacement"
+    },
+    "replacement!": {
+      "$ref": "#/properties/replacement"
+    },
+    "replacement-": {},
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source?": {
+      "$ref": "#/properties/source"
+    },
+    "source!": {
+      "$ref": "#/properties/source"
+    },
+    "source-": {},
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path?": {
+      "$ref": "#/properties/path"
+    },
+    "path!": {
+      "$ref": "#/properties/path"
+    },
+    "path-": {},
+    "why": {
+      "type": "string",
+      "minLength": 1
+    },
+    "why?": {
+      "$ref": "#/properties/why"
+    },
+    "why!": {
+      "$ref": "#/properties/why"
+    },
+    "why-": {},
+    "overwriting": {
+      "type": "boolean"
+    },
+    "overwriting?": {
+      "$ref": "#/properties/overwriting"
+    },
+    "overwriting!": {
+      "$ref": "#/properties/overwriting"
+    },
+    "overwriting-": {},
+    "glob": {
+      "type": "string",
+      "minLength": 1
+    },
+    "glob?": {
+      "$ref": "#/properties/glob"
+    },
+    "glob!": {
+      "$ref": "#/properties/glob"
+    },
+    "glob-": {}
+  },
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "required": [
+        "action"
+      ]
+    },
+    {
+      "required": [
+        "action!"
+      ]
+    },
+    {
+      "required": [
+        "action?"
+      ]
+    }
+  ]
+}

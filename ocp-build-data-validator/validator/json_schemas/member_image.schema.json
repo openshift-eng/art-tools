@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "member_image.schema.json",
+  "title": "Assembly Member Image",
+  "type": "object",
+  "properties": {
+    "distgit_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "why": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "description": "Image configuration",
+      "$ref": "image_config.base.schema.json"
+    }
+  },
+  "required": [
+    "distgit_key",
+    "why"
+  ],
+  "additionalProperties": false
+}

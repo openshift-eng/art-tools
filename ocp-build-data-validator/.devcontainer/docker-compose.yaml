@@ -1,0 +1,18 @@
+version: "2.2"
+
+services:
+  validator:
+    build:
+      context: ..
+      dockerfile: .devcontainer/dev.Dockerfile
+    image: local/validate-ocp-build-data-dev:latest
+    command: /bin/bash
+    volumes:
+    - ../:/workspaces/validate-ocp-build-data:cached,z
+    - ${HOME:-}${USERPROFILE:-}/.ssh:/home/art/.ssh:ro,cached,z
+    - ./settings.yaml:/home/art/.config/validator/settings.yaml:ro,cached,z
+    - ./krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
+    - ./brewkoji.conf:/etc/koji.conf.d/brewkoji.conf:ro,cached,z
+    working_dir: /workspaces/validate-ocp-build-data
+    tty: true
+    stdin_open: true

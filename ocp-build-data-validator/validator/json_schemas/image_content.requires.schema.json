@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "image_content.requires.schema.json",
+  "properties": {
+    "source": {
+      "properties": {
+        "ci_alignment": {
+          "properties": {
+            "streams_prs": {
+              "properties": {
+                "ci_build_root": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "stream"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "stream?"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "stream!"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "git": {
+            "allOf": [
+              {
+                "anyOf": [
+                  {
+                    "required": [
+                      "branch"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch?"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch!"
+                    ]
+                  }
+                ]
+              },
+              {
+                "anyOf": [
+                  {
+                    "required": [
+                      "url"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "url?"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "url!"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "git": {
+          "properties": {
+            "branch": {
+              "anyOf": [
+                {
+                  "required": [
+                    "target"
+                  ]
+                },
+                {
+                  "required": [
+                    "target?"
+                  ]
+                },
+                {
+                  "required": [
+                    "target!"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

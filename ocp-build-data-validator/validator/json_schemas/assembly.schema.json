@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assembly.schema.json",
+  "title": "Assembly",
+  "description": "An assembly represents unambiguous, programmatic instructions on how to build and rebuild a release payload at any point in the future.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "description": "Type of the assembly. Default value: stream",
+      "type": "string",
+      "enum": [
+        "stream",
+        "standard",
+        "candidate",
+        "custom",
+        "preview"
+      ]
+    },
+    "basis": {
+      "description": "Basis of the assembly",
+      "$ref": "assembly_basis.schema.json"
+    },
+    "group": {
+      "description": "Group configuration overrides for the assembly",
+      "$ref": "assembly_group_config.schema.json"
+    },
+    "members": {
+      "description": "Members of the assembly",
+      "type": "object",
+      "properties": {
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "member_image.schema.json"
+          }
+        },
+        "rpms": {
+          "type": "array",
+          "items": {
+            "$ref": "member_rpm.schema.json"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "rhcos": {
+      "description": "RHCOS configuration for the assembly",
+      "$ref": "rhcos.schema.json"
+    },
+    "streams": {
+      "$ref": "streams.schema.json"
+    },
+    "permits": {
+      "description": "Permits assembly errors. See https://github.com/openshift-eng/art-docs/blob/master/content/assemblies.md#permissible-issues for more information.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "description": "The error code to permit",
+            "type": "string",
+            "minLength": 1
+          },
+          "component": {
+            "description": "Name of the component that this permit applies to. Use '*' to permit all components.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "component"
+        ]
+      }
+    },
+    "promotion_permits": {
+      "description": "Permits promotion errors. See https://github.com/openshift/aos-cd-jobs/tree/master/jobs/build/promote-assembly#permit-certain-validation-failures for more information.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "description": "The error code to permit",
+            "type": "string",
+            "enum": [
+              "ATTACHED_BUGS",
+              "BLOCKER_BUGS",
+              "CVE_FLAWS",
+              "INVALID_ERRATA_STATUS",
+              "NO_ERRATA"
+            ]
+          },
+          "why": {
+            "description": "The reason why this error should be permitted. Note this text is public. Don't include customer related or confidential information.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "why"
+        ]
+      }
+    },
+    "issues": {
+      "description": "Bugs and JIRA issues to included or exclude for advisories",
+      "$ref": "assembly_issues.schema.json"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assembly_basis.schema.json",
+  "title": "Assembly Basis",
+  "description": "Basis ties the release to a particular moment, existing release, or another release.",
+  "type": "object",
+  "properties": {
+    "brew_event": {
+      "description": "A Brew event that ties the release to a particular moment. Images and rpms will be assembled relative to This basis event.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "assembly": {
+      "description": "The parent assembly to inherit from",
+      "type": "string",
+      "minLength": 1
+    },
+    "patch_version": {
+      "description": "For a custom release, explicitly set the patch version",
+      "type": "integer",
+      "minimum": 0
+    },
+    "patch_version!": {
+      "$ref": "#/properties/patch_version"
+    },
+    "patch_version?": {
+      "$ref": "#/properties/patch_version"
+    },
+    "patch_version-": {
+    },
+    "reference_releases": {
+      "title": "Reference releases",
+      "description": "Indicates this release should be assembled with specified existing release images",
+      "$ref": "arches_dict.schema.json"
+    },
+    "reference_releases!": {
+      "$ref": "#/properties/reference_releases"
+    },
+    "reference_releases?": {
+      "$ref": "#/properties/reference_releases"
+    },
+    "reference_releases-": {
+    }
+  },
+  "additionalProperties": false
+}
