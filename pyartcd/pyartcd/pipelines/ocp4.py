@@ -686,22 +686,13 @@ class Ocp4Pipeline:
         except ChildProcessError:
             self._handle_image_build_failures()
 
-        # If the API server builds, we mirror out the streams to CI. If ART builds a bad golang builder image it will
-        # break CI builds for most upstream components if we don't catch it before we push. So we use apiserver as
-        # bellweather to make sure that the current builder image is good enough. We can still break CI (e.g. pushing a
-        # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
-        with open(f'{self._doozer_working}/record.log', 'r') as file:
-            record_log: dict = record_util.parse_record_log(file)
+        self.runtime.logger.warning('mirroring streams to CI...')
 
-        success_map = record_util.get_successful_builds(record_log, full_record=True)
-        if success_map.get('ose-openshift-apiserver', None):
-            self.runtime.logger.warning('apiserver rebuilt: mirroring streams to CI...')
-
-            # Make sure our api.ci token is fresh
-            await oc.registry_login(self.runtime)
-            cmd = self._doozer_base_command.copy()
-            cmd.extend(['images:streams', 'mirror'])
-            await exectools.cmd_assert_async(cmd)
+        # Make sure our api.ci token is fresh
+        await oc.registry_login(self.runtime)
+        cmd = self._doozer_base_command.copy()
+        cmd.extend(['images:streams', 'mirror'])
+        await exectools.cmd_assert_async(cmd)
 
         # Kick off SAST scans for builds that succeeded using the NVR
         # Gives a comma separated list of NVRs, the filter-lambda function will handle the case of nvrs filed not found
