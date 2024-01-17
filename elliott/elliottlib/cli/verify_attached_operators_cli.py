@@ -336,7 +336,7 @@ def _handle_missing_builds(
                 # attaching builds from scratch is complicated; call out to existing cli
                 ctx.invoke(find_builds_cli, advisory_id=target, default_advisory_type=None,
                            builds=missing_nvrs, kind="image", as_json=False,
-                           remove=False, clean=False, no_cdn_repos=True, payload=False,
+                           no_cdn_repos=True, payload=False,
                            non_payload=False, include_shipped=False, member_only=False)
         return True, True
     else:
