@@ -115,11 +115,11 @@ def get_assembly_release_date(assembly, group):
     return assembly_release_data
 
 
-def get_infight(assembly, group):
+def get_inflight(assembly, group):
     """
-    Get infight release name from current assembly release
+    Get inflight release name from current assembly release
     """
-    infight_release = None
+    inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
     match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
     if not match:
@@ -133,8 +133,8 @@ def get_infight(assembly, group):
             if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
                 match = re.search(r'\d+\.\d+\.\d+', release['name'])
                 if match:
-                    infight_release = match.group()
+                    inflight_release = match.group()
                     break
                 else:
-                    raise ValueError(f"Didn't find in_fight release in {release['name']}")
-    return infight_release
+                    raise ValueError(f"Didn't find in_inflight release in {release['name']}")
+    return inflight_release
