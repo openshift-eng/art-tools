@@ -4,7 +4,7 @@ from types import coroutine
 
 from aioredlock import Aioredlock, LockError
 
-from pyartcd import redis
+from artcommonlib import redis
 
 
 # Defines the pipeline locks managed by Redis

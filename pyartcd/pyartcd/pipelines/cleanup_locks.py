@@ -2,7 +2,8 @@ import os
 
 from aioredlock import Lock
 
-from pyartcd import redis, jenkins, constants
+from pyartcd import jenkins, constants
+from artcommonlib import redis
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import LockManager
 from pyartcd.runtime import Runtime
