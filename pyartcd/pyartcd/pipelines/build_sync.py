@@ -24,8 +24,6 @@ from ghapi.all import GhApi
 
 TRACER = trace.get_tracer(__name__)
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
-GITHUB_OWNER = "openshift-eng"
-
 
 class BuildSyncPipeline:
 
@@ -79,7 +77,7 @@ class BuildSyncPipeline:
             if match:
                 repo_owner = match.group(1)
 
-            api = GhApi(owner=GITHUB_OWNER, repo=repository, token=token)
+            api = GhApi(owner=constants.GITHUB_OWNER, repo=repository, token=token)
 
             # Check if the doozer_data_gitref is given then, if not
             # then it set the branch to openshift-{major}.{minor}
@@ -103,7 +101,7 @@ class BuildSyncPipeline:
             pr_number = prs[0]["number"]
 
             if self.runtime.dry_run:
-                self.logger.warning(f"[DRY RUN] Would have commented on PR {GITHUB_OWNER}/{repository}/pull/{pr_number} "
+                self.logger.warning(f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} "
                                     f"with the message: \n {text_body}")
                 return
 

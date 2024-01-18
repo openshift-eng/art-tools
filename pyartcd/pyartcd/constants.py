@@ -42,3 +42,5 @@ UMB_BROKERS = {
     "qa": "stomp+ssl://umb.qa.api.redhat.com:61612",
     "dev": "stomp+ssl://umb.dev.api.redhat.com:61612",
 }
+
+GITHUB_OWNER = "openshift-eng"
