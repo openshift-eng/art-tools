@@ -110,7 +110,7 @@ def get_assembly_release_date(assembly, group):
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         if assembly in release['name']:
-            assembly_release_data = release['date_start']
+            assembly_release_data = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
             break
     return assembly_release_data
 
