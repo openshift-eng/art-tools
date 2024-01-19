@@ -138,9 +138,9 @@ data:
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
-    @patch("doozerlib.repodata.RepodataLoader._fetch_remote_gzip", autospec=True)
+    @patch("doozerlib.repodata.RepodataLoader._fetch_remote_compressed", autospec=True)
     @patch("aiohttp.ClientSession", autospec=True)
-    async def test_load(self, ClientSession: Mock, _fetch_remote_gzip: AsyncMock):
+    async def test_load(self, ClientSession: Mock, _fetch_remote_compressed: AsyncMock):
         repo_name = "test-x86_64"
         repo_url = "https://example.com/repos/test/x86_64/os"
         loader = RepodataLoader()
@@ -168,7 +168,7 @@ class TestRepodataLoader(IsolatedAsyncioTestCase):
 </repomd>
 """
 
-        def _fake_fetch_remote_gzip(_, url: Optional[str]):
+        def _fake_fetch_remote_compressed(_, url: Optional[str]):
             primary_xml = """<?xml version="1.0" encoding="UTF-8"?>
 <metadata packages="2" xmlns="http://linux.duke.edu/metadata/common" xmlns:rpm="http://linux.duke.edu/metadata/rpm">
     <package type="rpm">
@@ -210,10 +210,10 @@ data:
             if url.endswith("modules.yaml.gz"):
                 return modules_yaml.encode()
             raise ValueError("url")
-        _fetch_remote_gzip.side_effect = _fake_fetch_remote_gzip
+        _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
         repodata = await loader.load(repo_name, repo_url)
-        _fetch_remote_gzip.assert_any_await(ANY, "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz")
-        _fetch_remote_gzip.assert_any_await(ANY, "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz")
+        _fetch_remote_compressed.assert_any_await(ANY, "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz")
+        _fetch_remote_compressed.assert_any_await(ANY, "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz")
         self.assertEqual(repodata.name, repo_name)
         self.assertEqual(
             [rpm.nevra for rpm in repodata.primary_rpms],
