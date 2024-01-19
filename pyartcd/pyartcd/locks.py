@@ -1,10 +1,13 @@
 import enum
 import logging
+import tenacity
 from types import coroutine
 
 from aioredlock import Aioredlock, LockError
 
 from artcommonlib import redis
+
+LOGGER = logging.getLogger('pyartcd')
 
 
 # Defines the pipeline locks managed by Redis
@@ -16,6 +19,10 @@ class Lock(enum.Enum):
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
+
+
+class Keys(enum.Enum):
+    MASS_REBUILD_QUEUE = 'appdata:mass-rebuild-queue'
 
 
 # This constant defines for each lock type:
@@ -141,6 +148,57 @@ class LockManager(Aioredlock):
 
         self.logger.info('Retrieving locks matching pattern "%s"', pattern)
         return await redis.get_keys(pattern)
+
+
+def mass_rebuild_score(ocp_version: str) -> int:
+    """Given an ocp_version (e.g. `4.16`) return an integer score value
+    Higher the score, higher the priority
+    """
+    return int(float(ocp_version) * 100)  # '4.16' -> 416
+
+
+async def run_with_mass_rebuild_lock(coro: coroutine, lock: Lock, lock_name: str, ocp_version: str, lock_id: str):
+    if lock != lock.MASS_REBUILD or lock_name != lock.MASS_REBUILD.value:
+        raise ValueError("expected lock to be of mass_rebuild type")
+
+    queue = Keys.MASS_REBUILD_QUEUE.value
+    score = mass_rebuild_score(ocp_version)
+    mapping = {ocp_version: score}
+
+    # add yourself to the queue
+    # if queue does not exist, it will be created with the value
+    await redis.call('zadd', queue, mapping)
+
+    LOGGER.info('Queued in for mass rebuild lock')
+
+    lock_manager = LockManager.from_lock(lock)
+
+    @tenacity.retry(
+        wait=tenacity.wait_fixed(600),  # wait for 10 minutes between retries
+        stop=tenacity.stop_after_attempt(600 * 24),  # wait for 24 hours
+        retry=tenacity.retry_if_exception_type(),
+    )
+    async def run_when_i_have_priority():
+        if not await lock_manager.is_locked(lock_name):
+            # TODO: use a redis tx here
+            # fetch the first element in the reverse sorted set by score (item with the max score)
+            result = await redis.call('zrange', queue, 0, 0, desc=True)
+            # there should be at least 1 entry, if not error out
+            version_on_top = result[0]
+            if version_on_top == ocp_version:
+                # remove yourself from the queue
+                items = await redis.call('zpopmax', queue)
+                assert items[0] == (ocp_version, score)
+                return await run_with_lock(coro, lock, lock_name, lock_id)
+
+        LOGGER.info(f"Do not have priority for {lock_name} Waiting ..")
+        raise tenacity.TryAgain()
+
+    # if we reach timeout, quit but don't remove yourself from the queue
+    # it will prevent other versions from acquiring the lock, until you get back in the queue
+    # for accidental mass rebuild requests, we will need to delete the keys manually for now
+
+    return await run_when_i_have_priority()
 
 
 async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: str = None, skip_if_locked: bool = False):

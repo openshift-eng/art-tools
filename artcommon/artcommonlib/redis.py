@@ -57,6 +57,16 @@ def handle_connection_sync(func):
 
 
 @handle_connection
+async def call(conn: redis.asyncio.client.Redis, func_name: str, *args, **kwargs):
+    """
+    Call any redis client function with opening and closing of connection auto handled
+    call('zadd', name, mapping) -> redis_connection.zadd(name, mapping)
+    """
+    func = getattr(conn, func_name)
+    return await func(*args, **kwargs)
+
+
+@handle_connection
 async def get_value(conn: redis.asyncio.client.Redis, key: str):
     """
     Returns value for a given key
@@ -101,7 +111,7 @@ def set_value_sync(conn: redis.client.Redis, key: str, value):
 @handle_connection
 async def get_keys(conn: redis.asyncio.client.Redis, pattern: str):
     """
-    Returns a list of keys (string) matching pattern (e.g. "*.count")
+    Returns a list of keys (string) matching pattern (e.g. "count*")
     """
 
     keys = await conn.keys(pattern)

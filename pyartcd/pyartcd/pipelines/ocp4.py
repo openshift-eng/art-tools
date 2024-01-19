@@ -872,10 +872,11 @@ class Ocp4Pipeline:
             if self.mass_rebuild:
                 await self._slack_client.say(
                     f':loading-correct: Enqueuing mass rebuild for {self.version.stream} :loading-correct:')
-                await locks.run_with_lock(
+                await locks.run_with_mass_rebuild_lock(
                     coro=self._rebase_and_build_images(),
                     lock=Lock.MASS_REBUILD,
                     lock_name=Lock.MASS_REBUILD.value,
+                    ocp_version=self.version.stream,
                     lock_id=self.lock_identifier
                 )
             else:
