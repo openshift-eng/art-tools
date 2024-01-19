@@ -7,8 +7,6 @@ from aioredlock import Aioredlock, LockError
 
 from artcommonlib import redis
 
-LOGGER = logging.getLogger('pyartcd')
-
 
 # Defines the pipeline locks managed by Redis
 class Lock(enum.Enum):
@@ -173,8 +171,10 @@ async def _enqueue_for_lock(coro: coroutine, lock_manager, lock: Lock, lock_name
             # remove yourself from the queue
             await redis.call('zpopmax', version_queue_name)
             return await run_with_lock(coro, lock, lock_name, lock_id)
+        else:
+            lock_manager.logger.info(f"Do not have priority for {lock_name} as {version_on_top} is ahead. Waiting ..")
 
-    LOGGER.info(f"Do not have priority for {lock_name} Waiting ..")
+    lock_manager.logger.info(f"Do not have priority for {lock_name} Waiting ..")
     raise tenacity.TryAgain()
 
 

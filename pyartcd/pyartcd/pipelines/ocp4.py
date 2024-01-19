@@ -856,13 +856,8 @@ class Ocp4Pipeline:
         return round(float(self.version.stream) * 100)  # '4.16' -> 416
 
     async def _request_mass_rebuild(self):
-        coro = self._rebase_and_build_images()
-        ocp_version = self.version.stream
-        lock_id = self.lock_identifier
-        lock = Lock.MASS_REBUILD
-        lock_name = Lock.MASS_REBUILD.value
         queue = locks.Keys.MASS_REBUILD_QUEUE.value
-        mapping = {ocp_version: self._mass_rebuild_score()}
+        mapping = {self.version.stream: self._mass_rebuild_score()}
 
         # add yourself to the queue
         # if queue does not exist, it will be created with the value
@@ -872,7 +867,14 @@ class Ocp4Pipeline:
         # if we reach timeout, quit but don't remove yourself from the queue
         # it will prevent other versions from acquiring the lock, until you get back in the queue
         # for accidental mass rebuild requests, we will need to delete the keys manually for now
-        return await locks.enqueue_for_lock(coro, lock, lock_name, lock_id, ocp_version, queue)
+        return await locks.enqueue_for_lock(
+            coro=self._rebase_and_build_images(),
+            lock=Lock.MASS_REBUILD,
+            lock_name=Lock.MASS_REBUILD.value,
+            lock_id=self.lock_identifier,
+            ocp_version=self.version.stream,
+            version_queue_name=queue
+        )
 
     async def run(self):
         await self._initialize()
