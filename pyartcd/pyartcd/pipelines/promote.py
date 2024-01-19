@@ -259,6 +259,10 @@ class PromotePipeline:
                 verify_flaws = True
                 if "prerelease" in impetus_advisories.keys() or assembly_type == assembly.AssemblyTypes.PREVIEW:
                     verify_flaws = False
+
+                if assembly_type in [assembly.AssemblyTypes.PREVIEW, assembly.AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
+                    no_verify_blocking_bugs = True
+
                 try:
                     await self.verify_attached_bugs(advisories, no_verify_blocking_bugs=no_verify_blocking_bugs,
                                                     verify_flaws=verify_flaws)
