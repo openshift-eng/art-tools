@@ -6,12 +6,19 @@ import traceback
 import click
 import yaml
 
-from pyartcd import locks, util, plashets, exectools, constants, \
-    jenkins, record as record_util, oc
+from pyartcd import locks
+from pyartcd import util
+from pyartcd import plashets
+from pyartcd import exectools
+from pyartcd import constants
+from pyartcd import jenkins
+from pyartcd import record as record_util
+from pyartcd import oc
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.s3 import sync_repo_to_s3_mirror
+from artcommonlib import redis
 
 
 class BuildPlan:
@@ -842,6 +849,33 @@ class Ocp4Pipeline:
 
         jenkins.update_description(f'<hr />Build results:<br/><br/>{timing_report}<br/>')
 
+    def _mass_rebuild_score(self) -> int:
+        """For the ocp_version (e.g. `4.16`) return an integer score value
+        Higher the score, higher the priority
+        """
+        return round(float(self.version.stream) * 100)  # '4.16' -> 416
+
+    async def _request_mass_rebuild(self):
+        queue = locks.Keys.MASS_REBUILD_QUEUE.value
+        mapping = {self.version.stream: self._mass_rebuild_score()}
+
+        # add yourself to the queue
+        # if queue does not exist, it will be created with the value
+        await redis.call('zadd', queue, mapping)
+        self.runtime.logger.info('Queued in for mass rebuild lock')
+
+        # if we reach timeout, quit but don't remove yourself from the queue
+        # it will prevent other versions from acquiring the lock, until you get back in the queue
+        # for accidental mass rebuild requests, we will need to delete the keys manually for now
+        return await locks.enqueue_for_lock(
+            coro=self._rebase_and_build_images(),
+            lock=Lock.MASS_REBUILD,
+            lock_name=Lock.MASS_REBUILD.value,
+            lock_id=self.lock_identifier,
+            ocp_version=self.version.stream,
+            version_queue_name=queue
+        )
+
     async def run(self):
         await self._initialize()
 
@@ -872,12 +906,7 @@ class Ocp4Pipeline:
             if self.mass_rebuild:
                 await self._slack_client.say(
                     f':loading-correct: Enqueuing mass rebuild for {self.version.stream} :loading-correct:')
-                await locks.run_with_lock(
-                    coro=self._rebase_and_build_images(),
-                    lock=Lock.MASS_REBUILD,
-                    lock_name=Lock.MASS_REBUILD.value,
-                    lock_id=self.lock_identifier
-                )
+                await self._request_mass_rebuild()
             else:
                 await self._rebase_and_build_images()
         else:
