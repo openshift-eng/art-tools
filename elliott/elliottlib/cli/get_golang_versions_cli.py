@@ -237,11 +237,10 @@ def print_streams_golang(runtime, all_ocp, ignore_rhel, output):
         for golang_version, images in golang_streams_images.items():
             if not images:
                 continue
-            out.append({"version": golang_version, "building_count": len(images)})
+            out.append({"go_version": golang_version, "building_count": len(images)})
 
         out = sorted(out, key=lambda x: x['building_count'], reverse=True)
         if output == 'json':
             print(json.dumps(out, indent=4))
         else:
-            for entry in out:
-                green_print(f'{ocp_version} images using {entry["version"]}: {entry["building_count"]}')
+            green_print(f'{ocp_version}: {out}')
