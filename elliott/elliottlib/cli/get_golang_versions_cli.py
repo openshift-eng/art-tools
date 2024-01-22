@@ -1,5 +1,8 @@
 import click
+import json
+import re
 
+from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib import rhcos, format_util
 from artcommonlib.format_util import green_print
 from elliottlib import util, errata, logutil
@@ -21,14 +24,17 @@ _LOGGER = logutil.getLogger(__name__)
               help="Brew nvrs to show go version for. Comma separated")
 @click.option('--components', '-c',
               help="Only show go versions for these components (rpms/images) in advisory. Comma separated")
+@click.option("--streams", is_flag=True, help="Show details about golang streams configured in streams.yml")
+@click.option("--streams-all-ocp", is_flag=True, help="similar to --streams but for all ocp versions")
+@click.option("--ignore-rhel", is_flag=True, help="Ignore rhel version and instead only show go version")
 @click.option('-o', '--output',
               type=click.Choice(['json', 'text']),
               default='text', help='Output format')
 @click.option('--report', '-R', 'report', is_flag=True, default=False)
 @click.pass_obj
 @click_coroutine
-async def get_golang_versions_cli(runtime, release, advisory_id, default_advisory_type, nvrs, components, output,
-                                  report):
+async def get_golang_versions_cli(runtime, release, advisory_id, default_advisory_type, nvrs, components, streams,
+                                  streams_all_ocp, ignore_rhel, output, report):
     """
     Get the Go version for brew builds specified via nvrs / advisory / release
 
@@ -58,10 +64,22 @@ async def get_golang_versions_cli(runtime, release, advisory_id, default_advisor
     $ elliott go -r registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-04-24-145153
 
     List go version for given release pullspec
+
+\b
+    $ elliott -g openshift-4.14 go --streams
+
+    Show currently configured builders in streams.yml and compilers in buildroot
 """
-    count_options = sum(map(bool, [advisory_id, nvrs, default_advisory_type, release]))
+    count_options = sum(map(bool, [advisory_id, nvrs, default_advisory_type, release, streams, streams_all_ocp]))
     if count_options > 1:
-        raise click.BadParameter("Use only one of --release, --advisory, --nvrs, --use-default-advisory")
+        raise click.BadParameter("Use only one of --streams, --release, --advisory, --nvrs, --use-default-advisory")
+    if components and (nvrs or streams):
+        raise click.BadParameter("component filtering cannot be used for nvrs or streams")
+
+    all_ocp = False
+    if streams_all_ocp:
+        streams = True
+        all_ocp = True
 
     advisory_id, rhcos_images = None, None
     if default_advisory_type or release:
@@ -70,6 +88,8 @@ async def get_golang_versions_cli(runtime, release, advisory_id, default_advisor
             advisory_id = find_default_advisory(runtime, default_advisory_type)
         elif release:
             rhcos_images = {c['name'] for c in rhcos.get_container_configs(runtime)}
+    elif streams:
+        runtime.initialize(mode="both")
     else:
         runtime.initialize(no_group=True)
 
@@ -85,6 +105,8 @@ async def get_golang_versions_cli(runtime, release, advisory_id, default_advisor
     elif nvrs:
         nvrs = [n.strip() for n in nvrs.split(',')]
         return print_nvrs_golang(nvrs, output, report)
+    elif streams:
+        return print_streams_golang(runtime, all_ocp, ignore_rhel, output)
     else:
         format_util.red_print('The input value is not valid.')
 
@@ -155,3 +177,71 @@ async def print_release_golang(pullspec, rhcos_images, components, output, repor
         util.pretty_print_nvrs_go_json(go_nvr_map, report)
     elif output == 'text':
         util.pretty_print_nvrs_go(go_nvr_map, report)
+
+
+def print_streams_golang(runtime, all_ocp, ignore_rhel, output):
+    minor, major = runtime.get_major_minor()
+    base_version = f"{minor}.{major}"
+    versions = [base_version]
+    if all_ocp:
+        other_versions = {"4.11", "4.12", "4.13", "4.14", "4.15", "4.16"}
+        versions.extend(sorted({v for v in other_versions if v != base_version}))
+
+    for ocp_version in versions:
+        if ocp_version != base_version:
+            runtime.group = f"openshift-{ocp_version}"
+            runtime.image_map = {}
+            runtime.rpm_map = {}
+            runtime._group_config = None
+            runtime.branch = None
+            runtime.initialized = False
+            runtime.initialize(mode="both")
+
+        streams_dict = runtime.gitdata.load_data(key='streams').data
+        golang_streams = {}
+        golang_streams_images = {}
+        for stream_name, info in streams_dict.items():
+            if 'golang' not in stream_name:
+                continue
+            image_nvr_like = info['image']
+            if 'golang-builder' not in image_nvr_like:
+                continue
+
+            name, vr = image_nvr_like.split(':')
+            nvr = f"{name.replace('/', '-')}-container-{vr}"
+            parsed = parse_nvr(nvr)
+            match = re.search(r'(\d+\.\d+\.\d+)', parsed['version'])
+            version = match.group(1)
+            _, el_version = split_el_suffix_in_release(parsed['release'])
+            if not ignore_rhel:
+                version = f"{version}.{el_version}"
+
+            golang_streams[stream_name] = version
+            golang_streams_images[version] = []
+
+        for meta in runtime.image_metas():
+            image_name = meta.config_filename.replace('.yml', '')
+            if not meta.enabled:
+                _LOGGER.debug(f"Skipping image {image_name}")
+                continue
+
+            builders = {list(b.values())[0] for b in meta.config.get("from", {}).get("builder", [])}
+            for b in builders:
+                if 'golang' not in b:
+                    continue
+                v = golang_streams[b]
+                golang_streams_images[v].append(image_name)
+
+        # print results
+        out = []
+        for golang_version, images in golang_streams_images.items():
+            if not images:
+                continue
+            out.append({"version": golang_version, "building_count": len(images)})
+
+        out = sorted(out, key=lambda x: x['building_count'], reverse=True)
+        if output == 'json':
+            print(json.dumps(out, indent=4))
+        else:
+            for entry in out:
+                green_print(f'{ocp_version} images using {entry["version"]}: {entry["building_count"]}')

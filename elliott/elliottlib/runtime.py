@@ -54,6 +54,7 @@ class Runtime(GroupRuntime):
         self.data_path = None
         self.load_wip = False
         self.load_disabled = False
+        self.logger = None
         self.use_jira = True
         if str(os.environ.get('USEJIRA')).lower() in ["false", "0"]:
             self.use_jira = False
@@ -141,7 +142,8 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
-        self.initialize_logging()
+        if not self.logger:
+            self.initialize_logging()
 
         if disabled is not None:
             self.load_disabled = disabled
