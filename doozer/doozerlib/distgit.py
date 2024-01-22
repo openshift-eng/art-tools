@@ -15,6 +15,7 @@ import time
 import traceback
 from datetime import datetime
 from multiprocessing import Event, Lock
+from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional, Tuple, Union, Set
 
 import aiofiles
@@ -26,7 +27,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion
+from artcommonlib import assertion, redis
 from artcommonlib.format_util import yellow_print
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import constants, exectools, logutil, state, util
@@ -40,7 +41,7 @@ from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -1618,26 +1619,55 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             return parent
 
-    def _determine_upstream_rhel_version(self, dfp: DockerfileParser) -> Optional[str]:
-        version = None
+    def _determine_upstream_rhel_version(self, dfp: DockerfileParser) -> Optional[int]:
+        """
+        The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
 
+        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, we can extract the os-release file
+        (located at /usr/lib/os-release, symlinked at /etc/os-release) that should always contain a line like this one:
+        VERSION_ID="9.2"
+
+        First, check if it's been stored in Redis already. If so, simply return in.
+        Otherwise, use oc image extract to download that file to a random temporary dir, and parse it. Finally,
+        store it in Redis so to find it next time.
+
+        Return either an integer representing the RHEL major version, or None if something went wrong.
+        """
+
+        # We will infer the rhel version from the last build layer in the upstream Dockerfile
+        last_layer_pullspec = dfp.parent_images[-1]
+        redis_key = f'appdata:upstream-el-version:{last_layer_pullspec}'
+
+        # If the pullspec is not tracked in Redis yet, this will return None
+        version = redis.get_value_sync(redis_key)
+        if version:
+            # Already tracked in Redis
+            return version
+
+        # Not tracked yet: let's read it from os-release
         try:
-            # We will infer the rhel version from the last build layer in the upstream Dockerfile
-            last_layer = dfp.parent_images[-1]
-            cmd = ['oc', 'image', 'info', '-o', 'json', last_layer]
-            out, _ = exectools.cmd_assert(cmd)
-            tags = json.loads(out)['config']['config']['Labels']['io.openshift.tags']
+            # Create a temp dir with a random name to store the os-release file
+            with TemporaryDirectory() as tmpdir:
+                # Extract os-release
+                cmd = ['oc', 'image', 'extract', f'--path=/usr/lib/os-release:{tmpdir}',
+                       last_layer_pullspec, '--confirm']
+                exectools.cmd_assert(cmd)
 
-            # tags will be something like 'base rhel8'
-            pattern = r'el(\d)'
-            match = re.search(pattern, tags)
-            if match:
-                version = match.group()
+                # Parse it
+                with open(f'{tmpdir}/os-release') as os_release:
+                    # os-release will contain a line like this: VERSION_ID="9.2"
+                    # We need to eval the result to turn '"9.2"' into '9.2'
+                    version_id = eval([line for line in os_release if 'VERSION_ID' in line][0].split('=')[1])
+                    version = isolate_rhel_major_from_version(version_id)
+                    self.logger.info('Intended upstream RHEL version for %s: %s', self.name, version)
 
-        except (KeyError, ChildProcessError) as e:
+                    # Store el version in Redis
+                    redis.set_value_sync(redis_key, version)
+
+        except (ChildProcessError, IndexError) as e:
             # We could get:
-            #   - a ChildProcessError when the upstream equivalent is not found
-            #   - a KeyError when 'io.openshift.tags' label is undefined
+            #   - a ChildProcessError when we couldn't extract os-release from the pullspec
+            #   - an IndexError when /etc/os-release is not as expected
             self.logger.warning('Failed determining upstream rhel version: %s', e)
 
         if not version:
@@ -1655,7 +1685,7 @@ class ImageDistGitRepo(DistGitRepo):
             alt_configs = self.config.get('alternative_upstream', [])
             matched = False
             for alt_config in alt_configs:
-                if alt_config['when'] == self.upstream_intended_el_version:
+                if alt_config['when'] == f'el{self.upstream_intended_el_version}':
                     self.logger.info('Merging %s alternative config to match upstream', self.upstream_intended_el_version)
                     self.config.update(alt_config)
                     matched = True

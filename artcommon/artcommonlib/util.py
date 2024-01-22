@@ -1,4 +1,5 @@
-from typing import OrderedDict
+import re
+from typing import OrderedDict, Optional
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -82,3 +83,14 @@ def merge_objects(a, b):
             # move new entry to the beginning
             c.move_to_end(k, last=False)
     return c
+
+
+def isolate_rhel_major_from_version(version: str) -> Optional[int]:
+    """
+    E.g. '9.2' => 9
+    """
+
+    match = re.fullmatch(r"(\d+).(\d+)", version)
+    if match:
+        return int(match[1])
+    return None
