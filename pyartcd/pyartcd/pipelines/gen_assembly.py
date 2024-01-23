@@ -30,7 +30,7 @@ class GenAssemblyPipeline:
     def __init__(self, runtime: Runtime, group: str, assembly: str, data_path: str,
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
                  custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
-                 auto_previous: bool, auto_trigger_build_sync: bool, prerelease: bool = False,
+                 auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str,
                  logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
@@ -46,7 +46,7 @@ class GenAssemblyPipeline:
         self.in_flight = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
-        self.prerelease = prerelease
+        self.pre_ga_mode = pre_ga_mode
         self._logger = logger or runtime.logger
         self._slack_client = self.runtime.new_slack_client()
         self._working_dir = self.runtime.working_dir.absolute()
@@ -146,8 +146,8 @@ class GenAssemblyPipeline:
         for nightly in candidate_nightlies:
             cmd.append(f"--nightly={nightly}")
 
-        if self.prerelease:
-            cmd.append("--prerelease")
+        if self.pre_ga_mode:
+            cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
 
         if self.custom:
             cmd.append("--custom")
@@ -251,8 +251,8 @@ class GenAssemblyPipeline:
               help="Allow matching nightlies built from matching commits but with inconsistent RPMs")
 @click.option("--custom", is_flag=True,
               help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.")
-@click.option("--prerelease", is_flag=True,
-              help="Prepare the assembly for a prerelease operator advisory")
+@click.option("--pre-ga-mode", type=click.Choice(["prerelease", "advance"], case_sensitive=False),
+              help="Prepare the advisory for 'prerelease' or 'advance' operator release")
 @click.option('--auto-trigger-build-sync', is_flag=True,
               help='Will trigger build-sync automatically after PR creation')
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
@@ -263,12 +263,12 @@ class GenAssemblyPipeline:
 @pass_runtime
 @click_coroutine
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
-                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, prerelease: bool,
+                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
                        auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
                        previous_list: Tuple[str, ...], auto_previous: bool):
     pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, data_path=data_path,
                                    nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
                                    allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
                                    auto_trigger_build_sync=auto_trigger_build_sync,
-                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous, prerelease=prerelease)
+                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous, pre_ga_mode=pre_ga_mode)
     await pipeline.run()
