@@ -28,6 +28,8 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
     $ elliott go:report --versions 4.11,4.12,4.13,4.14,4.15,4.16
 
 """
+    results = {}
+
     for ocp_version in ocp_versions.split(","):
         runtime.group = f"openshift-{ocp_version}"
         runtime.image_map = {}
@@ -72,7 +74,7 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
                 v = golang_streams[b]
                 golang_streams_images[v].append(image_name)
 
-        # print results
+        # Add result
         out = []
         for golang_version, images in golang_streams_images.items():
             if not images:
@@ -80,7 +82,10 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
             out.append({"go_version": golang_version, "building_count": len(images)})
 
         out = sorted(out, key=lambda x: x['building_count'], reverse=True)
-        if output == 'json':
-            print(json.dumps(out, indent=4))
-        else:
-            green_print(f'{ocp_version}: {out}')
+        results[ocp_version] = out
+
+    if output == 'json':
+        print(json.dumps(results, indent=4))
+    else:
+        for ocp_version, result in results.items():
+            green_print(f'{ocp_version}: {result}')
