@@ -6,7 +6,7 @@ import tempfile
 
 from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
 from pyartcd.pipelines.promote import PromotePipeline
-from pyartcd.exceptions import VerificationError
+from artcommonlib.exceptions import VerificationError
 from doozerlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 

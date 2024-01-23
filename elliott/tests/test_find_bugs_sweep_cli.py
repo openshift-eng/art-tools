@@ -287,7 +287,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'microshift': {bugs[4].id},
         }
 
-        queried = categorize_bugs_by_type(bugs, advisory_id_map, 4)
+        queried = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
         for adv in queried:
             actual = set()
             for bug in queried[adv]:
@@ -299,7 +299,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
-            categorize_bugs_by_type(bugs, advisory_id_map, 4)
+            categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
 
 
 class TestGenAssemblyBugIDs(unittest.TestCase):

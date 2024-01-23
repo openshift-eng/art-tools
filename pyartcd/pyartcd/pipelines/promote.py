@@ -30,7 +30,7 @@ from pyartcd.signatory import AsyncSignatory
 from pyartcd.util import nightlies_with_pullspecs
 from pyartcd import constants, exectools, locks, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.exceptions import VerificationError
+from artcommonlib.exceptions import VerificationError
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.s3 import sync_dir_to_s3_mirror
