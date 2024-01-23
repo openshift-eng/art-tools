@@ -1,5 +1,6 @@
 #!/bin/sh
 export GOEXPERIMENT=strictfipsruntime
+export GOTOOLCHAIN=local
 
 LOG_PREFIX="Go compliance shim [${__doozer_group}][${__doozer_key}]:"
 echoerr() {
