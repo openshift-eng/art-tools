@@ -1683,7 +1683,10 @@ class PayloadGenerator:
         if not inconsistencies:
             return {}
 
-        msgs = sorted([i.msg for i in inconsistencies])
+        # Some codes aren't critical to be marked as a blocking inconsistency for payloads
+        exclude_assembly_issues = [AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD]
+
+        msgs = sorted([i.msg for i in inconsistencies if i.code not in exclude_assembly_issues])
         if len(msgs) > 5:
             # an exhaustive list of the problems may be too large; that goes in the state file.
             msgs[5:] = ["(...and more)"]
