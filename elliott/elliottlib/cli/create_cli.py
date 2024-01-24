@@ -5,9 +5,12 @@ from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.exectools import cmd_assert
-from elliottlib.exceptions import ElliottFatalError
+from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
 from elliottlib.util import YMD, validate_release_date, \
     validate_email_address, exit_unauthorized
+from elliottlib import errata
+from elliottlib import assembly
+
 
 LOGGER = elliottlib.logutil.getLogger(__name__)
 
@@ -82,8 +85,16 @@ advisory.
     # User entered a valid value for --date, set the release date
     release_date = datetime.datetime.strptime(date, YMD)
 
+    if "boilerplates" not in et_data:
+        raise ValueError("`boilerplates` is required in erratatool.yml")
+
+    if art_advisory_key not in et_data["boilerplates"]:
+        raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
+
+    boilerplate = et_data["boilerplates"][art_advisory_key]
+
     try:
-        erratum = elliottlib.errata.new_erratum(
+        erratum = errata.new_erratum(
             et_data,
             errata_type=errata_type,
             boilerplate_name=art_advisory_key,
@@ -92,9 +103,9 @@ advisory.
             manager=manager,
             package_owner=package_owner
         )
-    except elliottlib.exceptions.ErrataToolUnauthorizedException:
+    except ErrataToolUnauthorizedException:
         exit_unauthorized()
-    except elliottlib.exceptions.ErrataToolError as ex:
+    except ErrataToolError as ex:
         raise ElliottFatalError(getattr(ex, 'message', repr(ex)))
 
     if yes:
@@ -105,6 +116,11 @@ advisory.
         if with_placeholder:
             click.echo("Creating and attaching placeholder bug...")
             ctx.invoke(create_placeholder_cli, advisory=erratum.errata_id)
+
+        if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type != assembly.AssemblyType.CUSTOM:
+            major, minor = runtime.get_major_minor()
+            comment = {"release": f"{major}.{minor}", "kind": art_advisory_key, "impetus": "standard"}
+            errata.add_comment(erratum.errata_id, comment)
 
         if with_liveid:
             click.echo("Requesting Live ID...")
