@@ -42,8 +42,8 @@ def releases_gen_assembly(ctx, name):
 @click.option("--custom", default=False, is_flag=True,
               help="If specified, weaker conformance criteria are applied "
                    "(e.g. a nightly is not required for every arch).")
-@click.option("--prerelease", is_flag=True,
-              help="Prepare the assembly for a prerelease operator advisory. Only valid for preview and candidate assemblies.")
+@click.option("--pre-ga-mode", type=click.Choice(["prerelease", "advance"], case_sensitive=False),
+              help="Prepare the advisory for 'prerelease' or 'advance' operator release")
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option('--previous', 'previous_list', metavar='EDGES', default=[], multiple=True,
               help='A list of releases that can upgrade to this release')
@@ -65,7 +65,7 @@ def releases_gen_assembly(ctx, name):
 @click_coroutine
 @click.pass_context
 async def gen_assembly_from_releases(ctx, runtime: Runtime, nightlies: Tuple[str, ...], standards: Tuple[str, ...],
-                                     custom: bool, prerelease: bool, in_flight: Optional[str], previous_list: Tuple[str, ...],
+                                     custom: bool, pre_ga_mode: str, in_flight: Optional[str], previous_list: Tuple[str, ...],
                                      auto_previous: bool, graph_url: Optional[str], graph_content_stable: Optional[str],
                                      graph_content_candidate: Optional[str], suggestions_url: Optional[str],
                                      output_file: Optional[str]):
@@ -78,7 +78,7 @@ async def gen_assembly_from_releases(ctx, runtime: Runtime, nightlies: Tuple[str
         nightlies=nightlies,
         standards=standards,
         custom=custom,
-        prerelease=prerelease,
+        pre_ga_mode=pre_ga_mode,
         in_flight=in_flight,
         previous_list=previous_list,
         auto_previous=auto_previous,
@@ -103,7 +103,7 @@ class GenAssemblyCli:
             nightlies: Tuple[str, ...] = [],
             standards: Tuple[str, ...] = [],
             custom: bool = False,
-            prerelease: bool = False,
+            pre_ga_mode: str = '',
             in_flight: Optional[str] = None,
             previous_list: Tuple[str, ...] = None,
             auto_previous: bool = False,
@@ -118,7 +118,7 @@ class GenAssemblyCli:
         self.nightlies = nightlies
         self.standards = standards
         self.custom = custom
-        self.prerelease = prerelease
+        self.pre_ga_mode = pre_ga_mode
         self.in_flight = in_flight
         self.previous_list = previous_list
         self.auto_previous = auto_previous
@@ -159,7 +159,7 @@ class GenAssemblyCli:
 
         # ECs are always prerelease
         if self.assembly_type == AssemblyTypes.PREVIEW:
-            self.prerelease = True
+            self.pre_ga_mode = 'prerelease'
 
     async def run(self):
         self._validate_params()
@@ -194,7 +194,7 @@ class GenAssemblyCli:
             if self.auto_previous or self.previous_list or self.in_flight:
                 self._exit_with_error("Custom releases don't have previous list.")
 
-        if self.prerelease and self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+        if self.pre_ga_mode == "prerelease" and self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             self._exit_with_error("Prerelease is only valid for preview and candidate assemblies.")
 
     def _get_release_pullspecs(self):
@@ -507,8 +507,11 @@ class GenAssemblyCli:
             'metadata': -1,
         }
 
-        if self.prerelease:
+        if self.pre_ga_mode == 'prerelease':
             advisories['prerelease'] = -1
+
+        if self.pre_ga_mode == 'advance':
+            advisories['advance'] = -1
 
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
@@ -547,14 +550,14 @@ class GenAssemblyCli:
                 return advisories, release_jira
 
         previous_group = releases_config.releases[previous_assembly].assembly.group
-        advisories = previous_group.advisories.primitive()
+        advisories.update(previous_group.advisories.primitive())
 
         # prerelease advisory already associated with an assembly should be shipped, or dropped
         # do not reuse it
         # RCs can be designated as prerelease, but not always
         # see https://docs.google.com/document/d/1S_ivD8Sh85LuZKnClqvoRvIhn4hNJQA76jpfUaFZjUA/edit
         if 'prerelease' in advisories:
-            if self.prerelease:
+            if self.pre_ga_mode == 'prerelease':
                 advisories['prerelease'] = -1
             else:
                 advisories.pop('prerelease')
@@ -578,7 +581,7 @@ class GenAssemblyCli:
 
         if self.assembly_type != AssemblyTypes.CUSTOM:
             group_info['advisories'], group_info["release_jira"] = self._get_advisories_release_jira()
-            if self.prerelease:
+            if self.pre_ga_mode == 'prerelease':
                 group_info['operator_index_mode'] = 'pre-release'
 
         if self.final_previous_list:

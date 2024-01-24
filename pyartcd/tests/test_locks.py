@@ -17,7 +17,7 @@ class TestLocks(TestCase):
         lock_name = lock.value.format(version='4.14')
         self.assertEqual(lock_name, 'lock:build:4.14')
 
-    @patch("pyartcd.redis.redis_url", return_value='fake_url')
+    @patch("artcommonlib.redis.redis_url", return_value='fake_url')
     @patch("aioredlock.algorithm.Aioredlock.__attrs_post_init__")
     def test_lock_manager(self, *_):
         lock: Lock = Lock.PLASHET

@@ -1,0 +1,2 @@
+FROM validator:base
+RUN pip3 install --user -I https://github.com/openshift/ocp-build-data-validator/archive/refs/heads/master.zip

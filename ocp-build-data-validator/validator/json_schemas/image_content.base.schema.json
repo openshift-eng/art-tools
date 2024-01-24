@@ -1,0 +1,396 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "image_content.base.schema.json",
+  "title": "Image Content",
+  "type": "object",
+  "properties": {
+    "source": {
+      "type": "object",
+      "properties": {
+        "alias": {
+          "type": "string",
+          "minLength": 1
+        },
+        "alias?": {
+          "$ref": "#/properties/source/properties/alias"
+        },
+        "alias!": {
+          "$ref": "#/properties/source/properties/alias"
+        },
+        "alias-": {},
+        "ci_alignment": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "description": "Whether to enable CI alignment. Default value: true",
+              "type": "boolean"
+            },
+            "enabled?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/enabled"
+            },
+            "enabled!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/enabled"
+            },
+            "enabled-": {},
+            "final_user": {
+              "description": "Parameter for the transform Dockerfile to set this user when complete",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "final_user?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/final_user"
+            },
+            "final_user!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/final_user"
+            },
+            "final_user-": {},
+            "mirror": {
+              "description": "Whether to mirror this image for CI to use",
+              "type": "boolean"
+            },
+            "mirror?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/mirror"
+            },
+            "mirror!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/mirror"
+            },
+            "mirror-": {},
+            "mirror_manifest_list": {
+              "description": "Mirror the entire manifest list instead of just arch specific manifests",
+              "type": "boolean"
+            },
+            "mirror_manifest_list?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/mirror_manifest_list"
+            },
+            "mirror_manifest_list!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/mirror_manifest_list"
+            },
+            "mirror_manifest_list-": {},
+            "streams_prs": {
+              "description": "Configuration for creating PRs to align upstream dockerfiles w/ ART",
+              "type": "object",
+              "properties": {
+                "ci_build_root": {
+                  "description": "Explicitly override the buildroot to be used for CI tests",
+                  "type": "object",
+                  "properties": {
+                    "stream": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "ci_build_root?": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/ci_build_root"
+                },
+                "ci_build_root!": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/ci_build_root"
+                },
+                "ci_build_root-": {},
+                "enabled": {
+                  "description": "Whether to create PRs to align upstream dockerfiles w/ ART. Default value: true",
+                  "type": "boolean"
+                },
+                "enabled?": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/enabled"
+                },
+                "enabled!": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/enabled"
+                },
+                "enabled-": {},
+                "auto_label": {
+                  "description": "automatically add labels to alignment PRs when created",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "auto_label?": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/auto_label"
+                },
+                "auto_label!": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/auto_label"
+                },
+                "auto_label-": {},
+                "from": {
+                  "description": "Explicitly override the FROMs to be used upstream",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "from?": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/from"
+                },
+                "from!": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/from"
+                },
+                "from-": {},
+                "merge_first": {
+                  "description": "`merge_first` means that child images will not get PRs opened until this image is aligned. This helps prevent images like OpenShift's base image from having 100s of PRs referencing its PR.",
+                  "type": "boolean"
+                },
+                "merge_first?": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/merge_first"
+                },
+                "merge_first!": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/merge_first"
+                },
+                "merge_first-": {},
+                "commit_prefix": {
+                  "description": "`commit_prefix` will add a prefix to the commit msg in ART alignment PRs",
+                  "type": "string"
+                },
+                "commit_prefix?": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/commit_prefix"
+                },
+                "commit_prefix!": {
+                  "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs/properties/commit_prefix"
+                },
+                "commit_prefix-": {}
+              },
+              "additionalProperties": false
+            },
+            "streams_prs?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs"
+            },
+            "streams_prs!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/streams_prs"
+            },
+            "streams_prs-": {},
+            "transform": {
+              "description": "When mirroring a base image for CI, we push and transform: run a build to add a layer (typically to add repos)",
+              "type": "string",
+              "minLength": 1
+            },
+            "transform?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/transform"
+            },
+            "transform!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/transform"
+            },
+            "transform-": {},
+            "upstream_image": {
+              "description": "When mirroring a base image for CI, we push and transform: transformed image landing point; streams_pr will use this as FROM",
+              "type": "string",
+              "minLength": 1
+            },
+            "upstream_image?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image"
+            },
+            "upstream_image!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image"
+            },
+            "upstream_image-": {},
+            "upstream_image_base": {
+              "description": "push the ART image here; transform is applied to it",
+              "type": "string",
+              "minLength": 1
+            },
+            "upstream_image_base?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image_base"
+            },
+            "upstream_image_base!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image_base"
+            },
+            "upstream_image_base-": {}
+          },
+          "additionalProperties": false
+        },
+        "ci_alignment?": {
+          "$ref": "#/properties/source/properties/ci_alignment"
+        },
+        "ci_alignment!": {
+          "$ref": "#/properties/source/properties/ci_alignment"
+        },
+        "ci_alignment-": {},
+        "dockerfile": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dockerfile?": {
+          "$ref": "#/properties/source/properties/dockerfile"
+        },
+        "dockerfile!": {
+          "$ref": "#/properties/source/properties/dockerfile"
+        },
+        "dockerfile-": {},
+        "git": {
+          "type": "object",
+          "properties": {
+            "branch": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target?": {
+                  "$ref": "#/properties/source/properties/git/properties/branch/properties/target"
+                },
+                "target!": {
+                  "$ref": "#/properties/source/properties/git/properties/branch/properties/target"
+                },
+                "target-": {},
+                "fallback": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "fallback?": {
+                  "$ref": "#/properties/source/properties/git/properties/branch/properties/fallback"
+                },
+                "fallback!": {
+                  "$ref": "#/properties/source/properties/git/properties/branch/properties/fallback"
+                },
+                "fallback-": {},
+                "stage": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stage?": {
+                  "$ref": "#/properties/source/properties/git/properties/branch/properties/stage"
+                },
+                "stage!": {
+                  "$ref": "#/properties/source/properties/git/properties/branch/properties/stage"
+                },
+                "stage-": {}
+              },
+              "additionalProperties": false
+            },
+            "branch?": {
+              "$ref": "#/properties/source/properties/git/properties/branch"
+            },
+            "branch!": {
+              "$ref": "#/properties/source/properties/git/properties/branch"
+            },
+            "branch-": {},
+            "url": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^((git@[\\w\\.]+))([\\w\\.@\\:/\\-~]+)(\\.git)(/)?$"
+            },
+            "url?": {
+              "$ref": "#/properties/source/properties/git/properties/url"
+            },
+            "url!": {
+              "$ref": "#/properties/source/properties/git/properties/url"
+            },
+            "url-": {},
+            "web": {
+              "type": "string",
+              "minLength": 1
+            },
+            "web?": {
+              "$ref": "#/properties/source/properties/git/properties/web"
+            },
+            "web!": {
+              "$ref": "#/properties/source/properties/git/properties/web"
+            },
+            "web-": {}
+          },
+          "additionalProperties": false
+        },
+        "git?": {
+          "$ref": "#/properties/source/properties/git"
+        },
+        "git!": {
+          "$ref": "#/properties/source/properties/git"
+        },
+        "git-": {},
+        "modifications": {
+          "type": "array",
+          "items": {
+            "$ref": "source_modification.schema.json"
+          }
+        },
+        "modifications?": {
+          "$ref": "#/properties/source/properties/modifications"
+        },
+        "modifications!": {
+          "$ref": "#/properties/source/properties/modifications"
+        },
+        "modifications-": {},
+        "path": {
+          "type": "string"
+        },
+        "path?": {
+          "$ref": "#/properties/source/properties/path"
+        },
+        "path!": {
+          "$ref": "#/properties/source/properties/path"
+        },
+        "path-": {},
+        "pkg_managers": {
+          "description": "List of package manager magics used in Cachito. See https://github.com/containerbuildsystem/cachito#package-managers",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "gomod",
+              "pip",
+              "npm",
+              "yarn",
+              "git-submodule"
+            ]
+          }
+        },
+        "pkg_managers?": {
+          "$ref": "#/properties/source/properties/pkg_managers"
+        },
+        "pkg_managers!": {
+          "$ref": "#/properties/source/properties/pkg_managers"
+        },
+        "pkg_managers-": {},
+        "artifacts": {
+          "type": "object",
+          "description": "Configuring external artfacts to fetch during OSBS build.",
+          "properties": {
+            "from_urls": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "artifacts?": {
+          "$ref": "#/properties/source/properties/artifacts"
+        },
+        "artifacts!": {
+          "$ref": "#/properties/source/properties/artifacts"
+        },
+        "artifacts-": {}
+      },
+      "additionalProperties": false
+    },
+    "source!": {
+      "$ref": "#/properties/source"
+    },
+    "source?": {
+      "$ref": "#/properties/source"
+    },
+    "source-": {},
+    "set_build_variables": {
+      "description": "If False, do not inject environment variables into the Dockerfile. This is occasionally necessary for images like golang builder where env vars pollute the environment for code trying to establish their OWN src commit hash, etc.",
+      "type": "boolean"
+    },
+    "set_build_variables!": {
+      "$ref": "#/properties/set_build_variables"
+    },
+    "set_build_variables?": {
+      "$ref": "#/properties/set_build_variables"
+    },
+    "set_build_variables-": {}
+  },
+  "additionalProperties": false
+}

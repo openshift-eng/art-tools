@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assembly_issues.schema.json",
+  "title": "Assembly Issues",
+  "type": "object",
+  "properties": {
+    "include": {
+      "description": "Bugs or JIRA issues to include",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "Bug ID (integer) or JIRA issue key (string)",
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[A-Z]+-\\d+$"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id"
+        ]
+      }
+    },
+    "include!": {
+      "$ref": "#/properties/include"
+    },
+    "include?": {
+      "$ref": "#/properties/include"
+    },
+    "include-": {},
+    "exclude": {
+      "description": "Bugs or JIRA issues to exclude",
+      "$ref": "#/properties/include"
+    },
+    "exclude!": {
+      "$ref": "#/properties/exclude"
+    },
+    "exclude?": {
+      "$ref": "#/properties/exclude"
+    },
+    "exclude-": {},
+    "additionalProperties": false
+  },
+  "additionalProperties": false
+}

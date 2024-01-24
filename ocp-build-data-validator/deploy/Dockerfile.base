@@ -1,0 +1,36 @@
+FROM quay.io/centos/centos:stream8
+LABEL name="ocp-build-data-validator" \
+  description="ocp-build-data validator container image" \
+  maintainer="OpenShift Automated Release Tooling (ART) Team <aos-team-art@redhat.com>"
+
+RUN yum install -y epel-release @python38 \
+ && yum install -y \
+    gcc \
+    git \
+    jq \
+    krb5-devel \
+    libcurl-devel \
+    libgit2 \
+    openssl-devel \
+    python38-{devel,pip,requests} \
+ && yum clean all \
+ && update-alternatives --set python3 /usr/bin/python3.8
+
+RUN python3 -m pip install -U pip build \
+ && useradd -ms /bin/bash -u 1000 art \
+ && curl -o /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem --fail -L \
+         https://certs.corp.redhat.com/certs/2022-IT-Root-CA.pem \
+ && curl -o /etc/pki/ca-trust/source/anchors/2015-IT-Root-CA.pem --fail -L \
+         https://certs.corp.redhat.com/certs/2015-IT-Root-CA.pem \
+ && update-ca-trust extract  # Trust the Red Hat IT Root CAs
+
+USER art
+# These environment variables are required to install pycurl, koji, and rpkg with pip
+ENV PYCURL_SSL_LIBRARY=openssl \
+    PATH=$PATH:/home/art/.local/bin
+RUN pip3 install --user tox twine "setuptools>=45" wheel codecov future \
+    git+https://github.com/openshift/doozer.git \
+    git+https://github.com/openshift/elliott.git \
+    https://github.com/openshift/ocp-build-data-validator/archive/refs/heads/master.zip
+
+CMD ["tox"]

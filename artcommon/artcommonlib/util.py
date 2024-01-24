@@ -1,4 +1,4 @@
-from typing import OrderedDict
+from typing import OrderedDict, Optional
 from datetime import datetime
 from artcommonlib.constants import RELEASE_SCHEDULES
 import requests
@@ -138,3 +138,14 @@ def get_inflight(assembly, group):
                 else:
                     raise ValueError(f"Didn't find in_inflight release in {release['name']}")
     return inflight_release
+
+
+def isolate_rhel_major_from_version(version: str) -> Optional[int]:
+    """
+    E.g. '9.2' => 9
+    """
+
+    match = re.fullmatch(r"(\d+).(\d+)", version)
+    if match:
+        return int(match[1])
+    return None

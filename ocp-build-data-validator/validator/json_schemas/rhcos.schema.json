@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rhcos.schema.json",
+  "title": "RHCOS",
+  "description": "RHCOS images for the assembly.",
+  "type": "object",
+  "properties": {
+    "machine-os-content": {
+      "type": "object",
+      "properties": {
+        "images": {
+          "$ref": "arches_dict.schema.json"
+        },
+        "images!": {
+          "$ref": "#/properties/machine-os-content/properties/images"
+        },
+        "images?": {
+          "$ref": "#/properties/machine-os-content/properties/images"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "images"
+          ]
+        },
+        {
+          "required": [
+            "images?"
+          ]
+        },
+        {
+          "required": [
+            "images!"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "machine-os-content!": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "machine-os-content?": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-8": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-8!": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-8?": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-8-extensions": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-8-extensions!": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-8-extensions?": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos!": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos?": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-extensions": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-extensions!": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "rhel-coreos-extensions?": {
+      "$ref": "#/properties/machine-os-content"
+    },
+    "dependencies": {
+      "$ref": "assembly_dependencies.schema.json"
+    },
+    "dependencies!": {
+      "$ref": "#/properties/dependencies"
+    },
+    "dependencies?": {
+      "$ref": "#/properties/dependencies"
+    },
+    "dependencies-": {}
+  },
+  "anyOf": [
+    {
+      "required": [
+        "machine-os-content"
+      ]
+    },
+    {
+      "required": [
+        "machine-os-content!"
+      ]
+    },
+    {
+      "required": [
+        "machine-os-content?"
+      ]
+    }
+  ],
+  "additionalProperties": false
+}

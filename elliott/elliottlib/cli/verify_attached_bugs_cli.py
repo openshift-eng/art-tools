@@ -185,10 +185,16 @@ class BugValidator:
             self._verify_bug_status(non_flaw_bugs)
 
     def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
-        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids)
+        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids,
+                                               permissive=True)
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
-            expected = bugs_by_type[kind]
+
+            # If impetus is not present, assume no bugs need to be attached
+            expected = bugs_by_type.get(kind, set())
+            if not expected:
+                # Looks like impetus is not part of the ones we care about. Skipping bug attachment
+                continue
             if actual != expected:
                 bugs_not_found = expected - actual
                 extra_bugs = actual - expected
@@ -403,7 +409,7 @@ class BugValidator:
                     self._complain(message)
                 if blocker.status in ['CLOSED', 'Closed'] and \
                     blocker.resolution not in ['CURRENTRELEASE', 'NEXTRELEASE', 'ERRATA', 'DUPLICATE', 'NOTABUG', 'WONTFIX',
-                                               'Done', 'Fixed', 'Done-Errata',
+                                               'Done', 'Fixed', 'Done-Errata', 'Obsolete',
                                                'Current Release', 'Errata', 'Next Release',
                                                "Won't Do", "Won't Fix",
                                                'Duplicate', 'Duplicate Issue',
