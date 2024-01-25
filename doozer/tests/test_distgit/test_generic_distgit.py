@@ -661,7 +661,8 @@ class TestGenericDistGit(TestDistgit):
 
         self.assertIn(msg, actual)
 
-    def test_add_missing_pkgs_succeed(self):
+    @mock.patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_add_missing_pkgs_succeed(self, _):
         md = MockMetadata(MockRuntime(self.logger))
         d = distgit.ImageDistGitRepo(md, autoclone=False)
         d._add_missing_pkgs("haproxy")
@@ -669,8 +670,9 @@ class TestGenericDistGit(TestDistgit):
         self.assertEqual(1, len(d.runtime.missing_pkgs))
         self.assertIn("distgit_key image is missing package haproxy", d.runtime.missing_pkgs)
 
+    @mock.patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
     @mock.patch("requests.head")
-    def test_cgit_file_available(self, mocked_head):
+    def test_cgit_file_available(self, mocked_head, _):
         meta = MockMetadata(MockRuntime(self.logger))
         cgit_url = "http://distgit.example.com/cgit/containers/foo/plain/some_path/some_file.txt?h=some-branch&id=abcdefg"
         meta.cgit_file_url = lambda *args, **kwargs: cgit_url

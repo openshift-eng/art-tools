@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch, mock_open
 from flexmock import flexmock
 from unittest.mock import MagicMock
 
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from doozerlib import distgit, model
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.image import ImageMetadata
@@ -21,7 +21,8 @@ from ..support import MockScanner, TestDistgit
 
 class TestImageDistGit(TestDistgit):
 
-    def setUp(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def setUp(self, _):
         super(TestImageDistGit, self).setUp()
         self.img_dg = distgit.ImageDistGitRepo(self.md, autoclone=False)
         self.img_dg.runtime.group_config = model.Model()
@@ -51,7 +52,8 @@ class TestImageDistGit(TestDistgit):
             get_major_minor_fields=lambda *_, **__: (4, 14)
         )
 
-    def test_clone_invokes_read_master_data(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_clone_invokes_read_master_data(self, _):
         """
         Mocking `clone` method of parent class, since we are only interested
         in validating that `_read_master_data` is called in the child class.
@@ -72,7 +74,8 @@ class TestImageDistGit(TestDistgit):
         (distgit.ImageDistGitRepo(metadata, autoclone=False)
             .clone("distgits_root_dir", "distgit_branch"))
 
-    def test_image_build_method_default(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_image_build_method_default(self, _):
         metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
                             config=flexmock(distgit=flexmock(branch=distgit.Missing),
                                             image_build_method=distgit.Missing,
@@ -83,7 +86,8 @@ class TestImageDistGit(TestDistgit):
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("default-method", repo.image_build_method)
 
-    def test_image_build_method_imagebuilder(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_image_build_method_imagebuilder(self, _):
         get = lambda key, default: dict({"builder": "..."}) if key == "from" else default
 
         metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method=distgit.Missing)),
@@ -116,7 +120,8 @@ class TestImageDistGit(TestDistgit):
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("imagebuilder", repo.image_build_method)
 
-    def test_image_build_method_from_config(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_image_build_method_from_config(self, _):
         metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
                             config=flexmock(distgit=flexmock(branch=distgit.Missing),
                                             image_build_method="config-method",
@@ -127,7 +132,8 @@ class TestImageDistGit(TestDistgit):
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("config-method", repo.image_build_method)
 
-    def test_wait_for_build_with_build_status_true(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_wait_for_build_with_build_status_true(self, _):
         logger = flexmock()
 
         (logger
@@ -153,7 +159,8 @@ class TestImageDistGit(TestDistgit):
 
         repo.wait_for_build("i-am-waiting")
 
-    def test_wait_for_build_with_build_status_false(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_wait_for_build_with_build_status_false(self, _):
         metadata = flexmock(qualified_name="my-qualified-name",
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             runtime=self.mock_runtime(),
@@ -172,7 +179,8 @@ class TestImageDistGit(TestDistgit):
             actual = str(e)
             self.assertEqual(expected, actual)
 
-    def test_push(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_push(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
@@ -197,7 +205,8 @@ class TestImageDistGit(TestDistgit):
 
         self.assertEqual(expected, actual)
 
-    def test_push_with_io_error(self):
+    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    def test_push_with_io_error(self, _):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
@@ -601,81 +610,70 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
-    @patch("artcommonlib.redis.set_value_sync")
     @patch("doozerlib.exectools.cmd_assert")
+    @patch("artcommonlib.redis.set_value_sync")
     @patch("artcommonlib.redis.get_value_sync")
     def test_determine_upstream_rhel_version(self, get_value, *_):
-        dfp = MagicMock()
-        dfp.parent_images = ['bogus']
-
         # Already in Redis
         get_value.return_value = '9'
-        self.assertEqual('9', self.img_dg._determine_upstream_rhel_version(dfp))
+        with patch('builtins.open', new_callable=mock_open) as mocked_open:
+            mocked_open.return_value = io.StringIO('FROM bogus')
+            self.assertEqual('9', self.img_dg._determine_upstream_rhel_version('source-path'))
 
         # Not in Redis yet: parsing os-release
         get_value.return_value = None
         with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.return_value = io.StringIO('VERSION_ID="9.2"')
-            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version(dfp))
+            mocked_open.side_effect = [io.StringIO('FROM bogus'), io.StringIO('VERSION_ID="9.2"')]
+            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version('source-path'))
 
         # Not in Redis yet: parsing error
         get_value.return_value = None
         with patch('builtins.open', new_callable=mock_open) as mocked_open:
+            mocked_open.side_effect = [io.StringIO('FROM bogus'), io.StringIO('unparsable')]
             mocked_open.return_value = io.StringIO('unparsable')
-            self.assertEqual(None, self.img_dg._determine_upstream_rhel_version(dfp))
+            self.assertEqual(None, self.img_dg._determine_upstream_rhel_version('source-path'))
 
     @patch('doozerlib.distgit.datetime')
     @patch('doozerlib.distgit.ReleaseSchedule')
-    @patch('doozerlib.distgit.ImageDistGitRepo._determine_upstream_rhel_version')
-    def test_should_match_upstream(self, el_version, release_schedule, mock_datetime):
-        dfp = MagicMock()
-
-        # No RHEL version inferred from upstream
-        el_version.return_value = None
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
-
+    def test_canonical_builders_enabled(self, release_schedule, mock_datetime):
         # canonical_builders_from_upstream not defined
-        el_version.return_value = 'el8'
         self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
+        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 
         # canonical_builders_from_upstream = True in group.yml
-        el_version.return_value = 'el8'
         self.img_dg.config.canonical_builders_from_upstream = Missing
         self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(True, self.img_dg._should_match_upstream(dfp))
+        self.assertEqual(True, self.img_dg._canonical_builders_enabled())
 
         # canonical_builders_from_upstream = False in image config (override)
-        el_version.return_value = 'el8'
         self.img_dg.config.canonical_builders_from_upstream = False
         self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
+        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 
         # canonical_builders_from_upstream = 'on' in image config (override)
-        el_version.return_value = 'el8'
         self.img_dg.config.canonical_builders_from_upstream = 'on'
         self.img_dg.runtime.group_config.canonical_builders_from_upstream = False
-        self.assertEqual(True, self.img_dg._should_match_upstream(dfp))
+        self.assertEqual(True, self.img_dg._canonical_builders_enabled())
 
         # canonical_builders_from_upstream = 'auto'; current time < feature freeze
-        el_version.return_value = 'el8'
         self.img_dg.config.canonical_builders_from_upstream = 'auto'
         release_schedule.return_value.get_ff_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
         mock_datetime.now.return_value = datetime.datetime(2023, 5, 1, 10, 30, 15)
-        self.assertEqual(True, self.img_dg._should_match_upstream(dfp))
+        self.assertEqual(True, self.img_dg._canonical_builders_enabled())
 
         # canonical_builders_from_upstream = 'auto'; current time > feature freeze
-        el_version.return_value = 'el8'
         self.img_dg.config.canonical_builders_from_upstream = 'auto'
         release_schedule.return_value.get_ff_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
         mock_datetime.now.return_value = datetime.datetime(2023, 7, 1, 10, 30, 15)
-        self.assertEqual(False, self.img_dg._should_match_upstream(dfp))
+        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 
     def test_update_image_config(self):
+        self.img_dg.metadata = MagicMock()
         # 'when' clause matching upstream rhel version: override
         self.img_dg.should_match_upstream = True
-        self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                              'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
+        self.img_dg.config = Model(
+            {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+             'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
         self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)
@@ -683,18 +681,10 @@ COPY --from=builder /some/path/a /some/path/b
 
         # no 'when' clause matching upstream rhel version: do not match upstream
         self.img_dg.should_match_upstream = True
-        self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                              'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
+        self.img_dg.config = Model(
+            {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+             'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
         self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
-        self.img_dg._update_image_config()
-        self.assertTrue(self.img_dg.should_match_upstream)
-        self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
-
-        # canonical builders disabled: never override
-        self.img_dg.should_match_upstream = False
-        self.img_dg.config = {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                              'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]}
-        self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertFalse(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
