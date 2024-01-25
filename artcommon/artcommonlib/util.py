@@ -107,6 +107,7 @@ def get_assembly_release_date(assembly, group):
     """
     Get assembly release release date from release schedule API
     """
+    assembly_release_data = None
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         if assembly in release['name']:

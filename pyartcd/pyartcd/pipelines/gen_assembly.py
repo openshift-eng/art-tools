@@ -91,7 +91,7 @@ class GenAssemblyPipeline:
             pr = await self._create_or_update_pull_request(assembly_definition)
 
             # Sends a slack message
-            message = f"Hi @release-artists , please review assembly definition for {self.assembly}: {pr.html_url}"
+            message = f"Hi @release-artists , please review assembly definition for {self.assembly}: {pr.html_url}\n\nthe nightlies are {candidate_nightlies}\n\nthe inflight release is {self.in_flight}"
             await self._slack_client.say(message, slack_thread)
 
         except Exception as err:
