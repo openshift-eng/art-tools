@@ -122,6 +122,8 @@ def get_inflight(assembly, group):
     """
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
+    if not assembly_release_date:
+        raise ValueError(f'Assembly release date not found for {assembly}')
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
