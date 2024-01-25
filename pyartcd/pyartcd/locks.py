@@ -28,47 +28,40 @@ class Keys(enum.Enum):
 # - the sleep interval between two consecutive retries, in seconds
 # - a timeout, after which the lock will expire and clear itself
 LOCK_POLICY = {
-    # olm-bundle: give up after 1 hour
     Lock.OLM_BUNDLE: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 2,  # 2 hours
+        'lock_timeout': 60 * 60 * 4,  # 4 hours
     },
-    # mirror RPMs: give up after 1 hour
     Lock.MIRRORING_RPMS: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 3,  # 3 hours
+        'lock_timeout': 60 * 60 * 6,  # 6 hours
     },
-    # compose: give up after 1 hour
     Lock.PLASHET: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 6,  # 6 hours
+        'lock_timeout': 60 * 60 * 12,  # 12 hours
     },
-    # github-activity-lock: give up after 1 hour
     Lock.BUILD: {
         'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 6,  # 6 hours
+        'lock_timeout': 60 * 60 * 24,  # 24 hours
     },
-    # mass rebuild: give up after 8 hours
     Lock.MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 12,  # 12 hours
+        'lock_timeout': 60 * 60 * 24,  # 24 hours
     },
-    # signing: give up after 1 hour
     Lock.SIGNING: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 1,  # 1 hour
+        'lock_timeout': 60 * 60 * 2,  # 2 hour
     },
-    # build-sync: give up after 1 hour
     Lock.BUILD_SYNC: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 1,  # 1 hour
+        'lock_timeout': 60 * 60 * 2,  # 2 hour
     },
 }
 
