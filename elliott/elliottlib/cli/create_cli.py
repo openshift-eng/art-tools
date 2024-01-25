@@ -123,7 +123,7 @@ advisory.
         # https://gitlab.cee.redhat.com/releng/g-chat-notifier/notifier/-/blob/3d71698a45de9f847cb272d18a5a27dccf9521a0/notifier/etera_controller.py#L128
         # https://issues.redhat.com/browse/ART-8758
         # Do not leave a comment for a custom assembly type
-        if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type != assembly.AssemblyType.CUSTOM:
+        if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type is not assembly.AssemblyTypes.CUSTOM:
             major, minor = runtime.get_major_minor()
             comment = {"release": f"{major}.{minor}", "kind": art_advisory_key, "impetus": "standard"}
             errata.add_comment(erratum.errata_id, comment)
