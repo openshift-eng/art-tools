@@ -1,7 +1,7 @@
 import enum
 import logging
-import tenacity
 from types import coroutine
+from tenacity import retry, retry_if_exception_type, wait_fixed, stop_after_attempt, TryAgain
 
 from aioredlock import Aioredlock, LockError
 
@@ -154,10 +154,10 @@ async def enqueue_for_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id:
     return await _enqueue_for_lock(coro, lock_manager, lock, lock_name, lock_id, ocp_version, version_queue_name)
 
 
-@tenacity.retry(
-    wait=tenacity.wait_fixed(600),  # wait for 10 minutes between retries
-    stop=tenacity.stop_after_attempt(600 * 24),  # wait for 24 hours
-    retry=tenacity.retry_if_exception_type(),
+@retry(
+    wait=wait_fixed(600),  # wait for 10 minutes between retries
+    stop=stop_after_attempt(600 * 24),  # wait for 24 hours
+    retry=retry_if_exception_type(TryAgain),
 )
 async def _enqueue_for_lock(coro: coroutine, lock_manager, lock: Lock, lock_name: str, lock_id: str,
                             ocp_version: str, version_queue_name):
@@ -175,7 +175,7 @@ async def _enqueue_for_lock(coro: coroutine, lock_manager, lock: Lock, lock_name
             lock_manager.logger.info(f"Do not have priority for {lock_name} as {version_on_top} is ahead. Waiting ..")
 
     lock_manager.logger.info(f"Do not have priority for {lock_name} Waiting ..")
-    raise tenacity.TryAgain()
+    raise TryAgain()
 
 
 async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: str = None, skip_if_locked: bool = False):
