@@ -117,9 +117,13 @@ class LockManager(Aioredlock):
         return lock
 
     async def unlock(self, lock):
-        self.logger.info('Releasing lock "%s"', lock.resource)
-        await super().unlock(lock)
-        self.logger.info('Lock released')
+        try:
+            self.logger.info('Releasing lock "%s"', lock.resource)
+            await super().unlock(lock)
+            self.logger.info('Lock released')
+        except LockError:
+            self.logger.warning('Failed releasing lock %s', lock.resource)
+            raise
 
     async def get_lock_id(self, resource) -> str:
         self.logger.debug('Retrieving identifier for lock %s', resource)
