@@ -347,7 +347,7 @@ class ScanOshCli:
 
         cmd_template = "osh-cli mock-build --config={config} --brew-build {nvr} --nowait"
         for nvr in nvrs:
-            if "container" in nvr:
+            if "-container" in nvr:
                 cmds.append(cmd_template.format(config="cspodman", nvr=nvr))
 
             else:
@@ -617,15 +617,24 @@ class ScanOshCli:
         components_with_issues, components_without_issues = self.categorize_components(components_with_closed_scans)
         for component in components_without_issues:
             summary = component["jira_search_summary"]
+            kind = component["kind"]
+            osh_task_id = component["osh_task_id"]
 
-            open_issues = self.get_jira_issues(summary, status=JiraStatus.OPEN)
-            # Close open issues, if they exist
-            for open_issue in open_issues:
-                if not self.dry_run:
-                    self.jira_client.transition_issue(open_issue.key, "Closed")
-                    self.runtime.logger.info(f"Closed issue {open_issue.key}")
-                else:
-                    self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
+            if kind == BuildType.IMAGE:
+                # Close open issues, if they exist, for Images.
+                # For RPMs, its OCP version independent, so skipping
+                open_issues = self.get_jira_issues(summary, status=JiraStatus.OPEN)
+
+                # [asdas] Auto-ticket closing feature disabled.
+                # for open_issue in open_issues:
+                #     if not self.dry_run:
+                #         self.jira_client.transition_issue(open_issue.key, "Closed")
+                #         self.runtime.logger.info(f"Closed issue {open_issue.key}")
+                #     else:
+                #         self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
+                for open_issue in open_issues:
+                    self.runtime.logger.info(f"Would have closed issue: {open_issue.key}, "
+                                             f"since no issues found in OSH task {osh_task_id}")
 
         for c in components_with_issues:
             try:
@@ -770,7 +779,7 @@ class ScanOshCli:
                 self.runtime.logger.debug(f"Skipping build: {nvr} (since it's in excluded components)")
                 continue
 
-            kind: BuildType = BuildType.IMAGE if "container" in nvr and nvr.endswith(".stream") else BuildType.RPM
+            kind: BuildType = BuildType.IMAGE if "-container" in nvr and nvr.endswith(".stream") else BuildType.RPM
             component["kind"] = kind
 
             distgit_name = self.get_distgit_name_from_brew(kind=kind, brew_package_name=build["package_name"])

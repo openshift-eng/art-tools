@@ -1,10 +1,11 @@
 import enum
 import logging
+import tenacity
 from types import coroutine
 
 from aioredlock import Aioredlock, LockError
 
-from pyartcd import redis
+from artcommonlib import redis
 
 
 # Defines the pipeline locks managed by Redis
@@ -16,6 +17,10 @@ class Lock(enum.Enum):
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
+
+
+class Keys(enum.Enum):
+    MASS_REBUILD_QUEUE = 'appdata:mass-rebuild-queue'
 
 
 # This constant defines for each lock type:
@@ -141,6 +146,36 @@ class LockManager(Aioredlock):
 
         self.logger.info('Retrieving locks matching pattern "%s"', pattern)
         return await redis.get_keys(pattern)
+
+
+async def enqueue_for_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: str,
+                           ocp_version: str, version_queue_name):
+    lock_manager = LockManager.from_lock(lock)
+    return await _enqueue_for_lock(coro, lock_manager, lock, lock_name, lock_id, ocp_version, version_queue_name)
+
+
+@tenacity.retry(
+    wait=tenacity.wait_fixed(600),  # wait for 10 minutes between retries
+    stop=tenacity.stop_after_attempt(600 * 24),  # wait for 24 hours
+    retry=tenacity.retry_if_exception_type(),
+)
+async def _enqueue_for_lock(coro: coroutine, lock_manager, lock: Lock, lock_name: str, lock_id: str,
+                            ocp_version: str, version_queue_name):
+    if not await lock_manager.is_locked(lock_name):
+        # TODO: use a redis tx here
+        # fetch the first element in the reverse sorted set by score (item with the max score)
+        result = await redis.call('zrange', version_queue_name, 0, 0, desc=True)
+        # there should be at least 1 entry, if not error out
+        version_on_top = result[0]
+        if version_on_top == ocp_version:
+            # remove yourself from the queue
+            await redis.call('zpopmax', version_queue_name)
+            return await run_with_lock(coro, lock, lock_name, lock_id)
+        else:
+            lock_manager.logger.info(f"Do not have priority for {lock_name} as {version_on_top} is ahead. Waiting ..")
+
+    lock_manager.logger.info(f"Do not have priority for {lock_name} Waiting ..")
+    raise tenacity.TryAgain()
 
 
 async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: str = None, skip_if_locked: bool = False):

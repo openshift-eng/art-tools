@@ -14,7 +14,8 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
-                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
+                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
+                                       pre_ga_mode="none")
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
@@ -47,7 +48,8 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
-                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
+                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
+                                       pre_ga_mode="none")
         out = """
 releases:
   4.12.99:
@@ -96,7 +98,8 @@ releases:
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
-                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
+                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
+                                       pre_ga_mode="none")
         pipeline._working_dir = Path("/path/to/working")
         yaml.load.return_value = OrderedDict([
             ("releases", OrderedDict([
@@ -145,7 +148,8 @@ releases:
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
-                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False)
+                                       previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
+                                       pre_ga_mode="none")
         pipeline._working_dir = Path("/path/to/working")
         get_nightlies.return_value = ["nightly1", "nightly2", "nightly3", "nightly4"]
         _gen_assembly_from_releases.return_value = OrderedDict([

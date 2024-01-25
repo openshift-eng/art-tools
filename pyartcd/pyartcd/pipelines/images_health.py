@@ -40,15 +40,18 @@ class ImagesHealthPipeline:
 
     async def _send_notifications(self):
         if self.report:
-            msg = f':alert: Howdy! There are some issues to look into for openshift-{self.version}\n{self.report}'
+            count = self.report.count('Latest attempt')
+            msg = f':alert: Howdy! There are some issues to look into for openshift-{self.version}. {count} components have failed!'
 
             if self.send_to_release_channel:
                 self.slack_client.bind_channel(self.version)
-                await self.slack_client.say(msg)
+                response = await self.slack_client.say(msg)
+                await self.slack_client.say(f'{self.report}', thread_ts=response['ts'])
 
             if self.send_to_aos_art:
                 self.slack_client.bind_channel('#forum-ocp-art')
-                await self.slack_client.say(msg)
+                response = await self.slack_client.say(msg)
+                await self.slack_client.say(f'{self.report}', thread_ts=response['ts'])
 
         else:
             if self.send_to_release_channel:

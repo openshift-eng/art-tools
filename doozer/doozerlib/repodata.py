@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import lzma
 import io
 import logging
 import xml.etree.ElementTree as ET
@@ -153,7 +154,7 @@ class Repodata:
 
 class RepodataLoader:
     @staticmethod
-    async def _fetch_remote_gzip(session: aiohttp.ClientSession, url: Optional[str]):
+    async def _fetch_remote_compressed(session: aiohttp.ClientSession, url: Optional[str]):
         if not url:
             return b''
         data = io.BytesIO()
@@ -161,8 +162,15 @@ class RepodataLoader:
             resp.raise_for_status()
             data = io.BytesIO(await resp.read())
         data.seek(0)
-        with gzip.GzipFile(fileobj=data) as uncompressed:
-            return uncompressed.read()
+
+        if url.endswith('.gz'):
+            with gzip.GzipFile(fileobj=data) as uncompressed:
+                return uncompressed.read()
+        elif url.endswith('.xz'):
+            with lzma.open(data) as uncompressed:
+                return uncompressed.read()
+        else:
+            raise IOError(f'Unknown compression for: {url}')
 
     async def load(self, repo_name: str, repo_url: str):
         if not repo_url.endswith("/"):
@@ -194,12 +202,12 @@ class RepodataLoader:
             @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
                    retry=(retry_if_exception_type((aiohttp.ServerDisconnectedError, aiohttp.ClientResponseError, aiohttp.ClientPayloadError))),
                    before_sleep=before_sleep_log(LOGGER, logging.WARNING))
-            async def fetch_remote_gzip(url: Optional[str]):
-                return await self._fetch_remote_gzip(session, url)
+            async def fetch_remote_compressed(url: Optional[str]):
+                return await self._fetch_remote_compressed(session, url)
 
             primary_bytes, modules_bytes = await asyncio.gather(
-                fetch_remote_gzip(primary_url),
-                fetch_remote_gzip(modules_url),
+                fetch_remote_compressed(primary_url),
+                fetch_remote_compressed(modules_url),
             )
 
         yaml = YAML(typ='safe')

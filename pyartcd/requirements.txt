@@ -14,6 +14,7 @@ openshift-client
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-grpc
 pygit2 == 1.10.1 # https://github.com/libgit2/pygit2/issues/1176
+redis >= 5.0.1
 rh-doozer
 rh-elliott
 ruamel.yaml

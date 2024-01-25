@@ -99,3 +99,9 @@ class TestUtil(unittest.TestCase):
             actual = release_util.isolate_el_version_in_release(t[0])
             expected = t[1]
             self.assertEqual(actual, expected)
+
+    def test_isolate_rhel_major_from_version(self):
+        self.assertEqual(9, util.isolate_rhel_major_from_version('9.2'))
+        self.assertEqual(8, util.isolate_rhel_major_from_version('8.6'))
+        self.assertEqual(10, util.isolate_rhel_major_from_version('10.1'))
+        self.assertEqual(None, util.isolate_rhel_major_from_version('invalid'))
