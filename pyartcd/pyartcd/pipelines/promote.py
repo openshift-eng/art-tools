@@ -436,6 +436,13 @@ class PromotePipeline:
 
         self.create_cincinnati_prs(assembly_type, data)
 
+        # Backup to ocp-doomsday-registry on AWS
+        if "rc" in self.assembly or "ec" in self.assembly or "art" in self.assembly:
+            # Skip for ECs, RCs and hotfixes
+            self._logger.info("Skipping AWS backup for this payload")
+        else:
+            await self.ocp_doomsday_backup()
+
         json.dump(data, sys.stdout)
 
     @staticmethod
@@ -1507,6 +1514,28 @@ class PromotePipeline:
             candidate_pr_note,
             self.skip_ota_notification
         )
+
+    async def ocp_doomsday_backup(self):
+        """
+        Backup the payload to ocp-doomsday-registry s3 bucket on AWS. This function will trigger a pipeline on
+        ART cluster
+
+        :param major: Eg. 4.15
+        :param version: Eg. 4.15.10
+        """
+        pipeline_name = "doomsday-pipeline"
+        cmd = f"tkn pipeline start {pipeline_name} " \
+              f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} " \
+              f"--param major={self.group.split('-')[-1]} " \
+              f"--param version={self.assembly}"
+
+        env = os.environ.copy()
+        rc, _, _ = await exectools.cmd_gather_async(cmd, env=env)
+
+        if rc == 0:
+            self._logger.info("Successfully triggered ocp-doomsday-registry pipline on cluster")
+        else:
+            self._logger.error("Error while triggering ocp-doomsday-registry pipline on cluster")
 
 
 @cli.command("promote")
