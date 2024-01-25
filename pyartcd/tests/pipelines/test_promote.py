@@ -111,6 +111,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             "JENKINS_SERVICE_ACCOUNT_TOKEN": "fake-jenkins-service-account-token",
             "AWS_ACCESS_KEY_ID": "fake-aws-access-key-id",
             "AWS_SECRET_ACCESS_KEY": "fake-aws-crecret-access-key",
+            "ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG": "/path/to/kube/config"
         })
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
@@ -470,6 +471,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.wait_for_stable = AsyncMock(return_value=None)
         pipeline.send_image_list_email = AsyncMock()
         pipeline.is_accepted = AsyncMock(return_value=False)
+        pipeline.ocp_doomsday_backup = AsyncMock(return_value=None)
         await pipeline.run()
         load_group_config.assert_awaited_once()
         load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
