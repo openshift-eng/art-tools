@@ -15,6 +15,7 @@ import click
 import yaml
 from aioredlock import LockError
 from doozerlib.assembly import AssemblyTypes
+from artcommonlib.util import get_ocp_version_from_group
 from pyartcd import constants, exectools, locks, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.record import parse_record_log
@@ -52,10 +53,7 @@ class RebuildPipeline:
         self.ocp_build_data_url = ocp_build_data_url
 
         # determines OCP version
-        match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
-        if not match:
-            raise ValueError(f"Invalid group name: {group}")
-        self._ocp_version = (int(match[1]), int(match[2]))
+        self._ocp_version = (get_ocp_version_from_group(group))
 
         # sets environment variables for Doozer
         self._doozer_env_vars = os.environ.copy()

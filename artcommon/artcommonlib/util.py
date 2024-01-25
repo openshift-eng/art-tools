@@ -122,11 +122,8 @@ def get_inflight(assembly, group):
     """
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
-    match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
-    if not match:
-        raise ValueError(f"Invalid group name: {group}")
-    previous_release = f"openshift-{int(match[1])}.{int(match[2])-1}"
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{previous_release}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    major, minor = get_ocp_version_from_group(group)
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:
@@ -150,3 +147,13 @@ def isolate_rhel_major_from_version(version: str) -> Optional[int]:
     if match:
         return int(match[1])
     return None
+
+
+def get_ocp_version_from_group(group):
+    """
+    Extract ocp version from group value openshift-4.15 --> 4, 15
+    """
+    match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
+    if not match:
+        raise ValueError(f"Invalid group name: {group}")
+    return int(match[1]), int(match[2])
