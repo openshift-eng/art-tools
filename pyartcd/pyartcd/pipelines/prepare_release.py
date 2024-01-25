@@ -151,6 +151,7 @@ class PrepareReleasePipeline:
 
         await self.set_advisory_dependencies(advisories)
 
+        # handle release JIRA
         jira_issue_key = group_config.get("release_jira")
         jira_issue = None
         jira_template_vars = {
@@ -201,6 +202,8 @@ class PrepareReleasePipeline:
                 continue
             elif impetus == "metadata":
                 await self.build_and_attach_bundles(advisory)
+            elif impetus == "advance":
+                await self.build_and_attach_bundles(advisory)
             elif impetus == "prerelease":
                 await self.build_and_attach_prerelease_bundles(advisory)
             else:
@@ -208,6 +211,14 @@ class PrepareReleasePipeline:
 
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
+        if 'advance' in advisories:
+            # move dependencies builds to advance advisory before sweep bug
+            await self.verify_attached_operators(advisories['advance'], gather_dependencies=True, omit_attached=True)
+            # sweep bug for advance advisory
+            self.sweep_bugs(permissive=False)
+            _LOGGER.info("Processing attached Security Trackers")
+            for _, advisory in advisories.items():
+                self.attach_cve_flaws(advisory)
         if assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
             self.sweep_bugs(permissive=True)
             _LOGGER.info("Skipping flaw processing during pre-releases")
@@ -229,7 +240,7 @@ class PrepareReleasePipeline:
         if any(x in advisories for x in ("metadata", "prerelease", "advance")):
             try:
                 if 'advance' in advisories:
-                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
+                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True, omit_attached=True)
                 elif 'prerelease' in advisories:
                     await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
                 elif 'metadata' in advisories:
@@ -688,7 +699,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         return await self.build_and_attach_bundles(prerelease_advisory, force=True)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def verify_attached_operators(self, *advisories: List[int], gather_dependencies=False):
+    async def verify_attached_operators(self, *advisories: List[int], gather_dependencies=False, omit_attached=False):
         cmd = [
             "elliott",
             f"--group={self.group_name}",
@@ -697,6 +708,8 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         ]
         if gather_dependencies:
             cmd.append("--gather-dependencies")
+        if omit_attached:
+            cmd.append("--omit-attached")
         cmd.append("--")
         for advisory in advisories:
             cmd.append(f"{advisory}")

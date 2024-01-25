@@ -88,6 +88,10 @@ advisory.
     if "boilerplates" not in et_data:
         raise ValueError("`boilerplates` is required in erratatool.yml")
 
+    if art_advisory_key == "advance":
+        # the only difference for advance is advisory type, others can be same with metadata
+        et_data['release'] = "RHOSE ASYNC"
+        art_advisory_key = "metadata"
     if art_advisory_key not in et_data["boilerplates"]:
         raise ValueError(f"Boilerplate {art_advisory_key} not found in erratatool.yml")
 
