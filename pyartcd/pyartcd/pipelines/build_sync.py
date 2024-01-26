@@ -178,7 +178,7 @@ class BuildSyncPipeline:
             self.logger.info('Triggering %s release controller to cut new release using previously synced builds...',
                              arch)
             suffix = go_suffix_for_arch(arch, is_private=False)
-            cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi8 ' \
+            cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi9 ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller'
             _, out, _, = await exectools.cmd_gather_async(cmd)
             self.logger.info('oc output: %s', out)
