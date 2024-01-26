@@ -184,7 +184,7 @@ class BuildSyncPipeline:
             self.logger.info('oc output: %s', out)
 
             self.logger.info('Sleeping so that release controller has time to react...')
-            await asyncio.sleep(60)
+            await asyncio.sleep(120)
 
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller -d'
