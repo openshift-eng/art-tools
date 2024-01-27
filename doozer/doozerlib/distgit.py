@@ -1645,7 +1645,10 @@ class ImageDistGitRepo(DistGitRepo):
         df_name = self.config.content.source.dockerfile
         if not df_name:
             df_name = 'Dockerfile'
-        df_path = str(pathlib.Path(source_path).joinpath(df_name))
+        subdir = self.config.content.source.path
+        if not subdir:
+            subdir = '.'
+        df_path = str(pathlib.Path(source_path).joinpath(subdir).joinpath(df_name))
 
         with open(df_path) as f:
             dfp = DockerfileParser(fileobj=f)
