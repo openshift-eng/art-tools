@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List, Optional, Tuple, cast
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.util import get_ocp_version_from_group
 from doozerlib.assembly import AssemblyTypes
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
@@ -54,10 +55,7 @@ class BuildMicroShiftPipeline:
         self.slack_client.bind_channel(group)
 
         # determines OCP version
-        match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
-        if not match:
-            raise ValueError(f"Invalid group name: {group}")
-        self._ocp_version = (int(match[1]), int(match[2]))
+        self._ocp_version = get_ocp_version_from_group(group)
 
         # sets environment variables for Elliott and Doozer
         self._elliott_env_vars = os.environ.copy()

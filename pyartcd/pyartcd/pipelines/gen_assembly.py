@@ -9,7 +9,7 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import click
 from ghapi.all import GhApi
 
-from artcommonlib.util import split_git_url, merge_objects
+from artcommonlib.util import split_git_url, merge_objects, get_inflight
 from pyartcd import exectools, constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
@@ -43,7 +43,7 @@ class GenAssemblyPipeline:
         self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
-        self.in_flight = in_flight
+        self.in_flight = in_flight if in_flight else get_inflight(assembly, group)
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.pre_ga_mode = pre_ga_mode
@@ -91,7 +91,7 @@ class GenAssemblyPipeline:
             pr = await self._create_or_update_pull_request(assembly_definition)
 
             # Sends a slack message
-            message = f"Hi @release-artists , please review assembly definition for {self.assembly}: {pr.html_url}"
+            message = f"Hi @release-artists , please review assembly definition for {self.assembly}: {pr.html_url}\n\nthe inflight release is {self.in_flight}"
             await self._slack_client.say(message, slack_thread)
 
         except Exception as err:
