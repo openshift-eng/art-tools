@@ -50,7 +50,7 @@ class SlackClient:
         else:
             return await self.say(message, reaction, self._thread_ts)
 
-    async def say(self, message: str, reaction:  Optional[str] = None, thread_ts: Optional[str] = None):
+    async def say(self, message: str, reaction: Optional[str] = None, thread_ts: Optional[str] = None):
         attachments = []
         if self.build_url:
             attachments.append({
