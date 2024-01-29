@@ -1,21 +1,21 @@
 # mirror.openshift.com
 
-mirror.openshift.com is a host which provides public access to an array of artifacts to customers. It differs from the customer portal in that it does not require authentication to download content.
+mirror.openshift.com is infrastructure which provides public access to an array of artifacts to customers and internal engineering systems. It differs from the customer portal in that it does not require authentication to download content.
 
-The legacy infrastructure run by Service Delivery is to be [decommissioned EOY 2021](https://source.redhat.com/groups/public/openshiftplatformsre/blog/mirroropenshiftcom_end_of_life_announcement).
+mirror.openshift.com, as service, is quite old, but the infrastructure is new. The legacy infrastructure run, by Service Delivery was [decommissioned EOY 2021](https://source.redhat.com/groups/public/openshiftplatformsre/blog/mirroropenshiftcom_end_of_life_announcement).
 
-The current direction for replacing this infrastructure is an AWS S3 bucket behind CloudFront.
+Thew new implementation is an AWS S3 bucket behind a CloudFront distribution and utilizes Lambda@Edge to provide file listings / authentication.
 
-CloudFront provides worldwide distribution, but it is not a drop in replacement. It did not:
+CloudFront provides worldwide distribution, but it was not a drop in replacement for the legacy server. It did not:
 - Provide an Apache-style file listing for directory structures within that S3 bucket (S3 content is not even technically organized by directories).
-- Provide for client certificate authentication like the legacy mirror.openshift.com/enterprise.
+- Provide for client authentication like the legacy mirror.openshift.com/enterprise.
 
 ### /enterprise authentication
 To add a new service account, add a username / password pair to AWS Secrets Manager entry `art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS`.
 
 CloudFront does not support client certificate based authentication (used by the legacy mirror.openshift.com/enterprise). Client certificate based auth could have been preserved with a small deployment (e.g. of nginx) to proxy requests, but this introduced an unnecessary bottleneck and would have created a new operational concern for the ART team.
 
-Instead, the new infrastructure will be secured with basic auth (username & password) for authentication. This is enforced by a CloudFront function setup as a View Request hook. The View Request checks basic authentication whenever a /enterprise path is requested. See ENTERPRISE_SERVICE_ACCOUNTS in cloudfront_function_art-srv-request-basic-auth.js which is populated at runtime from AWS Secrets Manager entry `art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS`. The AWS secret has key value pairs which are username and passwords which will authenticate successfully to access /enterprise.
+Instead, the new infrastructure is secured with basic auth (username & password) for authentication. This is enforced by a CloudFront function setup as a View Request hook. The View Request checks basic authentication whenever a /enterprise path is requested. See ENTERPRISE_SERVICE_ACCOUNTS in cloudfront_function_art-srv-request-basic-auth.js which is populated at runtime from AWS Secrets Manager entry `art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS`. The AWS secret has key value pairs which are username and passwords which will authenticate successfully to access /enterprise.
 
 ### /pockets authentication
 To add a new service account, add a username / password pair to AWS Secrets Manager entry `art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS`.
@@ -41,9 +41,6 @@ This is critical to understand because, even if s3 content is pushed under /pub/
 Some teams that traditionally had ART publishing their clients to mirror.openshift.com have opted to host their content on Red Hat's content gateway (CGW). However, those teams still need older URLs to resolve. As such, certain directories on the new mirror.openshift.com are designed to proxy content from CGW.
 
 This was achieved by adding the CGW domain as an origin for our cloudfront distribution. This allows us to, for example, proxy a request to cloudfront for /pub/openshift-v4/clients/crc to pull content from https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/crc/ . This is another case where even if content is written to our s3 bucket, it will not be visible to users of cloudfront.
-
-### Generating credentials
-See gen_password.py.
 
 ### Backup and restore
 The art-srv-enterprise bucket has S3 versioning enabled. This means that deleted files can be restored if it is done quickly. There is a lifecycle rule that will permanently delete these files after 30 days.
