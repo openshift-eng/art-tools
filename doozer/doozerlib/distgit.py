@@ -1966,7 +1966,7 @@ class ImageDistGitRepo(DistGitRepo):
                 df_lines.extend([
                     '',
                     '# RHEL version in final image must match the one in ART\'s config',
-                    f'RUN source /etc/os-release && [[ "$PLATFORM_ID" == platform:el{el_version} ]]'
+                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]'
                 ])
 
             df_content = "\n".join(df_lines)
