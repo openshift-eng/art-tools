@@ -149,7 +149,7 @@ class PrepareReleasePipeline:
             for ad in advisories:
                 if advisories[ad] < 0:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type, art_advisory_key=ad)
-            await self._slack_client.say_in_thread(f"Advisories created complete with release date {self.release_date}")
+            await self._slack_client.say_in_thread(f"Advisories created with release date {self.release_date}")
 
         await self.set_advisory_dependencies(advisories)
 

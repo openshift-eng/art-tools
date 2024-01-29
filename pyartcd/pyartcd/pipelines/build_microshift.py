@@ -55,7 +55,7 @@ class BuildMicroShiftPipeline:
         self.slack_client.bind_channel(group)
 
         # determines OCP version
-        self._ocp_version = (get_ocp_version_from_group(group))
+        self._ocp_version = get_ocp_version_from_group(group)
 
         # sets environment variables for Elliott and Doozer
         self._elliott_env_vars = os.environ.copy()

@@ -53,7 +53,7 @@ class RebuildPipeline:
         self.ocp_build_data_url = ocp_build_data_url
 
         # determines OCP version
-        self._ocp_version = (get_ocp_version_from_group(group))
+        self._ocp_version = get_ocp_version_from_group(group)
 
         # sets environment variables for Doozer
         self._doozer_env_vars = os.environ.copy()

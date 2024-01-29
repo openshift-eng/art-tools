@@ -107,13 +107,13 @@ def get_assembly_release_date(assembly, group):
     """
     Get assembly release release date from release schedule API
     """
-    assembly_release_data = None
+    assembly_release_date = None
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         if assembly in release['name']:
-            assembly_release_data = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+            assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
             break
-    return assembly_release_data
+    return assembly_release_date
 
 
 def get_inflight(assembly, group):
