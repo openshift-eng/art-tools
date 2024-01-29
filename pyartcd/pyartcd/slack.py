@@ -42,15 +42,15 @@ class SlackClient:
         else:
             raise ValueError(f"Invalid channel_or_release value: {channel_or_release}")
 
-    async def say_in_thread(self, message: str):
+    async def say_in_thread(self, message: str, reaction: Optional[str] = None):
         if not self._thread_ts:
-            response_data = await self.say(message)
+            response_data = await self.say(message, reaction)
             self._thread_ts = response_data["ts"]
             return self._thread_ts
         else:
-            return await self.say(message, self._thread_ts)
+            return await self.say(message, reaction, self._thread_ts)
 
-    async def say(self, message: str, thread_ts: Optional[str] = None):
+    async def say(self, message: str, reaction:  Optional[str] = None, thread_ts: Optional[str] = None):
         attachments = []
         if self.build_url:
             attachments.append({
@@ -63,6 +63,14 @@ class SlackClient:
         response = await self._client.chat_postMessage(channel=self.channel, text=message, thread_ts=thread_ts,
                                                        username=self.as_user, link_names=True, attachments=attachments,
                                                        icon_emoji=self.icon_emoji, reply_broadcast=False)
+        # https://api.slack.com/methods/reactions.add
+        if reaction:
+            await self._client.reactions_add(
+                channel=self.channel,
+                name=reaction,
+                timestamp=response.data["ts"]
+            )
+
         return response.data
 
     async def upload_file(self, file=None, content=None, filename=None, initial_comment=None, thread_ts: Optional[str] = None):
