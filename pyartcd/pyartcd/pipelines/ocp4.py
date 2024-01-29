@@ -861,7 +861,10 @@ class Ocp4Pipeline:
 
         # add yourself to the queue
         # if queue does not exist, it will be created with the value
-        await redis.call('zadd', queue, mapping)
+        # nx=True to only create new elements and not to update scores for elements that already exist.
+        # This is so that release-artists can manually add versions with scores to set mass rebuild order
+        # and they will not be overwritten
+        await redis.call('zadd', queue, mapping, nx=True)
         self.runtime.logger.info('Queued in for mass rebuild lock')
 
         # if we reach timeout, quit but don't remove yourself from the queue
