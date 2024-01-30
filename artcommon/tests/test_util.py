@@ -44,8 +44,8 @@ class TestUtil(unittest.TestCase):
 
     def test_find_latest_builds(self):
         builds = [
-            {"id": 13, "name": "a-container", "version": "v1.2.3", "release": "3.assembly.stream", "tag_name": "tag1"},
-            {"id": 12, "name": "a-container", "version": "v1.2.3", "release": "2.assembly.hotfix_a", "tag_name": "tag1"},
+            {"id": 13, "name": "a-container", "version": "v1.2.3", "release": "3.assembly.stream.el8", "tag_name": "tag1"},
+            {"id": 12, "name": "a-container", "version": "v1.2.3", "release": "2.assembly.hotfix_a.el9", "tag_name": "tag1"},
             {"id": 11, "name": "a-container", "version": "v1.2.3", "release": "1.assembly.hotfix_a", "tag_name": "tag1"},
             {"id": 23, "name": "b-container", "version": "v1.2.3", "release": "3.assembly.test", "tag_name": "tag1"},
             {"id": 22, "name": "b-container", "version": "v1.2.3", "release": "2.assembly.hotfix_b", "tag_name": "tag1"},

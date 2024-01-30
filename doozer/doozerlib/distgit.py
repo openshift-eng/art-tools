@@ -411,6 +411,13 @@ class DistGitRepo(object):
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
         await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir, retries=3)
 
+    def get_branch_el(self) -> Optional[int]:
+        """
+        Extracts the RHEL version from the tag name and returns the integer value. e.g. 'rhaos-4.16-rhel-7' => 7.
+        If the branch name convention is not recognized, returns None.
+        """
+        return util.isolate_el_version_in_brew_tag(self.branch)
+
     def tag(self, version, release):
         if self.runtime.local:
             return ''  # no tags if local
@@ -1930,6 +1937,9 @@ class ImageDistGitRepo(DistGitRepo):
 
                 if self.runtime.assembly:
                     release += f'.assembly.{self.runtime.assembly}'
+
+                if self.get_branch_el():
+                    release += ".el" + str(self.get_branch_el())
 
                 dfp.labels['release'] = release
             else:

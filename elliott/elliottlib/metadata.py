@@ -189,6 +189,8 @@ class Metadata(object):
                             '7' for el7, '8' for el8, etc. You can also pass in a brew target that
                             contains '....-rhel-?..' and the number will be extracted. If you want the true
                             latest, leave as None.
+                            For an image, leaving as none will default to the RHEL version in the branch
+                            associated with the metadata.
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param complete_before_event: If a value is specified >= 0, the search will be constrained to builds which completed before
                                       the specified brew_event. If a value is specified < 0, the search will be conducted with no constraint on
@@ -259,6 +261,22 @@ class Metadata(object):
                 # This latter check ensures that 'assembly.how' doesn't not match a build from
                 # "assembly.howdy'.
                 refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
+
+                # .el? was added to images well after assemblies were established. It allows us to build multiple
+                # images out of the same distgit if they differ in RHEL version. Because this was added late, not
+                # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
+                # version, if they do.
+                if self.meta_type == 'image':
+                    image_el_ver = f'.el{self.branch_el_target()}'
+                    # Ensure the suffix ends the string OR at least terminated by a '.' .
+                    el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
+                    if el_refined:
+                        # if there were any images which had .el?, prefer them over the non-qualified.
+                        refined = el_refined
+                    else:
+                        # Everything was eliminated when elX was included. So at least filter out those which possess elY
+                        # where X != Y
+                        refined = [b for b in refined if '.el' not in b['nvr']]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we

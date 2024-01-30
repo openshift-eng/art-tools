@@ -304,7 +304,7 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
 
 def isolate_el_version_in_brew_tag(tag: Union[str, int]) -> Optional[int]:
     """
-    Given a brew tag (target) name, determines whether is contains
+    Given a brew tag (target) name, determines whether it contains
     a RHEL version. If it does, it returns the version value.
     If it is not found, None is returned. If an int is passed in,
     the int is just returned.
