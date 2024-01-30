@@ -707,7 +707,7 @@ class GenPayloadCli:
                 self.logger.warning("Permitting issues only because --emergency-ignore-issues was specified")
                 self.payload_permitted = True
             else:
-                self.logger.warning("Assembly is not permitted. Will not apply changes to imagestreams.")
+                self.logger.error("Assembly is not permitted. Will not apply changes to imagestreams.")
                 self.apply = False
                 self.apply_multi_arch = False
 
