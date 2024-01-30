@@ -1,7 +1,7 @@
 from unittest import TestCase
 from unittest.mock import patch
 
-from pyartcd.locks import LockManager, LOCK_POLICY, Lock
+from pyartcd.locks import LockManager, LOCK_POLICY, Lock, DEFAULT_LOCK_TIMEOUT
 
 
 class TestLocks(TestCase):
@@ -10,7 +10,7 @@ class TestLocks(TestCase):
         lock_policy: dict = LOCK_POLICY[lock]
         self.assertEqual(lock_policy['retry_count'], 36000)
         self.assertEqual(lock_policy['retry_delay_min'], 0.1)
-        self.assertEqual(lock_policy['lock_timeout'], 60 * 60 * 24)
+        self.assertEqual(lock_policy['lock_timeout'], DEFAULT_LOCK_TIMEOUT)
 
     def test_lock_name(self):
         lock: Lock = Lock.BUILD
