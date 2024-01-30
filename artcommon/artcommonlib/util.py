@@ -151,6 +151,17 @@ def isolate_rhel_major_from_version(version: str) -> Optional[int]:
     return None
 
 
+def isolate_rhel_major_from_distgit_branch(branch: str) -> Optional[int]:
+    """
+    E.g. 'rhaos-4.16-rhel-9' => 9
+    """
+
+    match = re.fullmatch(r"^rhaos-\d+\.\d+-rhel-(\d+)", branch)
+    if match:
+        return int(match[1])
+    return None
+
+
 def get_ocp_version_from_group(group):
     """
     Extract ocp version from group value openshift-4.15 --> 4, 15

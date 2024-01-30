@@ -105,3 +105,9 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(8, util.isolate_rhel_major_from_version('8.6'))
         self.assertEqual(10, util.isolate_rhel_major_from_version('10.1'))
         self.assertEqual(None, util.isolate_rhel_major_from_version('invalid'))
+
+    def test_isolate_rhel_major_from_distgit_branch(self):
+        self.assertEqual(9, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-9'))
+        self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-8'))
+        self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-10'))
+        self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch('invalid'))

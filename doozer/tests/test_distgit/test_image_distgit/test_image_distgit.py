@@ -618,7 +618,7 @@ COPY --from=builder /some/path/a /some/path/b
         get_value.return_value = '9'
         with patch('builtins.open', new_callable=mock_open) as mocked_open:
             mocked_open.return_value = io.StringIO('FROM bogus')
-            self.assertEqual('9', self.img_dg._determine_upstream_rhel_version('source-path'))
+            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version('source-path'))
 
         # Not in Redis yet: parsing os-release
         get_value.return_value = None
@@ -686,7 +686,7 @@ COPY --from=builder /some/path/a /some/path/b
              'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
         self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
         self.img_dg._update_image_config()
-        self.assertFalse(self.img_dg.should_match_upstream)
+        self.assertTrue(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
 
 

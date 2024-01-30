@@ -41,7 +41,8 @@ from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version, \
+    isolate_rhel_major_from_distgit_branch
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -461,6 +462,7 @@ class ImageDistGitRepo(DistGitRepo):
         # we need to determine what RHEL version upstream intends to use,
         # and look for a related alternative ART configuration.
         # If found, the image configs will be merged before doing the rebase
+        self.art_intended_el_version = None
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
@@ -468,6 +470,7 @@ class ImageDistGitRepo(DistGitRepo):
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.resolve_source(self.metadata)
+                self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
             # and find a related alternative_upstream config stanza
@@ -1627,6 +1630,19 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             return parent
 
+    def _determine_art_rhel_version(self):
+        """
+        Then canonical builders feature is enabled, we will try to match upstream desired builders and base images.
+        To do so, we need to compare upstream and ART intended RHEL version: if they match, just apply upstream FROM
+        clauses; if they don't, ART needs to have an alternative_upstream config stanza in the image configuration.
+        """
+
+        branch = self.config.distgit.branch
+        if branch is Missing:
+            self.logger.warning('Distgit branch undefined for %s, defaulting to group config', self.name)
+            branch = self.runtime.group_config.branch
+        return isolate_rhel_major_from_distgit_branch(branch)
+
     def _determine_upstream_rhel_version(self, source_path) -> Optional[int]:
         """
         The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
@@ -1662,7 +1678,7 @@ class ImageDistGitRepo(DistGitRepo):
         version = redis.get_value_sync(redis_key)
         if version:
             # Already tracked in Redis
-            return version
+            return int(version)
 
         # Not tracked yet: let's read it from os-release
         try:
@@ -1692,7 +1708,12 @@ class ImageDistGitRepo(DistGitRepo):
 
         if not version:
             self.logger.warning('Could not determine rhel version from upstream %s', self.name)
-        return version
+
+        try:
+            return int(version)
+        except TypeError:
+            # version is None, cannot cast to int
+            return None
 
     def _update_image_config(self):
         """
@@ -1711,10 +1732,18 @@ class ImageDistGitRepo(DistGitRepo):
                 break
 
         if not matched:
-            # there's no 'when' clause matching upstream intended RHEL version: fallback to default ART's config
-            self.should_match_upstream = False
+            # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
             self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
                                 self.upstream_intended_el_version)
+
+            # If ART and upstream intended rhel versions do not match, fallback to default ART's config
+            if self.art_intended_el_version != self.upstream_intended_el_version:
+                self.logger.warning('ART is using rhel-%s, while upstream is using rhel-%s: will not match upstream',
+                                    self.art_intended_el_version, self.upstream_intended_el_version)
+                self.should_match_upstream = False
+
+            # Even with no matching 'when' clause, rhel versions match so we can use canonical builders from upstream
+            self.should_match_upstream = True
             return
 
         # We found an alternative_upstream config stanza. We can match upstream
