@@ -1713,7 +1713,7 @@ class ImageDistGitRepo(DistGitRepo):
         if not matched:
             # there's no 'when' clause matching upstream intended RHEL version: fallback to default ART's config
             self.should_match_upstream = False
-            self.logger.warning('Could not match upstream because "%s" version is not mapped in alternative_config',
+            self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
                                 self.upstream_intended_el_version)
             return
 
