@@ -15,7 +15,6 @@ import time
 import traceback
 from datetime import datetime
 from multiprocessing import Event, Lock
-from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional, Tuple, Union, Set
 
 import aiofiles
@@ -42,8 +41,7 @@ from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version, \
-    isolate_rhel_major_from_distgit_branch, deep_merge
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -1435,9 +1433,7 @@ class ImageDistGitRepo(DistGitRepo):
         """
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
-            cmd = f'oc image info {original_parent} -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
-            labels = json.loads(out)['config']['config']['Labels']
+            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
 
             # Get the exact build NVR
             build_nvr = f'{labels["com.redhat.component"]}-{labels["version"]}-{labels["release"]}'
@@ -1455,8 +1451,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # Verify whether the image exists
             self.logger.debug('Checking for upstream equivalent existence, pullspec: %s', upstream_equivalent_pullspec)
-            cmd = f'oc image info {upstream_equivalent_pullspec} --filter-by-os linux/amd64 -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
+            util.oc_image_info__caching(upstream_equivalent_pullspec)
 
             # It does. Use this to rebase FROM directive
             mapped_image = f'{labels["name"]}:{labels["version"]}-{labels["release"]}'
@@ -1673,26 +1668,20 @@ class ImageDistGitRepo(DistGitRepo):
             subdir = '.'
         df_path = str(pathlib.Path(source_path).joinpath(subdir).joinpath(df_name))
 
-        with open(df_path) as f:
-            dfp = DockerfileParser(fileobj=f)
-            parent_images = dfp.parent_images
-
-        # We will infer the rhel version from the last build layer in the upstream Dockerfile
-        last_layer_pullspec = parent_images[-1]
-
         version = None
         try:
+            with open(df_path) as f:
+                dfp = DockerfileParser(fileobj=f)
+                parent_images = dfp.parent_images
+
             # We will infer the rhel version from the last build layer in the upstream Dockerfile
-            last_layer = dfp.parent_images[-1]
-            # Filter by os because upstream CI images can be multi-arch manifest lists.
-            cmd = ['oc', 'image', 'info', '--filter-by-os=amd64', '-o', 'json', last_layer_pullspec]
-            out, _ = exectools.cmd_assert(cmd)
-            image_labels = json.loads(out)['config']['config']['Labels']
+            last_layer_pullspec = parent_images[-1]
+            image_labels = util.oc_image_info__caching(last_layer_pullspec)['config']['config']['Labels']
             if 'version' not in image_labels or 'release' not in image_labels:
                 # This does not appear to be a brew image. We can't determine RHEL.
                 return None
 
-            bbii = BrewBuildImageInspector(self.runtime, last_layer)
+            bbii = BrewBuildImageInspector(self.runtime, last_layer_pullspec)
             version = bbii.get_rhel_base_version()
 
         except Exception as e:

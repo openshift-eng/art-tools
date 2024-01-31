@@ -28,7 +28,7 @@ except ImportError:
     pass
 
 from doozerlib import assembly, constants, exectools
-
+from functools import lru_cache
 
 DICT_EMPTY = object()
 
@@ -533,9 +533,7 @@ def get_release_calc_previous(version, arch,
 
 
 async def find_manifest_list_sha(pull_spec):
-    cmd = 'oc image info --filter-by-os=linux/amd64 -o json {}'.format(pull_spec)
-    out, err = await exectools.cmd_assert_async(cmd, retries=3)
-    image_data = json.loads(out)
+    image_data = oc_image_info__caching(pull_spec)
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
     return image_data['listDigest']
@@ -594,3 +592,25 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
         if patch_version is None:
             raise ValueError("patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance.")
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
+
+
+def oc_image_info(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+    """
+    Returns a Dict of the parsed JSON output of `oc image info` for the specified
+    pullspec. Use oc_image_info__caching if you do not believe the image will change
+    during the course of doozer's execution.
+    """
+    # Filter by os because images can be multi-arch manifest lists (which cause oc image info to throw an error if not filtered).
+    cmd = ['oc', 'image', 'info', f'--filter-by-os={go_arch}', '-o', 'json', pull_spec]
+    out, _ = exectools.cmd_assert(cmd, retries=3)
+    return json.loads(out)
+
+
+@lru_cache(maxsize=1000)
+def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+    """
+    Returns a Dict of the parsed JSON output of `oc image info` for the specified
+    pullspec. This function will cache that output per pullspec, so do not use it
+    if you expect the image to change during the course of doozer's execution.
+    """
+    return oc_image_info(pull_spec, go_arch)

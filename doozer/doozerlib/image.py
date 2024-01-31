@@ -8,6 +8,7 @@ from typing import (Any, Awaitable, Dict, List, Optional, Set, Tuple, Union,
 from copy import deepcopy
 
 import doozerlib
+from doozerlib import util
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import brew, coverity, exectools
@@ -364,8 +365,7 @@ class ImageMetadata(Metadata):
                 builder_brew_build = ImageMetadata.builder_image_builds.get(builder_image_url, None)
 
                 if not builder_brew_build:
-                    out, err = exectools.cmd_assert(f'oc image info {builder_image_url} --filter-by-os amd64 -o=json', retries=5, pollrate=10)
-                    latest_builder_image_info = Model(json.loads(out))
+                    latest_builder_image_info = Model(util.oc_image_info__caching(builder_image_url))
                     builder_info_labels = latest_builder_image_info.config.config.Labels
                     builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'], builder_info_labels['release']]
 

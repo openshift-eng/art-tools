@@ -8,7 +8,7 @@ from typing import (Awaitable, Dict, List, Optional, Tuple, Union,
 import doozerlib
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.release_util import isolate_el_version_in_release
-from doozerlib import brew, exectools
+from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 
@@ -258,11 +258,7 @@ class BrewBuildImageInspector:
         :return Returns the parsed output of oc image info for the specified arch.
         """
         go_arch = go_arch_for_brew_arch(arch)  # Ensure it is a go arch
-        cn = f'get_image_info-{go_arch}'
-        if cn not in self._cache:
-            image_raw_str, _ = exectools.cmd_assert(f'oc image info --filter-by-os={go_arch} -o=json {self._build_pullspec}', retries=3)
-            self._cache[cn] = json.loads(image_raw_str)
-        return self._cache[cn]
+        return util.oc_image_info__caching(self._build_pullspec, go_arch)
 
     def get_labels(self, arch='amd64') -> Dict[str, str]:
         """
