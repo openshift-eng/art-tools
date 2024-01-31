@@ -67,7 +67,7 @@ class BuildSyncPipeline:
 
         # Keeping in try-except so that job doesn't fail because of any error here
         try:
-            _, owner, repository = split_git_url(self.data_path)
+            _, _, repository = split_git_url(self.data_path)
             branch = self.doozer_data_gitref
             token = os.environ.get('GITHUB_TOKEN')
 
@@ -78,7 +78,7 @@ class BuildSyncPipeline:
             if match:
                 repo_owner = match.group(1)
 
-            api = GhApi(owner=owner, repo=repository, token=token)
+            api = GhApi(owner=constants.GITHUB_OWNER, repo=repository, token=token)
 
             # Check if the doozer_data_gitref is given then, if not
             # then it set the branch to openshift-{major}.{minor}
@@ -102,7 +102,7 @@ class BuildSyncPipeline:
             pr_number = prs[0]["number"]
 
             if self.runtime.dry_run:
-                self.logger.warning(f"[DRY RUN] Would have commented on PR {owner}/{repository}/pull/{pr_number} "
+                self.logger.warning(f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} "
                                     f"with the message: \n {text_body}")
                 return
 
