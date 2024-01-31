@@ -9,7 +9,7 @@ import logging
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from doozerlib.image import BrewBuildImageInspector
+from doozerlib.brew_info import BrewBuildImageInspector
 
 
 class MockRuntime(object):

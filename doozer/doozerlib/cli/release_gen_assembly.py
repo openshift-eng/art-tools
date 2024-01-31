@@ -18,7 +18,7 @@ from doozerlib.model import Model
 from doozerlib import brew
 from artcommonlib import rhcos
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.image import BrewBuildImageInspector
+from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.runtime import Runtime
 
 

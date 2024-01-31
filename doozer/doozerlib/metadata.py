@@ -487,7 +487,8 @@ class Metadata(object):
                     else:
                         # Everything was eliminated when elX was included. So at least filter out those which possess elY
                         # where X != Y
-                        refined = [b for b in refined if '.el' not in b['nvr']]
+                        el_pattern = re.compile(r'.*\.el\d+.*')
+                        refined = [b for b in refined if not el_pattern.match(b['nvr'])]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we

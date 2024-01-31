@@ -26,7 +26,8 @@ from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib.image import ImageMetadata, BrewBuildImageInspector, ArchiveImageInspector
+from doozerlib.image import ImageMetadata
+from doozerlib.brew_info import BrewBuildImageInspector, ArchiveImageInspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async

@@ -274,9 +274,10 @@ class Metadata(object):
                         # if there were any images which had .el?, prefer them over the non-qualified.
                         refined = el_refined
                     else:
-                        # Everything was eliminated when elX was included. So at least filter out those which possess elY
-                        # where X != Y
-                        refined = [b for b in refined if '.el' not in b['nvr']]
+                        # Everything was eliminated when elX was required (where X is our target).
+                        # So at least filter out those which possess elY where X != Y
+                        el_pattern = re.compile(r'.*\.el\d+.*')
+                        refined = [b for b in refined if not el_pattern.match(b['nvr'])]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we

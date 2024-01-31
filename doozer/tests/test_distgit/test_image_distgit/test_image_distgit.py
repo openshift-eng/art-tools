@@ -610,29 +610,6 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
-    @patch("doozerlib.exectools.cmd_assert")
-    @patch("artcommonlib.redis.set_value_sync")
-    @patch("artcommonlib.redis.get_value_sync")
-    def test_determine_upstream_rhel_version(self, get_value, *_):
-        # Already in Redis
-        get_value.return_value = '9'
-        with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.return_value = io.StringIO('FROM bogus')
-            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version('source-path'))
-
-        # Not in Redis yet: parsing os-release
-        get_value.return_value = None
-        with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.side_effect = [io.StringIO('FROM bogus'), io.StringIO('VERSION_ID="9.2"')]
-            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version('source-path'))
-
-        # Not in Redis yet: parsing error
-        get_value.return_value = None
-        with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.side_effect = [io.StringIO('FROM bogus'), io.StringIO('unparsable')]
-            mocked_open.return_value = io.StringIO('unparsable')
-            self.assertEqual(None, self.img_dg._determine_upstream_rhel_version('source-path'))
-
     @patch('doozerlib.distgit.datetime')
     @patch('doozerlib.distgit.ReleaseSchedule')
     def test_canonical_builders_enabled(self, release_schedule, mock_datetime):
@@ -672,8 +649,9 @@ COPY --from=builder /some/path/a /some/path/b
         # 'when' clause matching upstream rhel version: override
         self.img_dg.should_match_upstream = True
         self.img_dg.config = Model(
-            {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-             'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
+            {'canonical_builders_from_upstream': True,
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
         self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)

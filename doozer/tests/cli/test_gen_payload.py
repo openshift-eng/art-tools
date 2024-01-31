@@ -13,7 +13,8 @@ import openshift_client as oc
 from doozerlib.assembly import AssemblyIssueCode, AssemblyTypes, AssemblyIssue
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
-from doozerlib.image import BrewBuildImageInspector, ImageMetadata
+from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.image import ImageMetadata
 from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
