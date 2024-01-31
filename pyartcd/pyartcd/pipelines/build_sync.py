@@ -25,6 +25,7 @@ from ghapi.all import GhApi
 TRACER = trace.get_tracer(__name__)
 GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
+
 class BuildSyncPipeline:
 
     @classmethod
