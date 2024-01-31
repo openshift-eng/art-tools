@@ -1741,6 +1741,7 @@ class ImageDistGitRepo(DistGitRepo):
                 self.logger.warning('ART is using rhel-%s, while upstream is using rhel-%s: will not match upstream',
                                     self.art_intended_el_version, self.upstream_intended_el_version)
                 self.should_match_upstream = False
+                return
 
             # Even with no matching 'when' clause, rhel versions match so we can use canonical builders from upstream
             self.should_match_upstream = True

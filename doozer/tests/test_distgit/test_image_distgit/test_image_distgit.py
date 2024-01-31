@@ -686,7 +686,7 @@ COPY --from=builder /some/path/a /some/path/b
              'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
         self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
         self.img_dg._update_image_config()
-        self.assertTrue(self.img_dg.should_match_upstream)
+        self.assertFalse(self.img_dg.should_match_upstream)
         self.assertEqual(self.img_dg.config['distgit']['branch'], 'rhaos-4.16-rhel-9')
 
 
