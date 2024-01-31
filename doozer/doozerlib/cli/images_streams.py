@@ -714,8 +714,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, PullRequest.PullRequest], d
     for distgit_key, pr in pr_map.items():
         image_meta: ImageMetadata = runtime.image_map[distgit_key]
         potential_project, potential_component = image_meta.get_jira_info()
-        summary = f"Update {release_version} {image_meta.get_component_name()} image to be consistent with ART"
-        old_summary_format = f"Update {release_version} {image_meta.name} image to be consistent with ART"
+        summary = f"ART requests updates to {release_version} image {image_meta.get_component_name()}"
+        old_summary_format = f"Update {release_version} {image_meta.get_component_name()} image to be consistent with ART"
 
         project = potential_project
         if potential_project not in jira_project_names:
@@ -1234,31 +1234,38 @@ open_prs: {open_prs}
             # At this point, we have a fork branch in the proper state
             pr_body = f"""{first_commit_line}
 __TLDR__:
-Product builds replace base and builder images as configured. This PR is to ensure
-that CI builds use the same base images as the product builds.
+Product builds by ART can be configured for different base and builder images than corresponding CI
+builds. This automated PR requests a change to CI configuration to align with ART's configuration;
+please take steps to merge it quickly or contact ART to coordinate changes.
 
-Component owners, please ensure that this PR merges as it impacts the fidelity
-of your CI signal. Patch-manager / leads, this PR is a no-op from a product
-perspective -- feel free to manually apply any labels (e.g. jira/valid-bug) to help the
-PR merge as long as tests are passing. If the PR is labeled "needs-ok-to-test", this is
-to limit costs for re-testing these PRs while they wait for review. Issue /ok-to-test
-to remove this tag and help the PR to merge.
+The configuration in the following ART component metadata is driving this alignment request:
+[{os.path.basename(image_meta.config_filename)}]({reconcile_url}).
 
 __Detail__:
-This repository is out of sync with the downstream product builds for this component.
-One or more images differ from those being used by ART to create product builds. This
-should be addressed to ensure that the component's CI testing is accurately
-reflecting what customers will experience.
 
-The information within the following ART component metadata is driving this alignment
-request: [{os.path.basename(image_meta.config_filename)}]({reconcile_url}).
+This repository is out of sync with the downstream product builds for this component. The CI
+configuration for at least one image differs from ART's expected product configuration. This should
+be addressed to ensure that the component's CI testing accurate reflects what customers will
+experience.
 
-The vast majority of these PRs are opened because a different Golang version is being
-used to build the downstream component. ART compiles most components with the version
-of Golang being used by the control plane for a given OpenShift release. Exceptions
-to this convention (i.e. you believe your component must be compiled with a Golang
-version independent from the control plane) must be granted by the OpenShift
-architecture team and communicated to the ART team.
+Most of these PRs are opened as an ART-driven proposal to migrate base image or builder(s) to a
+different version, usually prior to GA. The intent is to effect changes in both configurations
+simultaneously without breaking either CI or ART builds, so usually ART builds are configured to
+consider CI as canonical and attempt to match CI config until the PR merges to align both. ART may
+also configure changes in GA releases with CI remaining canonical for a brief grace period to enable
+CI to succeed and the alignment PR to merge. In either case, ART configuration will be made
+canonical at some point (typically at branch-cut before GA or release dev-cut after GA), so it is
+important to align CI configuration as soon as possible.
+
+PRs are also triggered when CI configuration changes without ART coordination, for instance to
+change the number of builder images or to use a different golang version. These changes should be
+coordinated with ART; whether ART configuration is canonical or not, preferably it would be updated
+first to enable the changes to occur simultaneously in both CI and ART at the same time. This also
+gives ART a chance to validate the intended changes first. For instance, ART compiles most
+components with the Golang version being used by the control plane for a given OpenShift release.
+Exceptions to this convention (i.e. you believe your component must be compiled with a Golang
+version independent from the control plane) must be granted by the OpenShift staff engineers and
+communicated to the ART team.
 
 __Roles & Responsibilities__:
 - Component owners are responsible for ensuring these alignment PRs merge with passing
@@ -1267,9 +1274,11 @@ __Roles & Responsibilities__:
   introduced with a separate PR opened by the component team. Once the repository is aligned,
   this PR will be closed automatically.
 - Patch-manager or those with sufficient privileges within this repository may add
-  any required labels to ensure the PR merges once tests are passing. Downstream builds
-  are *already* being built with these changes. Merging this PR only improves the fidelity
-  of our CI.
+  any required labels to ensure the PR merges once tests are passing. In cases where ART config is
+  canonical, downstream builds are *already* being built with these changes, and merging this PR
+  only improves the fidelity of our CI. In cases where ART config is not canonical, this provides
+  a grace period for the component team to align their CI with ART's configuration before it becomes
+  canonical in product builds.
 """
             if desired_ci_build_root_coordinate:
                 pr_body += """
