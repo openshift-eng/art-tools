@@ -1,9 +1,11 @@
 import click
 import json
 import re
+import koji
 
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.format_util import green_print
+from artcommonlib.constants import BREW_HUB
 from elliottlib import logutil
 from elliottlib.cli.common import cli
 from elliottlib.rpm_utils import parse_nvr
@@ -29,6 +31,7 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
 
 """
     results = {}
+    koji_session = koji.ClientSession(BREW_HUB)
 
     for ocp_version in ocp_versions.split(","):
         runtime.group = f"openshift-{ocp_version}"
@@ -51,13 +54,7 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
 
             name, vr = image_nvr_like.split(':')
             nvr = f"{name.replace('/', '-')}-container-{vr}"
-            parsed = parse_nvr(nvr)
-            match = re.search(r'(\d+\.\d+\.\d+)', parsed['version'])
-            version = match.group(1)
-            _, el_version = split_el_suffix_in_release(parsed['release'])
-            if not ignore_rhel:
-                version = f"{version}.{el_version}"
-
+            version = go_version_from_nvr_string(nvr, ignore_rhel)
             golang_streams[stream_name] = version
             golang_streams_images[version] = []
 
@@ -74,14 +71,43 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
                 v = golang_streams[b]
                 golang_streams_images[v].append(image_name)
 
+        # Analyze defined rpms
+        rpm_rhel_target_map = {}
+        for rpm_meta in runtime.rpm_metas():
+            rpm_name = rpm_meta.config_filename.replace('.yml', '')
+            golang_rpms = {'microshift', 'openshift-clients', 'openshift'}
+            if rpm_name not in golang_rpms:
+                _LOGGER.debug(f"Skipping rpm {rpm_name} since it is not a golang rpm")
+                continue
+
+            for el_v in rpm_meta.determine_rhel_targets():
+                if el_v not in rpm_rhel_target_map:
+                    rpm_rhel_target_map[el_v] = []
+                rpm_rhel_target_map[el_v].append(rpm_name)
+
+        golang_streams_rpms = {}
+        for el_v in rpm_rhel_target_map.keys():
+            nvr = latest_go_build_in_buildroot(ocp_version, el_v, koji_session)
+            version = go_version_from_nvr_string(nvr, ignore_rhel)
+            golang_streams_rpms[version] = rpm_rhel_target_map[el_v]
+
         # Add result
         out = []
         for golang_version, images in golang_streams_images.items():
             if not images:
                 continue
-            out.append({"go_version": golang_version, "building_count": len(images)})
+            info = {"go_version": golang_version, "building_image_count": len(images)}
+            if golang_version in golang_streams_rpms:
+                info["building_rpm_count"] = len(golang_streams_rpms[golang_version])
+            out.append(info)
 
-        out = sorted(out, key=lambda x: x['building_count'], reverse=True)
+        for golang_version, rpms in golang_streams_rpms.items():
+            if not rpms or golang_version in golang_streams_images:
+                continue
+            out.append({"go_version": golang_version, "building_rpm_count": len(rpms)})
+
+        out = sorted(out, key=lambda x: x['building_image_count'] if 'building_image_count' in x
+                     else x['building_rpm_count'], reverse=True)
         results[ocp_version] = out
 
     if output == 'json':
@@ -89,3 +115,26 @@ def get_golang_report_cli(runtime, ocp_versions, ignore_rhel, output):
     else:
         for ocp_version, result in results.items():
             green_print(f'{ocp_version}: {result}')
+
+
+def go_version_from_nvr_string(nvr_string: str, ignore_rhel: bool) -> str:
+    nvr = parse_nvr(nvr_string)
+    match = re.search(r'(\d+\.\d+\.\d+)', nvr['version'])
+    version = match.group(1)
+    _, el_version = split_el_suffix_in_release(nvr['release'])
+    if not ignore_rhel:
+        version = f"{version}.{el_version}"
+    return version
+
+
+def latest_go_build_in_buildroot(ocp_version: str, el_v: int, koji_session) -> str:
+    if el_v == 7:
+        # rhel7 golang packages are differently named e.g. `go-toolset-1.18-golang`
+        raise NotImplementedError
+
+    go_pkg_name = "golang"
+    build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
+    latest_build = koji_session.getLatestBuilds(build_tag, package=go_pkg_name)
+    if not latest_build:  # if this happens, investigate
+        raise ValueError(f'Cannot find latest {go_pkg_name} build in {build_tag}. Please investigate.')
+    return latest_build[0]['nvr']
