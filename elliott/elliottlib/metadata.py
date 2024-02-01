@@ -1,7 +1,7 @@
 import re
 import time
 from builtins import object
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union, List
 
 import yaml
 from koji import ClientSession
@@ -65,6 +65,38 @@ class Metadata(object):
         self.logger = logutil.EntityLoggingAdapter(logger=self.runtime.logger, extra={'entity': self.qualified_key})
 
         self._distgit_repo = None
+
+    def determine_targets(self) -> List[str]:
+        """ Determine Brew targets for building this component
+        """
+        targets = self.config.get("targets")
+        if not targets:
+            # If not specified in meta config, load from group config
+            profile_name = self.runtime.group_config.get(f"default_{self.meta_type}_build_profile")
+            if profile_name:
+                targets = self.runtime.group_config.build_profiles.primitive()[self.meta_type][profile_name].get("targets")
+        if not targets:
+            # If group config doesn't define the targets either, the target name will be derived from the distgit branch name
+            targets = [self._default_brew_target()]
+        return targets
+
+    def determine_rhel_targets(self) -> List[int]:
+        """
+        For each build target for the component, return the rhel version it is for. For example,
+        if an RPM builds for both rhel-7 and rhel-8 targets, return [7,8]
+        """
+        el_targets: List[int] = []
+        for target in self.determine_targets():
+            el_ver = isolate_el_version_in_brew_tag(target)
+            if not el_ver:
+                raise IOError(f'Unable to determine RHEL version from build target {target} in {self.distgit_key}')
+            el_targets.append(el_ver)
+        return el_targets
+
+    def _default_brew_target(self):
+        """ Returns derived brew target name from the distgit branch name
+        """
+        return NotImplementedError()
 
     def save(self):
         with open(self.full_config_path, "w") as f:
