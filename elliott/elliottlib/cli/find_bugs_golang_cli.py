@@ -12,6 +12,7 @@ from artcommonlib.rhcos import get_container_configs
 from artcommonlib.format_util import green_print, red_print
 from elliottlib.util import get_nvrs_from_payload, get_golang_container_nvrs, get_golang_rpm_nvrs
 from elliottlib.rpm_utils import parse_nvr
+from elliottlib import errata
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from pyartcd.util import get_release_name_for_assembly, load_releases_config
 from pyartcd import constants as pyartcd_constants
@@ -138,6 +139,37 @@ class FindBugsGolangCli:
                 nvrs.extend([f"{n[0]}-{n[1]}-{n[2]}" for n in nvr_group])
             if fixed:
                 self._logger.info(f"Fix is in nvrs: {nvrs}")
+                # find_errata_for_fixed_nvrs
+                advisory_cache = {}
+
+                def advisory_synopsis(advisory_id):
+                    if advisory_id in advisory_cache:
+                        return advisory_cache[advisory_id]
+                    erratum = errata.get_raw_erratum(advisory_id)
+                    errata_dict = erratum["errata"]
+                    s = None
+                    for _, info in errata_dict.items():
+                        s = info["synopsis"]
+                        advisory_cache[advisory_id] = info["synopsis"]
+                        break
+                    if not s:
+                        self._logger.warning(f"Could not fetch advisory {advisory_id} synopsis")
+                    return s
+
+                for nvr in nvrs:
+                    build = errata.get_brew_build(nvr)
+                    # filter out dropped advisories
+                    advisories = [ad for ad in build.all_errata if ad["status"] != "DROPPED_NO_SHIP"]
+                    if not advisories:
+                        red_print(f"Build {nvr} is not attached to any advisories.")
+                        continue
+                    for advisory in advisories:
+                        if advisory["status"] == "SHIPPED_LIVE":
+                            synopsis = advisory_synopsis(advisory['id'])
+                            if "OpenShift Container Platform" in synopsis:
+                                message = f"{nvr} has shipped with OCP advisory {advisory['name']} - {synopsis}."
+                                green_print(message)
+
             build_artifacts = f"These nvrs {sorted(nvrs)}"
 
         comment = f"{bug.id} is associated with flaw bug(s) {bug.corresponding_flaw_bug_ids} " \
@@ -202,7 +234,7 @@ class FindBugsGolangCli:
         tr = ','.join(target_release)
         logger.info(f"Searching for open golang security trackers with target version {tr}")
 
-        query = ('project = "OCPBUGS" and summary ~ "golang" and status in (NEW, ASSIGNED, POST) '
+        query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
                  'and labels = "SecurityTracking" '
                  f'and "Target Version" in ({tr})')
 
