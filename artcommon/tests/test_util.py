@@ -1,6 +1,10 @@
 import unittest
 
+import yaml
+
 from artcommonlib import util, build_util, release_util
+from artcommonlib.model import Model, MissingModel
+from artcommonlib.util import deep_merge
 
 
 class TestUtil(unittest.TestCase):
@@ -111,3 +115,47 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-8'))
         self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-10'))
         self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch('invalid'))
+
+    def test_merge_objects(self):
+        yaml_data = """
+content:
+  source:
+    git:
+      branch:
+        target: release-4.16
+    ci_alignment:
+      streams_prs:
+        ci_build_root:
+          stream: rhel-9-golang-ci-build-root
+distgit:
+  branch: rhaos-4.16-rhel-9
+from:
+  builder:
+  - stream: golang
+  - stream: rhel-9-golang
+  member: openshift-enterprise-base-rhel9
+name: openshift/ose-machine-config-operator-rhel9
+alternative_upstream:
+- when: el8
+  distgit:
+    branch: rhaos-4.16-rhel-8
+  from:
+    member: openshift-enterprise-base
+  name: openshift/ose-machine-config-operator
+  content:
+    source:
+      ci_alignment:
+        streams_prs:
+          ci_build_root:
+            stream: rhel-8-golang-ci-build-root
+        """
+
+        config = Model(yaml.safe_load(yaml_data))
+        alt_config = config.alternative_upstream[0]
+        merged_config = Model(deep_merge(config.primitive(), alt_config.primitive()))
+
+        self.assertEqual(merged_config.name, 'openshift/ose-machine-config-operator')
+        self.assertEqual(merged_config.distgit.branch, 'rhaos-4.16-rhel-8')
+        self.assertEqual(merged_config.content.source.git.branch.target, 'release-4.16')
+        self.assertEqual(merged_config.get('from').get('builder'), [{'stream': 'golang'}, {'stream': 'rhel-9-golang'}])
+        self.assertEqual(merged_config.get('from').get('member'), 'openshift-enterprise-base')

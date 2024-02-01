@@ -4,6 +4,8 @@ from artcommonlib.constants import RELEASE_SCHEDULES
 import requests
 import re
 
+from artcommonlib.model import Model
+
 
 def remove_prefix(s: str, prefix: str) -> str:
     if s.startswith(prefix):
@@ -170,3 +172,24 @@ def get_ocp_version_from_group(group):
     if not match:
         raise ValueError(f"Invalid group name: {group}")
     return int(match[1]), int(match[2])
+
+
+def deep_merge(dict1, dict2):
+    """
+    Recursively merge two dictionaries.
+
+    Returns:
+    A new dictionary with merged values.
+    """
+
+    merged = dict1.copy()
+
+    for key, value in dict2.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            # If both values are dictionaries, merge them recursively
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            # Otherwise, simply update the value
+            merged[key] = value
+
+    return merged

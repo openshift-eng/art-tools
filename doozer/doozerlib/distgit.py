@@ -42,7 +42,7 @@ from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version, \
-    isolate_rhel_major_from_distgit_branch
+    isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -1704,7 +1704,7 @@ class ImageDistGitRepo(DistGitRepo):
             # We could get:
             #   - a ChildProcessError when we couldn't extract os-release from the pullspec
             #   - an IndexError when /etc/os-release is not as expected
-            self.logger.warning('Failed determining upstream rhel version: %s', e)
+            self.logger.warning('Failed determining upstream rhel version for %s: %s', self.name, e)
 
         if not version:
             self.logger.warning('Could not determine rhel version from upstream %s', self.name)
@@ -1722,12 +1722,12 @@ class ImageDistGitRepo(DistGitRepo):
         """
 
         # Check if there is an alternative configuration matching upstream RHEL version
-        alt_configs = self.config.get('alternative_upstream', [])
+        alt_configs = self.config.alternative_upstream
         matched = False
-        for alt_config in alt_configs:
+        for alt_config in alt_configs or []:
             if alt_config['when'] == f'el{self.upstream_intended_el_version}':
-                self.logger.info('Merging %s alternative config to match upstream', self.upstream_intended_el_version)
-                self.config.update(alt_config)
+                self.logger.info('Merging rhel%s alternative config to match upstream', self.upstream_intended_el_version)
+                self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
                 matched = True
                 break
 
