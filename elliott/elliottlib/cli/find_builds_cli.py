@@ -1,5 +1,4 @@
 import asyncio
-import functools
 import json
 import re
 from typing import Dict, List, Set, Union
