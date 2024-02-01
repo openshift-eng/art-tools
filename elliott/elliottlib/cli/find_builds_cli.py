@@ -384,13 +384,11 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
         if any(nvr for dep in rhcos_config.dependencies.rpms for _, nvr in dep.items()):
             raise ElliottFatalError(f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release.")
 
-    green_prefix('Generating list of rpms: ')
-    click.echo('Hold on a moment, fetching Brew builds')
     builds: List[Dict] = []
 
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
-            tasks = [exectools.to_thread(progress_func, functools.partial(rpm.get_latest_build, default=None, el_target=tag)) for rpm in runtime.rpm_metas()]
+            tasks = [exectools.to_thread(rpm.get_latest_build, default=None, el_target=tag) for rpm in runtime.rpm_metas()]
             builds_for_tag = await asyncio.gather(*tasks)
             builds.extend(filter(lambda b: b is not None, builds_for_tag))
 
@@ -412,7 +410,8 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
                 # Builds pinned by "is" should take precedence over every build from tag
                 for component, pinned_build in pinned_by_is.items():
                     if component in component_builds and pinned_build["id"] != component_builds[component]["id"]:
-                        LOGGER.warning("Swapping stream nvr %s for pinned nvr %s...", component_builds[component]["nvr"], pinned_build["nvr"])
+                        LOGGER.info("Swapping stream nvr %s for pinned nvr %s...", component_builds[component]["nvr"],
+                                    pinned_build["nvr"])
 
                 component_builds.update(pinned_by_is)  # pinned rpms take precedence over those from tags
 
@@ -421,7 +420,8 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
                 # Group dependencies should take precedence over anything previously determined except those pinned by "is".
                 for component, dep_build in group_deps.items():
                     if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
-                        LOGGER.warning("Swapping stream nvr %s for group dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"])
+                        LOGGER.info("Swapping stream nvr %s for group dependency nvr %s...", component_builds[
+                                    component]["nvr"], dep_build["nvr"])
                 component_builds.update(group_deps)
             builds.extend(component_builds.values())
 
@@ -430,18 +430,17 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     not_attachable_nvrs = [b["nvr"] for b in builds if "tag_name" not in b]
 
     if not_attachable_nvrs:
-        yellow_print(f"The following NVRs will not be swept because they don't have allowed tags {list(tag_pv_map.keys())}:")
-        for nvr in not_attachable_nvrs:
-            yellow_print(f"\t{nvr}")
+        LOGGER.warning("The following NVRs will not be swept because they don't have allowed tags"
+                       f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}")
 
     shipped = set()
     if include_shipped:
-        click.echo("Do not filter out shipped builds, all builds will be attached")
+        LOGGER.info("Do not filter out shipped builds, all builds will be attached")
     else:
-        click.echo("Filtering out shipped builds...")
+        LOGGER.info("Filtering out shipped builds...")
         shipped = _find_shipped_builds([b["id"] for b in qualified_builds], brew_session)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
-    click.echo(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
+    LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     nvrps = sorted(set(nvrps))  # remove duplicates
     return nvrps
