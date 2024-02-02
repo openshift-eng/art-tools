@@ -868,29 +868,36 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
     errors_raised = False  # If failures are found when opening a PR, won't break the loop but will return an exit code to signal this event
 
     def update_gomod(desired_ci_build_root_image, repo_dir, image_config):
-        # See if go.mod needs a change
-        golang = ''
+        # See if go.mod needs updating to match the new buildroot go version
         try:
             image_info = json.loads(exectools.cmd_assert(f'oc image info -o json {desired_ci_build_root_image}')[0])
         except (KeyError, ChildProcessError):
             logger.exception(f'Did not manage to look up {desired_ci_build_root_image}. Continuing')
             return
 
-        for env in image_info.get('config', {}).get('config', {}).get('Env', []):
-            key, val = env.split(sep='=', maxsplit=1)
-            if key == 'VERSION' and re.match(r'^[0-9]+\.[0-9]+$', val):
-                golang = val
-
-        if not golang:
+        # determine precise version of go in use. NOTE: this requires trusting the image's "version"
+        # label, that it is set correctly by ART and not changed when transformed to CI. if either
+        # of those assumptions goes wrong we will be recommending the wrong thing in the PR. but the
+        # alternative is pulling the image and running 'go version' inside it which seems excessive.
+        try:
+            version = image_info['config']['config']['Labels']['version']  # e.g. "v1.20.12"
+        except KeyError:
+            logger.error(f"{desired_ci_build_root_image} lacked a suitable 'version' label. Continuing")
             return
+        if not re.match(r'^v[0-9]+(\.[0-9]+){2}$', version):
+            logger.error(f"{desired_ci_build_root_image} had weird version '{version}'. Continuing")
+            return
+        go_full = version[1:]  # e.g. "1.20.12"
+        go_minor = go_full.rsplit(".", 1)[0]  # e.g. "1.20"
 
         gomods = [Path(repo_dir, f'{p}/go.mod') for p in image_config.cachito.packages.gomod]
         if not gomods:
             gomods = [Path(repo_dir, 'go.mod')]
         for gomod in gomods:
             if gomod.is_file():
-                exectools.cmd_assert(f'go mod edit -go={golang} {gomod}')
-                exectools.cmd_assert(f'git add --force {gomod}')
+                exectools.cmd_assert(f"sed -i -e 's/^go 1.*/go {go_minor}/; "
+                                     f"s/^toolchain go.*/toolchain go{go_full}/' {gomod}")
+                exectools.cmd_assert(f"git add --force {gomod}")
 
     for image_meta in runtime.ordered_image_metas():
         dgk = image_meta.distgit_key
