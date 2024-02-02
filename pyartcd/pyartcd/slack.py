@@ -44,11 +44,11 @@ class SlackClient:
 
     async def say_in_thread(self, message: str, reaction: Optional[str] = None):
         if not self._thread_ts:
-            response_data = await self.say(message, reaction)
+            response_data = await self.say(message, thread_ts=None, reaction=reaction)
             self._thread_ts = response_data["ts"]
-            return self._thread_ts
+            return response_data
         else:
-            return await self.say(message, reaction, self._thread_ts)
+            return await self.say(message, thread_ts=self._thread_ts, reaction=reaction)
 
     async def say(self, message: str, thread_ts: Optional[str] = None, reaction: Optional[str] = None):
         attachments = []
