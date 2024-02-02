@@ -435,8 +435,21 @@ class ImageMetadata(Metadata):
                     # Add this rpm_entry to arch_rpms in order to chech whether it is latest in repos
                     arch_rpms[arch].append(rpm_entry)
 
+        def get_ignored_repos():
+            # In case of rhel repo being updated and causing mass rebuilds we do not always want to rebuild immediately
+            # so check image config / group config if some repos are set to be ignored right now
+            # scan_sources:
+            #     freeze_repos:
+            #         enabled: true/false
+            #         frequency: weekend
+            #         repos:
+            #         - rhel-9-baseos-rpms
+            #         - rhel-9-appstream-rpms
+            # TODO: get from a combination of image meta & group.yml
+            return []
+
         self.logger.info('Checking whether any of the installed rpms is outdated')
-        non_latest_rpms = await bbii.find_non_latest_rpms(arch_rpms)
+        non_latest_rpms = await bbii.find_non_latest_rpms(arch_rpms, ignored_repos=get_ignored_repos())
         rebuild_hints = [
             f"Outdated RPM {installed_rpm} installed in {image_nvr} ({arch}) when {latest_rpm} was available in repo {repo}"
             for arch, non_latest in non_latest_rpms.items() for installed_rpm, latest_rpm, repo in non_latest
@@ -587,7 +600,8 @@ class ArchiveImageInspector:
         """
         return self.get_brew_build_inspector().get_image_meta()
 
-    async def find_non_latest_rpms(self, rpms_to_check: Optional[List[Dict]] = None) -> List[Tuple[str, str, str]]:
+    async def find_non_latest_rpms(self, rpms_to_check: Optional[List[Dict]] = None,
+                                   ignored_repos: Optional[List] = None) -> List[Tuple[str, str, str]]:
         """
         If the packages installed in this image archive overlap packages in the configured YUM repositories,
         return NVRs of the latest avaiable rpms that are not also installed in this archive.
@@ -599,6 +613,7 @@ class ArchiveImageInspector:
         likely broken.
 
         :param rpms_to_check: If set, narrow the rpms to check
+        :param ignored_repos: If set, ignore these repos
         :return: Returns a list of (installed_rpm, latest_rpm, repo_name)
         """
         meta = self.get_image_meta()
@@ -607,9 +622,17 @@ class ArchiveImageInspector:
 
         # Get enabled repos for the image
         group_repos = self.runtime.repos
-        enabled_repos = sorted({r.name for r in group_repos.values() if r.enabled} | set(meta.config.get("enabled_repos", [])))
+        enabled_repos = {r.name for r in group_repos.values() if r.enabled} | set(meta.config.get("enabled_repos", []))
         if not enabled_repos:  # no enabled repos
             logger.warning("Skipping non-latest rpms check for image %s because it doesn't have enabled_repos configured.", meta.distgit_key)
+            return []
+
+        ignored_repos = set(ignored_repos)
+        if enabled_repos & ignored_repos:
+            logger.warning("These repos will be ignored for image %s: %s",
+                           meta.distgit_key, enabled_repos & ignored_repos)
+        enabled_repos = sorted(enabled_repos - ignored_repos)
+        if not enabled_repos:  # no enabled repos
             return []
         logger.info("Fetching repodatas for enabled repos %s", ", ".join(f"{repo_name}-{arch}" for repo_name in enabled_repos))
         repodatas: List[Repodata] = await asyncio.gather(*(group_repos[repo_name].get_repodata_threadsafe(arch) for repo_name in enabled_repos))
@@ -954,7 +977,8 @@ class BrewBuildImageInspector:
         """
         return [t['name'] for t in self.list_brew_tags()]
 
-    async def find_non_latest_rpms(self, arch_rpms_to_check: Optional[Dict[str, List[Dict]]] = None) -> Dict[str, List[Tuple[str, str, str]]]:
+    async def find_non_latest_rpms(self, arch_rpms_to_check: Optional[Dict[str, List[Dict]]] = None,
+                                   ignored_repos: Optional[List] = None) -> Dict[str, List[Tuple[str, str, str]]]:
         """
         If the packages installed in this image build overlap packages in the configured YUM repositories,
         return NVRs of the latest avaiable rpms that are not also installed in this image.
@@ -966,6 +990,7 @@ class BrewBuildImageInspector:
         likely broken.
 
         :param arch_rpms_to_check: If set, narrow the rpms to check. This should be a dict with keys are arches and values are lists of rpm dicts
+        :param ignored_repos: If set, ignore these repos
         :return: Returns a dict. Keys are arch names; values are lists of (installed_rpm, latest_rpm, repo) tuples
         """
         meta = self.get_image_meta()
@@ -975,6 +1000,6 @@ class BrewBuildImageInspector:
         for arch in arches:
             iar = self.get_image_archive_inspector(arch)
             assert iar is not None
-            tasks.append(iar.find_non_latest_rpms(arch_rpms_to_check[arch] if arch_rpms_to_check else None))
+            tasks.append(iar.find_non_latest_rpms(arch_rpms_to_check[arch] if arch_rpms_to_check else None, ignored_repos))
         result = dict(zip(arches, await asyncio.gather(*tasks)))
         return result

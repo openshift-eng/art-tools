@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import click
 import yaml
 from typing import List, Tuple, Optional
-from github import GithubException
 
 import artcommonlib.util
 from artcommonlib.rhcos import get_primary_container_name
