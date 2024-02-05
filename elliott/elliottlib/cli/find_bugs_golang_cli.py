@@ -1,7 +1,7 @@
 import click
 import re
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from elliottlib import Runtime, constants, early_kernel
 from elliottlib.cli.common import cli, click_coroutine
@@ -19,12 +19,11 @@ from pyartcd import constants as pyartcd_constants
 
 
 class FindBugsGolangCli:
-    def __init__(self, runtime: Runtime, bug_ids: List[str], pullspec: str, update_tracker: bool, dry_run: bool):
+    def __init__(self, runtime: Runtime, pullspec: str, update_tracker: bool, dry_run: bool):
         self._runtime = runtime
         self._logger = runtime.logger
         self.update_tracker = update_tracker
         self.dry_run = dry_run
-        self.bug_ids = bug_ids
 
         # cache
         self.pullspec = pullspec
@@ -182,6 +181,10 @@ class FindBugsGolangCli:
 
     async def is_fixed_rpm(self, bug, tracker_fixed_in, rpm_name):
         if not self.rpm_nvrps:
+            if self._runtime.assembly == 'stream':
+                self._logger.error("need --assembly set to non-stream to determine rpm fix")
+                return False, None
+
             # fetch assembly selected nvrs
             replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
             et_data = self._runtime.get_errata_config(replace_vars=replace_vars)
@@ -199,7 +202,6 @@ class FindBugsGolangCli:
         nvrs = []
         for nvrp in self.rpm_nvrps:
             if nvrp[0] == rpm_name:
-                self._logger.info(f"Found assembly selected nvr {nvrp[0]}-{nvrp[1]}-{nvrp[2]}")
                 nvrs.append((nvrp[0], nvrp[1], nvrp[2]))
         if not nvrs:
             self._logger.warning(f"rpm {rpm_name} not found for assembly {self._runtime.assembly}. Is it a valid rpm?")
@@ -228,20 +230,15 @@ class FindBugsGolangCli:
 
     async def run(self):
         logger = self._logger
+        target_release = self.jira_tracker.target_release()
+        tr = ','.join(target_release)
+        logger.info(f"Searching for open golang security trackers with target version {tr}")
 
-        if not self.bug_ids:
-            target_release = self.jira_tracker.target_release()
-            tr = ','.join(target_release)
-            logger.info(f"Searching for open golang security trackers with target version {tr}")
-            query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
-                     'and labels = "SecurityTracking" '
-                     f'and "Target Version" in ({tr})')
-            bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
-        else:
-            for b in self.bug_ids:
-                if not b.startswith("OCPBUGS"):
-                    raise ValueError(f"bug_id is expected to be `OCPBUGS-XXXX` instead is {b}")
-            bugs: List[JIRABug] = self.jira_tracker.get_bugs(self.bug_ids)
+        query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
+                 'and labels = "SecurityTracking" '
+                 f'and "Target Version" in ({tr})')
+
+        bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
 
         def is_valid(b: JIRABug):
             # golang compiler cve title text always has `golang:`
@@ -304,7 +301,6 @@ class FindBugsGolangCli:
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
 @click.option("--pullspec", default=None,
               help="Pullspec of release payload to check against. If not provided, latest accepted nightly will be used")
-@click.option("--bugs", "bug_ids", help="Tracker bugs to analyze")
 @click.option("--update-tracker",
               is_flag=True,
               default=False,
@@ -315,8 +311,7 @@ class FindBugsGolangCli:
               help="Don't change anything")
 @click.pass_obj
 @click_coroutine
-async def find_bugs_golang_cli(runtime: Runtime, bug_ids: Optional[str], pullspec: str, update_tracker: bool,
-                               dry_run: bool):
+async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, update_tracker: bool, dry_run: bool):
     """Find golang tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project that are assigned to Release component
     Passing in an assembly is the most straightforward way to analyze golang-builder as well as rpm trackers.
@@ -341,13 +336,9 @@ async def find_bugs_golang_cli(runtime: Runtime, bug_ids: Optional[str], pullspe
                                                          runtime.assembly)
             pullspec = f'{pyartcd_constants.RELEASE_IMAGE_REPO}:{release_name}-x86_64'
 
-
-    bug_ids = [b.strip() for b in bug_ids.split(",")] if bug_ids else []
-
     # We want to load all configs for rpms, include disabled so microshift is included
     cli = FindBugsGolangCli(
         runtime=runtime,
-        bug_ids=bug_ids,
         pullspec=pullspec,
         update_tracker=update_tracker,
         dry_run=dry_run
