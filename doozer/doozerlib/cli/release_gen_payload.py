@@ -18,7 +18,7 @@ from doozerlib import rpm_utils
 import yaml
 from artcommonlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
-import openshift as oc
+import openshift_client as oc
 from opentelemetry import trace
 
 

@@ -4,7 +4,7 @@ import logging
 
 from pyartcd import exectools
 from pyartcd.runtime import Runtime
-import openshift as octool
+import openshift_client as octool
 from typing import List, Optional
 
 
