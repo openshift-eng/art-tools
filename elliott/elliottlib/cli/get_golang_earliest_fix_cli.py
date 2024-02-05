@@ -222,5 +222,5 @@ async def get_golang_earliest_fix_cli(runtime: Runtime, bug_ids: str):
     runtime.initialize(mode="rpms", disabled=True)
     bug_ids = [b.strip() for b in bug_ids.split(",")] if bug_ids else []
 
-    cli = GetGolangEarliestFixCli(runtime=runtime,bug_ids=bug_ids)
+    cli = GetGolangEarliestFixCli(runtime=runtime, bug_ids=bug_ids)
     await cli.run()
