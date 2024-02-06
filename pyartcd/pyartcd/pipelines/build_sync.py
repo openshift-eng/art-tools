@@ -114,7 +114,7 @@ class BuildSyncPipeline:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
     async def run(self):
-        if self.assembly not in ('stream', 'test'):
+        if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
@@ -202,6 +202,10 @@ class BuildSyncPipeline:
         various release controller namespaces should be performed.
         """
 
+        if self.runtime.dry_run:
+            self.logger.info('Would have backed up all imagestreams.')
+            return
+
         @exectools.limit_concurrency(500)
         async def backup_namespace(ns):
             self.logger.info('Running backup for namespace %s', ns)
@@ -254,7 +258,11 @@ class BuildSyncPipeline:
                          arch_suffix, self.version, tag, tag_pullspec)
         cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} ' \
               f'tag {tag_pullspec} {self.version}:{tag}'
-        await exectools.cmd_gather_async(cmd)
+
+        if self.runtime.dry_run:
+            self.logger.info('Would have executed: "%s"', ' '.join(cmd))
+        else:
+            await exectools.cmd_gather_async(cmd)
 
         if not arch_suffix:
             # Tag the image into the imagestream for private CI from openshift-priv.
@@ -262,7 +270,11 @@ class BuildSyncPipeline:
                              self.version, tag, tag_pullspec)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-private ' \
                   f'tag {tag_pullspec} {self.version}-priv:{tag}'
-            await exectools.cmd_gather_async(cmd)
+
+            if self.runtime.dry_run:
+                self.logger.info('Would have executed: "%s"', ' '.join(cmd))
+            else:
+                await exectools.cmd_gather_async(cmd)
 
     async def _populate_ci_imagestreams(self):
         """"
