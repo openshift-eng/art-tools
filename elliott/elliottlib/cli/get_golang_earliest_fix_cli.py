@@ -86,6 +86,9 @@ class GetGolangEarliestFixCli:
         for go_build in go_nvr_map.keys():
             # extract go version from nvr
             v = go_build
+            if constants.GOLANG_BUILDER_CVE_COMPONENT in go_build:
+                v = parse_nvr(go_build)['version']
+
             match = re.search(r'(\d+\.\d+\.\d+)', v)
             version = match.group(1)
             if version not in versions_to_build_map:
@@ -105,8 +108,76 @@ class GetGolangEarliestFixCli:
                         self._logger.debug(f"{bug.id} for {bug.whiteboard_component} is fixed in {existing_version}")
                         fixed_in_versions.add(existing_version)
 
-        unfixed_versions = set(versions_to_build_map.keys()) - fixed_in_versions
-        return not unfixed_versions
+        fixed = False
+        if fixed_in_versions:
+            self._logger.info(f"Fix is found in versions {fixed_in_versions}")
+
+        not_fixed_in = set(versions_to_build_map.keys()) - fixed_in_versions
+        if not_fixed_in:
+            self._logger.info(f"Couldn't determine if fix is in builders for versions {not_fixed_in}")
+            vuln_builds = sum([versions_to_build_map[v] for v in not_fixed_in])
+            self._logger.info(f"Potentially vulnerable builds: {vuln_builds}")
+
+            # In case this is for builder image
+            # and if vulnerable builds make up for less than 10% of total builds, consider it fixed
+            # this is due to etcd and a few payload images lagging behind due to special reasons
+            if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT and vuln_builds / total_builds < 0.1:
+                self._logger.info("Vulnerable builds make up for less than 10% of total builds, considering it fixed")
+                fixed = True
+        else:
+            fixed = True
+
+        return fixed
+
+    async def earliest_fix_builder(self, bug, tracker_fixed_in):
+        # We want to find the earliest payload release that had the golang bump
+        # this is different from rpms, since we do not ship golang builder image in errata
+        # but since we bump golang for rpms and builders/containers at the same time
+        # we take a golang rpm that we always build and ship `openshift` and track it through errata
+        # and analyze it's golang versions https://errata.devel.redhat.com/package/show/openshift
+        # Since there is no ET endpoint which serves us this mapping {advisory: shipped_brew_build} for a package
+        # we need to build this mapping ourselves
+        # we could also take a container image (like ose-cli-artifacts)
+        # but rpm is better in this case since we're using ET api to fetch advisory builds
+        # and number of container builds >> number of rpm builds
+        rpm_name = 'openshift'
+
+        # get all advisories that this rpm has shipped in
+        package_info = errata.get_package(rpm_name)
+        attached_in_erratas = {e['id']: e['status'] for e in package_info['data']['relationships']['errata']}
+
+        # get all ga/z-stream rpm advisories from releases.yml that overlap with above advisories
+        # this is faster than querying ET for all those advisories
+        releases_config = self._runtime.get_releases_config()
+        fixed_results = []
+        for assembly_name, info in releases_config['releases'].items():
+            a_type = assembly_type(releases_config, assembly_name)
+            if a_type != AssemblyTypes.STANDARD:
+                continue
+
+            rpm_advisory = info['assembly'].get('group', {}).get('advisories', {}).get('rpm', 0)
+            if rpm_advisory not in attached_in_erratas:
+                continue
+
+            status = 'shipped' if attached_in_erratas[rpm_advisory] == 'SHIPPED_LIVE' else 'is shipping'
+            nvrs = []
+            for b in self.get_advisory_builds(rpm_advisory):
+                parsed = parse_nvr(b.nvr)
+                if parsed['name'] == rpm_name:
+                    nvrs.append((parsed['name'], parsed['version'], parsed['release']))
+            self._logger.info(f"{rpm_name} {status} in {assembly_name} advisory {rpm_advisory}: {nvrs}")
+            go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
+            fixed = self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
+            status = "fixed" if fixed else "not fixed"
+            self._logger.info(f"{bug.id} is {status} in {assembly_name}")
+            fixed_results.append((assembly_name, rpm_advisory, fixed))
+
+        previous_fixed = None
+        for assembly_name, rpm_advisory, fixed in fixed_results[::-1]:
+            if fixed and not previous_fixed:
+                click.echo(f'Fix for {bug.id} was first introduced in {assembly_name}, advisory: {rpm_advisory}')
+                break
+            previous_fixed = fixed
 
     async def earliest_fix_rpm(self, bug, tracker_fixed_in, rpm_name):
         # We want to find the earliest rpm build that had the fix and which got shipped in an errata
@@ -178,9 +249,7 @@ class GetGolangEarliestFixCli:
             not_art = ["sandboxed-containers"]
             if comp in not_art:
                 return False, f'bug has pscomponent={comp} which is not owned by ART team'
-            if comp == constants.GOLANG_BUILDER_CVE_COMPONENT:
-                return False, 'bug is a golang builder tracker. Only rpm trackers are supported'
-            if comp.endswith("-container"):
+            if comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT:
                 return False, f'bug has pscomponent={comp} which is not owned by ART team'
             return True, ''
 
@@ -203,12 +272,13 @@ class GetGolangEarliestFixCli:
             component = bug.whiteboard_component
             tracker_fixed_in = self.tracker_fixed_in(bug)
             if not tracker_fixed_in:
-                self._logger.warning(
-                    f"Could not determine fixed in versions for {bug.id}. Ignoring it for now")
-                continue
+                raise ValueError(f"Could not determine fixed in versions for {bug.id}. Exclude and rerun")
             logger.info(f"{bug.id} is fixed in: {tracker_fixed_in}")
 
-            await self.earliest_fix_rpm(bug, tracker_fixed_in, component)
+            if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
+                await self.earliest_fix_builder(bug, tracker_fixed_in, component)
+            else:
+                await self.earliest_fix_rpm(bug, tracker_fixed_in, component)
 
 
 @cli.command("go:earliest-fix", short_help="Find earliest fix for golang tracker bugs")
