@@ -66,6 +66,16 @@ class Metadata(object):
 
         self._distgit_repo = None
 
+    def branch_el_target(self) -> int:
+        """
+        :return: Determines what rhel-# version the distgit branch is associated with and returns the RHEL version as an int
+        """
+        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
+        if target_match:
+            return int(target_match.group(1))
+        else:
+            raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
+
     def determine_targets(self) -> List[str]:
         """ Determine Brew targets for building this component
         """
