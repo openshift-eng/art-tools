@@ -165,37 +165,42 @@ class GetGolangEarliestFixCli:
         if not tr.startswith(version):
             raise ValueError(f"expected given bugs to have target_release={version}* but found {tr}")
 
-        def is_valid(b: JIRABug):
+        def is_valid(b: JIRABug) -> (bool, str):
             # golang compiler cve title text always has `golang:`
             # this ignores golang lib cves like `podman: net/http, golang.org/x/net/http2:`
-            if 'golang:' not in b.summary:
-                return False
+            marker = 'golang:'
+            if marker not in b.summary:
+                return False, f'`{marker}` not found in bug summary. Is it a valid golang compiler cve tracker?'
 
             comp = b.whiteboard_component
             if not comp:
-                return False
+                return False, 'cannot determine bug pscomponent'
             not_art = ["sandboxed-containers"]
             if comp in not_art:
-                return False
-            return not (comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT)
+                return False, f'bug has pscomponent={comp} which is not owned by ART team'
+            if comp == constants.GOLANG_BUILDER_CVE_COMPONENT:
+                return False, 'bug is a golang builder tracker. Only rpm trackers are supported'
+            if comp.endswith("-container"):
+                return False, f'bug has pscomponent={comp} which is not owned by ART team'
+            return True, ''
 
         bugs = [b for b in bugs if is_valid(b)]
-        invalid_bugs = [b.id for b in bugs if not is_valid(b)]
+        valid_bugs, invalid_bugs = [], {}
+        for b in bugs:
+            valid, invalid_reason = is_valid(b)
+            if not valid:
+                invalid_bugs[b.id] = invalid_reason
+            else:
+                valid_bugs.append(b)
         if invalid_bugs:
-            logger.warning(f"Found {len(bugs)} invalid golang tracker bugs. Ignoring them")
-            if not bugs:
-                return
+            raise ValueError(f"Found invalid golang tracker bugs: {invalid_bugs}. Exclude them and rerun")
 
-        bugs = sorted(bugs, key=lambda b: b.id)
+        bugs = sorted(valid_bugs, key=lambda b: b.id)
         for b in bugs:
             logger.info(f"{b.id} status={b.status} component={b.whiteboard_component}")
 
         for bug in bugs:
             component = bug.whiteboard_component
-            if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
-                self._logger.warning(f"{bug.id} is a builder tracker. Only rpm trackers are supported. Ignoring it")
-                continue
-
             tracker_fixed_in = self.tracker_fixed_in(bug)
             if not tracker_fixed_in:
                 self._logger.warning(
