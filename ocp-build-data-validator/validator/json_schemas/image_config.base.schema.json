@@ -212,7 +212,20 @@
         "branch?": {
           "$ref": "#/properties/distgit/properties/branch"
         },
-        "branch-": {}
+        "branch-": {},
+        "name": {
+          "description": "Override distgit name",
+          "type": "string"
+        },
+        "name!": {
+          "$ref": "#/properties/distgit/properties/name"
+        },
+        "name?": {
+          "$ref": "#/properties/distgit/properties/name"
+        },
+        "name-": {
+          "$ref": "#/properties/distgit/properties/name"
+        }
       },
       "additionalProperties": false
     },
