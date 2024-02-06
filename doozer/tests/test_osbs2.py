@@ -18,6 +18,9 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
                     "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
                 }
             },
+            'distgit': {
+                'branch': 'rhaos-4.12-rhel-8'
+            },
             "targets": ["rhaos-4.12-rhel-8-containers-candidate"],
         })
         meta = ImageMetadata(runtime, data_obj, clone_source=False, prevent_cloning=True)

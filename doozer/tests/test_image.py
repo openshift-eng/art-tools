@@ -14,14 +14,14 @@ try:
     from importlib import reload
 except ImportError:
     pass
-from doozerlib import exectools, image, model
+from doozerlib import exectools, image, model, brew_info
 
 TEST_YAML = """---
 name: 'openshift/test'
 distgit:
   namespace: 'hello'"""
 
-# base only images have have an additional flag
+# base only images have an additional flag
 TEST_BASE_YAML = """---
 name: 'openshift/test_base'
 base_only: true
@@ -166,10 +166,10 @@ class TestImageMetadata(unittest.TestCase):
 
 class TestArchiveImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.repos.Repo.get_repodata_threadsafe")
-    @mock.patch("doozerlib.image.ArchiveImageInspector.get_installed_rpm_dicts")
-    @mock.patch("doozerlib.image.ArchiveImageInspector.image_arch")
-    @mock.patch("doozerlib.image.ArchiveImageInspector.get_image_meta")
-    @mock.patch("doozerlib.image.ArchiveImageInspector.get_brew_build_id")
+    @mock.patch("doozerlib.brew_info.ArchiveImageInspector.get_installed_rpm_dicts")
+    @mock.patch("doozerlib.brew_info.ArchiveImageInspector.image_arch")
+    @mock.patch("doozerlib.brew_info.ArchiveImageInspector.get_image_meta")
+    @mock.patch("doozerlib.brew_info.ArchiveImageInspector.get_brew_build_id")
     async def test_find_non_latest_rpms(self, get_brew_build_id: mock.Mock, get_image_meta: mock.Mock,
                                         image_arch: mock.Mock, get_installed_rpm_dicts: mock.Mock,
                                         get_repodata_threadsafe: mock.AsyncMock):
@@ -179,7 +179,7 @@ class TestArchiveImageInspector(IsolatedAsyncioTestCase):
             "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
         }, ["x86_64", "s390x", "ppc64le", "aarch64"]))
         archive = mock.MagicMock()
-        brew_build_inspector = mock.MagicMock(autospec=image.BrewBuildImageInspector)
+        brew_build_inspector = mock.MagicMock(autospec=brew_info.BrewBuildImageInspector)
         get_brew_build_id.return_value = 12345
         brew_build_inspector.get_brew_build_id.return_value = 12345
         get_image_meta.return_value = mock.MagicMock(autospec=image.ImageMetadata, config={
@@ -197,7 +197,7 @@ class TestArchiveImageInspector(IsolatedAsyncioTestCase):
             {'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'},
             {'name': 'bar', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'bar-1.0.0-1.el9'},
         ]
-        inspector = image.ArchiveImageInspector(runtime, archive, brew_build_inspector)
+        inspector = brew_info.ArchiveImageInspector(runtime, archive, brew_build_inspector)
         actual = await inspector.find_non_latest_rpms()
         get_image_meta.assert_called_once_with()
         get_installed_rpm_dicts.assert_called_once_with()

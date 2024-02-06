@@ -15,7 +15,6 @@ import time
 import traceback
 from datetime import datetime
 from multiprocessing import Event, Lock
-from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional, Tuple, Union, Set
 
 import aiofiles
@@ -35,14 +34,14 @@ from doozerlib.assembly import AssemblyTypes
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
+from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.model import ListModel, Missing, Model
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version, \
-    isolate_rhel_major_from_distgit_branch, deep_merge
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -410,6 +409,13 @@ class DistGitRepo(object):
         # timeout value counterproductive. Limit to 5 simultaneous pushes.
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
         await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir, retries=3)
+
+    def get_branch_el(self) -> Optional[int]:
+        """
+        Extracts the RHEL version from the tag name and returns the integer value. e.g. 'rhaos-4.16-rhel-7' => 7.
+        If the branch name convention is not recognized, returns None.
+        """
+        return util.isolate_el_version_in_brew_tag(self.branch)
 
     def tag(self, version, release):
         if self.runtime.local:
@@ -1427,9 +1433,7 @@ class ImageDistGitRepo(DistGitRepo):
         """
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
-            cmd = f'oc image info {original_parent} -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
-            labels = json.loads(out)['config']['config']['Labels']
+            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
 
             # Get the exact build NVR
             build_nvr = f'{labels["com.redhat.component"]}-{labels["version"]}-{labels["release"]}'
@@ -1447,8 +1451,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # Verify whether the image exists
             self.logger.debug('Checking for upstream equivalent existence, pullspec: %s', upstream_equivalent_pullspec)
-            cmd = f'oc image info {upstream_equivalent_pullspec} --filter-by-os linux/amd64 -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
+            util.oc_image_info__caching(upstream_equivalent_pullspec)
 
             # It does. Use this to rebase FROM directive
             mapped_image = f'{labels["name"]}:{labels["version"]}-{labels["release"]}'
@@ -1657,7 +1660,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
-
         df_name = self.config.content.source.dockerfile
         if not df_name:
             df_name = 'Dockerfile'
@@ -1666,54 +1668,31 @@ class ImageDistGitRepo(DistGitRepo):
             subdir = '.'
         df_path = str(pathlib.Path(source_path).joinpath(subdir).joinpath(df_name))
 
-        with open(df_path) as f:
-            dfp = DockerfileParser(fileobj=f)
-            parent_images = dfp.parent_images
-
-        # We will infer the rhel version from the last build layer in the upstream Dockerfile
-        last_layer_pullspec = parent_images[-1]
-        redis_key = f'appdata:upstream-el-version:{last_layer_pullspec}'
-
-        # If the pullspec is not tracked in Redis yet, this will return None
-        version = redis.get_value_sync(redis_key)
-        if version:
-            # Already tracked in Redis
-            return int(version)
-
-        # Not tracked yet: let's read it from os-release
+        version = None
         try:
-            # Create a temp dir with a random name to store the os-release file
-            with TemporaryDirectory() as tmpdir:
-                # Extract os-release
-                cmd = ['oc', 'image', 'extract', f'--path=/usr/lib/os-release:{tmpdir}',
-                       last_layer_pullspec, '--confirm']
-                exectools.cmd_assert(cmd)
+            with open(df_path) as f:
+                dfp = DockerfileParser(fileobj=f)
+                parent_images = dfp.parent_images
 
-                # Parse it
-                with open(f'{tmpdir}/os-release') as os_release:
-                    # os-release will contain a line like this: VERSION_ID="9.2"
-                    # We need to eval the result to turn '"9.2"' into '9.2'
-                    version_id = eval([line for line in os_release if 'VERSION_ID' in line][0].split('=')[1])
-                    version = isolate_rhel_major_from_version(version_id)
-                    self.logger.info('Intended upstream RHEL version for %s: %s', self.name, version)
+            # We will infer the rhel version from the last build layer in the upstream Dockerfile
+            last_layer_pullspec = parent_images[-1]
+            image_labels = util.oc_image_info__caching(last_layer_pullspec)['config']['config']['Labels']
+            if 'version' not in image_labels or 'release' not in image_labels:
+                # This does not appear to be a brew image. We can't determine RHEL.
+                return None
 
-                    # Store el version in Redis
-                    redis.set_value_sync(redis_key, version)
+            bbii = BrewBuildImageInspector(self.runtime, last_layer_pullspec)
+            version = bbii.get_rhel_base_version()
 
-        except (ChildProcessError, IndexError) as e:
-            # We could get:
-            #   - a ChildProcessError when we couldn't extract os-release from the pullspec
-            #   - an IndexError when /etc/os-release is not as expected
-            self.logger.warning('Failed determining upstream rhel version for %s: %s', self.name, e)
+        except Exception as e:
+            # Swallow exception as this is not fatal. We just can't determine the
+            # correct canonical upstream RHEL version to use.
+            self.logger.warning('Failed determining upstream rhel version: %s', e)
 
         if not version:
             self.logger.warning('Could not determine rhel version from upstream %s', self.name)
 
-        try:
-            return int(version)
-        except TypeError:
-            # version is None, cannot cast to int
-            return None
+        return version
 
     def _update_image_config(self):
         """
@@ -1930,6 +1909,9 @@ class ImageDistGitRepo(DistGitRepo):
 
                 if self.runtime.assembly:
                     release += f'.assembly.{self.runtime.assembly}'
+
+                if self.get_branch_el():
+                    release += ".el" + str(self.get_branch_el())
 
                 dfp.labels['release'] = release
             else:

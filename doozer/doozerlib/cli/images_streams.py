@@ -20,7 +20,7 @@ from artcommonlib.format_util import green_print, yellow_print
 from doozerlib.model import Model, Missing
 from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
-from doozerlib import exectools, constants
+from doozerlib import exectools, constants, util
 from doozerlib.image import ImageMetadata
 from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
@@ -870,7 +870,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
     def update_gomod(desired_ci_build_root_image, repo_dir, image_config):
         # See if go.mod needs updating to match the new buildroot go version
         try:
-            image_info = json.loads(exectools.cmd_assert(f'oc image info -o json {desired_ci_build_root_image}')[0])
+            image_info = util.oc_image_info__caching(desired_ci_build_root_image)
         except (KeyError, ChildProcessError):
             logger.exception(f'Did not manage to look up {desired_ci_build_root_image}. Continuing')
             return
@@ -921,7 +921,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    exectools.cmd_assert(f'oc image info {upstream_image}', retries=3)
+                    util.oc_image_info__caching(upstream_image)
                 except:
                     yellow_print(f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.')
                     if not ignore_missing_images:

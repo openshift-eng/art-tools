@@ -1114,7 +1114,7 @@ class Runtime(GroupRuntime):
 
     def resolve_stream(self, stream_name):
         """
-        :param stream_name: The name of the stream to resolve.
+        :param stream_name: The name of the stream to resolve. The name can also be a stream name alias.
         :return: Resolves and returns the image stream name into its literal value.
                 This is usually a lookup in streams.yml, but can also be overridden on the command line. If
                 the stream_name cannot be resolved, an exception is thrown.
@@ -1124,10 +1124,11 @@ class Runtime(GroupRuntime):
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
 
-        if stream_name not in self.streams:
-            raise IOError("Unable to find definition for stream: %s" % stream_name)
+        for test_stream_name, stream_def in self.streams.items():
+            if stream_name == test_stream_name or ('aliases' in stream_def and stream_name in stream_def['aliases']):
+                return Model(dict_to_model=stream_def)
 
-        return self.streams[stream_name]
+        raise IOError("Unable to find definition for stream: %s" % stream_name)
 
     def get_stream_names(self):
         """
