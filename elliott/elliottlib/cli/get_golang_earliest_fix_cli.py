@@ -5,7 +5,7 @@ from typing import Dict, List
 
 from elliottlib import Runtime, constants, early_kernel
 from elliottlib.cli.common import cli, click_coroutine
-from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug
+from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug, Bug
 from elliottlib.util import get_nvrs_from_payload, get_golang_container_nvrs, get_golang_rpm_nvrs
 from elliottlib.rpm_utils import parse_nvr
 from elliottlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event
@@ -141,13 +141,14 @@ class GetGolangEarliestFixCli:
             go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
             fixed = self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
             status = "fixed" if fixed else "not fixed"
-            self._logger.info(f"Bug is {status} in {assembly_name}")
-            fixed_results.append((assembly_name, fixed))
+            self._logger.info(f"{bug.id} is {status} in {assembly_name}")
+            fixed_results.append((assembly_name, rpm_advisory, fixed))
 
         previous_fixed = None
-        for assembly_name, fixed in fixed_results[::-1]:
+        for assembly_name, rpm_advisory, fixed in fixed_results[::-1]:
             if fixed and not previous_fixed:
-                self._logger.info(f'Fix was first introduced in {assembly_name}')
+                click.echo(f'Fix for {bug.id} was first introduced in {assembly_name}, advisory: {rpm_advisory}')
+                break
             previous_fixed = fixed
 
     async def run(self):
@@ -156,7 +157,13 @@ class GetGolangEarliestFixCli:
         for b in self.bug_ids:
             if not b.startswith("OCPBUGS"):
                 raise ValueError(f"bug_id is expected to be `OCPBUGS-XXXX` instead is {b}")
+
         bugs: List[JIRABug] = self.jira_tracker.get_bugs(self.bug_ids)
+        major, minor = self._runtime.get_major_minor()
+        version = f'{major}.{minor}'
+        tr = Bug.get_target_release(bugs)
+        if not tr.startswith(version):
+            raise ValueError(f"expected given bugs to have target_release={version}* but found {tr}")
 
         def is_valid(b: JIRABug):
             # golang compiler cve title text always has `golang:`
