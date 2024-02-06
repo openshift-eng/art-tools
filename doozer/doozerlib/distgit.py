@@ -26,7 +26,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion, redis
+from artcommonlib import assertion
 from artcommonlib.format_util import yellow_print
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import constants, exectools, logutil, state, util
@@ -1650,13 +1650,9 @@ class ImageDistGitRepo(DistGitRepo):
         """
         The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
 
-        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, we can extract the os-release file
-        (located at /usr/lib/os-release, symlinked at /etc/os-release) that should always contain a line like this one:
-        VERSION_ID="9.2"
-
-        First, check if it's been stored in Redis already. If so, simply return in.
-        Otherwise, use oc image extract to download that file to a random temporary dir, and parse it. Finally,
-        store it in Redis so to find it next time.
+        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, use "oc image info" and Brew API
+        to determine the RHEL version. Use an in-memory caching mechanism to store the pullspec/rhel version pair
+        within the same Doozer execution.
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
