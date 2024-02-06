@@ -276,7 +276,7 @@ class GetGolangEarliestFixCli:
             logger.info(f"{bug.id} is fixed in: {tracker_fixed_in}")
 
             if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
-                await self.earliest_fix_builder(bug, tracker_fixed_in, component)
+                await self.earliest_fix_builder(bug, tracker_fixed_in)
             else:
                 await self.earliest_fix_rpm(bug, tracker_fixed_in, component)
 
