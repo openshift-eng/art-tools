@@ -124,9 +124,7 @@ advisory with the --add option.
     $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --use-default-advisory rpm
 
 """
-    operator_bundle_advisory = "metadata"
-    if advance_release:
-        operator_bundle_advisory = "advance"
+    operator_bundle_advisory = "advance" if advance_release else "metadata"
 
     count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
     if count_advisory_attach_flags > 1:
