@@ -849,7 +849,7 @@ class ScanOshCli:
 
         # Check if the OCP version is enabled for raising Jira tickets
         if not self.is_jira_workflow_group_enabled():
-            self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for {self.version}")
+            self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since it's not enabled in group.yml for {self.version}")
             return
 
         await self.process_data_for_ocpbugs_workflow()
