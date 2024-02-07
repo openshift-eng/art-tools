@@ -444,6 +444,10 @@ def config_rhcos_src(runtime: Runtime, version, output, brew_root, arch):
         out_base_dir_path = output_path.joinpath(package_name, build_obj['version'], build_obj['release'])
         out_base_dir_path.mkdir(parents=True, exist_ok=True)
         out_src_dir = out_base_dir_path.joinpath('src')
+        if not src_dir_path.exists():
+            runtime.logger.warning(f'Failed to find RPM brewroot directory {str(src_dir_path.absolute())}')
+            continue
+
         if out_src_dir.exists():
             if out_src_dir.is_symlink():
                 runtime.logger.info(f'Output directory already contains a symlink for {package_nvr}. Skipping.')
