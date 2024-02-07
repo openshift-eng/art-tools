@@ -252,8 +252,11 @@ def get_brewroot_arch_base_path(config, nvre, signed):
     package_version = parsed_nvr["version"]
     package_release = parsed_nvr["release"]
 
+    # Default to rhel 7 if no version is found
+    el_version = isolate_el_version_in_release(package_name) or 7
+
     unsigned_arch_base_path = '{brew_packages}/{package_name}/{package_version}/{package_release}'.format(
-        brew_packages=config.packages_path.format(el_version=isolate_el_version_in_release(package_release)),
+        brew_packages=config.packages_path.format(el_version=el_version),
         package_name=package_name,
         package_version=package_version,
         package_release=package_release,
