@@ -1726,7 +1726,8 @@ class ImageDistGitRepo(DistGitRepo):
         self.should_match_upstream = True
         # Distgit branch must be changed to track the alternative one
         self.branch = self.config.distgit.branch
-        # Also update builds targets
+        # Also update metadata config
+        self.metadata.config = self.config
         self.metadata.targets = self.metadata.determine_targets()
 
     def _rebase_from_directives(self, dfp):
