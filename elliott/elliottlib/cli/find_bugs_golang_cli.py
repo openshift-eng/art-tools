@@ -181,10 +181,6 @@ class FindBugsGolangCli:
 
     async def is_fixed_rpm(self, bug, tracker_fixed_in, rpm_name):
         if not self.rpm_nvrps:
-            if self._runtime.assembly == 'stream':
-                self._logger.error("need --assembly set to non-stream to determine rpm fix")
-                return False, None
-
             # fetch assembly selected nvrs
             replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
             et_data = self._runtime.get_errata_config(replace_vars=replace_vars)
