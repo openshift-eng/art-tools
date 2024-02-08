@@ -29,6 +29,7 @@ previous_packages = [
     "ovn",
     "podman",
     "python3-openvswitch",
+    "spdlog"
 ]
 
 ironic_previous_packages_for_4_15_plus = [
