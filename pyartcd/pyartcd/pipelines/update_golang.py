@@ -234,8 +234,8 @@ class UpdateGolangPipeline:
                 try:
                     await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
                 except Exception as err:
-                   _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
-                   continue
+                    _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
+                    continue
 
     def verify_golang_builder_repo(self, el_v, go_version):
         # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
