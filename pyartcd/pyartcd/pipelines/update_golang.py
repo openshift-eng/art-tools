@@ -134,9 +134,9 @@ class UpdateGolangPipeline:
         for el_v in el_nvr_map.keys():
             pattern = f"{component}-v{go_version}-*el{el_v}*"
             builds = self.koji_session.listBuilds(packageID=package_id,
-                                         state=BuildStates.COMPLETE.value, # complete
-                                         pattern=pattern,
-                                         queryOpts={'limit': 1, 'order': '-creation_event_id'})
+                                                  state=BuildStates.COMPLETE.value,  # complete
+                                                  pattern=pattern,
+                                                  queryOpts={'limit': 1, 'order': '-creation_event_id'})
             if builds:
                 nvr = [b['nvr'] for b in builds][0]
                 builder_nvrs[el_v] = nvr
@@ -179,7 +179,7 @@ class UpdateGolangPipeline:
             if not need_update:
                 green_print("Builders don't need update since nvr are built and pinned in streams.yml")
             else:
-                red_print(f"Please update streams.yml")
+                red_print("Please update streams.yml")
         else:
             # Make sure builder branches are updated for building
             _LOGGER.info("Did not find any existing builder images. Verifying builder branches are updated for "
@@ -263,7 +263,7 @@ class UpdateGolangPipeline:
                              "name please correct it.")
 
         expected = {arch: f'{content_repo_url}/{arch}/'
-                       for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()}
+                    for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()}
 
         major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
         actual = {arch: val.format(MAJOR=major, MINOR=minor)
@@ -317,8 +317,8 @@ class UpdateGolangPipeline:
             cmd = f'rhpkg clone --branch {branch} rpms/{rpm}'
             await exectools.cmd_assert_async(cmd)
         else:
-            await exectools.cmd_assert_async(f'git reset --hard', cwd=rpm)
-            await exectools.cmd_assert_async(f'git fetch --all', cwd=rpm)
+            await exectools.cmd_assert_async('git reset --hard', cwd=rpm)
+            await exectools.cmd_assert_async('git fetch --all', cwd=rpm)
         await exectools.cmd_assert_async(f'git checkout {branch}', cwd=rpm)
         await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=rpm)
 
@@ -409,7 +409,7 @@ class UpdateGolangPipeline:
         parsed_nvr = parse_nvr(nvr)
         latest_build = self.koji_session.getLatestBuilds(build_tag, package=parsed_nvr['name'])
         if not latest_build:  # if this happens, investigate
-            raise ValueError(f'Cannot find latest {name} build in {build_tag}. Please investigate.')
+            raise ValueError(f'Cannot find latest {parsed_nvr["name"]} build in {build_tag}. Please investigate.')
         if nvr == latest_build[0]['nvr']:
             return True
         return False
