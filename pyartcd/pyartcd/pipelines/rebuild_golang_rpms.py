@@ -106,7 +106,6 @@ class RebuildGolangRPMsPipeline:
                 [(n['name'], n['version'], n['release']) for n in rpms],
                 _LOGGER
             )
-            non_art_rpms_for_rebuild[el_v] = []
             for go_v, nvrs in go_nvr_map.items():
                 nvr_s = [f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs]
                 if go_v in nvr:
@@ -114,9 +113,11 @@ class RebuildGolangRPMsPipeline:
                     continue
                 _LOGGER.info(f'Builds on previous go version {go_v}: {nvr_s}')
                 art_rpms_for_rebuild.update([n[0] for n in nvrs if n[0] in art_built_rpms])
+                if el_v not in non_art_rpms_for_rebuild:
+                    non_art_rpms_for_rebuild[el_v] = []
                 non_art_rpms_for_rebuild[el_v].extend([n[0] for n in nvrs if n[0] not in art_built_rpms])
 
-            if non_art_rpms_for_rebuild[el_v]:
+            if non_art_rpms_for_rebuild.get(el_v):
                 _LOGGER.info(f'These non-ART rhel{el_v} rpms are on previous golang versions, they need to be '
                              f'rebuilt: {sorted(non_art_rpms_for_rebuild[el_v])}')
 
@@ -124,6 +125,11 @@ class RebuildGolangRPMsPipeline:
             _LOGGER.info(f'These ART rpms are on previous golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}')
             self.rebuild_art_rpms(art_rpms_for_rebuild)
 
+        if not non_art_rpms_for_rebuild:
+            _LOGGER.info(f'All non-ART rpms are using given golang builds!')
+            return
+
+        _LOGGER.info(f'Building non-ART rpms...')
         _, author, _ = await exectools.cmd_gather_async('git config user.name')
         _, email, _ = await exectools.cmd_gather_async('git config user.email')
         author = author.strip()
