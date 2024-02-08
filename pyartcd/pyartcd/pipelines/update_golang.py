@@ -16,11 +16,10 @@ from tenacity import (RetryCallState, RetryError, retry,
 
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.format_util import green_print, yellow_print, red_print
-from pyartcd import jenkins
+from artcommonlib.release_util import split_el_suffix_in_release
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from doozerlib.util import split_el_suffix_in_release
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import BuildStates
 from elliottlib import util as elliottutil
@@ -108,21 +107,6 @@ class UpdateGolangPipeline:
         else:
             _LOGGER.info('Not creating Jira ticket, run with --create-tagging-ticket to create one if one does not exist')
 
-        # Make sure builds are tagged and available
-        # _LOGGER.info('Checking if builds are tagged and available in buildroots')
-        # tasks = []
-        # for el_v, nvr in el_nvr_map.items():
-        #     tasks.append(self.wait_for_nvr_to_be_latest(el_v, nvr))
-        # try:
-        #     await asyncio.gather(*tasks)
-        # except RetryError as err:
-        #     message = f"Timeout waiting for builds to show up in buildroots: {err}"
-        #     _LOGGER.error(message)
-        #     _LOGGER.exception(err)
-        #     raise TimeoutError(message)
-        # finally:
-        #     _LOGGER.info("Golang builds are tagged and are available")
-
         # Make a sanity check if a builder nvr exists for this version and if it's already pinned
         _LOGGER.info(f"Checking if any builder image builds exist for {go_version} in brew")
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -191,6 +175,21 @@ class UpdateGolangPipeline:
                     "/job/build%252Fgolang-builder/ "
                     f"with params GOLANG_VERSION={go_version} RHEL_VERSION={el_v}")
 
+        # For rpms - first make sure builds are tagged and available
+        # if not exit
+        _LOGGER.info('Checking if golang builds are tagged and available in rpm buildroots')
+        error_msg = ""
+        for el_v, nvr in el_nvr_map.items():
+            if await self.is_latest_and_available(el_v, nvr):
+                _LOGGER.info(f"{nvr} is tagged and available in buildroot")
+            else:
+                msg = f"{nvr} is not tagged and available in buildroot. "
+                error_msg += msg
+                _LOGGER.warning(msg)
+
+        if error_msg:
+            exit(0)
+
         # Check which rpms need to be rebuilt
         _LOGGER.info('Checking if rpms need to be rebuilt')
         _LOGGER.info('Will ignore microshift rpm since it is special and rebuilds for payload image')
@@ -226,19 +225,17 @@ class UpdateGolangPipeline:
             _LOGGER.info(f'These ART rpms are on older golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}')
             self.rebuild_art_rpms(art_rpms_for_rebuild)
 
-        if non_art_rpms_for_rebuild and click.confirm("Rebuild non-ART rpms?"):
-            _LOGGER.info('Rebuilding non-ART rpms')
-            _, author, _ = await exectools.cmd_gather_async('git config user.name')
-            _, email, _ = await exectools.cmd_gather_async('git config user.email')
-            author = author.strip()
-            email = email.strip()
-            for el_v, rpms in non_art_rpms_for_rebuild.items():
-                for rpm in rpms:
-                    try:
-                        await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-                    except Exception as err:
-                        _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
-                        continue
+        _, author, _ = await exectools.cmd_gather_async('git config user.name')
+        _, email, _ = await exectools.cmd_gather_async('git config user.email')
+        author = author.strip()
+        email = email.strip()
+        for el_v, rpms in non_art_rpms_for_rebuild.items():
+            for rpm in rpms:
+                try:
+                    await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
+                except Exception as err:
+                   _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
+                   continue
 
     def verify_golang_builder_repo(self, el_v, go_version):
         # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
@@ -323,11 +320,11 @@ class UpdateGolangPipeline:
         await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=rpm)
 
         # get last commit message on this branch
-        bump_msg = 'Bump and rebuild with latest golang'
+        bump_msg = f'Bump and rebuild with latest golang, resolves {self.art_jira}'
         rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=rpm)
         if rc != 0:
             raise ValueError(f'Cannot get last commit message for {rpm}')
-        if commit_message.startswith(bump_msg):
+        if bump_msg in commit_message:
             _LOGGER.info(f'{rpm}/{branch} - Bump commit exists on branch, build in queue? skipping')
             return
 
@@ -340,17 +337,31 @@ class UpdateGolangPipeline:
 
         _LOGGER.info(f'{rpm}/{branch} - Bumping release in specfile')
         # Add a .1 after the first Release segment e.g. 42.rhaos4_8.el8 becomes 42.1.rhaos4_8.el8
+        _LOGGER.info(f'{rpm}/{branch} - Current release in specfile: {spec.release}')
         k = spec.release.split('.')
-        rel = f'{k[0]}.1'
-        if len(k) > 1:
-            rel += f'.{".".join(k[1:])}'
+        digits = []
+        non_digit_marker = None
+        for p in k:
+            if p.isdigit():
+                digits.append(p)
+            else:
+                non_digit_marker = spec.release.index(p)
+                break
+        if len(digits) < 1:
+            raise ValueError("unexpected release in specfile")
+        elif len(digits) < 2:
+            digits.append(0)
+        rel = f'{digits[0]}.{int(digits[1])+1}'
+        if non_digit_marker:
+            rel += f'.{spec.release[non_digit_marker:]}'
         spec.release = rel
+        _LOGGER.info(f'{rpm}/{branch} - New release in specfile: {spec.release}')
         _LOGGER.info(f'{rpm}/{branch} - Adding changelog entry in specfile')
-        msg = f'{bump_msg}, resolves {self.art_jira}'
+
         if not email.endswith('@redhat.com'):
             raise ValueError(f'git config user.email {email} does not end with @redhat.com')
         spec.add_changelog_entry(
-            msg,
+            bump_msg,
             author=author,
             email=email,
             timestamp=datetime.date.today(),
@@ -360,8 +371,11 @@ class UpdateGolangPipeline:
             _LOGGER.info(f"{rpm}/{branch} - Dry run, would've committed changes and triggered build")
             return
 
+        if not click.confirm(f"{rpm}/{branch} - Commit changes and trigger build?"):
+            return
+
         spec.save()
-        cmd = f'git commit -am "{msg}"'
+        cmd = f'git commit -am "{bump_msg}"'
         await exectools.cmd_assert_async(cmd, cwd=rpm)
         cmd = 'git push'
         await exectools.cmd_assert_async(cmd, cwd=rpm)
@@ -375,6 +389,7 @@ class UpdateGolangPipeline:
         rpms = [b for b in latest_builds if not ('-container' in b or b.startswith('rhcos-'))]
         return rpms
 
+    # TODO: do we really need this? maybe not, then remove it
     async def wait_for_nvr_to_be_latest(self, el_v: int, nvr: str):
         def _my_before_sleep(retry_state: RetryCallState):
             if retry_state.outcome.failed:
@@ -406,6 +421,7 @@ class UpdateGolangPipeline:
 
     def is_latest_build(self, el_v: int, nvr: str) -> bool:
         build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
+        _LOGGER.info(f'Checking build root {build_tag}')
         parsed_nvr = parse_nvr(nvr)
         latest_build = self.koji_session.getLatestBuilds(build_tag, package=parsed_nvr['name'])
         if not latest_build:  # if this happens, investigate
