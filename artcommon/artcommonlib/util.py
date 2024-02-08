@@ -113,6 +113,7 @@ def get_assembly_release_date(assembly, group):
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         if assembly in release['name']:
+            # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
             assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
             break
     return assembly_release_date
@@ -131,7 +132,7 @@ def get_inflight(assembly, group):
     for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:
-            days_diff = abs((datetime.strptime(assembly_release_date, "%Y-%m-%d") - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
+            days_diff = abs((datetime.strptime(assembly_release_date, "%Y-%b-%d") - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
             if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
                 match = re.search(r'\d+\.\d+\.\d+', release['name'])
                 if match:
