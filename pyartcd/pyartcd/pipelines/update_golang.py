@@ -1,18 +1,12 @@
 import click
 import koji
-import datetime
 import logging
 import re
-import asyncio
 import os
 import yaml
 import base64
 from typing import List
 from ghapi.all import GhApi
-from specfile import Specfile
-from tenacity import (RetryCallState, RetryError, retry,
-                      retry_if_exception_type, retry_if_result,
-                      stop_after_attempt, wait_fixed)
 
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.format_util import green_print, yellow_print, red_print
@@ -22,7 +16,6 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import BuildStates
-from elliottlib import util as elliottutil
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 
 _LOGGER = logging.getLogger(__name__)
@@ -175,68 +168,6 @@ class UpdateGolangPipeline:
                     "/job/build%252Fgolang-builder/ "
                     f"with params GOLANG_VERSION={go_version} RHEL_VERSION={el_v}")
 
-        # For rpms - first make sure builds are tagged and available
-        # if not exit
-        _LOGGER.info('Checking if golang builds are tagged and available in rpm buildroots')
-        error_msg = ""
-        for el_v, nvr in el_nvr_map.items():
-            if await self.is_latest_and_available(el_v, nvr):
-                _LOGGER.info(f"{nvr} is tagged and available in buildroot")
-            else:
-                msg = f"{nvr} is not tagged and available in buildroot. "
-                error_msg += msg
-                _LOGGER.warning(msg)
-
-        if error_msg:
-            exit(0)
-
-        # Check which rpms need to be rebuilt
-        _LOGGER.info('Checking if rpms need to be rebuilt')
-        _LOGGER.info('Will ignore microshift rpm since it is special and rebuilds for payload image')
-
-        # fetch art_built_rpms
-        art_built_rpms = self.get_art_built_rpms()
-
-        non_art_rpms_for_rebuild = dict()
-        art_rpms_for_rebuild = set()
-        for el_v, nvr in el_nvr_map.items():
-            _LOGGER.info(f'Fetching all rhel{el_v} rpms in our candidate tag')
-            rpms = [parse_nvr(n) for n in self.get_rpms(el_v) if 'microshift' not in n]
-            _LOGGER.info('Determining golang rpms and their build versions')
-            go_nvr_map = elliottutil.get_golang_rpm_nvrs(
-                [(n['name'], n['version'], n['release']) for n in rpms],
-                _LOGGER
-            )
-            non_art_rpms_for_rebuild[el_v] = []
-            for go_v, nvrs in go_nvr_map.items():
-                nvr_s = [f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs]
-                if go_v in nvr:
-                    _LOGGER.info(f'Builds on latest go version {go_v}: {nvr_s}')
-                    continue
-                _LOGGER.info(f'Builds on older go version {go_v}: {nvr_s}')
-                art_rpms_for_rebuild.update([n[0] for n in nvrs if n[0] in art_built_rpms])
-                non_art_rpms_for_rebuild[el_v].extend([n[0] for n in nvrs if n[0] not in art_built_rpms])
-
-            if non_art_rpms_for_rebuild[el_v]:
-                _LOGGER.info(f'These non-ART rhel{el_v} rpms are on older golang versions, they need to be '
-                             f'rebuilt: {sorted(non_art_rpms_for_rebuild[el_v])}')
-
-        if art_rpms_for_rebuild:
-            _LOGGER.info(f'These ART rpms are on older golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}')
-            self.rebuild_art_rpms(art_rpms_for_rebuild)
-
-        _, author, _ = await exectools.cmd_gather_async('git config user.name')
-        _, email, _ = await exectools.cmd_gather_async('git config user.email')
-        author = author.strip()
-        email = email.strip()
-        for el_v, rpms in non_art_rpms_for_rebuild.items():
-            for rpm in rpms:
-                try:
-                    await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-                except Exception as err:
-                    _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
-                    continue
-
     def verify_golang_builder_repo(self, el_v, go_version):
         # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
         github_token = os.environ.get('GITHUB_TOKEN')
@@ -287,129 +218,6 @@ class UpdateGolangPipeline:
     def get_content_repo_url(self, el_v):
         url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
         return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
-
-    def get_art_built_rpms(self):
-        github_token = os.environ.get('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
-        api = GhApi(owner='openshift-eng', repo='ocp-build-data', token=github_token)
-        branch = f'openshift-{self.ocp_version}'
-        content = api.repos.get_content(path='rpms', ref=branch)
-        return [c['name'].rstrip('.yml') for c in content if c['name'].endswith('.yml')]
-
-    def rebuild_art_rpms(self, rpms):
-        _LOGGER.info(f"Trigger job at https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/build with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
-                     f"PIN_BUILDS=True BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}")
-        # jenkins.start_ocp4(
-        #     build_version=self.ocp_version,
-        #     assembly='stream',
-        #     rpm_list=rpms,
-        #     dry_run=self.runtime.dry_run
-        # )
-
-    async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
-        branch = f'rhaos-{self.ocp_version}-rhel-{el_v}'
-        # check if dir exists
-        if not os.path.isdir(rpm):
-            cmd = f'rhpkg clone --branch {branch} rpms/{rpm}'
-            await exectools.cmd_assert_async(cmd)
-        else:
-            await exectools.cmd_assert_async('git reset --hard', cwd=rpm)
-            await exectools.cmd_assert_async('git fetch --all', cwd=rpm)
-        await exectools.cmd_assert_async(f'git checkout {branch}', cwd=rpm)
-        await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=rpm)
-
-        # get last commit message on this branch
-        bump_msg = f'Bump and rebuild with latest golang, resolves {self.art_jira}'
-        rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=rpm)
-        if rc != 0:
-            raise ValueError(f'Cannot get last commit message for {rpm}')
-        if bump_msg in commit_message:
-            _LOGGER.info(f'{rpm}/{branch} - Bump commit exists on branch, build in queue? skipping')
-            return
-
-        # get all .spec files
-        specs = [f for f in os.listdir(rpm) if f.endswith('.spec')]
-        if len(specs) != 1:
-            raise ValueError(f'Expected to find only 1 .spec file in {rpm}, found: {specs}')
-
-        spec = Specfile(os.path.join(rpm, specs[0]))
-
-        _LOGGER.info(f'{rpm}/{branch} - Bumping release in specfile')
-        # Add a .1 after the first Release segment e.g. 42.rhaos4_8.el8 becomes 42.1.rhaos4_8.el8
-        _LOGGER.info(f'{rpm}/{branch} - Current release in specfile: {spec.release}')
-        k = spec.release.split('.')
-        digits = []
-        non_digit_marker = None
-        for p in k:
-            if p.isdigit():
-                digits.append(p)
-            else:
-                non_digit_marker = spec.release.index(p)
-                break
-        if len(digits) < 1:
-            raise ValueError("unexpected release in specfile")
-        elif len(digits) < 2:
-            digits.append(0)
-        rel = f'{digits[0]}.{int(digits[1])+1}'
-        if non_digit_marker:
-            rel += f'.{spec.release[non_digit_marker:]}'
-        spec.release = rel
-        _LOGGER.info(f'{rpm}/{branch} - New release in specfile: {spec.release}')
-        _LOGGER.info(f'{rpm}/{branch} - Adding changelog entry in specfile')
-
-        if not email.endswith('@redhat.com'):
-            raise ValueError(f'git config user.email {email} does not end with @redhat.com')
-        spec.add_changelog_entry(
-            bump_msg,
-            author=author,
-            email=email,
-            timestamp=datetime.date.today(),
-        )
-
-        if self.runtime.dry_run:
-            _LOGGER.info(f"{rpm}/{branch} - Dry run, would've committed changes and triggered build")
-            return
-
-        if not click.confirm(f"{rpm}/{branch} - Commit changes and trigger build?"):
-            return
-
-        spec.save()
-        cmd = f'git commit -am "{bump_msg}"'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
-        cmd = 'git push'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
-        cmd = 'rhpkg build --nowait'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
-
-    def get_rpms(self, el_v):
-        # get all the go rpms from the candidate tag
-        tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-candidate'
-        latest_builds = [b['nvr'] for b in self.koji_session.listTagged(tag, latest=True)]
-        rpms = [b for b in latest_builds if not ('-container' in b or b.startswith('rhcos-'))]
-        return rpms
-
-    # TODO: do we really need this? maybe not, then remove it
-    async def wait_for_nvr_to_be_latest(self, el_v: int, nvr: str):
-        def _my_before_sleep(retry_state: RetryCallState):
-            if retry_state.outcome.failed:
-                err = retry_state.outcome.exception()
-                _LOGGER.warning(
-                    'Error fetching latest build. Will check again in %s seconds. %s: %s',
-                    retry_state.next_action.sleep, type(err).__name__, err,
-                )
-            else:
-                _LOGGER.log(
-                    logging.INFO if retry_state.attempt_number < 1 else logging.WARNING,
-                    '%s is still not the latest build in buildroot. Will check again in %s seconds.',
-                    nvr, retry_state.next_action.sleep
-                )
-        return await retry(
-            stop=(stop_after_attempt(144)),  # wait for 20m * 144 = 2880m = 48 hours
-            wait=wait_fixed(60),  # TODO: make it 1200, wait for 20 minutes between retries
-            retry=(retry_if_result(lambda is_latest: not is_latest) | retry_if_exception_type()),
-            before_sleep=_my_before_sleep,
-        )(self.is_latest_and_available)(el_v, nvr)
 
     def has_necessary_tags(self, nvr: str) -> bool:
         tag_regex = r'^RH[EBS]A-.*(pending|released)$'
