@@ -268,7 +268,7 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, operator_bundle_advisory, permissive=False, major_version: int = 4):
+                            permitted_bug_ids, operator_bundle_advisory: str = "metadata", permissive=False, major_version: int = 4):
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
