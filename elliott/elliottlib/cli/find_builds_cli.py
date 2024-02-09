@@ -153,12 +153,11 @@ PRESENT advisory. Here are some examples:
                                            nvrp[3], session=requests.Session())
     )
 
-    if not include_shipped:
-        previous = len(unshipped_builds)
-        unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds)
-        if len(unshipped_builds) != previous:
-            click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
-                       f'these ART advisories: {attached_to_advisories}')
+    previous = len(unshipped_builds)
+    unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds, include_shipped)
+    if len(unshipped_builds) != previous:
+        click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
+                   f'these ART advisories: {attached_to_advisories}')
 
     _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
 
@@ -449,7 +448,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     return nvrps
 
 
-def _filter_out_attached_builds(build_objects):
+def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool):
     """
     Filter out builds that are already attached to an ART advisory
     """
@@ -459,7 +458,8 @@ def _filter_out_attached_builds(build_objects):
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
-        for eid in [e['id'] for e in b.all_errata]:
+        for errata in b.all_errata:
+            eid = errata['id']
             if eid not in errata_version_cache:
                 release = errata.get_art_release_from_erratum(eid)
                 if not release:
@@ -469,6 +469,13 @@ def _filter_out_attached_builds(build_objects):
                     continue
                 errata_version_cache[eid] = release
             if errata_version_cache[eid] == get_release_version(b.product_version):
+                # We ship 2 different versions of operator builds, first in preGA advisory
+                # and second in GA advisory. We use include_shipped to indicate that we still want to include
+                # builds that have shipped before in preGA advisory, in the GA advisory.
+                # Errata does not allow attaching a build to 2 pending advisories at the same time
+                # So filter if advisory is pending otherwise skip if advisory is shipped
+                if include_shipped and errata['status'] == "SHIPPED_LIVE":
+                    continue
                 in_same_version = True
                 attached_to_advisories.add(eid)
                 break
