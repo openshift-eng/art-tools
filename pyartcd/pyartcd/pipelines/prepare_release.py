@@ -245,6 +245,20 @@ class PrepareReleasePipeline:
             else:
                 await self.sweep_builds_async(impetus, advisory)
 
+        # Verify attached operators - and gather builds if needed
+        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
+            try:
+                if 'advance' in advisories:
+                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
+                elif 'prerelease' in advisories:
+                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
+                elif 'metadata' in advisories:
+                    await self.verify_attached_operators(advisories["image"], advisories["extras"],
+                                                         advisories['metadata'])
+            except Exception as ex:
+                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
+                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
+
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
 
@@ -270,18 +284,7 @@ class PrepareReleasePipeline:
             for _, payload in self.candidate_nightlies.items():
                 self.verify_payload(payload, advisories["image"])
 
-        # Verify attached operators
-        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
-            try:
-                if 'advance' in advisories:
-                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
-                elif 'prerelease' in advisories:
-                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
-                elif 'metadata' in advisories:
-                    await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories['metadata'])
-            except Exception as ex:
-                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
-                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
+
 
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
