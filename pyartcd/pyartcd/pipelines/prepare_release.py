@@ -723,8 +723,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             "find-builds",
             "--kind=image",
         ]
-        if self.include_shipped:
-            cmd.append("--include-shipped")
         for bundle_nvr in bundle_nvrs:
             cmd.append("--build")
             cmd.append(bundle_nvr)
