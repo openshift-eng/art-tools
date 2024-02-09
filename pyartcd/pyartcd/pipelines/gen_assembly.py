@@ -43,7 +43,7 @@ class GenAssemblyPipeline:
         self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
-        self.in_flight = in_flight if in_flight else get_inflight(assembly, group)
+        self.in_flight = None if in_flight.lower() == "none" else get_inflight(assembly, group)
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.pre_ga_mode = pre_ga_mode
