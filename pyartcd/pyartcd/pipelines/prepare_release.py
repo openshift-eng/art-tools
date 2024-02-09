@@ -239,7 +239,8 @@ class PrepareReleasePipeline:
                 # Looks like advance advisory is not present, let's continue as usual
                 await self.build_and_attach_bundles(advisory)
             elif impetus == "advance":
-                await self.build_and_attach_bundles(advisory)
+                # TODO: remove force=True, temporary hack to fix advisory
+                await self.build_and_attach_bundles(advisory, force=True)
             elif impetus == "prerelease":
                 await self.build_and_attach_prerelease_bundles(advisory)
             else:
