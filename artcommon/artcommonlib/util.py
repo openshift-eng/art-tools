@@ -111,7 +111,7 @@ def get_assembly_release_date(assembly, group):
     """
     assembly_release_date = None
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    for release in release_schedules.json().get('all_ga_tasks', []):
+    for release in release_schedules.json()['all_ga_tasks']:
         if assembly in release['name']:
             # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
             assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
@@ -129,7 +129,7 @@ def get_inflight(assembly, group):
         raise ValueError(f'Assembly release date not found for {assembly}')
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    for release in release_schedules.json().get('all_ga_tasks', []):
+    for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:
             days_diff = abs((datetime.strptime(assembly_release_date, "%Y-%b-%d") - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
