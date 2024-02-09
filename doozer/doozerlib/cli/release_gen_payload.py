@@ -119,7 +119,14 @@ and in more detail in state.yaml. The release-controller, per ART-2195, will
 read and propagate/expose this annotation in its display of the release image.
     """
 
-    runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
+    # Initialize group config: we need this to determine the canonical builders behavior
+    runtime.initialize(config_only=True)
+
+    if runtime.group_config.canonical_builders:
+        runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
+    else:
+        runtime.initialize(mode="both", clone_distgits=False, clone_source=False, prevent_cloning=True)
+
     await GenPayloadCli(
         runtime,
         is_name or assembly_imagestream_base_name(runtime),
