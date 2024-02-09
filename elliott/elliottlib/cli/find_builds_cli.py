@@ -458,8 +458,8 @@ def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
-        for errata in b.all_errata:
-            eid = errata['id']
+        for errata_info in b.all_errata:
+            eid = errata_info['id']
             if eid not in errata_version_cache:
                 release = errata.get_art_release_from_erratum(eid)
                 if not release:
@@ -474,7 +474,7 @@ def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool
                 # builds that have shipped before in preGA advisory, in the GA advisory.
                 # Errata does not allow attaching a build to 2 pending advisories at the same time
                 # So filter if advisory is pending otherwise skip if advisory is shipped
-                if include_shipped and errata['status'] == "SHIPPED_LIVE":
+                if include_shipped and errata_info['status'] == "SHIPPED_LIVE":
                     continue
                 in_same_version = True
                 attached_to_advisories.add(eid)
