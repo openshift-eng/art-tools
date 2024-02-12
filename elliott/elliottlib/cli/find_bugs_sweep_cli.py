@@ -343,8 +343,8 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         advisory = advisory_id_map.get(kind)
         if not advisory:
             continue
-        attached_builds = errata.get_advisory_nvrs(advisory)
-        packages = list(attached_builds.keys())
+        attached_builds = errata.get_all_advisory_nvrs(advisory)
+        packages = set(b[0] for b in attached_builds)
         exception_packages = []
         if kind == 'image':
             # golang builder is a special tracker component

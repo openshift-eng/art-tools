@@ -183,12 +183,13 @@ treated as an error with the advisory.
     PAYLOAD - Full pullspec of the payload to verify
     ADVISORY - Numerical ID of the advisory
 
-Two checks are made:
+Report on:
 
 \b
- 1. Missing in Advisory - No payload components are absent from the given advisory
-
- 2. Payload Advisory Mismatch - The version-release of each payload item match what is in the advisory
+ 1. Missing in Advisory - Payload nvrs that are missing from the given advisory
+ 2. Extra in Advisory - Nvrs that are not in payload but are attached to advisory
+ 3. Attached but Shipped Or Pending - Nvrs that are in payload and attached, but are also attached more advisory(s)
+ which might be pending release or shipped
 
 Results are summarily printed at the end of the run. They are also
 written out to summary_results.json.
@@ -202,77 +203,64 @@ written out to summary_results.json.
     """
     runtime.initialize()
     rhcos_images = {c['name'] for c in rhcos.get_container_configs(runtime)}
-    all_advisory_nvrs = elliottlib.errata.get_advisory_nvrs(advisory)
 
-    click.echo("Found {} builds".format(len(all_advisory_nvrs)))
-
+    runtime.logger.info("Fetching nvrs from payload..")
     all_payload_nvrs = await util.get_nvrs_from_payload(payload, rhcos_images, runtime.logger)
+    all_payload_nvrs = set(all_payload_nvrs)
+    runtime.logger.info(f"Found {len(all_payload_nvrs)} nvrs in payload")
 
-    missing_in_errata = {}
-    payload_doesnt_match_errata = {}
-    in_pending_advisory = []
-    in_shipped_advisory = []
-    output = {
-        'missing_in_advisory': missing_in_errata,
-        'payload_advisory_mismatch': payload_doesnt_match_errata,
-        "in_pending_advisory": in_pending_advisory,
-        "in_shipped_advisory": in_shipped_advisory,
-    }
+    runtime.logger.info("Fetching nvrs from advisory..")
+    all_advisory_nvrs = elliottlib.errata.get_all_advisory_nvrs(advisory)
 
-    green_prefix("Analyzing data: ")
-    click.echo("{} images to consider from payload".format(len(all_payload_nvrs)))
+    # filter out rhcos nvrs since they are special and not auto-stitched and fetched by util.get_nvrs_from_payload
+    all_advisory_nvrs = [n for n in all_advisory_nvrs if "rhcos-" not in n[0]]
 
-    for image, vr_tuple in all_payload_nvrs.items():
-        vr = f"{vr_tuple[0]}-{vr_tuple[1]}"
-        imagevr = f"{image}-{vr}"
-        yellow_prefix("Cross-checking from payload: ")
-        click.echo(imagevr)
-        if image not in all_advisory_nvrs:
-            missing_in_errata[image] = imagevr
-            click.echo(f"{imagevr} in payload not found in advisory")
-        elif image in all_advisory_nvrs and vr != all_advisory_nvrs[image]:
-            click.echo(f"{image} from payload has version {vr} which does not match {all_advisory_nvrs[image]} from advisory")
-            payload_doesnt_match_errata[image] = {
-                'payload': vr,
-                'errata': all_advisory_nvrs[image]
-            }
+    all_advisory_nvrs = set(all_advisory_nvrs)
+    runtime.logger.info(f"Found {len(all_advisory_nvrs)} nvrs in advisory")
 
-    if missing_in_errata:  # check if missing images are already shipped or pending to ship
-        advisory_nvrs: Dict[int, List[str]] = {}  # a dict mapping advisory numbers to lists of NVRs
-        green_print(f"Checking if {len(missing_in_errata)} missing images are shipped...")
-        for nvr in missing_in_errata.copy().values():
-            # get the list of advisories that this build has been attached to
-            build = elliottlib.errata.get_brew_build(nvr)
-            # filter out dropped advisories
-            advisories = [ad for ad in build.all_errata if ad["status"] != "DROPPED_NO_SHIP"]
-            if not advisories:
-                red_print(f"Build {nvr} is not attached to any advisories.")
+    missing_in_advisory = all_payload_nvrs - all_advisory_nvrs
+    extra_in_advisory = all_advisory_nvrs - all_payload_nvrs
+    runtime.logger.info(f"Extra in advisory {len(extra_in_advisory)}")
+
+    in_pending_advisory = set()
+    in_shipped_advisory = set()
+    attached_but_shipped_or_pending = set()
+
+    runtime.logger.info(f"Checking if any payload nvrs that are attached have been shipped...")
+    for nvr_tuple in all_payload_nvrs & all_advisory_nvrs:
+        nvr = "-".join(nvr_tuple)
+        build = elliottlib.errata.get_brew_build(nvr)
+        for ad in build.all_errata:
+            if ad['id'] == advisory:
                 continue
-            for advisory in advisories:
-                if advisory["status"] == "SHIPPED_LIVE":
-                    green_print(f"Missing build {nvr} has been shipped with advisory {advisory}.")
+            if ad["status"] == "DROPPED_NO_SHIP":
+                continue
+            attached_but_shipped_or_pending.add(nvr_tuple)
+    if attached_but_shipped_or_pending:
+        runtime.logger.info(f"Nvrs that are attached but shipped or pending {len(attached_but_shipped_or_pending)}")
+
+    if missing_in_advisory:  # check if missing images are already shipped or pending to ship
+        runtime.logger.info(f"Checking if {len(missing_in_advisory)} missing images are shipped...")
+        for nvr_tuple in missing_in_advisory:
+            nvr = "-".join(nvr_tuple)
+            build = elliottlib.errata.get_brew_build(nvr)
+            for ad in build.all_errata:
+                if ad["status"] == "DROPPED_NO_SHIP":
+                    continue
+                if ad["status"] == "SHIPPED_LIVE":
+                    in_shipped_advisory.add(nvr_tuple)
                 else:
-                    yellow_print(f"Missing build {nvr} is in another pending advisory.")
-                advisory_nvrs.setdefault(advisory["id"], []).append(nvr)
-            name = nvr.rsplit("-", 2)[0]
-            del missing_in_errata[name]
-        if advisory_nvrs:
-            click.echo(f"Getting information of {len(advisory_nvrs)} advisories...")
-            for advisory, nvrs in advisory_nvrs.items():
-                advisory_obj = elliottlib.errata.get_raw_erratum(advisory)
-                adv_type, adv_info = next(iter(advisory_obj["errata"].items()))
-                item = {
-                    "id": advisory,
-                    "type": adv_type.upper(),
-                    "url": elliottlib.constants.errata_url + f"/{advisory}",
-                    "summary": adv_info["synopsis"],
-                    "state": adv_info["status"],
-                    "nvrs": nvrs,
-                }
-                if adv_info["status"] == "SHIPPED_LIVE":
-                    in_shipped_advisory.append(item)
-                else:
-                    in_pending_advisory.append(item)
+                    in_pending_advisory.add(nvr_tuple)
+        missing_in_advisory = missing_in_advisory - in_pending_advisory - in_shipped_advisory
+    runtime.logger.info(f"Missing in advisory {len(missing_in_advisory)}")
+
+    output = {
+        "missing_in_advisory": sorted("-".join(t) for t in missing_in_advisory),
+        "extra_in_advisory": sorted("-".join(t) for t in extra_in_advisory),
+        "in_pending_advisory": sorted("-".join(t) for t in in_pending_advisory),
+        "in_shipped_advisory": sorted("-".join(t) for t in in_shipped_advisory),
+        "attached_but_shipped_or_pending": sorted("-".join(t) for t in attached_but_shipped_or_pending)
+    }
 
     green_print("Summary results:")
     click.echo(json.dumps(output, indent=4))

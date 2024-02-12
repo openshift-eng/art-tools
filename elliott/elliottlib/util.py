@@ -508,7 +508,7 @@ async def get_nvrs_from_payload(pullspec, rhcos_images, logger=None):
         if logger:
             logger.info(msg)
 
-    all_payload_nvrs = {}
+    all_payload_nvrs = []
     log("Fetching release info...")
     release_export_cmd = f'oc adm release info {pullspec} -o json'
 
@@ -549,5 +549,5 @@ async def get_nvrs_from_payload(pullspec, rhcos_images, logger=None):
         component = labels['com.redhat.component']
         v = labels['version']
         r = labels['release']
-        all_payload_nvrs[component] = (v, r)
+        all_payload_nvrs.append((component, v, r))
     return all_payload_nvrs

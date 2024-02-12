@@ -262,8 +262,7 @@ class FindBugsGolangCli:
         if not self.go_nvr_map:
             self._logger.info(f"Fetching go build nvrs for {self.pullspec}...")
             rhcos_images = {c['name'] for c in get_container_configs(self._runtime)}
-            nvr_map = await get_nvrs_from_payload(self.pullspec, rhcos_images)
-            nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
+            nvrs = await get_nvrs_from_payload(self.pullspec, rhcos_images)
             self.go_nvr_map = get_golang_container_nvrs(nvrs, self._logger)
 
         if fixed_in_nvr:
