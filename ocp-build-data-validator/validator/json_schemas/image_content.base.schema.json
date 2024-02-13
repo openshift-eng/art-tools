@@ -21,17 +21,6 @@
         "ci_alignment": {
           "type": "object",
           "properties": {
-            "enabled": {
-              "description": "Whether to enable CI alignment. Default value: true",
-              "type": "boolean"
-            },
-            "enabled?": {
-              "$ref": "#/properties/source/properties/ci_alignment/properties/enabled"
-            },
-            "enabled!": {
-              "$ref": "#/properties/source/properties/ci_alignment/properties/enabled"
-            },
-            "enabled-": {},
             "final_user": {
               "description": "Parameter for the transform Dockerfile to set this user when complete",
               "oneOf": [
