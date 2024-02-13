@@ -21,7 +21,6 @@
         "ci_alignment": {
           "type": "object",
           "properties": {
-            "enabled-": {},
             "final_user": {
               "description": "Parameter for the transform Dockerfile to set this user when complete",
               "oneOf": [
