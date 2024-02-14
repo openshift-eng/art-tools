@@ -21,8 +21,8 @@ logger = logutil.getLogger(__name__)
 @cli.command("verify-attached-bugs",
              short_help="Run validations on bugs attached to release advisories and report results")
 @click.option("--verify-bug-status", is_flag=True,
-              help="Check that bugs of advisories are all VERIFIED or more",
-              type=bool, default=False)
+              help="Check that bugs of advisories are all ON_QA or more",
+              type=bool, default=True)
 @click.option("--verify-flaws", is_flag=True,
               help="Check that flaw bugs are attached and associated with respective builds",
               type=bool, default=False)
@@ -51,7 +51,7 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     - Bugs aren't attached to multiple advisories. To skip use --skip-multiple-advisories-check.
 
     Additional validations:
-    - Bug Status (--verify-bug-status): All bugs are in at least in VERIFIED state
+    - Bug Status (--verify-bug-status): All bugs are in at least in ON_QA state
     - Flaw Bugs (--verify-flaws): All flaw bugs are attached to advisories (using attach-cve-flaws logic) and
     associated with respective builds. Verify advisory type is RHSA when applicable, and CVE names field is correct.
 
@@ -103,13 +103,14 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
 
     if validator.problems:
         if validator.output != 'slack':
-            red_print(f"Found the following problems: {validator.problems}")
-            red_print("Some bug problems were listed above. Please investigate.")
+            print("Found the following problems, please investigate")
+            for p in validator.problems:
+                print(p)
         exit(1)
 
 
 @cli.command("verify-bugs", short_help="Verify bugs included in an assembly (default --assembly=stream)")
-@click.option("--verify-bug-status", is_flag=True, help="Check that bugs of advisories are all VERIFIED or more",
+@click.option("--verify-bug-status", is_flag=True, help="Check that bugs of advisories are all ON_QA or more",
               type=bool, default=False)
 @click.option("--no-verify-blocking-bugs", is_flag=True,
               help="Don't check if there are open bugs for the next minor version blocking bugs for this minor version",
@@ -423,18 +424,20 @@ class BugValidator:
                     self._complain(message)
 
     def _verify_bug_status(self, bugs):
-        # complain about bugs that are not yet VERIFIED or more.
+        # complain about bugs that are not yet ON_QA or more.
+        good_resolution = ['CURRENTRELEASE', 'ERRATA',
+                           'Done', 'Fixed', 'Done-Errata', 'Current Release', 'Errata']
         for bug in bugs:
             if bug.is_flaw_bug():
                 continue
-            if bug.status in ["VERIFIED", "RELEASE_PENDING", "Verified", "Release Pending"]:
+            if bug.status in ["VERIFIED", "RELEASE_PENDING", "Verified", "Release Pending", "ON_QA"]:
                 continue
-            if bug.status in ["CLOSED", "Closed"] and bug.resolution in ["ERRATA", 'Errata']:
+            if bug.status in ["CLOSED", "Closed"] and bug.resolution in good_resolution:
                 continue
             status = f"{bug.status}"
             if bug.status in ['CLOSED', 'Closed']:
                 status = f"{bug.status}: {bug.resolution}"
-            self._complain(f"Bug <{bug.weburl}|{bug.id}> has status {status}")
+            self._complain(f"Bug <{bug.weburl}|{bug.id}> has invalid status {status}")
 
     def _find_invalid_trackers(self, bugs):
         logger.info("Checking for invalid tracker bugs")
