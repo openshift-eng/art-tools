@@ -160,6 +160,8 @@ class AssemblyInspector:
         brew_tag = "rhaos-{MAJOR}.{MINOR}-rhel-{RHCOS_EL_MAJOR}-candidate".format_map(self.runtime.group_config.vars)
         check_external_packages = self.runtime.group_config.check_external_packages
 
+        self.runtime.logger.info(f'check_external_packages: {check_external_packages}')
+
         if check_external_packages and self.runtime.assembly_basis_event:
             external_rpms = self.get_external_rpm_build_dicts()
             for entry in check_external_packages:
