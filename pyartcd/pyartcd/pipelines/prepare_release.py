@@ -287,8 +287,6 @@ class PrepareReleasePipeline:
             for _, payload in self.candidate_nightlies.items():
                 self.verify_payload(payload, advisories["image"])
 
-
-
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
             if impetus in ("image", "extras", "metadata", "prerelease", "advance"):

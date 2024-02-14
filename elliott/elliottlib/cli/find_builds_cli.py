@@ -447,7 +447,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     return nvrps
 
 
-def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool):
+def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool = False):
     """
     Filter out builds that are already attached to an ART advisory
     """
