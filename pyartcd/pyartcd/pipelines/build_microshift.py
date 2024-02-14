@@ -225,6 +225,7 @@ class BuildMicroShiftPipeline:
             "--group", self.group,
             "--assembly", self.assembly,
             "find-bugs:sweep",
+            "--permissive",  # this is so we don't error out on non-microshift bugs
             "--use-default-advisory", "microshift"
         ]
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
@@ -432,12 +433,10 @@ class BuildMicroShiftPipeline:
             if not existing_prs.items:
                 result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
                 api.pulls.merge(owner=constants.GITHUB_OWNER, repo=repo, pull_number=result.number, merge_method="squash")
-                api.git.delete_ref(owner=constants.GITHUB_OWNER, repo=repo, ref=f"heads/{branch}")
             else:
                 pull_number = existing_prs.items[0].number
                 result = api.pulls.update(pull_number=pull_number, title=title, body=body)
                 api.pulls.merge(owner=constants.GITHUB_OWNER, repo=repo, pull_number=pull_number, merge_method="squash")
-                api.git.delete_ref(owner=constants.GITHUB_OWNER, repo=repo, ref=f"heads/{branch}")
         else:
             self._logger.warning("PR is not created: Nothing to commit.")
         return result
