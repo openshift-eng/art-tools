@@ -155,8 +155,7 @@ class PromotePipeline:
         logger.info("Release name: %s", release_name)
 
         self._slack_client.bind_channel(release_name)
-        slack_response = await self._slack_client.say(f"Promoting release `{release_name}` @release-artists")
-        slack_thread = slack_response["message"]["ts"]
+        await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
 
         justifications = []
         try:
@@ -238,6 +237,9 @@ class PromotePipeline:
             if self.skip_attached_bug_check:
                 logger.info("Skip checking attached bugs.")
             else:
+                logger.info("Verifying attached bugs...")
+                advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
+
                 # FIXME: We used to skip blocking bug check for the latest minor version,
                 # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
                 # from preparing z-stream releases for the latest minor version.
@@ -247,29 +249,35 @@ class PromotePipeline:
                 # next_minor = f"{major}.{minor + 1}"
                 # logger.info("Checking if %s is GA'd...", next_minor)
                 # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
-                no_verify_blocking_bugs = False
                 # if not graph_data.get("nodes"):
                 #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
                 #     no_verify_blocking_bugs = True
                 # else:
                 #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
-                logger.info("Verifying attached bugs...")
-                advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
+
+                no_verify_blocking_bugs = False
+                if assembly_type in [assembly.AssemblyTypes.PREVIEW,
+                                     assembly.AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
+                    no_verify_blocking_bugs = True
 
                 verify_flaws = True
                 if "prerelease" in impetus_advisories.keys() or assembly_type == assembly.AssemblyTypes.PREVIEW:
                     verify_flaws = False
 
-                if assembly_type in [assembly.AssemblyTypes.PREVIEW, assembly.AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
-                    no_verify_blocking_bugs = True
-
                 try:
-                    await self.verify_attached_bugs(advisories, no_verify_blocking_bugs=no_verify_blocking_bugs,
+                    await self.verify_attached_bugs(advisories,
+                                                    no_verify_blocking_bugs=no_verify_blocking_bugs,
                                                     verify_flaws=verify_flaws)
                 except ChildProcessError as err:
                     logger.warn("Error verifying attached bugs: %s", err)
-                    justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
-                    justifications.append(justification)
+
+                    if assembly_type in [assembly.AssemblyTypes.PREVIEW, assembly.AssemblyTypes.CANDIDATE]:
+                        await self._slack_client.say_in_thread("Attached bugs have some issues. Permitting since "
+                                                               f"assembly is of type {assembly_type}")
+                        await self._slack_client.say_in_thread(str(err))
+                    else:
+                        justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
+                        justifications.append(justification)
 
             # Promote release images
             metadata = {}
@@ -299,7 +307,9 @@ class PromotePipeline:
 
             if not tag_stable:
                 self._logger.warning("Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr)
-                await self._slack_client.say(f"Release {release_name} is ready. It will not appear on the release controllers. Please tell the user to manually pull the release images: {pullspecs_repr}", slack_thread)
+                await self._slack_client.say_in_thread(f"Release {release_name} is ready. It will not appear on the "
+                                                       "release controllers. Please tell the user to manually pull "
+                                                       f"the release images: {pullspecs_repr}")
             else:
                 # check if release is already accepted (in case we timeout and run the job again)
                 tasks = []
@@ -314,7 +324,8 @@ class PromotePipeline:
                 if not all(accepted):
                     # Wait for release images to be accepted by the release controllers
                     self._logger.info("Waiting for release images for %s to be accepted by the release controller...", release_name)
-                    await self._slack_client.say(f"Release {release_name} has been tagged on release controller, but is not accepted yet. Waiting.", slack_thread)
+                    await self._slack_client.say_in_thread(f"Release {release_name} has been tagged on release "
+                                                           "controller, but is not accepted yet. Waiting.")
                     tasks = []
                     for arch, release_info in release_infos.items():
                         release_stream = self._get_release_stream_name(assembly_type, arch)
@@ -333,7 +344,7 @@ class PromotePipeline:
                 self._logger.info("All release images for %s have been accepted by the release controllers.", release_name)
 
                 message = f"Release `{release_name}` has been accepted by the release controllers."
-                await self._slack_client.say(message, slack_thread)
+                await self._slack_client.say_in_thread(message)
 
                 # Send image list
                 if not image_advisory:
@@ -390,7 +401,7 @@ class PromotePipeline:
             self._logger.exception(err)
             error_message = f"Error promoting release {release_name}: {err}\n {traceback.format_exc()}"
             message = f"Promoting release {release_name} failed with: {error_message}"
-            await self._slack_client.say(message, slack_thread)
+            await self._slack_client.say_in_thread(message)
             raise
 
         # Print release infos to console
