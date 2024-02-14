@@ -176,7 +176,7 @@ class BuildMicroShiftPipeline:
                     self._logger.warning("Failed to trigger microshift_sync job: %s", err)
                     message = "@release-artists Please start <https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888" \
                               "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
-                    await self.slack_client.say_in_thread(message, reaction=":art-attention:")
+                    await self.slack_client.say_in_thread(message)
 
             # Check if microshift advisory is defined in assembly
             if 'microshift' not in advisories:
