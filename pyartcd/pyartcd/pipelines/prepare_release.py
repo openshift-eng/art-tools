@@ -595,13 +595,13 @@ class PrepareReleasePipeline:
         _LOGGER.info("Running command: %s", cmd)
         subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
         # elliott verify-payload always writes results to $cwd/"summary_results.json".
-        # move it to a different location to avoid overwritting the result.
+        # move it to a different location to avoid overwriting the result.
         results_path = self.working_dir / "summary_results.json"
         new_path = self.working_dir / f"verify-payload-results-{pullspec.split(':')[-1]}.json"
         shutil.move(results_path, new_path)
         with open(new_path, "r") as f:
             results = json.load(f)
-            if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
+            if results.get("missing_in_advisory") or results.get("extra_in_advisory") or results.get("attached_but_shipped_or_pending"):
                 raise ValueError(f"""Failed to verify payload for nightly {pullspec}.
 Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
 update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
