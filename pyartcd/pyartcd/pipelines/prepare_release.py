@@ -239,11 +239,28 @@ class PrepareReleasePipeline:
                 # Looks like advance advisory is not present, let's continue as usual
                 await self.build_and_attach_bundles(advisory)
             elif impetus == "advance":
+                # TODO: Advance advisory can require force=True
+                # or it would attach prerelease bundles, since it is prepared after prerelease
+                # so detect and do force=True if necessary
                 await self.build_and_attach_bundles(advisory)
             elif impetus == "prerelease":
                 await self.build_and_attach_prerelease_bundles(advisory)
             else:
                 await self.sweep_builds_async(impetus, advisory)
+
+        # Verify attached operators - and gather builds if needed
+        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
+            try:
+                if 'advance' in advisories:
+                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
+                elif 'prerelease' in advisories:
+                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
+                elif 'metadata' in advisories:
+                    await self.verify_attached_operators(advisories["image"], advisories["extras"],
+                                                         advisories['metadata'])
+            except Exception as ex:
+                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
+                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
 
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
@@ -269,19 +286,6 @@ class PrepareReleasePipeline:
             _LOGGER.info("Verify the swept builds match the nightlies...")
             for _, payload in self.candidate_nightlies.items():
                 self.verify_payload(payload, advisories["image"])
-
-        # Verify attached operators
-        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
-            try:
-                if 'advance' in advisories:
-                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
-                elif 'prerelease' in advisories:
-                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
-                elif 'metadata' in advisories:
-                    await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories['metadata'])
-            except Exception as ex:
-                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
-                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
 
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
