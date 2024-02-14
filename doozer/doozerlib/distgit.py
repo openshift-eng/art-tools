@@ -1481,10 +1481,28 @@ class ImageDistGitRepo(DistGitRepo):
         base = image.member
         from_image_metadata = self.runtime.resolve_image(base, False)
 
-        if self.should_match_upstream:
-            parent = self._resolve_parent(original_parent, dfp)
-            if parent:
-                return parent
+        # Non-builder upstream images (e.g. ocp/4.16:<component> which are not based on
+        # streams.yml entries are usually CI image builds. CI images are the output of
+        # Test Platform cluster builds that are not performed in brew/osbs.
+        # That said, the CI builds typically layer content on top of base images
+        # that ultimately derive from ART images like `openshift-base-rhel?` or
+        # `openshift-enterprise-base...` which ARE built in brew.
+        # In other words, ART creates base images, which serve as parent images
+        # for component builds in CI and those components are promoted by CI
+        # into the ocp/4.x imagestream.
+        # It is these non-nightly component images that upstream Dockerfiles are
+        # reconciled with.
+        # So, if ART inspects these images and tries to determine what brew builds
+        # they are associated with, the logic would detect the original ART base image
+        # and NOT the component the upstream image actually represented .
+        # For example, registry.ci.openshift.org/ocp/4.16:cli has the NVR
+        # openshift-enterprise-base-container-v4.16.0-....
+        # instead of an openshift-enterprise-cli-* NVR.
+        # In short, we cannot treat FROM entries like this as canonical.
+        # if self.should_match_upstream:
+        #     parent = self._resolve_parent(original_parent, dfp)
+        #     if parent:
+        #         return parent
 
         if from_image_metadata is None:
             if not self.runtime.ignore_missing_base:
