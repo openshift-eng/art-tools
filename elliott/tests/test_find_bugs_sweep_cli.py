@@ -281,15 +281,15 @@ class TestCategorizeBugsByType(unittest.TestCase):
             flexmock(id='OCPBUGS-4', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component='MicroShift'),
         ]
         builds_map = {
-            'image': {bugs[2].whiteboard_component: None},
-            'rpm': {bugs[1].whiteboard_component: None},
-            'extras': {bugs[0].whiteboard_component: None},
-            'microshift': dict(),
+            'image': [(bugs[2].whiteboard_component, 'version', 'release')],
+            'rpm': [(bugs[1].whiteboard_component, 'version', 'release')],
+            'extras': [(bugs[0].whiteboard_component, 'version', 'release')],
+            'microshift': [],
         }
 
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
         for kind in advisory_id_map.keys():
-            flexmock(errata).should_receive("get_advisory_nvrs").with_args(advisory_id_map[kind]).and_return(
+            flexmock(errata).should_receive("get_all_advisory_nvrs").with_args(advisory_id_map[kind]).and_return(
                 builds_map[kind])
         expected = {
             'rpm': {bugs[1].id},
@@ -299,7 +299,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'microshift': {bugs[4].id},
         }
 
-        queried, issues = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+        queried, issues = categorize_bugs_by_type(bugs, advisory_id_map, major_version=4,
+                                                  operator_bundle_advisory="metadata")
         self.assertEqual(issues, [])
         for adv in queried:
             actual = set()
@@ -312,7 +313,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
-            categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+            categorize_bugs_by_type(bugs, advisory_id_map, major_version=4, operator_bundle_advisory="metadata")
 
 
 class TestGenAssemblyBugIDs(unittest.TestCase):

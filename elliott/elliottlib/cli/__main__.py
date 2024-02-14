@@ -226,7 +226,7 @@ written out to summary_results.json.
     in_shipped_advisory = set()
     attached_but_shipped_or_pending = set()
 
-    runtime.logger.info(f"Checking if any payload nvrs that are attached have been shipped...")
+    runtime.logger.info("Checking if any payload nvrs that are attached have been shipped...")
     for nvr_tuple in all_payload_nvrs & all_advisory_nvrs:
         nvr = "-".join(nvr_tuple)
         build = elliottlib.errata.get_brew_build(nvr)
