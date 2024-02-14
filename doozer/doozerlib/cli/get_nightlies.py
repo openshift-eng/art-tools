@@ -323,7 +323,7 @@ class Nightly:
         for tag, commit in self.commit_for_tag.items():
             other_commit = other.commit_for_tag.get(tag)
             if commit and other_commit and commit != other_commit:
-                logger.warning(f"{self.name} differs from {other.name} because {tag}@{commit} != {tag}@{other_commit}")
+                logger.info(f"{self.name} differs from {other.name} because {tag}@{commit} != {tag}@{other_commit}")
                 return False
             # ^^ missing entries automatically match
 
