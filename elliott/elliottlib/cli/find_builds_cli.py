@@ -152,7 +152,6 @@ PRESENT advisory. Here are some examples:
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
                                            nvrp[3], session=requests.Session())
     )
-
     previous = len(unshipped_builds)
     unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds, include_shipped)
     if len(unshipped_builds) != previous:
