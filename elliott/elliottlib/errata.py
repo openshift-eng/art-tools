@@ -769,3 +769,10 @@ def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """
     return ErrataConnector()._put(f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true',
                                   json=file_meta)
+
+
+def push_cdn_stage(advisory_id) -> List[dict]:
+    """Trigger stage push for an advisory
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#pushing-advisories
+    """
+    return ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/push', data=[{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}])
