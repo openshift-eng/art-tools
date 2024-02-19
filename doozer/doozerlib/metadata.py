@@ -459,24 +459,16 @@ class Metadata(object):
                 raise IOError(msg)
 
             def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate other release components that might be introduced later.
-                # Also include a .el<version> suffix to match the new build pattern
-                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.el{self.branch_el_target()}*'
+                # Include * after pattern_suffix to tolerate:
+                # 1. Matching an unspecified RPM suffix (e.g. .el7).
+                # 2. Other release components that might be introduced later.
+                # Matching a higher number of builds to avoid getting only the wrong .el<version> one,
+                # which will be then filtered out
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
-                                             pattern=rhel_pattern,
-                                             queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                                             pattern=f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}',
+                                             queryOpts={'limit': 10, 'order': '-creation_event_id'},
                                              **list_builds_kwargs)
-
-                # If no builds were found, the component might still be following the old pattern,
-                # where a .el suffix was not included in the NVR
-                if not builds:
-                    legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
-                    builds = koji_api.listBuilds(packageID=package_id,
-                                                 state=None if build_state is None else build_state.value,
-                                                 pattern=legacy_pattern,
-                                                 queryOpts={'limit': 1, 'order': '-creation_event_id'},
-                                                 **list_builds_kwargs)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from

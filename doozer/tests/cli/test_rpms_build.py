@@ -22,9 +22,8 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         runtime.logger = logging.getLogger()
         return runtime
 
-    @patch("doozerlib.metadata.Metadata.branch_el_target")
     @patch("doozerlib.cli.rpms.RPMBuilder")
-    async def test_rpms_build_success(self, MockedRPMBuilder: Mock, _):
+    async def test_rpms_build_success(self, MockedRPMBuilder: Mock):
         runtime = self._make_runtime()
         version = "v1.2.3"
         release = "202104070000.yuxzhu.test.p?"
@@ -72,9 +71,8 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, 0)
 
-    @patch("doozerlib.metadata.Metadata.branch_el_target")
     @patch("doozerlib.cli.rpms.RPMBuilder")
-    async def test_rpms_build_failure(self, MockedRPMBuilder: Mock, _):
+    async def test_rpms_build_failure(self, MockedRPMBuilder: Mock):
         runtime = self._make_runtime()
         version = "v1.2.3"
         release = "202104070000.yuxzhu.test.p?"
