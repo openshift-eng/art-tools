@@ -57,14 +57,13 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         rpm._run_modifications = mock.MagicMock()
         return rpm
 
-    @mock.patch("doozerlib.metadata.Metadata.branch_el_target")
     @mock.patch("doozerlib.rpm_builder.Path.mkdir")
     @mock.patch("shutil.copy")
     @mock.patch("aiofiles.os.remove")
     @mock.patch("aiofiles.open")
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_assert_async")
     async def test_rebase(self, mocked_cmd_assert_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
-                          mocked_copy: mock.Mock, mocked_mkdir: mock.Mock, _):
+                          mocked_copy: mock.Mock, mocked_mkdir: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()
@@ -98,14 +97,13 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
                                           )
         dg.push_async.assert_called_once()
 
-    @mock.patch("doozerlib.metadata.Metadata.branch_el_target")
     @mock.patch("doozerlib.rpm_builder.Path.mkdir")
     @mock.patch("shutil.copy")
     @mock.patch("aiofiles.os.remove")
     @mock.patch("aiofiles.open")
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_assert_async")
     async def test_rebase_with_assembly(self, mocked_cmd_assert_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
-                                        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock, _):
+                                        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime(assembly='tester')
@@ -138,9 +136,8 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
                                               'io.openshift.build.source-location': None})
         dg.push_async.assert_called_once()
 
-    @mock.patch("doozerlib.metadata.Metadata.branch_el_target")
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_gather_async")
-    async def test_build_success(self, mocked_cmd_gather_async: mock.Mock, _):
+    async def test_build_success(self, mocked_cmd_gather_async: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()
@@ -176,10 +173,9 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         mocked_cmd_gather_async.assert_any_call(["brew", "download-logs", "--recurse", "-d", mock.ANY, 10001])
         mocked_cmd_gather_async.assert_any_call(["brew", "download-logs", "--recurse", "-d", mock.ANY, 10002])
 
-    @mock.patch("doozerlib.metadata.Metadata.branch_el_target")
     @mock.patch("asyncio.sleep")
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_gather_async")
-    async def test_build_failure(self, mocked_cmd_gather_async: mock.Mock, mocked_sleep: mock.Mock, _):
+    async def test_build_failure(self, mocked_cmd_gather_async: mock.Mock, mocked_sleep: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()
@@ -233,9 +229,8 @@ systemd-units
         actual = await builder._golang_required("./foo.spec")
         self.assertTrue(actual)
 
-    @mock.patch("doozerlib.metadata.Metadata.branch_el_target")
     @mock.patch("aiofiles.open")
-    async def test_populate_specfile_async(self, mocked_open: mock.Mock, _):
+    async def test_populate_specfile_async(self, mocked_open: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()
@@ -276,9 +271,8 @@ Some description
         self.assertIn("Version:        1.2.3\n", specfile_content)
         self.assertIn("AOS Automation Release Team <noreply@redhat.com>", specfile_content[17])
 
-    @mock.patch("doozerlib.metadata.Metadata.branch_el_target")
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_assert_async")
-    async def test_build_target_async(self, mocked_cmd_assert_async: mock.Mock, _):
+    async def test_build_target_async(self, mocked_cmd_assert_async: mock.Mock):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()

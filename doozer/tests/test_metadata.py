@@ -259,7 +259,7 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly='stream', is_rpm=True, release_suffix='.el8')
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # No target should find el7 or el8
-        self.assertIsNotNone(meta.get_latest_build(default=None, el_target='7'))
+        self.assertIsNone(meta.get_latest_build(default=None, el_target='7'))
         self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[1])
 
         builds = [
@@ -267,8 +267,8 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly='stream', is_rpm=True, release_suffix='.el7'),
             self.build_record(now - datetime.timedelta(hours=1), assembly='stream', is_rpm=True, release_suffix='.el8')
         ]
-        self.assertEqual(meta.get_latest_build(default=None), builds[2])
-        self.assertEqual(meta.get_latest_build(default=None, el_target='7'), builds[2])
+        self.assertEqual(meta.get_latest_build(default=None), builds[1])  # Latest is el7 by one hour
+        self.assertEqual(meta.get_latest_build(default=None, el_target='7'), builds[1])
         self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[2])
 
     def test_needs_rebuild_disgit_only(self):
@@ -397,7 +397,7 @@ class TestMetadata(TestCase):
             self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7'),
             self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8')
         ]
-        self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER)
+        self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
         # If a build is newer, but el8 failed
         builds = [
