@@ -174,7 +174,7 @@ class ImageMetadata(Metadata):
     def pull_url(self):
         # Don't trust what is the Dockerfile for version & release. This field may not even be present.
         # Query brew to find the most recently built release for this component version.
-        _, version, release = self.get_latest_build_info()
+        _, version, release = self.get_latest_build_info(el_target=self.branch_el_target())
 
         # we need to pull images from proxy if 'brew_image_namespace' is enabled:
         # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy
