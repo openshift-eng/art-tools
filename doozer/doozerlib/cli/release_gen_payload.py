@@ -608,7 +608,7 @@ class GenPayloadCli:
             entries, issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
 
             # Exclude issues for now, for private repo
-            private_entries, _ = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
+            private_entries, _ = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
             entries_for_arch[arch] = entries
             private_entries_for_arch[arch] = private_entries
             self.assembly_issues.extend(issues)
