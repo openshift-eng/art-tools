@@ -140,8 +140,7 @@ def print_advisory_golang(advisory_id, components, output, report):
 
 
 async def print_release_golang(pullspec, rhcos_images, components, output, report):
-    nvr_map = await util.get_nvrs_from_payload(pullspec, rhcos_images, _LOGGER)
-    nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
+    nvrs = await util.get_nvrs_from_payload(pullspec, rhcos_images, _LOGGER)
     _LOGGER.debug(f'{len(nvrs)} builds found in {pullspec}')
     if not nvrs:
         _LOGGER.debug('No golang builds found. exiting')

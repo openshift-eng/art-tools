@@ -268,7 +268,8 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, operator_bundle_advisory: str = "metadata", permissive=False, major_version: int = 4):
+                            permitted_bug_ids=None, operator_bundle_advisory: str = "metadata",
+                            permissive=False, major_version: int = 4):
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -334,8 +335,8 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         advisory = advisory_id_map.get(kind)
         if not advisory:
             continue
-        attached_builds = errata.get_advisory_nvrs(advisory)
-        packages = list(attached_builds.keys())
+        attached_builds = errata.get_all_advisory_nvrs(advisory)
+        packages = set(b[0] for b in attached_builds)
         exception_packages = []
         if kind == 'image':
             # golang builder is a special tracker component

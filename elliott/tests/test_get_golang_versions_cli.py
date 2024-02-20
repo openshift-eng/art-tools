@@ -59,7 +59,7 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
     def test_get_golang_versions_release(self, mock_get_nvrs_from_payload: AsyncMock):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize").and_return(None)
-        payload_nvrs = {'ose-cli-container': ('3.0.1', '6.el8')}
+        payload_nvrs = [('ose-cli-container', '3.0.1', '6.el8')]
         go_map = {'1.15': {('ose-cli-container', '3.0.1', '6.el8')}}
 
         logger = get_golang_versions_cli._LOGGER
