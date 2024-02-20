@@ -8,7 +8,7 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug, Bug
 from elliottlib.util import get_nvrs_from_payload, get_golang_container_nvrs, get_golang_rpm_nvrs
 from elliottlib.rpm_utils import parse_nvr
-from elliottlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event
+from elliottlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, _assembly_field
 from elliottlib import errata
 
 from pyartcd import constants as pyartcd_constants
@@ -158,8 +158,12 @@ class GetGolangEarliestFixCli:
             if a_type != AssemblyTypes.STANDARD:
                 continue
 
-            rpm_advisory = info['assembly'].get('group', {}).get('advisories', {}).get('rpm', 0)
-            image_advisory = info['assembly'].get('group', {}).get('advisories', {}).get('image', 0)
+            group = _assembly_field("group", releases_config, assembly_name)
+            if not group.advisories:
+                raise ValueError(f"Unexpected - no advisories found for standard assembly {assembly_name}")
+
+            rpm_advisory = group.advisories.rpm
+            image_advisory = group.advisories.image
             if rpm_advisory not in attached_in_erratas:
                 continue
 
