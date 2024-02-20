@@ -763,6 +763,45 @@ def get_file_meta(advisory_id) -> List[dict]:
     return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
 
 
+def create_batch(release_version, release_date):
+    """Create batch for a release
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
+    :param release_name: release name, e.g. 4.14.12
+    :param release_date: release date, e.g. 2024-02-08
+    :return: return the batch id which used as parameter when creating advisory
+
+    """
+    data = {
+        "name": f"OCP {release_version}",
+        "release_name": "RHOSE ASYNC - AUTO",
+        "release_date": release_date,
+        "description": f"OCP {release_version}",
+        "is_active": True
+        }
+    response = ErrataConnector()._post("/api/v1/batches", data=data)
+    if response.status_code != requests.codes.created:
+        raise IOError(f'Failed to create batch with code {response.status_code} and error: {response.text}')
+    else:
+        return response.json()['data']['id']
+
+
+def change_advisory_batch(advisory_id, batch_id, clear_batch=False):
+    """Change the batch details for an advisory.
+    POST /api/v1/erratum/{id}/change_batch
+    Request body may contain:
+        batch_id - id of the batch (integer)
+        batch_name - name of the batch (string) - alternative to batch_id
+        clear_batch - removes erratum from batch (boolean)
+        is_batch_blocker - indicates if advisory blocks batch (boolean)
+    """
+    if clear_batch:
+        response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"clear_batch": True})
+    else:
+        response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"batch_id": batch_id})
+    if response.status_code != requests.codes.created:
+        raise IOError(f'Failed to create update advisory batch with code {response.status_code} and error: {response.text}')
+
+
 def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """Update the metadata for some or all files in this advisory.
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-put-apiv1erratumidfilemeta

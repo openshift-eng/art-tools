@@ -22,6 +22,7 @@ from doozerlib.assembly import AssemblyTypes
 from elliottlib.assembly import assembly_group_config
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.errata import get_brew_builds
+from elliottlib.errata import create_batch, change_advisory_batch
 from elliottlib.model import Model
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -141,6 +142,7 @@ class PrepareReleasePipeline:
             self.check_blockers()
 
         advisories = {}
+        batch_id = None
 
         if self.default_advisories:
             advisories = group_config.get("advisories", {})
@@ -152,6 +154,9 @@ class PrepareReleasePipeline:
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
+                    if not batch_id:
+                        # Create a batch for a release if not created
+                        batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
                     if ad == "advance":
                         # Set release date to one week before
                         # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
@@ -167,6 +172,8 @@ class PrepareReleasePipeline:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
                                                           release_date=self.release_date)
+                    # Connect advisory to the batch_id
+                    change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
 
