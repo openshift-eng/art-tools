@@ -186,8 +186,20 @@ class BugValidator:
             self._verify_bug_status(non_flaw_bugs)
 
     def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
-        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids,
-                                               permissive=True)
+        advance_release = False
+        if "advance" in advisory_id_map:
+            if "metadata" in advisory_id_map:
+                if len(advisory_bug_map[advisory_id_map["advance"]]) > len(advisory_bug_map[advisory_id_map["metadata"]]):
+                    advance_release = True
+            else:
+                advance_release = True
+        operator_bundle_advisory = "advance" if advance_release else "metadata"
+        bugs_by_type, issues = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map,
+                                                       permitted_bug_ids=permitted_bug_ids,
+                                                       permissive=True, operator_bundle_advisory=operator_bundle_advisory)
+        for i in issues:
+            self._complain(i)
+
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
 

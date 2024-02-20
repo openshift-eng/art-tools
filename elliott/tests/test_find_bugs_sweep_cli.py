@@ -44,7 +44,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
-        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({})
+        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({}, [])
 
         # jira mocks
         jira_bug = flexmock(
@@ -82,7 +82,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({})
-        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({})
+        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({}, [])
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -193,7 +193,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123})
-        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": set(bugs)})
+        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({"image": set(bugs)}, [])
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -233,7 +233,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             "image": set(image_bugs),
             "rpm": set(rpm_bugs),
             "extras": set(extras_bugs)
-        })
+        }, [])
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123, 'rpm': 123, 'extras': 123,
                                                                               'metadata': 123})
 
@@ -287,7 +287,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'microshift': {bugs[4].id},
         }
 
-        queried = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+        queried, issues = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+        self.assertEqual(issues, [])
         for adv in queried:
             actual = set()
             for bug in queried[adv]:
