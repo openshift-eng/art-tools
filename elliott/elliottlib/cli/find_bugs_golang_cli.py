@@ -231,7 +231,7 @@ class FindBugsGolangCli:
         logger.info(f"Searching for open golang security trackers with target version {tr}")
 
         query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
-                 'and labels = "SecurityTracking" '
+                 'and status not in (ON_QA, Verified) and labels = "SecurityTracking" '
                  f'and "Target Version" in ({tr})')
 
         bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
