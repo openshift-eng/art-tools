@@ -224,10 +224,10 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
-    bugs_by_type = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
-                                           permissive=permissive,
-                                           major_version=major_version,
-                                           operator_bundle_advisory=operator_bundle_advisory)
+    bugs_by_type, _ = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
+                                              permissive=permissive,
+                                              major_version=major_version,
+                                              operator_bundle_advisory=operator_bundle_advisory)
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
 
@@ -268,7 +268,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, operator_bundle_advisory: str = "metadata", permissive=False, major_version: int = 4):
+                            permitted_bug_ids, operator_bundle_advisory: str = "metadata",
+                            permissive=False, major_version: int = 4):
+    issues = []
+
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -285,7 +288,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     # for 3.x, all bugs should go to the rpm advisory
     if int(major_version) < 4:
         bugs_by_type["rpm"] = set(bugs)
-        return bugs_by_type
+        return bugs_by_type, issues
 
     # for 4.x, first sort all non_tracker_bugs
     tracker_bugs: type_bug_set = set()
@@ -310,11 +313,12 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         message = f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not."
         if permissive:
             logger.warning(f"{message} Ignoring them.")
+            issues.append(message)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
     if not tracker_bugs:
-        return bugs_by_type
+        return bugs_by_type, issues
 
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
@@ -324,7 +328,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     if not advisory_id_map:
         logger.info("Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
                     "validate trackers.")
-        return bugs_by_type
+        return bugs_by_type, issues
 
     logger.info("Validating tracker bugs with builds in advisories..")
     found = set()
@@ -376,10 +380,11 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                        f'ids in the assembly definition')
             if permissive:
                 logger.warning(f"{message} Ignoring them for now.")
+                issues.append(message)
             else:
                 raise ValueError(message)
 
-    return bugs_by_type
+    return bugs_by_type, issues
 
 
 def extras_bugs(bugs: type_bug_set) -> type_bug_set:
