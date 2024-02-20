@@ -132,6 +132,14 @@ class GetGolangEarliestFixCli:
 
         return fixed
 
+    async def is_fixed_golang_builder(self, bug, tracker_fixed_in, pullspec):
+        self._logger.info(f"Fetching go build nvrs for {pullspec}...")
+        rhcos_images = {c['name'] for c in get_container_configs(self._runtime)}
+        nvr_map = await get_nvrs_from_payload(pullspec, rhcos_images)
+        nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
+        go_nvr_map = get_golang_container_nvrs(nvrs, self._logger)
+        return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
+
     async def earliest_fix_builder(self, bug, tracker_fixed_in):
         # We want to find the earliest payload release that had the golang bump
         # this is different from rpms, since we do not ship golang builder image in errata
@@ -141,8 +149,8 @@ class GetGolangEarliestFixCli:
         # Since there is no ET endpoint which serves us this mapping {advisory: shipped_brew_build} for a package
         # we need to build this mapping ourselves
         # we could also take a container image (like ose-cli-artifacts)
-        # but rpm is better in this case since we're using ET api to fetch advisory builds
-        # and number of container builds >> number of rpm builds
+        # but rpm is better in this case since we're using ET api to fetch all advisory builds
+        # number of builds in image advisory >> number of builds in rpm advisory
         rpm_name = 'openshift'
 
         # get all advisories that this rpm has shipped in
@@ -176,10 +184,11 @@ class GetGolangEarliestFixCli:
             self._logger.info(f"{rpm_name} {status} in {assembly_name} advisory {rpm_advisory}: {nvrs}")
             go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
             fixed = self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
-            status = "fixed" if fixed else "not fixed"
-            self._logger.info(f"{bug.id} is {status} in {assembly_name}")
             # append image advisory since builder bug should be associated with payload/image advisory
             fixed_results.append((assembly_name, image_advisory, fixed))
+            self._logger.info(f"{bug.id} is {"fixed" if fixed else "not fixed"} in {assembly_name}")
+            if not fixed:
+                break
 
         previous_fixed = None
         for assembly_name, image_advisory, fixed in fixed_results[::-1]:
@@ -187,12 +196,7 @@ class GetGolangEarliestFixCli:
                 click.echo(f'Golang bump relevant to {bug.id} was first introduced in {assembly_name}')
                 click.echo('Verifying that payload matches golang bump')
                 pullspec = f'{pyartcd_constants.RELEASE_IMAGE_REPO}:{assembly_name}-x86_64'
-                self._logger.info(f"Fetching go build nvrs for {pullspec}...")
-                rhcos_images = {c['name'] for c in get_container_configs(self._runtime)}
-                nvr_map = await get_nvrs_from_payload(pullspec, rhcos_images)
-                nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
-                go_nvr_map = get_golang_container_nvrs(nvrs, self._logger)
-                if self._is_fixed(bug, tracker_fixed_in, go_nvr_map):
+                if self.is_fixed_golang_builder(bug, tracker_fixed_in, pullspec)
                     advisory_link = f'https://errata.devel.redhat.com/advisory/{image_advisory}'
                     click.echo(f'Fix for {bug.id} was first introduced in {assembly_name} payload, and should be '
                                f'associated with {assembly_name} release image advisory: {advisory_link}')
