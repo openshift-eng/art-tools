@@ -260,7 +260,7 @@ class Metadata(object):
             def latest_build_list(pattern_suffix):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
-                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.el{el_target}*'
+                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=rhel_pattern,
