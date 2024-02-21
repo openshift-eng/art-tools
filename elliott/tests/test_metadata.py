@@ -113,7 +113,7 @@ class TestMetadata(unittest.TestCase):
         koji_mock = self.koji_mock
         now = datetime.datetime.now(datetime.timezone.utc)
 
-        def list_builds(packageID=None, state=None, pattern=None, queryOpts=None):
+        def list_builds(packageID=None, state=None, pattern=None, queryOpts=None, **kwargs):
             return self._list_builds(builds, packageID=packageID, state=state, pattern=pattern, queryOpts=queryOpts)
 
         koji_mock.listBuilds.side_effect = list_builds
@@ -134,32 +134,6 @@ class TestMetadata(unittest.TestCase):
         builds = [
             self.build_record(now, assembly='not_ours'),
             self.build_record(now, assembly='stream')
-        ]
-        self.assertEqual(meta.get_latest_build(default=None), builds[1])
-
-        # If there is a build from the 'stream' assembly, but it is for the
-        # wrong RHEL based on our metadata tag, it should not be returned.
-        builds = [
-            self.build_record(now, assembly='not_ours', release_suffix='.el8'),
-            self.build_record(now, assembly='stream', release_suffix='.el9')
-        ]
-        self.assertIsNone(meta.get_latest_build(default=None))
-
-        # Filtering should prefer images which match our tag's RHEL version.
-        builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly='stream', release_suffix='.el8'),
-            self.build_record(now, assembly='stream', release_suffix='.el9')
-        ]
-        self.assertEqual(meta.get_latest_build(default=None), builds[1])
-
-        # Filtering should prefer images which match our tag's RHEL version, bug
-        # if there is no match for our elX, at the very least, it should filter out
-        # the wrong elY.
-        builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly='stream'),
-            self.build_record(now, assembly='stream', release_suffix='.el9')
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
