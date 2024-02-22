@@ -427,12 +427,6 @@ class Runtime(GroupRuntime):
         self.group_dir = self.gitdata.data_dir
         self.group_config = self.get_group_config()
 
-        # If canonical_builders is enabled, we need to clone distgits
-        if self.group_config.canonical_builders_from_upstream is not Missing and \
-                self.group_config.canonical_builders_from_upstream in ['on', True] and \
-                not clone_distgits:
-            raise ValueError('Need to clone distgits when canonical_builders is enabled')
-
         self.hotfix = False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
 
         if self.group_config.assemblies.enabled or self.enable_assemblies:
