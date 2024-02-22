@@ -112,7 +112,13 @@ PRESENT advisory. Here are some examples:
     if payload and non_payload:
         raise click.BadParameter('Use only one of --payload or --non-payload.')
 
-    runtime.initialize(mode='images' if kind == 'image' else 'rpms')
+    mode = 'images' if kind == 'image' else 'rpms'
+    runtime.initialize(config_only=True)
+    if runtime.group_config.canonical_builders_from_upstream:
+        runtime.initialize(mode=mode, clone_distgits=True, clone_source=False, prevent_cloning=False)
+    else:
+        runtime.initialize(mode=mode, clone_distgits=False, clone_source=False, prevent_cloning=True)
+
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
