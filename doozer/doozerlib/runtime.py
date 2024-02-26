@@ -102,6 +102,7 @@ class Runtime(GroupRuntime):
         self.quiet = False
         self.load_wip = False
         self.load_disabled = False
+        self.logger = None
         self.data_path = None
         self.data_dir = None
         self.latest_parent_version = False
