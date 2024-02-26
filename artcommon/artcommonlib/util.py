@@ -113,7 +113,7 @@ def get_assembly_release_date(assembly, group):
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         # release['name'] usually has release name in value like "4.15.1 in Fast Channel", but for GA the value will be like "4.15 GA"
-        if assembly in release['name'] or ("ec" in assembly or "rc" in assembly or ".0" in assembly) and "GA" in release['name']:  
+        if assembly in release['name'] or ("ec" in assembly or "rc" in assembly or ".0" in assembly) and "GA" in release['name']:
             # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
             assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
             break
