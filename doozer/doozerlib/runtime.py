@@ -483,6 +483,11 @@ class Runtime(GroupRuntime):
                 for key, val in source_dict.items():
                     self.register_source_alias(key, val)
 
+        if not self.group_config.canonical_builders_from_upstream:
+            clone_distgits = False
+            clone_source = False
+            prevent_cloning = True
+
         with Dir(self.group_dir):
 
             # Flattens multiple comma/space delimited lists like [ 'x', 'y,z' ] into [ 'x', 'y', 'z' ]
