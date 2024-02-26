@@ -610,8 +610,8 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
-    @patch('doozerlib.distgit.datetime')
-    @patch('doozerlib.distgit.ReleaseSchedule')
+    @patch('artcommonlib.build_util.datetime')
+    @patch('artcommonlib.build_util.ReleaseSchedule')
     def test_canonical_builders_enabled(self, release_schedule, mock_datetime):
         # canonical_builders_from_upstream not defined
         self.img_dg.config.canonical_builders_from_upstream = Missing

@@ -26,7 +26,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion, logutil
+from artcommonlib import assertion, logutil, build_util
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
 from artcommonlib.release_util import isolate_assembly_in_release
@@ -1608,34 +1608,8 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
 
-        if canonical_builders_from_upstream is Missing:
-            # Default case: override using ART's config
-            return False
-        elif canonical_builders_from_upstream == 'auto':
-            # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
-            try:
-                feature_freeze_date = ReleaseSchedule(self.runtime).get_ff_date()
-                return datetime.now() < feature_freeze_date
-            except ChildProcessError:
-                # Could not access Gitlab: display a warning and fallback to default
-                self.logger.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
-                return False
-            except ValueError as e:
-                # A GITLAB token env var was not provided: display a warning and fallback to default
-                self.logger.warning(f'Fallback to default ART config: {e}')
-                return False
-        elif canonical_builders_from_upstream in ['on', True]:
-            # yaml parser converts bare 'on' to True, same for 'off' and False
-            return True
-        elif canonical_builders_from_upstream in ['off', False]:
-            return False
-        else:
-            # Invalid value
-            self.logger.warning(
-                'Invalid value provided for "canonical_builders_from_upstream": %s',
-                canonical_builders_from_upstream
-            )
-            return False
+        return build_util.canonical_builders_enabled(
+            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
