@@ -6,14 +6,14 @@ from urllib.parse import urlparse
 import requests
 import yaml
 
+from artcommonlib.logutil import get_logger
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.exectools import cmd_assert
-from doozerlib.logutil import getLogger
 from doozerlib.model import Missing
 from doozerlib.pushd import Dir
 from doozerlib.util import is_in_directory, mkdirs
 
-LOGGER = getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 
 class SourceModifierFactory(object):

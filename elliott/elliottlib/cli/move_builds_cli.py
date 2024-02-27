@@ -1,11 +1,12 @@
 import sys
 import click
 
-from elliottlib import errata, logutil
+from artcommonlib import logutil
+from elliottlib import errata
 from elliottlib.cli.common import cli, move_builds
 from elliottlib.util import ensure_erratatool_auth
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command('move-builds', short_help='Move builds from one advisory to another')

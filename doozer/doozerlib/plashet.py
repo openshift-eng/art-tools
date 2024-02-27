@@ -1,8 +1,8 @@
-import logging
 from collections import OrderedDict
 from logging import Logger
 from typing import Dict, Iterable, List, Optional, Union
 
+from artcommonlib import logutil
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.build_util import find_latest_builds
 from doozerlib.rpm_utils import parse_nvr
@@ -18,7 +18,7 @@ from doozerlib.util import strip_epoch, to_nvre
 class PlashetBuilder:
     def __init__(self, koji_api: ClientSession, logger: Optional[Logger] = None) -> None:
         self._koji_api = koji_api
-        self._logger = logger or logging.getLogger(__name__)
+        self._logger = logger or logutil.get_logger(__name__)
         self._build_cache: Dict[str, Optional[Dict]] = {}  # Cache build_id/nvre -> build_dict to prevent unnecessary queries.
 
     def _get_builds(self, ids_or_nvrs: Iterable[Union[int, str]]) -> List[Dict]:

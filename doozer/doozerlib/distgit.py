@@ -26,11 +26,11 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib import constants, exectools, logutil, state, util
+from doozerlib import constants, exectools, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
@@ -65,7 +65,7 @@ CONTAINER_YAML_HEADER = """
 # May be added to based on group/image config
 BASE_IGNORE = [".git", ".oit"]
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 def recursive_overwrite(src, dest, ignore=set()):

@@ -1,7 +1,7 @@
 from future import standard_library
 
 import artcommonlib.util
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
 
@@ -30,7 +30,6 @@ from jira import JIRA
 
 from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
-from . import logutil
 from . import exectools
 from . import dblib
 from .pushd import Dir
@@ -696,7 +695,7 @@ class Runtime(GroupRuntime):
             root_logger.addFilter(logging.Filter("ocp"))
 
         # Get a reference to the logger for doozer
-        self.logger = logutil.getLogger()
+        self.logger = logutil.get_logger()
         self.logger.propagate = False
 
         # levels will be set at the handler level. Make sure master level is low.
