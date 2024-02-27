@@ -202,7 +202,7 @@ def _assembly_field(field_name: str, releases_config: Model, assembly: str) -> M
     :param field_name: the field name
     :param releases_config: The content of releases.yml in Model form.
     :param assembly: The name of the assembly to assess
-    Returns the a computed rhcos config model for a given assembly.
+    Returns the computed field as Model object for a given assembly.
     """
     if not assembly or not isinstance(releases_config, Model):
         return Missing

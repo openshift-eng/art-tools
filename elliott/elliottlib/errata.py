@@ -416,6 +416,18 @@ def get_brew_build(nvr, product_version='', session=None):
             msg=res.text))
 
 
+def get_package(package_name, session=None):
+    if session is None:
+        session = requests.session()
+
+    res = session.get(constants.errata_get_package_url.format(package_name=package_name),
+                      verify=ssl.get_default_verify_paths().openssl_cafile,
+                      auth=HTTPSPNEGOAuth())
+
+    res.raise_for_status()
+    return res.json()
+
+
 def get_advisories_for_bug(bug_id, session=None):
     """ Fetch the list of advisories which a specified bug is attached to.
 
