@@ -27,10 +27,10 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
 
 import doozerlib
 from artcommonlib import assertion
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import constants, exectools, logutil, state, util
-from doozerlib.assembly import AssemblyTypes
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError

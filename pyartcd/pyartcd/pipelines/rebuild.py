@@ -13,8 +13,8 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import click
 import yaml
-from aioredlock import LockError
-from doozerlib.assembly import AssemblyTypes
+
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group
 from pyartcd import constants, exectools, locks, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime

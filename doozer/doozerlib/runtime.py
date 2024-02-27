@@ -2,6 +2,8 @@ from future import standard_library
 
 import artcommonlib.util
 from artcommonlib import assertion
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
+    assembly_streams_config
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -43,7 +45,6 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib import constants
 from doozerlib import util
 from doozerlib import brew
-from doozerlib.assembly import assembly_group_config, assembly_basis_event, assembly_type, AssemblyTypes, assembly_streams_config
 from doozerlib.build_status_detector import BuildStatusDetector
 
 # Values corresponds to schema for group.yml: freeze_automation. When

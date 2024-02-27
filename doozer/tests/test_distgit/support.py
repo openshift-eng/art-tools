@@ -1,7 +1,7 @@
 from unittest import IsolatedAsyncioTestCase
 from future import standard_library
 
-from doozerlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
 
 standard_library.install_aliases()
 

@@ -3,11 +3,11 @@ from collections import OrderedDict
 from logging import Logger
 from typing import Dict, Iterable, List, Optional, Union
 
+from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.build_util import find_latest_builds
 from doozerlib.rpm_utils import parse_nvr
 from koji import ClientSession
 
-from doozerlib.assembly import assembly_metadata_config, assembly_rhcos_config
 from doozerlib.brew import get_build_objects, list_archives_by_builds
 from doozerlib.image import ImageMetadata
 from doozerlib.model import Model

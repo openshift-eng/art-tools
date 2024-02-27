@@ -13,8 +13,8 @@ from typing import Dict, Iterable, List, Optional, Tuple, cast
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group
-from doozerlib.assembly import AssemblyTypes
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML

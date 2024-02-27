@@ -11,9 +11,9 @@ from unittest.mock import Mock, patch, mock_open
 from flexmock import flexmock
 from unittest.mock import MagicMock
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Missing, Model
 from doozerlib import distgit, model
-from doozerlib.assembly import AssemblyTypes
 from doozerlib.image import ImageMetadata
 
 from ..support import MockScanner, TestDistgit

@@ -3,8 +3,8 @@ from typing import Dict, List, Optional
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_rhcos_config
 from elliottlib import brew, exectools, rhcos
-from elliottlib.assembly import assembly_rhcos_config, AssemblyTypes, assembly_type
 from elliottlib.build_finder import BuildFinder
 
 from elliottlib.cli.common import cli, click_coroutine

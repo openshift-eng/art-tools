@@ -1,6 +1,8 @@
 from typing import Any, List, Dict, Optional, cast
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_permits, assembly_rhcos_config, \
+    AssemblyIssueCode, AssemblyIssue
 from doozerlib.plashet import PlashetBuilder
 
 from koji import ClientSession
@@ -12,8 +14,6 @@ from doozerlib.rpm_utils import compare_nvr, parse_nvr
 from doozerlib import brew, util, Runtime
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.assembly import assembly_rhcos_config, AssemblyTypes, assembly_permits, AssemblyIssue, \
-    AssemblyIssueCode, assembly_type
 from doozerlib.rhcos import RHCOSBuildInspector, RHCOSBuildFinder
 from artcommonlib.rhcos import get_container_configs, RhcosMissingContainerException
 

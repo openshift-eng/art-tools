@@ -10,8 +10,10 @@ from typing import Dict, Optional, Tuple, Union, Iterable
 
 import yaml
 
+import artcommonlib
 from artcommonlib.arch_util import go_suffix_for_arch
-from doozerlib import assembly, model
+from artcommonlib.assembly import assembly_type
+from doozerlib import model
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 
@@ -144,15 +146,16 @@ async def load_assembly(group: str, assembly: str, key: str = '',
 
 
 def get_assembly_type(releases_config: Dict, assembly_name: str):
-    return assembly.assembly_type(model.Model(releases_config), assembly_name)
+    return assembly_type(model.Model(releases_config), assembly_name)
 
 
 def get_assembly_basis(releases_config: Dict, assembly_name: str):
-    return assembly.assembly_basis(model.Model(releases_config), assembly_name)
+    return artcommonlib.assembly.assembly_basis(model.Model(releases_config), assembly_name)
 
 
 def get_assembly_promotion_permits(releases_config: Dict, assembly_name: str):
-    return assembly._assembly_config_struct(model.Model(releases_config), assembly_name, 'promotion_permits', [])
+    return artcommonlib.assembly.assembly_config_struct(
+        model.Model(releases_config), assembly_name, 'promotion_permits', [])
 
 
 def get_release_name_for_assembly(group_name: str, releases_config: Dict, assembly_name: str):

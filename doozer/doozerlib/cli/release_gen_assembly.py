@@ -9,9 +9,9 @@ from typing import Dict, List, Optional, Set, Tuple
 import yaml
 
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import util
-from doozerlib.assembly import AssemblyTypes
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib import exectools
 from doozerlib.model import Model

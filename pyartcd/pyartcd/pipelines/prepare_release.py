@@ -10,16 +10,15 @@ import jinja2
 import semver
 from io import StringIO
 from pathlib import Path
-from subprocess import PIPE, CalledProcessError
+from subprocess import PIPE
 from typing import Dict, List, Optional, Tuple
 from jira.resources import Issue
 from ruamel.yaml import YAML
 from tenacity import retry, stop_after_attempt, wait_fixed
 from datetime import datetime, timedelta
 
+from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.util import get_assembly_release_date
-from doozerlib.assembly import AssemblyTypes
-from elliottlib.assembly import assembly_group_config
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.errata import get_brew_builds
 from elliottlib.model import Model
