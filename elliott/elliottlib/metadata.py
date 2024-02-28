@@ -8,8 +8,8 @@ from artcommonlib import build_util
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib.model import Model, Missing
 from elliottlib.brew import BuildStates
-from elliottlib.model import Missing, Model
 from elliottlib.util import isolate_el_version_in_brew_tag
 
 CONFIG_MODES = [

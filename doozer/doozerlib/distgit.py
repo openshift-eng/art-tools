@@ -29,13 +29,13 @@ import doozerlib
 from artcommonlib import assertion, logutil, build_util
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
+from artcommonlib.model import Missing, Model, ListModel
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import constants, exectools, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
-from doozerlib.model import ListModel, Missing, Model
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.pushd import Dir
 from doozerlib.release_schedule import ReleaseSchedule

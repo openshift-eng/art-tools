@@ -9,8 +9,8 @@ from artcommonlib import logutil
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.format_util import green_print, yellow_print, red_print
 from doozerlib import constants, exectools
+from artcommonlib.model import Model
 from doozerlib.cli import cli, click_coroutine
-from doozerlib.model import Model
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
 

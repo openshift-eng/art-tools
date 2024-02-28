@@ -22,7 +22,7 @@ import artcommonlib
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, GO_ARCHES
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
-from doozerlib.model import Missing, Model
+from artcommonlib.model import Model, Missing
 
 try:
     from reprlib import repr

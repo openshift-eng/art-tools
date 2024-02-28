@@ -3,7 +3,7 @@
 import unittest
 
 from tests_functional import DoozerRunnerTestCase
-from doozerlib import image, exectools, model
+from doozerlib import exectools
 
 
 class TestSanity(DoozerRunnerTestCase):

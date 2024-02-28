@@ -2,6 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 from future import standard_library
 
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 
 standard_library.install_aliases()
 
@@ -13,8 +14,6 @@ import io
 import logging
 import tempfile
 import shutil
-
-from doozerlib import model
 
 
 class MockDistgit(object):
@@ -32,8 +31,8 @@ class MockConfig(dict):
     def __init__(self, *args, **kwargs):
         super(MockConfig, self).__init__(*args, **kwargs)
         self.distgit = MockDistgit()
-        self.content = model.Model()
-        self.content.source = model.Model()
+        self.content = Model()
+        self.content.source = Model()
         self.content.source.specfile = "test-dummy.spec"
 
 

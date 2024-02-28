@@ -3,7 +3,6 @@ Utility functions for general interactions with Brew and Builds
 """
 from artcommonlib import logutil
 # stdlib
-from elliottlib.model import Missing
 import json
 import logging
 import ssl
@@ -18,6 +17,7 @@ import koji
 import requests
 from requests_gssapi import HTTPSPNEGOAuth
 
+from artcommonlib.model import Missing
 # ours
 from elliottlib import constants, exceptions
 from elliottlib.util import total_size

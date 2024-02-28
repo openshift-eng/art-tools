@@ -1,8 +1,9 @@
 import click
 import sys
 import traceback
+
+from artcommonlib.model import Missing
 from doozerlib import Runtime
-from doozerlib.model import Missing
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import exectools
 from typing import Optional, Tuple

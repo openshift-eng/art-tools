@@ -3,9 +3,10 @@ import time
 import os
 import threading
 import traceback
+
+from artcommonlib.model import Missing
 from doozerlib import constants
 import functools
-from .model import Missing
 import datetime
 
 try:

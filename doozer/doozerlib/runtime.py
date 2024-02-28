@@ -4,6 +4,7 @@ import artcommonlib.util
 from artcommonlib import assertion, logutil
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
+from artcommonlib.model import Model, Missing
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -37,7 +38,6 @@ from .pushd import Dir
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata
 from doozerlib import state
-from .model import Model, Missing
 from multiprocessing import Lock, RLock, Semaphore
 from .repos import Repos
 from doozerlib.exceptions import DoozerFatalError

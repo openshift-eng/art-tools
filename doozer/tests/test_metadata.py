@@ -5,9 +5,9 @@ import datetime
 
 from unittest.mock import MagicMock, Mock, patch
 
+from artcommonlib.model import Model
 from doozerlib.metadata import Metadata, CgitAtomFeedEntry, RebuildHintCode
 from doozerlib.brew import BuildStates
-from doozerlib.model import Model
 
 
 class TestMetadata(TestCase):
