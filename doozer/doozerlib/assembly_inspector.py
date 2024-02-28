@@ -47,7 +47,7 @@ class AssemblyInspector:
         # If an image component has a latest build, an ImageInspector associated with the image.
         self._release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
         for image_meta in runtime.get_for_release_image_metas():
-            latest_build_obj = image_meta.get_latest_build(default=None)
+            latest_build_obj = image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
                 self._release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
             else:
