@@ -769,3 +769,18 @@ def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """
     return ErrataConnector()._put(f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true',
                                   json=file_meta)
+
+
+def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
+    """
+    Use /api/v1/external_tests API to check if builds on advisory have failed greenwave_cvp test
+    If the tests all pass then the data field of the return value will be empty
+    Return True, If all greenwave test passed on advisory
+    Return False, If there are failed test on advisory
+    """
+    logger.info(f"Check failed greenwave tests on {advisory_id}")
+    result = ErrataConnector()._get(f'/api/v1/external_tests?filter[test_type]=greenwave_cvp&filter[status]=FAILED&filter[active]=true&page[size]=1000&filter[errata_id]={advisory_id}')
+    if result.get('data', []):
+        logger.warning(f"Some greenwave tests on {advisory_id} failed with {result}")
+        return False
+    return True

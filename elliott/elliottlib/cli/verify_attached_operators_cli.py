@@ -114,7 +114,7 @@ def _analyze_image_builds(runtime, advisories: List, omit_shipped: bool, omit_at
                                       where they are needed
     """
     brew_session = koji.ClientSession(runtime.group_config.urls.brewhub or constants.BREW_HUB)
-    image_builds = _get_attached_image_builds(brew_session, advisories)
+    image_builds = _get_attached_image_builds_and_check_advisory(brew_session, advisories)
 
     bundles = _get_bundle_images(image_builds)
     if not bundles:
@@ -167,17 +167,34 @@ def _validate_csvs(bundles):
     return invalid
 
 
-def _get_attached_image_builds(brew_session, advisories):
-    # get all attached image builds
+def _get_attached_image_builds_and_check_advisory(brew_session, advisories):
+    # get all attached image builds and check hotfix and prerelease requirements
     build_nvrs = []
+    build_objs = []
     for advisory in advisories:
+        advisory_info = errata.get_advisory(advisory)
+        is_operator_hotfix = advisory_info['errata'][advisory_info['original_type'].lower()]['is_operator_hotfix']
+        is_operator_prerelease = advisory_info['errata'][advisory_info['original_type'].lower()]['is_operator_prerelease']
+        if not is_operator_prerelease and not errata.is_greenwave_all_pass_on_advisory(advisory):
+            # prerelease only need push, greenwave test could failed
+            raise ElliottFatalError(f"Please fix greenwave on {advisory}.")
         green_print(f"Retrieving builds from advisory {advisory}")
         advisory = Erratum(errata_id=advisory)
         for build_list in advisory.errata_builds.values():  # one per product version
             build_nvrs.extend(build_list)
+        for b in [build for build in brew.get_build_objects(build_nvrs, brew_session) if _is_image(build)]:
+            build_objs.extend(b)
+            if is_operator_hotfix and b['extra']['osbs_build']['subtypes'] == ['operator_bundle']:
+                # check hotfix label for bundle builds
+                if "com.redhat.hotfix" not in brew_session.listArchives(buildID=b['build_id'])[0]['extra']['docker']['config']['config']['Labels'].keys():
+                    raise ElliottFatalError(f"Build {b['nvr']} is missing the com.redhat.hotfix label")
+            if is_operator_prerelease:
+                # check prerelease label for all builds
+                if "com.redhat.prerelease" not in brew_session.listArchives(buildID=b['build_id'])[0]['extra']['docker']['config']['config']['Labels'].keys():
+                    raise ElliottFatalError(f"Build {b['nvr']} is missing the com.redhat.prerelease label")
 
     green_print(f"Found {len(build_nvrs)} builds")
-    return [build for build in brew.get_build_objects(build_nvrs, brew_session) if _is_image(build)]
+    return build_objs
 
 
 def _is_image(build):

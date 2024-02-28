@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from artcommonlib.util import get_assembly_release_date
 from doozerlib.assembly import AssemblyTypes
 from elliottlib.assembly import assembly_group_config
-from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
+from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, is_greenwave_all_pass_on_advisory
 from elliottlib.errata import get_brew_builds
 from elliottlib.model import Model
 from pyartcd import exectools
@@ -31,7 +31,6 @@ from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_basis, get_assembly_type,
                           get_release_name_for_assembly,
-                          is_greenwave_all_pass_on_advisory,
                           nightlies_with_pullspecs)
 
 
