@@ -802,7 +802,7 @@ class GenPayloadCli:
         if self.apply or self.apply_multi_arch:
             self.logger.info(f"Mirroring images from {str(src_dest_path)}")
             await asyncio.wait_for(exectools.cmd_assert_async(
-                f"oc image mirror --keep-manifest-list --filename={str(src_dest_path)}", retries=3), timeout=3600)
+                f"oc image mirror --keep-manifest-list --filename={str(src_dest_path)}", retries=3), timeout=7200)
 
     async def generate_specific_payload_imagestreams(self, arch: str, private_mode: bool,
                                                      payload_entries: Dict[str, PayloadEntry],
