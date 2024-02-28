@@ -3,8 +3,8 @@ import io
 import os
 import threading
 from typing import Optional
-from doozerlib.assembly import AssemblyTypes
 
+from artcommonlib.assembly import AssemblyTypes
 from doozerlib.rpm_utils import labelCompare
 
 from doozerlib import brew, util

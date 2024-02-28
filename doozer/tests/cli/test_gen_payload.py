@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import yaml
 import openshift_client as oc
 
-from doozerlib.assembly import AssemblyIssueCode, AssemblyTypes, AssemblyIssue
+from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
 from doozerlib.brew_info import BrewBuildImageInspector

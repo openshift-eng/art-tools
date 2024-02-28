@@ -5,7 +5,7 @@ from unittest.mock import ANY, MagicMock, Mock, patch
 import koji
 from jira import JIRA, Issue
 
-from elliottlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
 from elliottlib.cli.find_bugs_kernel_clones_cli import FindBugsKernelClonesCli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.bzutil import JIRABugTracker

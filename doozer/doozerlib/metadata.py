@@ -16,8 +16,8 @@ from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
 import doozerlib
+from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from doozerlib import exectools, logutil
-from doozerlib.assembly import assembly_basis_event, assembly_metadata_config
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
 from doozerlib.model import Missing, Model

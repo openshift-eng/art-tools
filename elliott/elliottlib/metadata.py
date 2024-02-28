@@ -6,8 +6,8 @@ from typing import Any, Optional, Tuple, Union, List
 import yaml
 from koji import ClientSession
 
+from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from elliottlib import logutil
-from elliottlib.assembly import assembly_basis_event, assembly_metadata_config
 from elliottlib.brew import BuildStates
 from elliottlib.model import Missing, Model
 from elliottlib.util import isolate_el_version_in_brew_tag

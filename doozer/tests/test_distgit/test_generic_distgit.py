@@ -6,8 +6,8 @@ import unittest
 from flexmock import flexmock
 from unittest import mock
 
+from artcommonlib.assembly import AssemblyTypes
 from doozerlib import distgit, model
-from doozerlib.assembly import AssemblyTypes
 
 from .support import MockConfig, MockMetadata, MockRuntime, TestDistgit
 

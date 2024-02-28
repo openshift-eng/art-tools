@@ -13,6 +13,7 @@ import aiofiles
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
+from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue, assembly_basis
 from artcommonlib.format_util import red_print
 from doozerlib import rpm_utils
 import yaml
@@ -33,7 +34,6 @@ from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async
 from doozerlib.util import isolate_nightly_name_components
 from artcommonlib.util import convert_remote_git_to_https
-from doozerlib.assembly import AssemblyTypes, assembly_basis, AssemblyIssue, AssemblyIssueCode
 from doozerlib import exectools
 from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError

@@ -7,7 +7,7 @@ from bugzilla import Bugzilla
 from bugzilla.bug import Bug
 from jira import JIRA, Issue
 
-from elliottlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
 from elliottlib.cli.find_bugs_kernel_cli import FindBugsKernelCli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.runtime import Runtime

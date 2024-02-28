@@ -1,8 +1,8 @@
 
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
-from doozerlib.assembly import AssemblyTypes
 
+from artcommonlib.assembly import AssemblyTypes
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.model import Model
 

@@ -5,8 +5,8 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Set
 
+from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
-from elliottlib.assembly import assembly_issues_config
 from elliottlib.bzutil import BugTracker, Bug, JIRABug
 from elliottlib import (Runtime, bzutil, constants, errata, logutil)
 from elliottlib.cli import common

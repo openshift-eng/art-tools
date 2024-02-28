@@ -4,9 +4,9 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 from errata_tool import Erratum
 
+from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
 from elliottlib import bzutil, constants, logutil
-from elliottlib.assembly import assembly_issues_config
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
