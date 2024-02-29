@@ -40,7 +40,8 @@ from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.pushd import Dir
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge, get_feature_freeze_release_date
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
+from artcommonlib.release_util import get_feature_freeze_release_date
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -1612,17 +1613,8 @@ class ImageDistGitRepo(DistGitRepo):
             return False
         elif canonical_builders_from_upstream == 'auto':
             # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
-            try:
-                feature_freeze_date = get_feature_freeze_release_date(self.runtime.group_config.vars['MAJOR'], self.runtime.group_config.vars['MINOR'])
-                return datetime.now() < feature_freeze_date
-            except ChildProcessError:
-                # Could not access Gitlab: display a warning and fallback to default
-                self.logger.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
-                return False
-            except ValueError as e:
-                # A GITLAB token env var was not provided: display a warning and fallback to default
-                self.logger.warning(f'Fallback to default ART config: {e}')
-                return False
+            feature_freeze_date = get_feature_freeze_release_date(self.runtime.group_config.vars['MAJOR'], self.runtime.group_config.vars['MINOR'])
+            return datetime.now() < feature_freeze_date
         elif canonical_builders_from_upstream in ['on', True]:
             # yaml parser converts bare 'on' to True, same for 'off' and False
             return True

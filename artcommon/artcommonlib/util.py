@@ -1,10 +1,6 @@
 from typing import OrderedDict, Optional
 from datetime import datetime
-from artcommonlib.constants import RELEASE_SCHEDULES
-import requests
 import re
-
-from artcommonlib.model import Model
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -103,66 +99,6 @@ def is_future_release_date(date_str):
         return True
     else:
         return False
-
-
-def get_feature_freeze_release_date(major, minor):
-    """
-    Get feature freeze release release date from release schedule API
-    """
-    release_date = None
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor}/schedule-tasks/?name=Feature%20Development%20for%20{major}.{minor}', headers={'Accept': 'application/json'})
-    if release_schedules.status_code == 200:
-        release_date = datetime.strptime(release_schedules.json()[0]['date_finish'], "%Y-%m-%d")
-    return release_date
-
-
-def get_ga_release_date(major, minor):
-    """
-    Get ga release release date from release schedule API
-    """
-    release_date = None
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor}/schedule-tasks/?name=OpenShift%20Container%20Platform%20GA%20Release%20Schedule', headers={'Accept': 'application/json'})
-    if release_schedules.status_code == 200:
-        release_date = datetime.strptime(release_schedules.json()[0]['date_finish'], "%Y-%m-%d")
-    return release_date
-
-
-def get_assembly_release_date(assembly, group):
-    """
-    Get assembly release release date from release schedule API
-    """
-    assembly_release_date = None
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    for release in release_schedules.json()['all_ga_tasks']:
-        if assembly in release['name']:
-            # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-            assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-            break
-    return assembly_release_date
-
-
-def get_inflight(assembly, group):
-    """
-    Get inflight release name from current assembly release
-    """
-    inflight_release = None
-    assembly_release_date = get_assembly_release_date(assembly, group)
-    if not assembly_release_date:
-        raise ValueError(f'Assembly release date not found for {assembly}')
-    major, minor = get_ocp_version_from_group(group)
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    for release in release_schedules.json()['all_ga_tasks']:
-        is_future = is_future_release_date(release['date_start'])
-        if is_future:
-            days_diff = abs((datetime.strptime(assembly_release_date, "%Y-%b-%d") - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
-            if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
-                match = re.search(r'\d+\.\d+\.\d+', release['name'])
-                if match:
-                    inflight_release = match.group()
-                    break
-                else:
-                    raise ValueError(f"Didn't find in_inflight release in {release['name']}")
-    return inflight_release
 
 
 def isolate_rhel_major_from_version(version: str) -> Optional[int]:
