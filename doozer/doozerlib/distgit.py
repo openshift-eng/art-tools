@@ -38,10 +38,9 @@ from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.model import ListModel, Missing, Model
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.pushd import Dir
-from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge, get_feature_freeze_release_date
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -1614,7 +1613,7 @@ class ImageDistGitRepo(DistGitRepo):
         elif canonical_builders_from_upstream == 'auto':
             # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
             try:
-                feature_freeze_date = ReleaseSchedule(self.runtime).get_ff_date()
+                feature_freeze_date = get_feature_freeze_release_date(self.runtime.group_config.vars['MAJOR'], self.runtime.group_config.vars['MINOR'])
                 return datetime.now() < feature_freeze_date
             except ChildProcessError:
                 # Could not access Gitlab: display a warning and fallback to default

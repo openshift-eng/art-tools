@@ -611,8 +611,8 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
     @patch('doozerlib.distgit.datetime')
-    @patch('doozerlib.distgit.ReleaseSchedule')
-    def test_canonical_builders_enabled(self, release_schedule, mock_datetime):
+    @patch('doozerlib.distgit.get_feature_freeze_release_date')
+    def test_canonical_builders_enabled(self, get_feature_freeze_release_date, mock_datetime):
         # canonical_builders_from_upstream not defined
         self.img_dg.config.canonical_builders_from_upstream = Missing
         self.assertEqual(False, self.img_dg._canonical_builders_enabled())
@@ -634,13 +634,13 @@ COPY --from=builder /some/path/a /some/path/b
 
         # canonical_builders_from_upstream = 'auto'; current time < feature freeze
         self.img_dg.config.canonical_builders_from_upstream = 'auto'
-        release_schedule.return_value.get_ff_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
+        get_feature_freeze_release_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
         mock_datetime.now.return_value = datetime.datetime(2023, 5, 1, 10, 30, 15)
         self.assertEqual(True, self.img_dg._canonical_builders_enabled())
 
         # canonical_builders_from_upstream = 'auto'; current time > feature freeze
         self.img_dg.config.canonical_builders_from_upstream = 'auto'
-        release_schedule.return_value.get_ff_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
+        get_feature_freeze_release_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
         mock_datetime.now.return_value = datetime.datetime(2023, 7, 1, 10, 30, 15)
         self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 

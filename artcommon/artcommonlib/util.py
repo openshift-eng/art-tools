@@ -105,6 +105,27 @@ def is_future_release_date(date_str):
         return False
 
 
+def get_feature_freeze_release_date(major, minor):
+    """
+    Get feature freeze release release date from release schedule API
+    """
+    release_date = None
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor}/schedule-tasks/?name=Feature%20Development%20for%20{major}.{minor}', headers={'Accept': 'application/json'})
+    if release_schedules.status_code == 200:
+        release_date = datetime.strptime(release_schedules.json()[0]['date_finish'], "%Y-%m-%d")
+    return release_date
+
+def get_ga_release_date(major, minor):
+    """
+    Get ga release release date from release schedule API
+    """
+    release_date = None
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor}/schedule-tasks/?name=OpenShift%20Container%20Platform%20GA%20Release%20Schedule', headers={'Accept': 'application/json'})
+    if release_schedules.status_code == 200:
+        release_date = datetime.strptime(release_schedules.json()[0]['date_finish'], "%Y-%m-%d")
+    return release_date
+
+
 def get_assembly_release_date(assembly, group):
     """
     Get assembly release release date from release schedule API
