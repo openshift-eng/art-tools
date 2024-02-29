@@ -1,6 +1,5 @@
 import click
 import datetime
-import elliottlib
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_prefix
