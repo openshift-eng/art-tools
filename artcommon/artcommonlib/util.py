@@ -115,6 +115,7 @@ def get_feature_freeze_release_date(major, minor):
         release_date = datetime.strptime(release_schedules.json()[0]['date_finish'], "%Y-%m-%d")
     return release_date
 
+
 def get_ga_release_date(major, minor):
     """
     Get ga release release date from release schedule API
