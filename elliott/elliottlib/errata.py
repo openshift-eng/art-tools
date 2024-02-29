@@ -15,8 +15,9 @@ import click
 import requests
 from functools import lru_cache
 
+from artcommonlib import logutil
 from artcommonlib.format_util import green_print
-from elliottlib import exceptions, constants, brew, logutil
+from elliottlib import exceptions, constants, brew
 from elliottlib.util import chunk
 from elliottlib import bzutil
 from requests_gssapi import HTTPSPNEGOAuth
@@ -26,7 +27,7 @@ from typing import List, Optional
 
 import xmlrpc.client
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 ErrataConnector._url = constants.errata_url
 

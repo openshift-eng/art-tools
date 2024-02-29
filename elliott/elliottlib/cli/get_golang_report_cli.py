@@ -3,14 +3,14 @@ import json
 import re
 import koji
 
+from artcommonlib import logutil
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.format_util import green_print
 from artcommonlib.constants import BREW_HUB
-from elliottlib import logutil
 from elliottlib.cli.common import cli
 from elliottlib.rpm_utils import parse_nvr
 
-_LOGGER = logutil.getLogger(__name__)
+_LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("go:report", short_help="Report about golang streams configured in streams.yml")

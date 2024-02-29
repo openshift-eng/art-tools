@@ -4,9 +4,10 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 from errata_tool import Erratum
 
+from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
-from elliottlib import bzutil, constants, logutil
+from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -15,7 +16,7 @@ from elliottlib.bzutil import Bug
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 @cli.command("verify-attached-bugs",

@@ -10,14 +10,14 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib.arch_util import brew_suffix_for_arch
 from artcommonlib.release_util import isolate_el_version_in_release
-from doozerlib import brew, exectools, logutil
+from doozerlib import brew, exectools
 from doozerlib.model import Model
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
-from artcommonlib import rhcos
+from artcommonlib import rhcos, logutil
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 class RHCOSNotFound(Exception):

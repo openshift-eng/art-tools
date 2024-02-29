@@ -5,17 +5,18 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Set
 
+from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
 from elliottlib.bzutil import BugTracker, Bug, JIRABug
-from elliottlib import (Runtime, bzutil, constants, errata, logutil)
+from elliottlib import (Runtime, bzutil, constants, errata)
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import chunk
 
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
 type_bug_set = Set[Bug]
 

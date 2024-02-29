@@ -9,11 +9,12 @@ import koji
 import requests
 from errata_tool import ErrataException
 
+from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
 from artcommonlib.rhcos import get_container_configs
-from elliottlib import Runtime, brew, errata, logutil
+from elliottlib import Runtime, brew, errata
 from elliottlib import exectools
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
@@ -26,7 +27,7 @@ from elliottlib.util import (ensure_erratatool_auth,
                              isolate_el_version_in_brew_tag,
                              parallel_results_with_progress, pbar_header, progress_func)
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 pass_runtime = click.make_pass_decorator(Runtime)
 

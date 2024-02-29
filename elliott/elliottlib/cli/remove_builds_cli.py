@@ -1,12 +1,14 @@
 import click
 from errata_tool import ErrataException
-from elliottlib import Runtime, brew, errata, logutil
+
+from artcommonlib import logutil
+from elliottlib import Runtime, errata
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option)
 from elliottlib.util import ensure_erratatool_auth
 
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command('remove-builds', short_help='Remove builds from ADVISORY')

@@ -13,12 +13,12 @@ import subprocess
 import time
 import urllib
 
-from artcommonlib import assertion
-from elliottlib import logutil, pushd
+from artcommonlib import assertion, logutil
+from elliottlib import pushd
 
 SUCCESS = 0
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 class RetryException(Exception):

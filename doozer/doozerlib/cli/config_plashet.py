@@ -13,6 +13,7 @@ import requests
 import yaml
 
 from artcommonlib.build_util import find_latest_builds
+from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib.rpm_utils import compare_nvr, parse_nvr
 from requests_kerberos import HTTPKerberosAuth
@@ -349,7 +350,7 @@ def setup_logging(dest_dir: str):
     mkdirs(dest_dir)
     logging.basicConfig(level=logging.INFO)
 
-    logger = logging.getLogger('plashet')
+    logger = get_logger(__name__)
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
     # create file handler which logs even debug messages
