@@ -2003,8 +2003,9 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 release_suffix = ''
 
-            # Environment variables that will be always be injected into the Dockerfile.
-            env_vars = {  # Set A
+            # Environment variables that will be injected into the Dockerfile
+            # unless content.set_build_variables=False
+            build_update_env_vars = {  # Set A
                 'OS_GIT_MAJOR': major_version,
                 'OS_GIT_MINOR': minor_version,
                 'OS_GIT_PATCH': patch_version,
@@ -2013,20 +2014,25 @@ class ImageDistGitRepo(DistGitRepo):
                 'SOURCE_GIT_TREE_STATE': 'clean',
                 'BUILD_VERSION': version,
                 'BUILD_RELEASE': release if release else '',
-                '__doozer_group': self.runtime.group,
-                '__doozer_key': self.metadata.distgit_key,
             }
 
+            # Unlike update_env_vars (which can be disabled in metadata with content.set_build_variables=False),
+            # metadata_envs are always injected into doozer builds.
+            metadata_envs: Dict[str, str] = {
+                '__doozer_group': self.runtime.group,
+                '__doozer_key': self.metadata.distgit_key,
+                '__doozer_version': version,  # Useful when build variables are not being injected, but we still need "version" during the build.
+            }
             if self.config.envs:
                 # Allow environment variables to be specified in the ART image metadata
-                env_vars.update(self.config.envs.primitive())
+                metadata_envs.update(self.config.envs.primitive())
 
             df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
             with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:
                 shutil.copyfileobj(df_fileobj, df)
                 df_fileobj.close()
 
-            self._update_environment_variables(env_vars)
+            self._update_environment_variables(build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
 
             self._reflow_labels()
 
@@ -2298,28 +2304,32 @@ class ImageDistGitRepo(DistGitRepo):
             # Re-write the CSV content.
             pathlib.Path(csv_file).write_text(yaml.dump(csv_obj))
 
-    def _update_environment_variables(self, update_envs, filename='Dockerfile'):
+    def _update_environment_variables(self, build_update_envs: Dict[str, str], metadata_envs: Dict[str, str], filename='Dockerfile'):
         """
         There are three distinct sets of environment variables we need to consider
         in a Dockerfile:
-        Set A) those which doozer calculates on every update
-        Set B) those which doozer can calculate only when upstream source code is available
+        Set A) build environment variables which doozer calculates on every Dockerfile update (build_update_envs)
+        Set B) merge environment variables which doozer can calculate only when upstream source code is available
                (self.env_vars_from_source). If self.env_vars_from_source=None, no merge
                has occurred and we should not try to update envs from source we find in distgit.
-        Set C) those which the Dockerfile author has set for their own purposes (these cannot
-               override doozer's env, but they are free to use other variables names).
+        Set C) metadata environment variable which are those which the Dockerfile author has set for their own purposes (these cannot
+               override doozer's build env values, but they are free to use other variables names).
 
-        :param update_envs: The update environment variables to set (Set A).
+        Sets (A) and (B) can be disabled with .content.set_build_variables=False.
+
+        :param build_update_envs: The update environment variables to set (Set A).
+        :param metadata_envs: Environment variables that should always be included in the rebased Dockerfile.
         :param filename: The Dockerfile name in the distgit dir to edit.
         :return: N/A
         """
 
+        do_set_build_variables = True
         # set_build_variables must be explicitly set to False. If left unset, default to True. If False,
         # we do not inject environment variables into the Dockerfile. This is occasionally necessary
         # for images like the golang builders where these environment variables pollute the environment
         # for code trying to establish their OWN src commit hash, etc.
         if self.config.content.set_build_variables is not Missing and not self.config.content.set_build_variables:
-            return
+            do_set_build_variables = False
 
         dg_path = self.dg_path
         df_path = dg_path.joinpath(filename)
@@ -2330,14 +2340,18 @@ class ImageDistGitRepo(DistGitRepo):
         # going to set. To do so, we repeatedly load the Dockerfile and remove the env variable.
         # In this way, from our example, on the second load and removal, A=1 should be removed.
 
-        # Build a dict of everything we want to set.
-        all_envs = dict(update_envs)
-        all_envs.update(self.env_vars_from_source or {})
+        # Build a dict of everything we want to remove from the Dockerfile.
+        all_envs_to_remove = dict()
+        all_envs_to_remove.update(metadata_envs)
+
+        if do_set_build_variables:
+            all_envs_to_remove.update(build_update_envs)
+            all_envs_to_remove.update(self.env_vars_from_source or {})
 
         while True:
             dfp = DockerfileParser(str(df_path))
             # Find the intersection between envs we want to set and those present in parser
-            envs_intersect = set(list(all_envs.keys())).intersection(set(list(dfp.envs.keys())))
+            envs_intersect = set(list(all_envs_to_remove.keys())).intersection(set(list(dfp.envs.keys())))
 
             if not envs_intersect:  # We've removed everything we want to ultimately set
                 break
@@ -2356,6 +2370,13 @@ class ImageDistGitRepo(DistGitRepo):
         # Now, we want to inject the values we have available. In a Dockerfile, ENV must
         # be set for each build stage. So the ENVs must be set after each FROM.
 
+        # Envs that will be written into the Dockerfile every time it is updated
+        actual_update_envs: Dict[str, str] = dict()
+        actual_update_envs.update(metadata_envs or {})
+
+        if do_set_build_variables:
+            actual_update_envs.update(build_update_envs)
+
         env_update_line_flag = '__doozer=update'
         env_merge_line_flag = '__doozer=merge'
 
@@ -2371,18 +2392,18 @@ class ImageDistGitRepo(DistGitRepo):
 
         # Build up an UPDATE mode environment variable line we want to inject into each stage.
         update_env_line = None
-        if update_envs:
-            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(update_envs)
+        if actual_update_envs:
+            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(actual_update_envs)
 
         # If a merge has occurred, build up a MERGE mode environment variable line we want to inject into each stage.
         merge_env_line = None
-        if self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
+        if do_set_build_variables and self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
             self.env_vars_from_source.update(dict(
                 SOURCE_GIT_COMMIT=self.source_full_sha,
                 SOURCE_GIT_TAG=self.source_latest_tag,
                 SOURCE_GIT_URL=self.public_facing_source_url,
                 SOURCE_DATE_EPOCH=self.source_date_epoch,
-                OS_GIT_VERSION=f'{update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
+                OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
                 OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}'
             ))
 
@@ -2414,7 +2435,7 @@ class ImageDistGitRepo(DistGitRepo):
     def _reflow_labels(self, filename="Dockerfile"):
         """
         The Dockerfile parser we are presently using writes all labels on a single line
-        and occasionally make multiple LABEL statements. Calling this method with a
+        and occasionally makes multiple LABEL statements. Calling this method with a
         Dockerfile in the current working directory will rewrite the file with
         labels at the end in a single statement.
         """
