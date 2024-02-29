@@ -9,8 +9,7 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import click
 from ghapi.all import GhApi
 
-from artcommonlib.util import split_git_url, merge_objects
-from artcommonlib.release_util import get_inflight
+from artcommonlib.util import split_git_url, merge_objects, get_inflight
 from pyartcd import exectools, constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
