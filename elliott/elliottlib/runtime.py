@@ -116,7 +116,7 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none', no_group=False, disabled=None, config_only=False):
+    def initialize(self, mode='none', no_group=False, disabled=None):
 
         if self.initialized:
             return
@@ -218,10 +218,6 @@ class Runtime(GroupRuntime):
         # release_name variable is currently only used in microshift rpm config to allow Doozer to pass release name to a modification script.
         # Elliott doesn't need to care about it. Set an arbitrary value until it becomes necessary.
         replace_vars['release_name'] = '(irrelevant)'
-
-        # only initialize group and assembly configs and nothing else
-        if config_only:
-            return
 
         image_data = {}
         if mode in ['images', 'both']:

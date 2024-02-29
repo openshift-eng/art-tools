@@ -368,8 +368,7 @@ class Runtime(GroupRuntime):
         if disabled is not None:
             self.load_disabled = disabled
 
-        if not self.logger:
-            self.initialize_logging()
+        self.initialize_logging()
 
         self.init_state()
 
