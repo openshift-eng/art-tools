@@ -49,6 +49,91 @@
             },
             "type": "array"
           },
+          "from": {
+            "description": "Ordered list of what the FROMs in the upstream Dockerfile should be replaced with",
+            "type": "object",
+            "properties": {
+              "builder": {
+                "description": "List of images of the non-final layer",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "stream": {
+                      "description": "Base images from streams.yml",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "stream!": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/stream"
+                    },
+                    "stream?": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/stream"
+                    },
+                    "stream-": {},
+                    "member": {
+                      "description": "Base image managed by ocp-build-data/images in the current branch",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "member!": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/member"
+                    },
+                    "member?": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/member"
+                    },
+                    "member-": {},
+                    "image": {
+                      "description": "Currently unused",
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "image!": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/image"
+                    },
+                    "image?": {
+                      "$ref": "#/properties/from/properties/builder/items/properties/image"
+                    },
+                    "image-": {}
+                  }
+                }
+              },
+                "stream": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stream!": {
+                  "$ref": "#/properties/from/properties/stream"
+                },
+                "stream?": {
+                  "$ref": "#/properties/from/properties/stream"
+                },
+                "stream-": {},
+                "member": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "member!": {
+                  "$ref": "#/properties/from/properties/member"
+                },
+                "member?": {
+                  "$ref": "#/properties/from/properties/member"
+                },
+                "member-": {},
+                "image": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "image!": {
+                  "$ref": "#/properties/from/properties/image"
+                },
+                "image?": {
+                  "$ref": "#/properties/from/properties/image"
+                },
+                "image-": {}
+              },
+            "additionalProperties": false
+          },
           "name": {
             "description": "Alternative reference to Comet repo name",
             "type": "string",
