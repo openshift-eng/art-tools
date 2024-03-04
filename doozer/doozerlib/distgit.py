@@ -479,9 +479,10 @@ class ImageDistGitRepo(DistGitRepo):
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
-            # and find a related alternative_upstream config stanza
-            if self.upstream_intended_el_version:
-                self._update_image_config()
+            # and find a related alternative_upstream config stanza. This won't happen if:
+            # 1. we failed to determine upstream rhel version
+            # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
+            self._update_image_config()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1687,6 +1688,12 @@ class ImageDistGitRepo(DistGitRepo):
         If we're trying to match upstream, check if there's a 'when' clause in image alternative_config field
         that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
         """
+
+        if not self.upstream_intended_el_version:
+            self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            return
+        elif self.upstream_intended_el_version == self.art_intended_el_version:
+            self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
 
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream
