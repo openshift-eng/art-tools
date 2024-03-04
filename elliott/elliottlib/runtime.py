@@ -14,11 +14,11 @@ import yaml
 
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
+from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
 from elliottlib import brew, constants, gitdata, util
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.model import Missing, Model
 from elliottlib.rpmcfg import RPMMetadata
 from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 

@@ -1,8 +1,8 @@
 import unittest
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.model import Model
 from doozerlib import util
-from doozerlib.model import Model
 
 
 class TestUtil(unittest.TestCase):

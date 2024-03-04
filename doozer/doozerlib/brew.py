@@ -17,9 +17,9 @@ import koji
 import koji_cli.lib
 import requests
 
+from artcommonlib.model import Missing
 from artcommonlib import logutil
 from doozerlib import exectools, constants
-from .model import Missing
 from .util import total_size
 
 logger = logutil.get_logger(__name__)

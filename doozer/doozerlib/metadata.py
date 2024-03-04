@@ -19,9 +19,9 @@ import doozerlib
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from doozerlib import exectools
+from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.model import Missing, Model
 from doozerlib.pushd import Dir
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)

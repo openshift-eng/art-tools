@@ -3,7 +3,8 @@ import unittest
 from flexmock import flexmock
 
 from artcommonlib import logutil
-from doozerlib import runtime, exectools, model
+from artcommonlib.model import Model
+from doozerlib import runtime, exectools
 
 
 def stub_runtime():
@@ -14,7 +15,7 @@ def stub_runtime():
         branch='test-branch',
         rhpkg_config="",
     )
-    rt.group_config = model.Model()
+    rt.group_config = Model()
     return rt
 
 

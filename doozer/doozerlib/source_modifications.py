@@ -7,9 +7,9 @@ import requests
 import yaml
 
 from artcommonlib.logutil import get_logger
+from artcommonlib.model import Missing
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.exectools import cmd_assert
-from doozerlib.model import Missing
 from doozerlib.pushd import Dir
 from doozerlib.util import is_in_directory, mkdirs
 
