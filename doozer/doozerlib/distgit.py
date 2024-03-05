@@ -1690,11 +1690,15 @@ class ImageDistGitRepo(DistGitRepo):
         """
 
         if not self.upstream_intended_el_version:
+            # Could not determine upstream rhel version: do not match upstream builders
             self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            self.should_match_upstream = False
             return
 
         elif self.upstream_intended_el_version == self.art_intended_el_version:
+            # ART/upstream el versions match: do not merge configs, but match upstream builders
             self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
+            self.should_match_upstream = True
             return
 
         # Check if there is an alternative configuration matching upstream RHEL version
@@ -1709,27 +1713,19 @@ class ImageDistGitRepo(DistGitRepo):
 
         if not matched:
             # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
+            # Besides, ART and upstream intended rhel versions do not match, therefore fallback to default ART's config
             self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
                                 self.upstream_intended_el_version)
+            self.should_match_upstream = False
 
-            # If ART and upstream intended rhel versions do not match, fallback to default ART's config
-            if self.art_intended_el_version != self.upstream_intended_el_version:
-                self.logger.warning('ART is using rhel-%s, while upstream is using rhel-%s: will not match upstream',
-                                    self.art_intended_el_version, self.upstream_intended_el_version)
-                self.should_match_upstream = False
-                return
-
-            # Even with no matching 'when' clause, rhel versions match so we can use canonical builders from upstream
+        else:
+            # We found an alternative_upstream config stanza. We can match upstream
             self.should_match_upstream = True
-            return
-
-        # We found an alternative_upstream config stanza. We can match upstream
-        self.should_match_upstream = True
-        # Distgit branch must be changed to track the alternative one
-        self.branch = self.config.distgit.branch
-        # Also update metadata config
-        self.metadata.config = self.config
-        self.metadata.targets = self.metadata.determine_targets()
+            # Distgit branch must be changed to track the alternative one
+            self.branch = self.config.distgit.branch
+            # Also update metadata config
+            self.metadata.config = self.config
+            self.metadata.targets = self.metadata.determine_targets()
 
     def _rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
