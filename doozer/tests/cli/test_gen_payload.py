@@ -11,11 +11,11 @@ import yaml
 import openshift_client as oc
 
 from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue
+from artcommonlib.model import Model
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.image import ImageMetadata
-from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException

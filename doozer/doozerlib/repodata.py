@@ -13,9 +13,10 @@ import aiohttp
 from ruamel.yaml import YAML
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from artcommonlib import logutil
 from doozerlib import rpm_utils
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 NAMESPACES = {
     "repo": "http://linux.duke.edu/metadata/repo",
     "rpm": "http://linux.duke.edu/metadata/rpm",
@@ -276,7 +277,7 @@ class OutdatedRPMFinder:
         :return: Returns a list of outdated rpms in the form of (installed_rpm, latest_rpm, repo_name)
         """
         # Determine which repos are enabled for the image
-        logger = logger or logging.getLogger(__name__)
+        logger = logger or logutil.get_logger(__name__)
 
         # archive_rpms holds all rpms to examine
         archive_rpms = {rpm['name']: rpm for rpm in rpms_to_check}  # rpm_name => rpm dict

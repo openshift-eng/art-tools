@@ -2,6 +2,9 @@
 # and released under LGPL v3 <https://www.gnu.org/licenses/lgpl-3.0.en.html>
 
 from future import standard_library
+
+from artcommonlib.logutil import get_logger
+
 standard_library.install_aliases()
 import yaml
 import logging
@@ -72,7 +75,7 @@ class GitData(object):
         self.logger = logger
         if logger is None:
             logging.basicConfig(level=logging.INFO)
-            self.logger = logging.getLogger()
+            self.logger = get_logger(__name__)
 
         self.clone_dir = clone_dir
         self.branch = commitish

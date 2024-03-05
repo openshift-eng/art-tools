@@ -4,12 +4,12 @@ from builtins import object
 from typing import Any, Optional, Tuple, Union, List
 
 import yaml
-from koji import ClientSession
+from artcommonlib import build_util
 
+from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from elliottlib import logutil
+from artcommonlib.model import Model, Missing
 from elliottlib.brew import BuildStates
-from elliottlib.model import Missing, Model
 from elliottlib.util import isolate_el_version_in_brew_tag
 
 CONFIG_MODES = [
@@ -258,9 +258,26 @@ class Metadata(object):
                 raise IOError(msg)
 
             def latest_build_list(pattern_suffix):
+                nonlocal el_target
+
+                if self.meta_type == 'image':
+                    # For pre-releases, if canonical builders are enabled and alternative_upstream config is defined,
+                    # consider rhel 8 as the normal build target. Even if this is an approximation, it is very realistic
+                    # that the alternative config is downgrading the image to rhelX-1 while upstream aligns to ART's
+                    # desires, and with this assumption we'll avoid attaching outdated builds to the advisories
+                    if self.config.canonical_builders_from_upstream is not Missing:
+                        canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
+                    else:
+                        canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
+
+                    if build_util.canonical_builders_enabled(canonical_builders_from_upstream, self.runtime) and \
+                            self.config.alternative_upstream is not Missing:
+                        el_target = self.branch_el_target() - 1
+                el_suffix = f'.el{el_target}' if el_target else ''
+
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
-                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.el{el_target}*'
+                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{el_suffix}*'
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=rhel_pattern,
@@ -278,7 +295,7 @@ class Metadata(object):
                                                  **list_builds_kwargs)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
-                # This latter check ensures that 'assembly.how' doesn't not match a build from
+                # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
                 refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
 
@@ -287,15 +304,15 @@ class Metadata(object):
                 # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
                 # version, if they do.
                 if self.meta_type == 'image':
-                    image_el_ver = f'.el{self.branch_el_target()}'
+                    image_el_ver = f'.el{el_target}'
                     # Ensure the suffix ends the string OR at least terminated by a '.' .
                     el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
                     if el_refined:
                         # if there were any images which had .el?, prefer them over the non-qualified.
                         refined = el_refined
                     else:
-                        # Everything was eliminated when elX was required (where X is our target).
-                        # So at least filter out those which possess elY where X != Y
+                        # Everything was eliminated when elX was included. So at least filter out those which possess elY
+                        # where X != Y
                         el_pattern = re.compile(r'.*\.el\d+.*')
                         refined = [b for b in refined if not el_pattern.match(b['nvr'])]
 

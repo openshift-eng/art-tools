@@ -12,10 +12,10 @@ import pathlib
 from future import standard_library
 
 from artcommonlib.format_util import green_print, yellow_print, color_print
+from artcommonlib.model import Missing
 from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.pushd import Dir
-from doozerlib.model import Missing
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
 

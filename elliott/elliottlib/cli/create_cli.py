@@ -1,6 +1,6 @@
 import click
 import datetime
-import elliottlib
+from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
@@ -12,7 +12,7 @@ from elliottlib.util import YMD, validate_release_date, \
 from elliottlib import errata
 
 
-LOGGER = elliottlib.logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("create", short_help="Create a new advisory")

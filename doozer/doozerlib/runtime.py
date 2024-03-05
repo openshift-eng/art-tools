@@ -1,9 +1,10 @@
 from future import standard_library
 
 import artcommonlib.util
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
+from artcommonlib.model import Model, Missing
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -30,7 +31,6 @@ from jira import JIRA
 
 from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
-from . import logutil
 from . import exectools
 from . import dblib
 from .pushd import Dir
@@ -38,7 +38,6 @@ from .pushd import Dir
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata
 from doozerlib import state
-from .model import Model, Missing
 from multiprocessing import Lock, RLock, Semaphore
 from .repos import Repos
 from doozerlib.exceptions import DoozerFatalError
@@ -368,8 +367,7 @@ class Runtime(GroupRuntime):
         if disabled is not None:
             self.load_disabled = disabled
 
-        if not self.logger:
-            self.initialize_logging()
+        self.initialize_logging()
 
         self.init_state()
 
@@ -696,7 +694,7 @@ class Runtime(GroupRuntime):
             root_logger.addFilter(logging.Filter("ocp"))
 
         # Get a reference to the logger for doozer
-        self.logger = logutil.getLogger()
+        self.logger = logutil.get_logger()
         self.logger.propagate = False
 
         # levels will be set at the handler level. Make sure master level is low.

@@ -5,8 +5,8 @@ from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 import koji
 
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 from doozerlib.cli.config_tag_rpms import TagRPMsCli
-from doozerlib.model import Model
 
 
 class TestRpmDelivery(IsolatedAsyncioTestCase):

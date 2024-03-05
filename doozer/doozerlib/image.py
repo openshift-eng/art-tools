@@ -1,24 +1,16 @@
-
-import asyncio
 import hashlib
 import json
-import logging
-from typing import (Any, Awaitable, Dict, List, Optional, Set, Tuple, Union,
-                    cast)
+from typing import (Any, Dict, List, Optional, Set, Tuple)
 from copy import deepcopy
 
 import doozerlib
+from artcommonlib.model import Missing, Model
 from doozerlib import util
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
-from artcommonlib.release_util import isolate_el_version_in_release
-from doozerlib import brew, coverity, exectools
+from doozerlib import brew, coverity
 from doozerlib.brew_info import BrewBuildImageInspector
-from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
-from doozerlib.model import Missing, Model
 from doozerlib.pushd import Dir
-from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.rpm_utils import parse_nvr, to_nevra
 
 

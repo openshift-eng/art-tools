@@ -26,21 +26,21 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil, build_util
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
+from artcommonlib.model import Missing, Model, ListModel
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib import constants, exectools, logutil, state, util
+from doozerlib import constants, exectools, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
-from doozerlib.model import ListModel, Missing, Model
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.pushd import Dir
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge, get_feature_freeze_release_date
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -64,7 +64,7 @@ CONTAINER_YAML_HEADER = """
 # May be added to based on group/image config
 BASE_IGNORE = [".git", ".oit"]
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 def recursive_overwrite(src, dest, ignore=set()):
@@ -478,9 +478,10 @@ class ImageDistGitRepo(DistGitRepo):
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
-            # and find a related alternative_upstream config stanza
-            if self.upstream_intended_el_version:
-                self._update_image_config()
+            # and find a related alternative_upstream config stanza. This won't happen if:
+            # 1. we failed to determine upstream rhel version
+            # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
+            self._update_image_config()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1607,25 +1608,8 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
 
-        if canonical_builders_from_upstream is Missing:
-            # Default case: override using ART's config
-            return False
-        elif canonical_builders_from_upstream == 'auto':
-            # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
-            feature_freeze_date = get_feature_freeze_release_date(self.runtime.group_config.vars['MAJOR'], self.runtime.group_config.vars['MINOR'])
-            return datetime.now() < feature_freeze_date
-        elif canonical_builders_from_upstream in ['on', True]:
-            # yaml parser converts bare 'on' to True, same for 'off' and False
-            return True
-        elif canonical_builders_from_upstream in ['off', False]:
-            return False
-        else:
-            # Invalid value
-            self.logger.warning(
-                'Invalid value provided for "canonical_builders_from_upstream": %s',
-                canonical_builders_from_upstream
-            )
-            return False
+        return build_util.canonical_builders_enabled(
+            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
@@ -1703,6 +1687,12 @@ class ImageDistGitRepo(DistGitRepo):
         If we're trying to match upstream, check if there's a 'when' clause in image alternative_config field
         that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
         """
+
+        if not self.upstream_intended_el_version:
+            self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            return
+        elif self.upstream_intended_el_version == self.art_intended_el_version:
+            self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
 
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream

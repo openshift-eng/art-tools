@@ -10,11 +10,11 @@ import yaml
 
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import util
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib import exectools
-from doozerlib.model import Model
 from doozerlib import brew
 from artcommonlib import rhcos
 from doozerlib.rpmcfg import RPMMetadata

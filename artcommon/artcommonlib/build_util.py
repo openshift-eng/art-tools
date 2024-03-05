@@ -1,6 +1,12 @@
+from datetime import datetime
 from typing import List, Optional, Iterable, Dict
 
+from artcommonlib import logutil
+from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
+from doozerlib.release_schedule import ReleaseSchedule
+
+LOGGER = logutil.get_logger(__name__)
 
 
 def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[Dict]:
@@ -43,3 +49,41 @@ def find_latest_builds(brew_builds: Iterable[Dict], assembly: Optional[str]) -> 
         chosen_build = find_latest_build(builds, assembly)
         if chosen_build:
             yield chosen_build
+
+
+def canonical_builders_enabled(canonical_builders_from_upstream, runtime) -> bool:
+    """
+    canonical_builders_from_upstream can be set globally, or overridden by single components; this function will take
+    either a global or a local flag, and check if canonical builders apply within this context
+    """
+
+    if canonical_builders_from_upstream is Missing:
+        # Default case: override using ART's config
+        return False
+
+    elif canonical_builders_from_upstream == 'auto':
+        # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
+        try:
+            feature_freeze_date = ReleaseSchedule(runtime).get_ff_date()
+            return datetime.now() < feature_freeze_date
+        except ChildProcessError:
+            # Could not access Gitlab: display a warning and fallback to default
+            LOGGER.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
+            return False
+        except ValueError as e:
+            # A GITLAB token env var was not provided: display a warning and fallback to default
+            LOGGER.warning(f'Fallback to default ART config: {e}')
+            return False
+
+    elif canonical_builders_from_upstream in ['on', True]:
+        # yaml parser converts bare 'on' to True, same for 'off' and False
+        return True
+
+    elif canonical_builders_from_upstream in ['off', False]:
+        return False
+
+    else:
+        # Invalid value: fallback to default
+        LOGGER.warning(
+            'Invalid value provided for "canonical_builders_from_upstream": %s', canonical_builders_from_upstream)
+        return False

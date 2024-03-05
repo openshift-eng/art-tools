@@ -10,10 +10,9 @@ from typing import Dict, List, Optional, cast
 import requests
 import yaml
 
-from doozerlib import exectools, rpm_utils
+from artcommonlib.model import Missing, Model
 from doozerlib.repodata import Repodata, RepodataLoader
 
-from .model import Missing, Model
 
 DEFAULT_REPOTYPES = ['unsigned', 'signed']
 

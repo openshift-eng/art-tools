@@ -1,18 +1,21 @@
 #!/usr/bin/env python
 import unittest
 from flexmock import flexmock
-from doozerlib import runtime, exectools, logutil, model
+
+from artcommonlib import logutil
+from artcommonlib.model import Model
+from doozerlib import runtime, exectools
 
 
 def stub_runtime():
     rt = runtime.Runtime(
         latest_parent_version=False,
-        logger=logutil.getLogger(__name__),
+        logger=logutil.get_logger(__name__),
         stage=False,
         branch='test-branch',
         rhpkg_config="",
     )
-    rt.group_config = model.Model()
+    rt.group_config = Model()
     return rt
 
 

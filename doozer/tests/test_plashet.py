@@ -2,7 +2,7 @@ from unittest import TestCase
 
 from unittest.mock import MagicMock, Mock, patch
 
-from doozerlib.model import Model
+from artcommonlib.model import Model
 from doozerlib.plashet import PlashetBuilder
 
 

@@ -12,12 +12,13 @@ from typing import Dict, Optional, Tuple
 import click
 import yaml
 
+from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
+from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
-from elliottlib import brew, constants, gitdata, logutil, util
+from elliottlib import brew, constants, gitdata, util
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.model import Missing, Model
 from elliottlib.rpmcfg import RPMMetadata
 from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 
@@ -116,7 +117,7 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none', no_group=False, disabled=None, config_only=False):
+    def initialize(self, mode='none', no_group=False, disabled=None):
 
         if self.initialized:
             return
@@ -219,10 +220,6 @@ class Runtime(GroupRuntime):
         # Elliott doesn't need to care about it. Set an arbitrary value until it becomes necessary.
         replace_vars['release_name'] = '(irrelevant)'
 
-        # only initialize group and assembly configs and nothing else
-        if config_only:
-            return
-
         image_data = {}
         if mode in ['images', 'both']:
             image_data = self.gitdata.load_data(path='images', keys=image_keys,
@@ -293,7 +290,7 @@ class Runtime(GroupRuntime):
             root_logger.addFilter(logging.Filter("ocp"))
 
         # Get a reference to the logger for elliott
-        self.logger = logutil.getLogger()
+        self.logger = logutil.get_logger()
         self.logger.propagate = False
 
         # levels will be set at the handler level. Make sure main level is low.

@@ -9,11 +9,12 @@ import koji
 import requests
 from errata_tool import ErrataException
 
+from artcommonlib import logutil
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
 from artcommonlib.rhcos import get_container_configs
-from elliottlib import Runtime, brew, errata, logutil
+from elliottlib import Runtime, brew, errata
 from elliottlib import exectools
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
@@ -26,7 +27,7 @@ from elliottlib.util import (ensure_erratatool_auth,
                              isolate_el_version_in_brew_tag,
                              parallel_results_with_progress, pbar_header, progress_func)
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -112,13 +113,7 @@ PRESENT advisory. Here are some examples:
     if payload and non_payload:
         raise click.BadParameter('Use only one of --payload or --non-payload.')
 
-    mode = 'images' if kind == 'image' else 'rpms'
-    runtime.initialize(config_only=True)
-    if runtime.group_config.canonical_builders_from_upstream:
-        runtime.initialize(mode=mode, clone_distgits=True, clone_source=False, prevent_cloning=False)
-    else:
-        runtime.initialize(mode=mode, clone_distgits=False, clone_source=False, prevent_cloning=True)
-
+    runtime.initialize(mode='images' if kind == 'image' else 'rpms')
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
@@ -335,7 +330,10 @@ async def _fetch_builds_by_kind_image(runtime: Runtime, tag_pv_map: Dict[str, st
         'Generating list of images: ',
         f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...')
 
-    brew_latest_builds: List[Dict] = await asyncio.gather(*[exectools.to_thread(progress_func, image.get_latest_build) for image in image_metas])
+    tasks = [exectools.to_thread(
+        progress_func,
+        functools.partial(image.get_latest_build, el_target=image.branch_el_target())) for image in image_metas]
+    brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
 
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
     shipped = set()
