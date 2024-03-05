@@ -1692,8 +1692,10 @@ class ImageDistGitRepo(DistGitRepo):
         if not self.upstream_intended_el_version:
             self.logger.warning('Unknown upstream rhel version: will not merge configs')
             return
+
         elif self.upstream_intended_el_version == self.art_intended_el_version:
             self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
+            return
 
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream
