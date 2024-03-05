@@ -3,6 +3,7 @@ from datetime import datetime
 import re
 from artcommonlib.constants import RELEASE_SCHEDULES
 import requests
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -135,6 +136,7 @@ def get_ocp_version_from_group(group):
     return int(match[1]), int(match[2])
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def get_feature_freeze_release_date(major, minor):
     """
     Get feature freeze release release date from release schedule API
@@ -149,6 +151,7 @@ def get_feature_freeze_release_date(major, minor):
     return release_date
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def get_ga_release_date(major, minor):
     """
     Get ga release release date from release schedule API
@@ -163,6 +166,7 @@ def get_ga_release_date(major, minor):
     return release_date
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def get_assembly_release_date(assembly, group):
     """
     Get assembly release release date from release schedule API
@@ -180,6 +184,7 @@ def get_assembly_release_date(assembly, group):
     return assembly_release_date
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
 def get_inflight(assembly, group):
     """
     Get inflight release name from current assembly release

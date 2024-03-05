@@ -610,10 +610,9 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
-
     @patch('artcommonlib.build_util.datetime')
-    @patch('artcommonlib.build_util.ReleaseSchedule')
-    def test_canonical_builders_enabled(self, release_schedule, mock_datetime):
+    @patch('artcommonlib.build_util.get_feature_freeze_release_date')
+    def test_canonical_builders_enabled(self, get_feature_freeze_release_date, mock_datetime):
         # canonical_builders_from_upstream not defined
         self.img_dg.config.canonical_builders_from_upstream = Missing
         self.assertEqual(False, self.img_dg._canonical_builders_enabled())

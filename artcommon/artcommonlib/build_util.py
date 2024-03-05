@@ -4,7 +4,7 @@ from typing import List, Optional, Iterable, Dict
 from artcommonlib import logutil
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib.release_schedule import ReleaseSchedule
+from artcommonlib.util import get_feature_freeze_release_date
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -64,7 +64,7 @@ def canonical_builders_enabled(canonical_builders_from_upstream, runtime) -> boo
     elif canonical_builders_from_upstream == 'auto':
         # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
         try:
-            feature_freeze_date = ReleaseSchedule(runtime).get_ff_date()
+            feature_freeze_date = get_feature_freeze_release_date(runtime.group_config.vars['MAJOR'], runtime.group_config.vars['MINOR'])
             return datetime.now() < feature_freeze_date
         except ChildProcessError:
             # Could not access Gitlab: display a warning and fallback to default
