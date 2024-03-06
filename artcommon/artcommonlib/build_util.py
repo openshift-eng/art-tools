@@ -1,10 +1,7 @@
-from datetime import datetime
 from typing import List, Optional, Iterable, Dict
-
 from artcommonlib import logutil
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
-from artcommonlib.util import get_feature_freeze_release_date
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -60,20 +57,6 @@ def canonical_builders_enabled(canonical_builders_from_upstream, runtime) -> boo
     if canonical_builders_from_upstream is Missing:
         # Default case: override using ART's config
         return False
-
-    elif canonical_builders_from_upstream == 'auto':
-        # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
-        try:
-            feature_freeze_date = get_feature_freeze_release_date(runtime.group_config.vars['MAJOR'], runtime.group_config.vars['MINOR'])
-            return datetime.now() < feature_freeze_date
-        except ChildProcessError:
-            # Could not access Gitlab: display a warning and fallback to default
-            LOGGER.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
-            return False
-        except ValueError as e:
-            # A GITLAB token env var was not provided: display a warning and fallback to default
-            LOGGER.warning(f'Fallback to default ART config: {e}')
-            return False
 
     elif canonical_builders_from_upstream in ['on', True]:
         # yaml parser converts bare 'on' to True, same for 'off' and False

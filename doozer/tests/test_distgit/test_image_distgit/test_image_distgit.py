@@ -610,9 +610,7 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
-    @patch('artcommonlib.build_util.datetime')
-    @patch('artcommonlib.build_util.get_feature_freeze_release_date')
-    def test_canonical_builders_enabled(self, get_feature_freeze_release_date, mock_datetime):
+    def test_canonical_builders_enabled(self):
         # canonical_builders_from_upstream not defined
         self.img_dg.config.canonical_builders_from_upstream = Missing
         self.assertEqual(False, self.img_dg._canonical_builders_enabled())
@@ -631,18 +629,6 @@ COPY --from=builder /some/path/a /some/path/b
         self.img_dg.config.canonical_builders_from_upstream = 'on'
         self.img_dg.runtime.group_config.canonical_builders_from_upstream = False
         self.assertEqual(True, self.img_dg._canonical_builders_enabled())
-
-        # canonical_builders_from_upstream = 'auto'; current time < feature freeze
-        self.img_dg.config.canonical_builders_from_upstream = 'auto'
-        get_feature_freeze_release_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
-        mock_datetime.now.return_value = datetime.datetime(2023, 5, 1, 10, 30, 15)
-        self.assertEqual(True, self.img_dg._canonical_builders_enabled())
-
-        # canonical_builders_from_upstream = 'auto'; current time > feature freeze
-        self.img_dg.config.canonical_builders_from_upstream = 'auto'
-        get_feature_freeze_release_date.return_value = datetime.datetime(2023, 6, 1, 10, 30, 15)
-        mock_datetime.now.return_value = datetime.datetime(2023, 7, 1, 10, 30, 15)
-        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 
     def test_update_image_config(self):
         self.img_dg.metadata = MagicMock()
