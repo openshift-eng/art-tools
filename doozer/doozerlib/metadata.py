@@ -686,7 +686,9 @@ class Metadata(object):
 
         if not latest_build:
             return RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                               reason=f'Component {component_name} has no latest build for assembly: {self.runtime.assembly}')
+                               reason=f'Component {component_name} has no latest build '
+                                      f'for assembly {self.runtime.assembly} '
+                                      f'and target {el_target}')
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
         latest_build_creation = latest_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC
