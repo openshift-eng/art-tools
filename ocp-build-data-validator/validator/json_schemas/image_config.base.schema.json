@@ -208,7 +208,7 @@
     "content-": {},
     "canonical_builders_from_upstream": {
       "description": "Override the facility to adhere to upstream suggestions for base images",
-      "enum": [true, false, "auto", "off", "no", "on", "yes"]
+      "enum": [true, false]
     },
     "canonical_builders_from_upstream?": {
       "$ref": "#/properties/canonical_builders_from_upstream"
