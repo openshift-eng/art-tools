@@ -761,16 +761,12 @@ class GenPayloadCli:
             False: dict()
         }
 
-        # Mirror all images to private quay
-        tasks = []
-        for arch, payload_entries in self.private_payload_entries_for_arch.items():
-            tasks.append(self.mirror_payload_content(arch, payload_entries))
-        await asyncio.gather(*tasks)
-
         # Ensure that all payload images have been mirrored before updating
         # the imagestream. Otherwise, the imagestream will fail to import the
         # image.
         tasks = []
+        for arch, payload_entries in self.private_payload_entries_for_arch.items():
+            tasks.append(self.mirror_payload_content(arch, payload_entries, True))
         for arch, payload_entries in self.payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries))
         await asyncio.gather(*tasks)
@@ -793,7 +789,8 @@ class GenPayloadCli:
                                  "not have group.multi_arch.enabled==true")
 
     @exectools.limit_concurrency(500)
-    async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry]):
+    async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry],
+                                     private: bool = False):
         """
         Ensure an arch's payload entries are synced out for the public to access.
         """
@@ -816,7 +813,7 @@ class GenPayloadCli:
         # there no '-priv'? The true images for the assembly are what we are syncing -
         # it is what we update in the imagestreams that defines whether the image will be
         # part of a public vs private release.
-        src_dest_path = self.output_path.joinpath(f"src_dest.{arch}")
+        src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}.txt")
         async with aiofiles.open(src_dest_path, mode="w+", encoding="utf-8") as out_file:
             for dest_pullspec, src_pullspec in mirror_src_for_dest.items():
                 await out_file.write(f"{src_pullspec}={dest_pullspec}\n")
