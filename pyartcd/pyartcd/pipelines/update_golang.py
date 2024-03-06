@@ -97,8 +97,13 @@ class UpdateGolangPipeline:
 
             _LOGGER.info('Creating Jira ticket to tag golang builds in buildroots')
             self.create_jira_ticket(el_nvr_map, go_version)
-        else:
-            _LOGGER.info('Not creating Jira ticket, run with --create-tagging-ticket to create one if one does not exist')
+            return
+
+        for el_v, nvr in el_nvr_map.items():
+            if not await self.is_latest_and_available(el_v, nvr):
+                raise ValueError(f'{nvr} is not the latest build in buildroot, tag yourself or get them tagged via'
+                                 '--create-tagging-ticket')
+        _LOGGER.info('All builds are tagged and available!')
 
         # Make a sanity check if a builder nvr exists for this version and if it's already pinned
         _LOGGER.info(f"Checking if any builder image builds exist for {go_version} in brew")
@@ -229,7 +234,7 @@ class UpdateGolangPipeline:
 
     def is_latest_build(self, el_v: int, nvr: str) -> bool:
         build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
-        _LOGGER.info(f'Checking build root {build_tag}')
+        _LOGGER.info(f'Checking build root {build_tag} for latest build')
         parsed_nvr = parse_nvr(nvr)
         latest_build = self.koji_session.getLatestBuilds(build_tag, package=parsed_nvr['name'])
         if not latest_build:  # if this happens, investigate
@@ -245,7 +250,7 @@ class UpdateGolangPipeline:
         # If regen repo has been run this would take a few seconds
         # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
         build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
-        _LOGGER.info(f'Checking build root {build_tag}')
+        _LOGGER.info(f'Checking build root {build_tag} if latest build is available')
         cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1'
         rc, _, _ = await exectools.cmd_gather_async(cmd)
         return rc == 0
