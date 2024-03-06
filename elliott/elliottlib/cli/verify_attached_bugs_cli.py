@@ -299,21 +299,20 @@ class BugValidator:
                 self.errata_api,
                 advisory_id, attached_builds,
                 cve_components_mapping)
+            for cve, cve_package_exclusions in extra_exclusions.items():
+                if cve_package_exclusions:
+                    self._complain(f"On advisory {advisory_id}, {cve} is not associated with Brew components "
+                                   f"{', '.join(sorted(cve_package_exclusions))}."
+                                   " You may need to associate the CVE with the components "
+                                   "in the CVE mapping or drop the tracker bugs.")
+            for cve, cve_package_exclusions in missing_exclusions.items():
+                if cve_package_exclusions:
+                    self._complain(f"On advisory {advisory_id}, {cve} is associated with Brew components "
+                                   f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
+                                   " You may need to explicitly exclude those Brew components from the CVE "
+                                   "mapping or attach the corresponding tracker bugs.")
         except ValueError as e:
             self._complain(e)
-
-        for cve, cve_package_exclusions in extra_exclusions.items():
-            if cve_package_exclusions:
-                self._complain(f"On advisory {advisory_id}, {cve} is not associated with Brew components "
-                               f"{', '.join(sorted(cve_package_exclusions))}."
-                               " You may need to associate the CVE with the components "
-                               "in the CVE mapping or drop the tracker bugs.")
-        for cve, cve_package_exclusions in missing_exclusions.items():
-            if cve_package_exclusions:
-                self._complain(f"On advisory {advisory_id}, {cve} is associated with Brew components "
-                               f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
-                               " You may need to explicitly exclude those Brew components from the CVE "
-                               "mapping or attach the corresponding tracker bugs.")
 
         # Validate `CVE Names` field of the advisory
         advisory_cves = advisory_info["content"]["content"]["cve"].split()
