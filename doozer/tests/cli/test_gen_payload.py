@@ -216,7 +216,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
         pg_fpe_mock.return_value = ("entries", ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, dict(ppc64le="entries"))
+        self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
         self.assertEqual(gpcli.assembly_issues, ["issues"])
 
     async def test_detect_extend_payload_entry_issues(self):
