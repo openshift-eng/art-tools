@@ -1018,6 +1018,7 @@ class ImageDistGitRepo(DistGitRepo):
             state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
             return (self.metadata.distgit_key, False)
 
+        owners = list(self.config.owners) if self.config.owners and self.config.owners is not Missing else []
         action = "build"
         release = self.org_release if self.org_release is not None else '?'
         record = {
@@ -1025,7 +1026,7 @@ class ImageDistGitRepo(DistGitRepo):
             "dockerfile": "%s/Dockerfile" % self.distgit_dir,
             "distgit": self.metadata.distgit_key,
             "image": self.org_image_name,
-            "owners": ",".join(list(self.config.owners) if self.config.owners is not Missing else []),
+            "owners": ",".join(owners),
             "version": self.org_version,
             "release": release,
             "message": "Unknown failure",
