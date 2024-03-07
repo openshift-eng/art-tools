@@ -1,10 +1,11 @@
 import click
 import json
 
+from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BREW_ARCHES, GO_ARCHES
 from artcommonlib.format_util import green_print
 from elliottlib.cli.common import cli
-from elliottlib import rhcos, util, exectools
+from elliottlib import rhcos, util
 from artcommonlib.rhcos import get_primary_container_name
 
 

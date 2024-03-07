@@ -8,7 +8,7 @@ import aiohttp
 import gssapi
 
 from artcommonlib import logutil
-from elliottlib.exectools import limit_concurrency
+from artcommonlib.exectools import limit_concurrency
 
 from elliottlib.rpm_utils import parse_nvr
 from elliottlib import constants, util

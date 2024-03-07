@@ -3,6 +3,7 @@
 
 from future import standard_library
 
+from artcommonlib import exectools
 from artcommonlib.logutil import get_logger
 from artcommonlib.pushd import Dir
 
@@ -13,7 +14,6 @@ import urllib.parse
 import os
 import shutil
 import io
-from . import exectools
 from doozerlib import constants
 
 

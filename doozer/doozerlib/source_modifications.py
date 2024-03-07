@@ -6,11 +6,11 @@ from urllib.parse import urlparse
 import requests
 import yaml
 
+from artcommonlib import exectools
 from artcommonlib.logutil import get_logger
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.exectools import cmd_assert
 from doozerlib.util import is_in_directory, mkdirs
 
 LOGGER = get_logger(__name__)
@@ -200,7 +200,7 @@ class CommandModifier(object):
         ceiling_dir = kwargs["ceiling_dir"]
 
         with Dir(ceiling_dir):
-            cmd_assert(self.command, set_env=set_env, log_stdout=True, log_stderr=True)
+            exectools.cmd_assert(self.command, set_env=set_env, log_stdout=True, log_stderr=True)
 
 
 SourceModifierFactory.MODIFICATIONS["command"] = CommandModifier

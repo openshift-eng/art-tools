@@ -19,6 +19,7 @@ import semver
 import yaml
 
 import artcommonlib
+from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, GO_ARCHES
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
@@ -29,7 +30,7 @@ try:
 except ImportError:
     pass
 
-from doozerlib import constants, exectools
+from doozerlib import constants
 from functools import lru_cache
 
 DICT_EMPTY = object()
@@ -103,19 +104,6 @@ def mkdirs(path, mode=0o755):
     :param mode: create directories with mode
     """
     pathlib.Path(str(path)).mkdir(mode=mode, parents=True, exist_ok=True)
-
-
-@contextmanager
-def timer(out_method, msg):
-    caller = getframeinfo(stack()[2][0])  # Line that called this method
-    caller_caller = getframeinfo(stack()[3][0])  # Line that called the method calling this method
-    start_time = datetime.now()
-    try:
-        yield
-    finally:
-        time_elapsed = datetime.now() - start_time
-        entry = f'Time elapsed (hh:mm:ss.ms) {time_elapsed} in {os.path.basename(caller.filename)}:{caller.lineno} from {os.path.basename(caller_caller.filename)}:{caller_caller.lineno}:{caller_caller.code_context[0].strip() if caller_caller.code_context else ""} : {msg}'
-        out_method(entry)
 
 
 def analyze_debug_timing(file):

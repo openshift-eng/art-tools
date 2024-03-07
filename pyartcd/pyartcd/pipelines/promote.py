@@ -24,6 +24,7 @@ from tenacity import (RetryCallState, RetryError, retry,
 from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, \
     go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.exectools import to_thread
 from artcommonlib.rhcos import get_primary_container_name
 from pyartcd.locks import Lock
 from pyartcd.signatory import AsyncSignatory
@@ -1426,7 +1427,7 @@ class PromotePipeline:
     async def send_image_list_email(self, release_name: str, advisory: int, archive_dir: Path):
         content = await self.get_advisory_image_list(advisory)
         subject = f"OCP {release_name} Image List"
-        return await exectools.to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
+        return await to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
 
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
                                nightlies: List[str]):

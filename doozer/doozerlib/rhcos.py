@@ -11,10 +11,10 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from artcommonlib.arch_util import brew_suffix_for_arch
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from doozerlib import brew, exectools
+from doozerlib import brew
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
-from artcommonlib import rhcos, logutil
+from artcommonlib import rhcos, logutil, exectools
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 
 logger = logutil.get_logger(__name__)

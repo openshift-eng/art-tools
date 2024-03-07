@@ -2,10 +2,10 @@ import click
 import datetime
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.exectools import cmd_assert
 from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
-from elliottlib.exectools import cmd_assert
 from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
 from elliottlib.util import YMD, validate_release_date, \
     validate_email_address, exit_unauthorized

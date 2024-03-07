@@ -15,11 +15,11 @@ from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
+import artcommonlib
 import doozerlib
-from artcommonlib import logutil
+from artcommonlib import logutil, exectools
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.pushd import Dir
-from doozerlib import exectools
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
@@ -376,7 +376,7 @@ class Metadata(object):
         """
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
         try:
-            req = exectools.retry(
+            req = artcommonlib.exectools.retry(
                 3, lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200)
         except Exception as e:

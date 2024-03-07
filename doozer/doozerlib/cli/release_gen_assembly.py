@@ -14,9 +14,8 @@ from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import util
 from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib import exectools
 from doozerlib import brew
-from artcommonlib import rhcos
+from artcommonlib import rhcos, exectools
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.runtime import Runtime

@@ -8,8 +8,8 @@ import click
 import yaml
 
 from artcommonlib.format_util import green_print
-from doozerlib import Runtime, brew, exectools
-from artcommonlib import rhcos
+from doozerlib import Runtime, brew
+from artcommonlib import rhcos, exectools
 from doozerlib import build_status_detector as bs_detector
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.exceptions import DoozerFatalError

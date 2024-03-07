@@ -18,7 +18,7 @@ from artcommonlib.format_util import red_print
 from artcommonlib.model import Model
 from doozerlib import rpm_utils
 import yaml
-from artcommonlib import rhcos
+from artcommonlib import rhcos, exectools
 from artcommonlib.rhcos import RhcosMissingContainerException
 import openshift_client as oc
 from opentelemetry import trace
@@ -36,7 +36,6 @@ from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async
 from doozerlib.util import isolate_nightly_name_components
 from artcommonlib.util import convert_remote_git_to_https
-from doozerlib import exectools
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import find_manifest_list_sha
 

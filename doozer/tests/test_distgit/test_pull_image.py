@@ -1,5 +1,7 @@
 import unittest
 from flexmock import flexmock
+
+from artcommonlib.exectools import RetryException
 from doozerlib import distgit
 
 
@@ -26,7 +28,7 @@ class TestDistgitPullImage(unittest.TestCase):
         # simulating a failed command execution
         flexmock(distgit.exectools).should_receive("cmd_gather").and_return((1, "", ""))
 
-        expected_exception = distgit.exectools.RetryException
+        expected_exception = RetryException
         self.assertRaises(expected_exception, distgit.pull_image, "my-image")
 
     def test_custom_logging(self):

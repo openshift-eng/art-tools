@@ -9,13 +9,12 @@ import koji
 import requests
 from errata_tool import ErrataException
 
-from artcommonlib import logutil
+from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
 from artcommonlib.rhcos import get_container_configs
 from elliottlib import Runtime, brew, errata
-from elliottlib import exectools
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option, click_coroutine)
