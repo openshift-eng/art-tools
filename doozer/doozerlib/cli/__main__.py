@@ -8,8 +8,8 @@ import tempfile
 from future import standard_library
 
 from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
+from artcommonlib.pushd import Dir
 from doozerlib import state, cli as cli_package
-from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 
 from doozerlib.cli.release_gen_payload import release_gen_payload

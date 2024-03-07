@@ -8,6 +8,7 @@ from github import GithubException
 
 import artcommonlib.util
 from artcommonlib.model import Missing
+from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, exectools, rhcos, util
 from doozerlib.cli import cli, pass_runtime
@@ -15,7 +16,6 @@ from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
-from doozerlib.pushd import Dir
 
 
 class ConfigScanSources:

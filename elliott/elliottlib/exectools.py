@@ -14,7 +14,7 @@ import time
 import urllib
 
 from artcommonlib import assertion, logutil
-from elliottlib import pushd
+from artcommonlib.pushd import Dir
 
 SUCCESS = 0
 
@@ -79,7 +79,7 @@ def cmd_assert(cmd, retries=1, pollrate=60, on_retry=None, text_mode=True):
     assertion.success(
         result,
         "Error running [{}] {}. See debug log.".
-        format(pushd.Dir.getcwd(), cmd))
+        format(Dir.getcwd(), cmd))
 
     return stdout, stderr
 
@@ -102,7 +102,7 @@ def cmd_gather(cmd, text_mode=True):
     else:
         cmd_list = cmd
 
-    cwd = pushd.Dir.getcwd()
+    cwd = Dir.getcwd()
     cmd_info = '[cwd={}]: {}'.format(cwd, json.dumps(cmd_list))
 
     logger.debug("Executing:cmd_gather {}".format(cmd_info))
@@ -131,7 +131,7 @@ async def cmd_gather_async(cmd, text_mode=True):
     else:
         cmd_list = cmd
 
-    cwd = pushd.Dir.getcwd()
+    cwd = Dir.getcwd()
     cmd_info = '[cwd={}]: {}'.format(cwd, json.dumps(cmd_list))
 
     logger.debug("Executing:cmd_gather {}".format(cmd_info))

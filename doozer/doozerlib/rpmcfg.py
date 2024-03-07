@@ -6,6 +6,7 @@ from typing import Optional
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Missing
+from artcommonlib.pushd import Dir
 from doozerlib.rpm_utils import labelCompare
 
 from doozerlib import brew, util
@@ -14,7 +15,6 @@ from doozerlib.source_modifications import SourceModifierFactory
 
 from . import exectools
 from .metadata import Metadata
-from .pushd import Dir
 
 
 class RPMMetadata(Metadata):

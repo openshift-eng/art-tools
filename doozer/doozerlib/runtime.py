@@ -5,6 +5,7 @@ from artcommonlib import assertion, logutil
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
 from artcommonlib.model import Model, Missing
+from artcommonlib.pushd import Dir
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -33,7 +34,6 @@ from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
 from . import exectools
 from . import dblib
-from .pushd import Dir
 
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata

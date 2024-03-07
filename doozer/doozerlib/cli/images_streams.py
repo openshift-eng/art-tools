@@ -18,7 +18,7 @@ from dockerfile_parse import DockerfileParser
 
 from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.model import Missing, Model
-from doozerlib.pushd import Dir
+from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import exectools, constants, util
 from doozerlib.image import ImageMetadata
