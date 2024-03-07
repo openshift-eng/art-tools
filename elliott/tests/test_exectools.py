@@ -9,6 +9,7 @@ import unittest
 from flexmock import flexmock
 from unittest import mock
 
+from artcommonlib import pushd
 from elliottlib import exectools
 
 
@@ -76,7 +77,7 @@ class TestCmdExec(unittest.TestCase):
     def test_cmd_assert_success(self):
         """
         """
-        (flexmock(exectools.pushd.Dir)
+        (flexmock(pushd.Dir)
             .should_receive("getcwd")
             .and_return("/my/path"))
 
@@ -115,7 +116,7 @@ class TestCmdExec(unittest.TestCase):
         """
         flexmock(exectools.time).should_receive("sleep").replace_with(lambda *_: None)
 
-        (flexmock(exectools.pushd.Dir)
+        (flexmock(pushd.Dir)
             .should_receive("getcwd")
             .and_return("/my/path"))
 
@@ -155,7 +156,7 @@ class TestGather(unittest.IsolatedAsyncioTestCase):
     def test_gather_success(self):
         """
         """
-        (flexmock(exectools.pushd.Dir)
+        (flexmock(pushd.Dir)
             .should_receive("getcwd")
             .and_return("/my/path"))
 
@@ -193,7 +194,7 @@ class TestGather(unittest.IsolatedAsyncioTestCase):
         """
         flexmock(exectools.time).should_receive("sleep").replace_with(lambda *_: None)
 
-        (flexmock(exectools.pushd.Dir)
+        (flexmock(pushd.Dir)
             .should_receive("getcwd")
             .and_return("/my/path"))
 
@@ -236,7 +237,7 @@ class TestGather(unittest.IsolatedAsyncioTestCase):
         fake_stdout = b"fake_stdout"
         fake_stderr = b"fake_stderr"
         with mock.patch("asyncio.create_subprocess_exec") as create_subprocess_exec, \
-             mock.patch("elliottlib.pushd.Dir.getcwd", return_value=fake_cwd):
+             mock.patch("artcommonlib.pushd.Dir.getcwd", return_value=fake_cwd):
             proc = create_subprocess_exec.return_value
             proc.returncode = 0
             proc.communicate.return_value = (fake_stdout, fake_stderr)

@@ -2,6 +2,9 @@
 # and released under LGPL v3 <https://www.gnu.org/licenses/lgpl-3.0.en.html>
 from future.utils import as_native_str
 from future.standard_library import install_aliases
+
+from artcommonlib.pushd import Dir
+
 install_aliases()
 from urllib.parse import urlparse
 
@@ -12,7 +15,6 @@ import logging
 import os
 import shutil
 from . import exectools
-from .pushd import Dir
 
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]

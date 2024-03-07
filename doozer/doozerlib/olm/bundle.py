@@ -13,8 +13,9 @@ import yaml
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 
+from artcommonlib import pushd
 from artcommonlib.build_util import find_latest_build
-from doozerlib import brew, exectools, pushd, util
+from doozerlib import brew, exectools, util
 from doozerlib.runtime import Runtime
 
 

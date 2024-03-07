@@ -192,7 +192,7 @@ class TestGather(IsolatedAsyncioTestCase):
         fake_stdout = b"fake_stdout"
         fake_stderr = b"fake_stderr"
         with mock.patch("asyncio.create_subprocess_exec") as create_subprocess_exec, \
-                mock.patch("doozerlib.pushd.Dir.getcwd", return_value=fake_cwd):
+                mock.patch("artcommonlib.pushd.Dir.getcwd", return_value=fake_cwd):
             proc = create_subprocess_exec.return_value
             proc.returncode = 0
             proc.communicate.return_value = (fake_stdout, fake_stderr)

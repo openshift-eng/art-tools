@@ -4,6 +4,7 @@
 from future import standard_library
 
 from artcommonlib.logutil import get_logger
+from artcommonlib.pushd import Dir
 
 standard_library.install_aliases()
 import yaml
@@ -13,7 +14,6 @@ import os
 import shutil
 import io
 from . import exectools
-from .pushd import Dir
 from doozerlib import constants
 
 
