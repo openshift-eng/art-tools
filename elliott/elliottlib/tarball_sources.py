@@ -1,14 +1,13 @@
-from . import logutil
 import os
 from io import BytesIO
 import collections
 import tarfile
 import pygit2
 import errata_tool
-import koji
-import logging
-from . import constants
 from future.standard_library import install_aliases
+
+from artcommonlib import logutil
+
 install_aliases()
 from urllib.parse import urldefrag
 
@@ -16,7 +15,7 @@ from urllib.parse import urldefrag
 TARBALL_IGNORES = {".gitignore", ".oit", "container.yaml",
                    "content_sets.yml", "gating.yaml", "sources", "additional-tags"}
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 BuildWithProductVersion = collections.namedtuple(
     "BuildWithProductVersion", ["nvr", "product", "product_version"])

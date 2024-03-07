@@ -1,6 +1,8 @@
 from typing import Any, List, Dict, Optional, cast
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_permits, assembly_rhcos_config, \
+    AssemblyIssueCode, AssemblyIssue
 from doozerlib.plashet import PlashetBuilder
 
 from koji import ClientSession
@@ -12,8 +14,6 @@ from doozerlib.rpm_utils import compare_nvr, parse_nvr
 from doozerlib import brew, util, Runtime
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.assembly import assembly_rhcos_config, AssemblyTypes, assembly_permits, AssemblyIssue, \
-    AssemblyIssueCode, assembly_type
 from doozerlib.rhcos import RHCOSBuildInspector, RHCOSBuildFinder
 from artcommonlib.rhcos import get_container_configs, RhcosMissingContainerException
 
@@ -47,7 +47,7 @@ class AssemblyInspector:
         # If an image component has a latest build, an ImageInspector associated with the image.
         self._release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
         for image_meta in runtime.get_for_release_image_metas():
-            latest_build_obj = image_meta.get_latest_build(default=None)
+            latest_build_obj = image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
                 self._release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
             else:

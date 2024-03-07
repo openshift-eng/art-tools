@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock
 import yaml
 import openshift_client as oc
 
-from doozerlib.assembly import AssemblyIssueCode, AssemblyTypes, AssemblyIssue
+from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue
+from artcommonlib.model import Model
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.image import ImageMetadata
-from doozerlib.model import Model
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
@@ -216,7 +216,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
         pg_fpe_mock.return_value = ("entries", ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, dict(ppc64le="entries"))
+        self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
         self.assertEqual(gpcli.assembly_issues, ["issues"])
 
     async def test_detect_extend_payload_entry_issues(self):

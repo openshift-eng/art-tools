@@ -4,9 +4,10 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 from errata_tool import Erratum
 
+from artcommonlib import logutil
+from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
-from elliottlib import bzutil, constants, logutil
-from elliottlib.assembly import assembly_issues_config
+from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -15,7 +16,7 @@ from elliottlib.bzutil import Bug
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 @cli.command("verify-attached-bugs",
@@ -186,8 +187,20 @@ class BugValidator:
             self._verify_bug_status(non_flaw_bugs)
 
     def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
-        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids,
-                                               permissive=True)
+        advance_release = False
+        if "advance" in advisory_id_map:
+            if "metadata" in advisory_id_map:
+                if len(advisory_bug_map[advisory_id_map["advance"]]) > len(advisory_bug_map[advisory_id_map["metadata"]]):
+                    advance_release = True
+            else:
+                advance_release = True
+        operator_bundle_advisory = "advance" if advance_release else "metadata"
+        bugs_by_type, issues = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map,
+                                                       permitted_bug_ids=permitted_bug_ids,
+                                                       permissive=True, operator_bundle_advisory=operator_bundle_advisory)
+        for i in issues:
+            self._complain(i)
+
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
 
@@ -286,21 +299,20 @@ class BugValidator:
                 self.errata_api,
                 advisory_id, attached_builds,
                 cve_components_mapping)
+            for cve, cve_package_exclusions in extra_exclusions.items():
+                if cve_package_exclusions:
+                    self._complain(f"On advisory {advisory_id}, {cve} is not associated with Brew components "
+                                   f"{', '.join(sorted(cve_package_exclusions))}."
+                                   " You may need to associate the CVE with the components "
+                                   "in the CVE mapping or drop the tracker bugs.")
+            for cve, cve_package_exclusions in missing_exclusions.items():
+                if cve_package_exclusions:
+                    self._complain(f"On advisory {advisory_id}, {cve} is associated with Brew components "
+                                   f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
+                                   " You may need to explicitly exclude those Brew components from the CVE "
+                                   "mapping or attach the corresponding tracker bugs.")
         except ValueError as e:
             self._complain(e)
-
-        for cve, cve_package_exclusions in extra_exclusions.items():
-            if cve_package_exclusions:
-                self._complain(f"On advisory {advisory_id}, {cve} is not associated with Brew components "
-                               f"{', '.join(sorted(cve_package_exclusions))}."
-                               " You may need to associate the CVE with the components "
-                               "in the CVE mapping or drop the tracker bugs.")
-        for cve, cve_package_exclusions in missing_exclusions.items():
-            if cve_package_exclusions:
-                self._complain(f"On advisory {advisory_id}, {cve} is associated with Brew components "
-                               f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
-                               " You may need to explicitly exclude those Brew components from the CVE "
-                               "mapping or attach the corresponding tracker bugs.")
 
         # Validate `CVE Names` field of the advisory
         advisory_cves = advisory_info["content"]["content"]["cve"].split()

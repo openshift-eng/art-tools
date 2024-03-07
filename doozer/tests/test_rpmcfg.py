@@ -25,7 +25,7 @@ targets:
 - rhaos-4.7-rhel-8-candidate
     """
 
-    @mock.patch("doozerlib.logutil.EntityLoggingAdapter")
+    @mock.patch("artcommonlib.logutil.EntityLoggingAdapter")
     @mock.patch("doozerlib.rpmcfg.Dir")
     def test_assert_golang_versions(self, MockDir, MockEntityLoggingAdapter):
         runtime = mock.MagicMock(brew_logs_dir="/path/to/brew/logs")

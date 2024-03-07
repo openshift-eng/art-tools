@@ -7,13 +7,13 @@ from typing import List, Tuple, Optional
 from github import GithubException
 
 import artcommonlib.util
+from artcommonlib.model import Missing
 from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, exectools, rhcos, util
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
-from doozerlib.model import Missing
 from doozerlib.runtime import Runtime
 from doozerlib.pushd import Dir
 
@@ -612,7 +612,14 @@ def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_
     It will report RHCOS updates available per imagestream.
     """
 
-    runtime.initialize(mode='both', clone_distgits=False, clone_source=False, prevent_cloning=False)
+    # Initialize group config: we need this to determine the canonical builders behavior
+    runtime.initialize(config_only=True)
+
+    if runtime.group_config.canonical_builders_from_upstream:
+        runtime.initialize(mode="both", clone_distgits=True)
+    else:
+        runtime.initialize(mode='both', clone_distgits=False)
+
     ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
 
 

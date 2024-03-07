@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from flexmock import flexmock
 
+from artcommonlib.assembly import AssemblyTypes
 from doozerlib import distgit
-from doozerlib.assembly import AssemblyTypes
 
 
 class TestImageDistGitRepoPushImage(unittest.TestCase):

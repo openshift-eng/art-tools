@@ -1,7 +1,10 @@
 from future import standard_library
 
 import artcommonlib.util
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
+    assembly_streams_config
+from artcommonlib.model import Model, Missing
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -28,7 +31,6 @@ from jira import JIRA
 
 from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
-from . import logutil
 from . import exectools
 from . import dblib
 from .pushd import Dir
@@ -36,14 +38,12 @@ from .pushd import Dir
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata
 from doozerlib import state
-from .model import Model, Missing
 from multiprocessing import Lock, RLock, Semaphore
 from .repos import Repos
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import constants
 from doozerlib import util
 from doozerlib import brew
-from doozerlib.assembly import assembly_group_config, assembly_basis_event, assembly_type, AssemblyTypes, assembly_streams_config
 from doozerlib.build_status_detector import BuildStatusDetector
 
 # Values corresponds to schema for group.yml: freeze_automation. When
@@ -102,6 +102,7 @@ class Runtime(GroupRuntime):
         self.quiet = False
         self.load_wip = False
         self.load_disabled = False
+        self.logger = None
         self.data_path = None
         self.data_dir = None
         self.latest_parent_version = False
@@ -693,7 +694,7 @@ class Runtime(GroupRuntime):
             root_logger.addFilter(logging.Filter("ocp"))
 
         # Get a reference to the logger for doozer
-        self.logger = logutil.getLogger()
+        self.logger = logutil.get_logger()
         self.logger.propagate = False
 
         # levels will be set at the handler level. Make sure master level is low.

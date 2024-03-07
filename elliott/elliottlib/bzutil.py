@@ -22,13 +22,14 @@ from errata_tool.bug import Bug as ErrataBug
 from bugzilla.bug import Bug
 from koji import ClientSession
 
-from elliottlib import constants, exceptions, exectools, logutil, errata, util
+from artcommonlib import logutil
+from elliottlib import constants, exceptions, exectools, errata, util
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
 from elliottlib.util import isolate_timestamp_in_release, chunk
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 # This is easier to patch in unit tests

@@ -1,11 +1,11 @@
+from artcommonlib import logutil
 from artcommonlib.format_util import green_prefix
-from elliottlib import logutil
 from elliottlib.cli.common import cli
 from errata_tool import Erratum, ErrataException
 import click
 import re
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 supported_update_fields = [
     'publish_date',
     'text_only',

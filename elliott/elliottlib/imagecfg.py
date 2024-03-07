@@ -1,7 +1,7 @@
-from . import logutil
+from artcommonlib import logutil
 from .metadata import Metadata
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 class ImageMetadata(Metadata):
