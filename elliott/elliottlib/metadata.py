@@ -261,6 +261,9 @@ class Metadata(object):
                 nonlocal el_target
 
                 if self.meta_type == 'image':
+                    if not el_target:
+                        el_target = self.branch_el_target()
+
                     # For pre-releases, if canonical builders are enabled and alternative_upstream config is defined,
                     # consider rhel 8 as the normal build target. Even if this is an approximation, it is very realistic
                     # that the alternative config is downgrading the image to rhelX-1 while upstream aligns to ART's
