@@ -6,10 +6,10 @@ import requests
 import yaml
 from enum import Enum
 
+from artcommonlib import exectools
 from artcommonlib.format_util import cprint
 from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.runtime import Runtime
-from doozerlib.exectools import fire_and_forget, cmd_gather_async, limit_concurrency, cmd_gather
 from doozerlib.image import ImageMetadata
 from doozerlib.rpmcfg import RPMMetadata
 from typing import Optional
@@ -100,9 +100,9 @@ class ScanOshCli:
         But please note that this will take a lot of time since it has to run for all 200+ packages.
         """
 
-        @limit_concurrency(16)
+        @exectools.limit_concurrency(16)
         async def run_get_untriggered_nvrs(nvr):
-            rc, _, _ = await cmd_gather_async(f"osh-cli find-tasks --nvr {nvr}")
+            rc, _, _ = await exectools.cmd_gather_async(f"osh-cli find-tasks --nvr {nvr}")
 
             return None if rc == 0 else nvr
 
@@ -146,7 +146,7 @@ class ScanOshCli:
             cmd = f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} rpms:print " \
                   f"--short '{{component}}: {{name}}'"
 
-        _, output, _ = cmd_gather(cmd)
+        _, output, _ = exectools.cmd_gather(cmd)
         result = []
         for line in output.splitlines():
             result.append(line.split(": "))
@@ -166,7 +166,7 @@ class ScanOshCli:
         # Needs to be updated once https://issues.redhat.com/browse/OSH-376 is completed
         cmd = f"osh-cli find-tasks --nvr {nvr} --latest"
 
-        _, result, _ = cmd_gather(cmd)
+        _, result, _ = exectools.cmd_gather(cmd)
 
         tasks = result.strip().split("\n")
 
@@ -180,7 +180,7 @@ class ScanOshCli:
         cmd = f"osh-cli task-info {task_id}"
         self.runtime.logger.info(f"[osh-cli] Running: {cmd}")
 
-        _, result, _ = cmd_gather(cmd)
+        _, result, _ = exectools.cmd_gather(cmd)
         result_parsed_yml = yaml.safe_load(result.replace(" =", ":"))
 
         return task_id, result_parsed_yml["state_label"]
@@ -383,24 +383,24 @@ class ScanOshCli:
 
         return components_with_issues, components_without_issues
 
-    @limit_concurrency(16)
+    @exectools.limit_concurrency(16)
     async def get_latest_task_ids(self, nvr, package_name):
         # There is a bug in the osh-cli that sometimes, tasks are not in the order of created time
         # But task IDs are generated based on that order, so sorting in descending order and get the latest task for
         # a particular NVR
         cmd = f"osh-cli find-tasks --nvr {nvr} --latest"
 
-        _, result, _ = await cmd_gather_async(cmd)
+        _, result, _ = await exectools.cmd_gather_async(cmd)
         tasks = result.strip().split("\n")
 
         # This will always be a list with len 1, since we're using --latest flag
         return (package_name, None) if tasks == [''] else (package_name, tasks[0])
 
-    @limit_concurrency(16)
+    @exectools.limit_concurrency(16)
     async def get_osh_task_state(self, task_id, package_name):
         cmd = f"osh-cli task-info {task_id}"
 
-        _, result, _ = await cmd_gather_async(cmd)
+        _, result, _ = await exectools.cmd_gather_async(cmd)
         result_parsed_yml = yaml.safe_load(result.replace(" =", ":"))
 
         return package_name, result_parsed_yml["state_label"]
@@ -650,7 +650,7 @@ class ScanOshCli:
             message = f"Ran command: {cmd}"
 
             if not self.dry_run:
-                fire_and_forget(self.runtime.cwd, cmd)
+                exectools.fire_and_forget(self.runtime.cwd, cmd)
             else:
                 message = "[DRY RUN] " + message
 

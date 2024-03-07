@@ -314,7 +314,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
 
     @patch("aiofiles.open")
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_mirror_payload_content(self, exec_mock, open_mock):
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True)
         payload_entries = dict(
@@ -552,7 +552,7 @@ spec:
         gpcli.create_multi_manifest_list.assert_awaited_once_with("spam", arch_to_payload_entry, "ocp")
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
         runtime = MagicMock(uuid="uuid")
@@ -581,7 +581,7 @@ spec:
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
 
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("pathlib.Path.open")
     async def test_create_multi_release_images(self, open_mock, exec_mock):
         gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp"))
@@ -606,7 +606,7 @@ spec:
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
     @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.mirror_payload_content")
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_release_manifest_list(self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock):
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")

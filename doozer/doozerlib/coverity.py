@@ -8,8 +8,8 @@ import shutil
 
 from dockerfile_parse import DockerfileParser
 
+from artcommonlib import exectools
 from artcommonlib.pushd import Dir
-from doozerlib import exectools
 
 COVSCAN_ALL_JS_FILENAME = 'all_results.js'
 COVSCAN_DIFF_JS_FILENAME = 'diff_results.js'

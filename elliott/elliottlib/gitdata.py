@@ -3,6 +3,7 @@
 from future.utils import as_native_str
 from future.standard_library import install_aliases
 
+from artcommonlib import exectools
 from artcommonlib.pushd import Dir
 
 install_aliases()
@@ -14,7 +15,6 @@ import ruamel.yaml.util
 import logging
 import os
 import shutil
-from . import exectools
 
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]

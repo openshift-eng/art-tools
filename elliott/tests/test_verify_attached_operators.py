@@ -13,7 +13,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
     def setUp(self):
         self.respath = Path(os.path.dirname(__file__), 'resources')
 
-    @patch("elliottlib.exectools.cmd_assert", autospec=True)
+    @patch("artcommonlib.exectools.cmd_assert", autospec=True)
     def test_nvr_for_operand_pullspec(self, mock_cmd):
         runtime = MagicMock()
         img_info = dict(config=dict(config=dict(Labels={
