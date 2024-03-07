@@ -4,7 +4,7 @@ from unittest import TestCase, IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm, RpmModule
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from ruamel.yaml import YAML
 
 from doozerlib.rpm_utils import parse_nvr

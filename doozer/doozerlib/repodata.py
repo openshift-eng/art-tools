@@ -3,7 +3,8 @@ import gzip
 import lzma
 import io
 import logging
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree
+import defusedxml.ElementTree as ET
 from dataclasses import dataclass, field
 from logging import Logger
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -78,7 +79,7 @@ class Rpm:
         )
 
     @staticmethod
-    def from_metadata(metadata: ET.Element):
+    def from_metadata(metadata: xml.etree.ElementTree.Element):
         name = metadata.find("common:name", NAMESPACES)
         if name is None or not name.text:
             raise ValueError("name is not set")
@@ -142,7 +143,7 @@ class Repodata:
     modules: List[RpmModule] = field(default_factory=list)
 
     @staticmethod
-    def from_metadatas(name: str, primary: ET.Element, modules_yaml: List[Dict]):
+    def from_metadatas(name: str, primary: xml.etree.ElementTree.Element, modules_yaml: List[Dict]):
         primary_rpms = [Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)]
         modules = [RpmModule.from_metadata(metadata) for metadata in modules_yaml if metadata['document'] == 'modulemd']
         repodata = Repodata(
