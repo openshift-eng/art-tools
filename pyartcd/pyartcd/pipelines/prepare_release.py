@@ -171,8 +171,9 @@ class PrepareReleasePipeline:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
                                                           release_date=self.release_date)
-                    # Connect advisory to the batch_id
-                    change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
+                    if batch_id:
+                        # Connect advisory to the batch_id
+                        change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
 
