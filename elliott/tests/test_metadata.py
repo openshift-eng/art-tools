@@ -45,7 +45,7 @@ class TestMetadata(unittest.TestCase):
 
     def build_record(self, creation_dt: datetime.datetime, assembly, name='foo-container',
                      version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-                     release_prefix=None, release_suffix='',
+                     release_prefix=None, release_suffix='', el_target=None,
                      build_state: BuildStates = BuildStates.COMPLETE,
                      is_rpm: bool = False):
         """
@@ -65,6 +65,8 @@ class TestMetadata(unittest.TestCase):
         if assembly is not None:
             release += f'.assembly.{assembly}{release_suffix}'
 
+        if el_target:
+            release += f'.el{el_target}'
         ver_prefix = '' if is_rpm else 'v'
 
         return {
@@ -196,7 +198,7 @@ class TestMetadata(unittest.TestCase):
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly=None, build_state=BuildStates.COMPLETE),
             self.build_record(now, assembly=None, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=None, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly=None, build_state=BuildStates.COMPLETE, el_target=8),
         ]
         self.assertEqual(meta.get_latest_build(default=None, assembly=''), builds[2])
 
