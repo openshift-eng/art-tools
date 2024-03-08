@@ -10,8 +10,9 @@ from zipfile import ZipFile
 
 from errata_tool import Erratum
 
+from artcommonlib import exectools
 from artcommonlib.format_util import red_print, green_print
-from elliottlib import brew, constants, exectools, errata
+from elliottlib import brew, constants, errata
 from elliottlib.cli.find_builds_cli import find_builds_cli
 from elliottlib.cli.common import cli, pass_runtime, move_builds
 from elliottlib.exceptions import ElliottFatalError, BrewBuildException
@@ -351,7 +352,7 @@ def _nvr_for_operand_pullspec(runtime, spec):
     spec = f"{urls.brew_image_host}/{urls.brew_image_namespace}/openshift-{spec}"
     info = exectools.cmd_assert(
         f"oc image info -o json --filter-by-os=linux/amd64 {spec}",
-        retries=3, pollrate=5, text_mode=True,
+        retries=3, pollrate=5
     )[0]
     labels = json.loads(info)["config"]["config"]["Labels"]
     return f"{labels['com.redhat.component']}-{labels['version']}-{labels['release']}"

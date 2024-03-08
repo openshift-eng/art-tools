@@ -7,9 +7,10 @@ import sys
 import tempfile
 from future import standard_library
 
+from artcommonlib import exectools
 from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
+from artcommonlib.pushd import Dir
 from doozerlib import state, cli as cli_package
-from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 
 from doozerlib.cli.release_gen_payload import release_gen_payload
@@ -35,7 +36,6 @@ from doozerlib.cli.images import images_clone, images_list, images_push_distgit,
     images_print, distgit_config_template, query_rpm_version
 
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib import exectools
 from doozerlib.util import analyze_debug_timing
 from doozerlib.util import get_release_calc_previous
 

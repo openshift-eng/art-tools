@@ -5,12 +5,12 @@ from copy import deepcopy
 
 import doozerlib
 from artcommonlib.model import Missing, Model
+from artcommonlib.pushd import Dir
 from doozerlib import util
 from doozerlib import brew, coverity
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
-from doozerlib.pushd import Dir
 from doozerlib.rpm_utils import parse_nvr, to_nevra
 
 

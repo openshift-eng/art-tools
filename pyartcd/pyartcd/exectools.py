@@ -1,6 +1,4 @@
 import asyncio
-import contextvars
-import functools
 import logging
 import shlex
 from typing import List, Tuple, Union
@@ -12,44 +10,6 @@ from pyartcd.telemetry import start_as_current_span_async
 
 logger = logging.getLogger(__name__)
 TRACER = trace.get_tracer(__name__)
-
-
-async def to_thread(func, *args, **kwargs):
-    """Asynchronously run function *func* in a separate thread.
-
-    This function is a backport of asyncio.to_thread from Python 3.9.
-
-    Any *args and **kwargs supplied for this function are directly passed
-    to *func*. Also, the current :class:`contextvars.Context` is propogated,
-    allowing context variables from the main thread to be accessed in the
-    separate thread.
-
-    Return a coroutine that can be awaited to get the eventual result of *func*.
-    """
-    loop = asyncio.get_event_loop()
-    ctx = contextvars.copy_context()
-    func_call = functools.partial(ctx.run, func, *args, **kwargs)
-    return await loop.run_in_executor(None, func_call)
-
-
-def limit_concurrency(limit=5):
-    """A decorator to limit the number of parallel tasks with asyncio.
-
-    It should be noted that when the decorator function is executed, the created Semaphore is bound to the default event loop.
-    https://stackoverflow.com/a/66289885
-    """
-    # use asyncio.BoundedSemaphore(5) instead of Semaphore to prevent accidentally increasing the original limit (stackoverflow.com/a/48971158/6687477)
-    sem = asyncio.BoundedSemaphore(limit)
-
-    def executor(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            async with sem:
-                return await func(*args, **kwargs)
-
-        return wrapper
-
-    return executor
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")

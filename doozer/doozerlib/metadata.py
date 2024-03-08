@@ -15,14 +15,14 @@ from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
+import artcommonlib
 import doozerlib
-from artcommonlib import logutil
+from artcommonlib import logutil, exectools
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from doozerlib import exectools
+from artcommonlib.pushd import Dir
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.pushd import Dir
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
 
@@ -376,7 +376,7 @@ class Metadata(object):
         """
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
         try:
-            req = exectools.retry(
+            req = artcommonlib.exectools.retry(
                 3, lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200)
         except Exception as e:
@@ -686,7 +686,9 @@ class Metadata(object):
 
         if not latest_build:
             return RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                               reason=f'Component {component_name} has no latest build for assembly: {self.runtime.assembly}')
+                               reason=f'Component {component_name} has no latest build '
+                                      f'for assembly {self.runtime.assembly} '
+                                      f'and target {el_target}')
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
         latest_build_creation = latest_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC

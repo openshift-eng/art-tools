@@ -18,10 +18,11 @@ from artcommonlib.format_util import red_print
 from artcommonlib.model import Model
 from doozerlib import rpm_utils
 import yaml
-from artcommonlib import rhcos
+from artcommonlib import rhcos, exectools
 from artcommonlib.rhcos import RhcosMissingContainerException
 import openshift_client as oc
 from opentelemetry import trace
+from enum import Enum
 
 
 from doozerlib.rpm_utils import parse_nvr
@@ -35,12 +36,16 @@ from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async
 from doozerlib.util import isolate_nightly_name_components
 from artcommonlib.util import convert_remote_git_to_https
-from doozerlib import exectools
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import find_manifest_list_sha
 
 
 TRACER = trace.get_tracer(__name__)
+
+
+class RepositoryType(Enum):
+    PRIVATE = 0
+    PUBLIC = 1
 
 
 @cli.command("release:gen-payload", short_help="Mirror release images to quay and release-controller")
@@ -52,6 +57,8 @@ TRACER = trace.get_tracer(__name__)
               help="Quay ORGANIZATION to mirror into.\ndefault=openshift-release-dev")
 @click.option("--repository", metavar="REPO", required=False, default="ocp-v4.0-art-dev",
               help="Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev")
+@click.option("--private-repository", metavar="REPO", required=False, default="ocp-v4.0-art-dev-priv",
+              help="Private Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev-priv")
 @click.option("--release-repository", metavar="REPO", required=False, default="ocp-release-nightly",
               help="Quay REPOSITORY in ORGANIZATION to push release payloads (used for multi-arch)\n"
                    "default=ocp-release-nightly")
@@ -72,8 +79,8 @@ TRACER = trace.get_tracer(__name__)
 @click_coroutine
 @pass_runtime
 async def release_gen_payload(runtime: Runtime, is_name: str, is_namespace: str, organization: str,
-                              repository: str, release_repository: str, output_dir: str, exclude_arch: Tuple[str, ...],
-                              skip_gc_tagging: bool, emergency_ignore_issues: bool,
+                              repository: str, private_repository: str, release_repository: str, output_dir: str,
+                              exclude_arch: Tuple[str, ...], skip_gc_tagging: bool, emergency_ignore_issues: bool,
                               apply: bool, apply_multi_arch: bool, moist_run: bool):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
@@ -131,7 +138,7 @@ read and propagate/expose this annotation in its display of the release image.
         runtime,
         is_name or assembly_imagestream_base_name(runtime),
         is_namespace or default_imagestream_namespace_base_name(),
-        organization, repository, release_repository,
+        organization, repository, private_repository, release_repository,
         output_dir,
         exclude_arch,
         skip_gc_tagging, emergency_ignore_issues,
@@ -258,9 +265,10 @@ class GenPayloadCli:
     def __init__(self,
                  # leave these all optional to make testing easier
                  runtime: Runtime = None, is_name: str = None, is_namespace: str = None, organization: str = None,
-                 repository: str = None, release_repository: str = None, output_dir: str = None,
-                 exclude_arch: Tuple[str] = None, skip_gc_tagging: bool = False, emergency_ignore_issues: bool = False,
-                 apply: bool = False, apply_multi_arch: bool = False, moist_run: bool = False):
+                 repository: str = None, private_repository: str = None, release_repository: str = None,
+                 output_dir: str = None, exclude_arch: Tuple[str] = None, skip_gc_tagging: bool = False,
+                 emergency_ignore_issues: bool = False, apply: bool = False, apply_multi_arch: bool = False,
+                 moist_run: bool = False):
 
         self.runtime = runtime
         self.logger = runtime.logger if runtime else MagicMock()  # in tests, blackhole logs by default
@@ -268,6 +276,7 @@ class GenPayloadCli:
         self.base_imagestream = (is_namespace, is_name)
         # where in the registry to publish/reference component images and release images
         self.component_repo = (organization, repository)
+        self.private_component_repo = (organization, private_repository)
         self.release_repo = (organization, release_repository)
 
         if output_dir:  # where to output yaml report and backed up IS
@@ -283,6 +292,7 @@ class GenPayloadCli:
 
         # store generated payload entries: {arch -> dict of payload entries}
         self.payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
+        self.private_payload_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = {}
         # for gathering issues that are found while evaluating the payload:
         self.assembly_issues: List[AssemblyIssue] = list()
         # private releases (only nightlies) can reference private component builds
@@ -310,7 +320,7 @@ class GenPayloadCli:
         with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
 
-        self.payload_entries_for_arch = self.generate_payload_entries(assembly_inspector)
+        self.payload_entries_for_arch, self.private_payload_entries_for_arch = self.generate_payload_entries(assembly_inspector)
         assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
 
         self.logger.info('\n%s', yaml.dump(assembly_report, default_flow_style=False, indent=2))
@@ -567,16 +577,17 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(assembly_inspector.check_installed_rpms_in_image(dg_key, bbii))
 
-    def full_component_repo(self) -> str:
+    def full_component_repo(self, repo_type: RepositoryType = RepositoryType.PUBLIC) -> str:
         """
         Full pullspec for the component repo
         """
+        org, repo = self.private_component_repo if repo_type == RepositoryType.PRIVATE else self.component_repo
 
-        org, repo = self.component_repo
         return f"quay.io/{org}/{repo}"
 
     @TRACER.start_as_current_span("GenPayloadCli.generate_payload_entries")
-    def generate_payload_entries(self, assembly_inspector: AssemblyInspector) -> Dict[str, Dict[str, PayloadEntry]]:
+    def generate_payload_entries(self, assembly_inspector: AssemblyInspector) -> (Dict[str, Dict[str, PayloadEntry]],
+                                                                                  Dict[str, Dict[str, PayloadEntry]]):
         """
         Generate single-arch PayloadEntries for the assembly payload.
         Payload generation may uncover assembly issues, which are added to the assembly_issues list.
@@ -584,6 +595,7 @@ class GenPayloadCli:
         """
 
         entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
+        private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         for arch in self.runtime.arches:
             if arch in self.exclude_arch:
                 self.logger.info(f"Excluding payload files architecture: {arch}")
@@ -592,12 +604,15 @@ class GenPayloadCli:
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             issues: List[AssemblyIssue]
-            entries, issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch,
-                                                                    self.full_component_repo())
+            entries, issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
+
+            # Exclude issues for now, for private repo
+            private_entries, _ = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
             entries_for_arch[arch] = entries
+            private_entries_for_arch[arch] = private_entries
             self.assembly_issues.extend(issues)
 
-        return entries_for_arch
+        return entries_for_arch, private_entries_for_arch
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.detect_extend_payload_entry_issues")
     async def detect_extend_payload_entry_issues(self, assembly_inspector: AssemblyInspector):
@@ -749,6 +764,8 @@ class GenPayloadCli:
         # the imagestream. Otherwise, the imagestream will fail to import the
         # image.
         tasks = []
+        for arch, payload_entries in self.private_payload_entries_for_arch.items():
+            tasks.append(self.mirror_payload_content(arch, payload_entries, True))
         for arch, payload_entries in self.payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries))
         await asyncio.gather(*tasks)
@@ -771,7 +788,8 @@ class GenPayloadCli:
                                  "not have group.multi_arch.enabled==true")
 
     @exectools.limit_concurrency(500)
-    async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry]):
+    async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry],
+                                     private: bool = False):
         """
         Ensure an arch's payload entries are synced out for the public to access.
         """
@@ -794,7 +812,7 @@ class GenPayloadCli:
         # there no '-priv'? The true images for the assembly are what we are syncing -
         # it is what we update in the imagestreams that defines whether the image will be
         # part of a public vs private release.
-        src_dest_path = self.output_path.joinpath(f"src_dest.{arch}")
+        src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}.txt")
         async with aiofiles.open(src_dest_path, mode="w+", encoding="utf-8") as out_file:
             for dest_pullspec, src_pullspec in mirror_src_for_dest.items():
                 await out_file.write(f"{src_pullspec}={dest_pullspec}\n")

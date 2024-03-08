@@ -2,9 +2,9 @@
 import unittest
 from flexmock import flexmock
 
-from artcommonlib import logutil
+from artcommonlib import logutil, exectools
 from artcommonlib.model import Model
-from doozerlib import runtime, exectools
+from doozerlib import runtime
 
 
 def stub_runtime():

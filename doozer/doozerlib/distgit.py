@@ -4,7 +4,6 @@ import errno
 import glob
 import hashlib
 import io
-import json
 import logging
 import os
 import pathlib
@@ -13,7 +12,6 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import datetime
 from multiprocessing import Event, Lock
 from typing import Dict, List, Optional, Tuple, Union, Set
 
@@ -26,18 +24,18 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion, logutil, build_util
+from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model, ListModel
+from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib import constants, exectools, state, util
+from doozerlib import constants, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
-from doozerlib.pushd import Dir
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
@@ -86,8 +84,7 @@ def pull_image(url):
         time.sleep(60)
 
     exectools.retry(
-        3, wait_f=wait,
-        task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
+        retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
 
 
 def map_image_name(name, image_map):
@@ -1017,6 +1014,7 @@ class ImageDistGitRepo(DistGitRepo):
             state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
             return (self.metadata.distgit_key, False)
 
+        owners = list(self.config.owners) if self.config.owners and self.config.owners is not Missing else []
         action = "build"
         release = self.org_release if self.org_release is not None else '?'
         record = {
@@ -1024,7 +1022,7 @@ class ImageDistGitRepo(DistGitRepo):
             "dockerfile": "%s/Dockerfile" % self.distgit_dir,
             "distgit": self.metadata.distgit_key,
             "image": self.org_image_name,
-            "owners": ",".join(list(self.config.owners) if self.config.owners is not Missing else []),
+            "owners": ",".join(owners),
             "version": self.org_version,
             "release": release,
             "message": "Unknown failure",
@@ -1689,10 +1687,16 @@ class ImageDistGitRepo(DistGitRepo):
         """
 
         if not self.upstream_intended_el_version:
+            # Could not determine upstream rhel version: do not match upstream builders
             self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            self.should_match_upstream = False
             return
+
         elif self.upstream_intended_el_version == self.art_intended_el_version:
+            # ART/upstream el versions match: do not merge configs, but match upstream builders
             self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
+            self.should_match_upstream = True
+            return
 
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream
@@ -1706,27 +1710,19 @@ class ImageDistGitRepo(DistGitRepo):
 
         if not matched:
             # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
+            # Besides, ART and upstream intended rhel versions do not match, therefore fallback to default ART's config
             self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
                                 self.upstream_intended_el_version)
+            self.should_match_upstream = False
 
-            # If ART and upstream intended rhel versions do not match, fallback to default ART's config
-            if self.art_intended_el_version != self.upstream_intended_el_version:
-                self.logger.warning('ART is using rhel-%s, while upstream is using rhel-%s: will not match upstream',
-                                    self.art_intended_el_version, self.upstream_intended_el_version)
-                self.should_match_upstream = False
-                return
-
-            # Even with no matching 'when' clause, rhel versions match so we can use canonical builders from upstream
+        else:
+            # We found an alternative_upstream config stanza. We can match upstream
             self.should_match_upstream = True
-            return
-
-        # We found an alternative_upstream config stanza. We can match upstream
-        self.should_match_upstream = True
-        # Distgit branch must be changed to track the alternative one
-        self.branch = self.config.distgit.branch
-        # Also update metadata config
-        self.metadata.config = self.config
-        self.metadata.targets = self.metadata.determine_targets()
+            # Distgit branch must be changed to track the alternative one
+            self.branch = self.config.distgit.branch
+            # Also update metadata config
+            self.metadata.config = self.config
+            self.metadata.targets = self.metadata.determine_targets()
 
     def _rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))

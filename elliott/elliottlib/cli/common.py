@@ -4,8 +4,9 @@ from functools import update_wrapper
 
 import click
 
+from artcommonlib import dotconfig
 from artcommonlib.format_util import red_prefix, green_prefix, yellow_print
-from elliottlib import Runtime, constants, dotconfig, __version__, errata
+from elliottlib import Runtime, constants, __version__, errata
 from elliottlib.cli import cli_opts
 
 

@@ -8,7 +8,6 @@ import re
 import urllib.parse
 import xmlrpc.client
 import bugzilla
-import click
 import os
 import requests
 from requests_gssapi import HTTPSPNEGOAuth
@@ -22,8 +21,8 @@ from errata_tool.bug import Bug as ErrataBug
 from bugzilla.bug import Bug
 from koji import ClientSession
 
-from artcommonlib import logutil
-from elliottlib import constants, exceptions, exectools, errata, util
+from artcommonlib import logutil, exectools
+from elliottlib import constants, exceptions, errata, util
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata

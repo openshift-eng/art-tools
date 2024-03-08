@@ -3,9 +3,9 @@ import logging
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from artcommonlib.exectools import RetryException
 from doozerlib import gitdata, rpmcfg
 from doozerlib.cli.rpms import _rpms_rebase_and_build
-from doozerlib.exectools import RetryException
 
 
 class TestRPMsBuildCli(IsolatedAsyncioTestCase):

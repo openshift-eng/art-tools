@@ -73,7 +73,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(task_id, 12345)
         self.assertEqual(task_url, f"{constants.BREWWEB_URL}/taskinfo?taskID=12345")
 
-    @patch("doozerlib.exectools.cmd_gather", return_value=(0, "", ""))
+    @patch("artcommonlib.exectools.cmd_gather", return_value=(0, "", ""))
     @patch("doozerlib.brew.watch_task", return_value=None)
     @patch("doozerlib.osbs2_builder.OSBS2Builder._start_build", return_value=(12345, f"{constants.BREWWEB_URL}/taskinfo?taskID=12345"))
     async def test_build(self, _start_build: MagicMock, watch_task: MagicMock, cmd_gather: MagicMock):

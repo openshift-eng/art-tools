@@ -10,8 +10,9 @@ from multiprocessing.dummy import Pool as ThreadPool
 from sys import getsizeof, stderr
 from typing import Dict, Iterable, List, Optional, Tuple, Sequence, Any
 
+from artcommonlib import exectools
 from artcommonlib.format_util import red_prefix, green_prefix, green_print
-from elliottlib import brew, exectools
+from elliottlib import brew
 from elliottlib.exceptions import BrewBuildException
 
 from errata_tool import Erratum

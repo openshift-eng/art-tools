@@ -1,10 +1,6 @@
 from future.utils import bytes_to_native_str
 from . import metadata
 import yaml
-import os
-import shutil
-from .pushd import Dir
-from . import exectools
 import sys
 import csv
 import io
@@ -140,12 +136,19 @@ class MetaDataConfig(object):
                 w.writerow(value_list)
 
         if output is None:
-            writer = csv.writer(sys.stdout, delimiter=bytes_to_native_str(b','), quotechar=bytes_to_native_str(b'"'), quoting=csv.QUOTE_MINIMAL)
+            writer = csv.writer(
+                sys.stdout,
+                delimiter=bytes_to_native_str(b','),
+                quotechar=bytes_to_native_str(b'"'),
+                quoting=csv.QUOTE_MINIMAL)
             _write_rows(writer)
             return
 
         with io.open(output, mode='w', encoding="utf-8") as csv_file:
-            writer = csv.writer(csv_file, delimiter=bytes_to_native_str(b','), quotechar=bytes_to_native_str(b'"'), quoting=csv.QUOTE_MINIMAL)
+            writer = csv.writer(csv_file,
+                                delimiter=bytes_to_native_str(b','),
+                                quotechar=bytes_to_native_str(b'"'),
+                                quoting=csv.QUOTE_MINIMAL)
             _write_rows(writer)
 
     def commit(self, msg):
