@@ -127,10 +127,9 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_e
 
     logger.debug("cmd_assert: Final result = {} in {} tries.".format(result, try_num + 1))
 
-    assertion.success(
-        result,
-        "Error running [{}] {}. See debug log.".
-        format(Dir.getcwd(), cmd))
+    if result != SUCCESS:
+        msg = f"Process {cmd} exited with code {result}:\ncwd={Dir.getcwd()}\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
+        raise ChildProcessError(msg, (result, stdout, stderr))
 
     return stdout, stderr
 
