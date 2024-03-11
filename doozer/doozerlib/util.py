@@ -24,6 +24,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch,
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Model, Missing
+from artcommonlib.util import isolate_major_minor_in_group
 
 try:
     from reprlib import repr
@@ -527,18 +528,6 @@ async def find_manifest_list_sha(pull_spec):
     if 'listDigest' not in image_data:
         raise ValueError('Specified image is not a manifest-list.')
     return image_data['listDigest']
-
-
-def isolate_major_minor_in_group(group_name: str) -> Tuple[int, int]:
-    """
-    Given a group name, determines whether is contains
-    a OCP major.minor version. If it does, it returns the version value as (int, int).
-    If it is not found, (None, None) is returned.
-    """
-    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
-    if not match:
-        return None, None
-    return int(match[1]), int(match[2])
 
 
 def get_release_name(assembly_type: artcommonlib.assembly.AssemblyTypes, group_name: str, assembly_name: str,

@@ -1,4 +1,4 @@
-from typing import OrderedDict, Optional
+from typing import OrderedDict, Optional, Tuple
 from datetime import datetime
 from artcommonlib.constants import RELEASE_SCHEDULES
 import requests
@@ -194,3 +194,16 @@ def deep_merge(dict1, dict2):
             merged[key] = value
 
     return merged
+
+
+def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Given a group name, determines whether it contains an OCP {major}.{minor} version.
+    If it does, it returns the version value as (int, int).
+    If it is not found, (None, None) is returned.
+    """
+
+    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
+    if not match:
+        return None, None
+    return int(match[1]), int(match[2])

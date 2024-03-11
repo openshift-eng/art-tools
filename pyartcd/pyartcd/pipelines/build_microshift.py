@@ -14,7 +14,7 @@ import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
@@ -26,9 +26,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_basis, get_assembly_type,
-                          isolate_el_version_in_release, load_group_config,
-                          load_releases_config)
+from pyartcd.util import (get_assembly_type, isolate_el_version_in_release, load_group_config, load_releases_config)
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -74,7 +72,7 @@ class BuildMicroShiftPipeline:
         await oc.registry_login(self.runtime)
 
         assembly_type = AssemblyTypes.STREAM
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
 
         try:
             group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
