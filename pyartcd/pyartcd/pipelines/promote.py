@@ -26,6 +26,7 @@ from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exectools import to_thread
 from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd.locks import Lock
 from pyartcd.signatory import AsyncSignatory
 from pyartcd.util import nightlies_with_pullspecs
@@ -469,7 +470,7 @@ class PromotePipeline:
 
     async def sync_rhcos_srpms(self, assembly_type, data):
         # Sync potential pre-release source on which RHCOS depends. See ART-6419 for details.
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
         if assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
             src_output_dir = self._working_dir / "rhcos_src_staging"
             src_output_dir.mkdir(parents=True, exist_ok=True)
@@ -671,7 +672,7 @@ class PromotePipeline:
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
         if (major > 4 or minor >= 14) or (major == 4 and minor >= 10 and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
@@ -878,7 +879,7 @@ class PromotePipeline:
             self._logger.info("Skipping microshift build because SKIP_BUILD_MICROSHIFT is set.")
             return
 
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
         if major == 4 and minor < 14:
             self._logger.info("Skip microshift build for version < 4.14")
             return
@@ -1001,7 +1002,7 @@ class PromotePipeline:
         if not dest_image_info or self.permit_overwrite:
             if dest_image_info:
                 self._logger.warning("The existing release image %s will be overwritten!", dest_image_pullspec)
-            major, minor = util.isolate_major_minor_in_group(self.group)
+            major, minor = isolate_major_minor_in_group(self.group)
             # Ensure build-sync has been run for this assembly
             is_name = f"{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
             imagestream = await self.get_image_stream(f"ocp{go_arch_suffix}", is_name)
@@ -1042,7 +1043,7 @@ class PromotePipeline:
                 if reference_release:
                     dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-release": reference_release}}
                 else:
-                    major, minor = util.isolate_major_minor_in_group(self.group)
+                    major, minor = isolate_major_minor_in_group(self.group)
                     go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
                     dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
 
@@ -1108,7 +1109,7 @@ class PromotePipeline:
         if not dest_image_digest or self.permit_overwrite:
             if dest_image_digest:
                 self._logger.warning("The existing payload %s will be overwritten!", dest_image_pullspec)
-            major, minor = util.isolate_major_minor_in_group(self.group)
+            major, minor = isolate_major_minor_in_group(self.group)
             # The imagestream for the assembly in ocp-multi contains a single tag.
             # That single istag points to a top-level manifest-list on quay.io.
             # Each entry in the manifest-list is an arch-specific heterogeneous payload.

@@ -9,6 +9,7 @@ from errata_tool import Erratum
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB
+from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd import constants, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
@@ -89,7 +90,7 @@ class OperatorSDKPipeline:
         self.exec_cmd(cmd)
         if arch == 'amd64' or arch == 'arm64':
             tarballFilename = f"{self.sdk}-{sdkVersion}-darwin-{rarch}.tar.gz"
-            major, minor = util.isolate_major_minor_in_group(self.group)
+            major, minor = isolate_major_minor_in_group(self.group)
             share_path = "mac_arm64" if arch == 'arm64' and (major, minor) >= (4, 12) else "mac"
             cmd = f"oc image extract {constants.OPERATOR_URL}@{shasum} --path /usr/share/{self.sdk}/{share_path}/{self.sdk}:./{rarch}/ --confirm" + \
                   f" && chmod +x ./{rarch}/{self.sdk} && tar -c --preserve-order -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}" + \

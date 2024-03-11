@@ -6,7 +6,6 @@ import re
 import click
 import yaml
 from opentelemetry import trace
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import rhcos, redis
 from artcommonlib.arch_util import go_suffix_for_arch
