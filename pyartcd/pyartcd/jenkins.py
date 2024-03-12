@@ -249,6 +249,9 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
     if comment_on_pr:
         params['COMMENT_ON_PR'] = True
 
+    # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
+    params['SKIP_PLASHETS'] = False
+
     return start_build(
         job=Jobs.OCP4,
         params=params,

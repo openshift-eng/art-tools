@@ -1,10 +1,9 @@
 import click
 from pprint import pprint
 
+from artcommonlib.assembly import AssemblyIssueCode, AssemblyIssue
 from doozerlib.cli import cli
 from doozerlib.cli.release_gen_payload import PayloadGenerator
-from doozerlib.assembly import AssemblyIssueCode
-from doozerlib.assembly import AssemblyIssue
 from doozerlib.assembly_inspector import AssemblyInspector
 
 

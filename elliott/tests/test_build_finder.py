@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock, Mock
 from unittest.mock import patch
 
-from elliottlib.model import Model
+from artcommonlib.model import Model
 from elliottlib.build_finder import BuildFinder
 
 

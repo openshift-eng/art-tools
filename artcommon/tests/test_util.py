@@ -4,7 +4,7 @@ import yaml
 
 from artcommonlib import util, build_util, release_util
 from artcommonlib.model import Model, MissingModel
-from artcommonlib.util import deep_merge
+from artcommonlib.util import deep_merge, isolate_major_minor_in_group
 
 
 class TestUtil(unittest.TestCase):
@@ -159,3 +159,20 @@ alternative_upstream:
         self.assertEqual(merged_config.content.source.git.branch.target, 'release-4.16')
         self.assertEqual(merged_config.get('from').get('builder'), [{'stream': 'golang'}, {'stream': 'rhel-9-golang'}])
         self.assertEqual(merged_config.get('from').get('member'), 'openshift-enterprise-base')
+
+    def test_isolate_major_minor_in_group(self):
+        major, minor = isolate_major_minor_in_group('openshift-4.16')
+        self.assertEqual(major, 4)
+        self.assertEqual(minor, 16)
+
+        major, minor = isolate_major_minor_in_group('invalid-4.16')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+        major, minor = isolate_major_minor_in_group('openshift-4.invalid')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+        major, minor = isolate_major_minor_in_group('openshift-invalid.16')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)

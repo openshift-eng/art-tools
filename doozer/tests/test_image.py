@@ -7,6 +7,8 @@ from unittest import IsolatedAsyncioTestCase, mock
 
 from flexmock import flexmock
 
+from artcommonlib import exectools
+from artcommonlib.model import Model
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 
@@ -14,7 +16,7 @@ try:
     from importlib import reload
 except ImportError:
     pass
-from doozerlib import exectools, image, model, brew_info
+from doozerlib import image, brew_info
 
 TEST_YAML = """---
 name: 'openshift/test'
@@ -151,10 +153,10 @@ class TestImageMetadata(unittest.TestCase):
         self.assertEqual(r, "7")
 
     def test_get_brew_image_name_short(self):
-        image_model = model.Model({
+        image_model = Model({
             'name': 'openshift/test',
         })
-        data_obj = model.Model({
+        data_obj = Model({
             'key': 'my-distgit',
             'data': image_model,
             'filename': 'my-distgit.yaml',

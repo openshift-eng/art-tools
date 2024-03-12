@@ -5,15 +5,16 @@ from typing import Dict, List, Sequence, Set, Tuple
 import aiohttp
 import click
 
+from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.format_util import green_print, yellow_print, red_print
-from doozerlib import constants, exectools, logutil
+from doozerlib import constants
+from artcommonlib.model import Model
 from doozerlib.cli import cli, click_coroutine
-from doozerlib.model import Model
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.runtime import Runtime
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 @cli.command("get-nightlies", short_help="Determine set(s) of accepted nightlies with matching contents for all architectures")

@@ -1,24 +1,16 @@
-
-import asyncio
 import hashlib
 import json
-import logging
-from typing import (Any, Awaitable, Dict, List, Optional, Set, Tuple, Union,
-                    cast)
+from typing import (Any, Dict, List, Optional, Set, Tuple)
 from copy import deepcopy
 
 import doozerlib
+from artcommonlib.model import Missing, Model
+from artcommonlib.pushd import Dir
 from doozerlib import util
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
-from artcommonlib.release_util import isolate_el_version_in_release
-from doozerlib import brew, coverity, exectools
+from doozerlib import brew, coverity
 from doozerlib.brew_info import BrewBuildImageInspector
-from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
-from doozerlib.model import Missing, Model
-from doozerlib.pushd import Dir
-from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.rpm_utils import parse_nvr, to_nevra
 
 
@@ -174,7 +166,7 @@ class ImageMetadata(Metadata):
     def pull_url(self):
         # Don't trust what is the Dockerfile for version & release. This field may not even be present.
         # Query brew to find the most recently built release for this component version.
-        _, version, release = self.get_latest_build_info()
+        _, version, release = self.get_latest_build_info(el_target=self.branch_el_target())
 
         # we need to pull images from proxy if 'brew_image_namespace' is enabled:
         # https://source.redhat.com/groups/public/container-build-system/container_build_system_wiki/pulling_pre_quay_switch_over_osbs_built_container_images_using_the_osbs_registry_proxy

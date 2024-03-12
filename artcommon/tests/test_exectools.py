@@ -9,6 +9,8 @@ import unittest
 
 from unittest import IsolatedAsyncioTestCase, mock
 
+from artcommonlib import exectools
+
 try:
     from importlib import reload
 except ImportError:
@@ -17,8 +19,6 @@ import logging
 import os
 import shutil
 import tempfile
-
-from doozerlib import exectools
 
 
 class RetryTestCase(IsolatedAsyncioTestCase):
@@ -192,7 +192,7 @@ class TestGather(IsolatedAsyncioTestCase):
         fake_stdout = b"fake_stdout"
         fake_stderr = b"fake_stderr"
         with mock.patch("asyncio.create_subprocess_exec") as create_subprocess_exec, \
-                mock.patch("doozerlib.pushd.Dir.getcwd", return_value=fake_cwd):
+                mock.patch("artcommonlib.pushd.Dir.getcwd", return_value=fake_cwd):
             proc = create_subprocess_exec.return_value
             proc.returncode = 0
             proc.communicate.return_value = (fake_stdout, fake_stderr)
@@ -213,7 +213,7 @@ class TestGather(IsolatedAsyncioTestCase):
     async def test_cmd_assert_async(self):
         cmd = ["uname", "-a"]
         fake_cwd = "/foo/bar"
-        with mock.patch("doozerlib.exectools.cmd_gather_async") as cmd_gather_async:
+        with mock.patch("artcommonlib.exectools.cmd_gather_async") as cmd_gather_async:
             cmd_gather_async.return_value = (0, "fake_stdout", "fake_stderr")
 
             out, err = await exectools.cmd_assert_async(cmd, cwd=fake_cwd, text_mode=True)
@@ -221,7 +221,7 @@ class TestGather(IsolatedAsyncioTestCase):
             self.assertEqual(out, "fake_stdout")
             self.assertEqual(err, "fake_stderr")
 
-        with mock.patch("doozerlib.exectools.cmd_gather_async") as cmd_gather_async:
+        with mock.patch("artcommonlib.exectools.cmd_gather_async") as cmd_gather_async:
             cmd_gather_async.return_value = (1, "fake_stdout", "fake_stderr")
             with self.assertRaises(ChildProcessError):
                 out, err = await exectools.cmd_assert_async(cmd, cwd=fake_cwd, text_mode=True)

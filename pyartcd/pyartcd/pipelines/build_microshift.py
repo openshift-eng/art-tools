@@ -13,8 +13,8 @@ from typing import Dict, Iterable, List, Optional, Tuple, cast
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
-from artcommonlib.util import get_ocp_version_from_group
-from doozerlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
@@ -26,9 +26,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_basis, get_assembly_type,
-                          isolate_el_version_in_release, load_group_config,
-                          load_releases_config)
+from pyartcd.util import (get_assembly_type, isolate_el_version_in_release, load_group_config, load_releases_config)
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -42,7 +40,7 @@ class BuildMicroShiftPipeline:
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
     def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
-                 force: bool, ocp_build_data_url: str, logger: Optional[logging.Logger] = None):
+                 force: bool, data_path: str, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -63,18 +61,18 @@ class BuildMicroShiftPipeline:
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
 
-        if not ocp_build_data_url:
-            ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
-        if ocp_build_data_url:
-            self._doozer_env_vars["DOOZER_DATA_PATH"] = ocp_build_data_url
-            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = ocp_build_data_url
+        if not data_path:
+            data_path = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
+        if data_path:
+            self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
+            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
     async def run(self):
         # Make sure our api.ci token is fresh
         await oc.registry_login(self.runtime)
 
         assembly_type = AssemblyTypes.STREAM
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
 
         try:
             group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
@@ -461,7 +459,7 @@ class BuildMicroShiftPipeline:
 
 
 @cli.command("build-microshift")
-@click.option("--ocp-build-data-url", metavar='BUILD_DATA', default=None,
+@click.option("--data-path", metavar='BUILD_DATA', default=None,
               help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
 @click.option("-g", "--group", metavar='NAME', required=True,
               help="The group of components on which to operate. e.g. openshift-4.9")
@@ -475,8 +473,8 @@ class BuildMicroShiftPipeline:
               help="(For named assemblies) Rebuild even if a build already exists")
 @pass_runtime
 @click_coroutine
-async def build_microshift(runtime: Runtime, ocp_build_data_url: str, group: str, assembly: str, payloads: Tuple[str, ...],
+async def build_microshift(runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
                            no_rebase: bool, force: bool):
     pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-                                       no_rebase=no_rebase, force=force, ocp_build_data_url=ocp_build_data_url)
+                                       no_rebase=no_rebase, force=force, data_path=data_path)
     await pipeline.run()

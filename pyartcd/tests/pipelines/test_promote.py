@@ -5,9 +5,10 @@ import shutil
 import tempfile
 
 from unittest.mock import AsyncMock, Mock, MagicMock, patch, ANY
+
+from artcommonlib.assembly import AssemblyTypes
 from pyartcd.pipelines.promote import PromotePipeline
 from artcommonlib.exceptions import VerificationError
-from doozerlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 
 

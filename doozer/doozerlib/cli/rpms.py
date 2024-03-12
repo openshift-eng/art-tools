@@ -3,8 +3,9 @@ import click
 import io
 import traceback
 from typing import List
+
+from artcommonlib.exectools import RetryException
 from doozerlib.cli import cli, click_coroutine, pass_runtime, validate_rpm_version
-from doozerlib import exectools
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_builder import RPMBuilder
 from doozerlib.rpmcfg import RPMMetadata
@@ -292,7 +293,7 @@ async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata):
         tb = traceback.format_exc()
         record["message"] = "Exception occurred:\n{}".format(tb)
         logger.error("Exception occurred when building %s:\n%s", rpm.distgit_key, tb)
-        if isinstance(e, exectools.RetryException):
+        if isinstance(e, RetryException):
             task_ids, task_urls = e.args[1]
     finally:
         if task_ids:

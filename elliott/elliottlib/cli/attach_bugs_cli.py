@@ -1,12 +1,13 @@
 import click
 
-from elliottlib import Runtime, logutil
+from artcommonlib import logutil
+from elliottlib import Runtime
 from elliottlib.bzutil import Bug, get_jira_bz_bug_ids
 from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.cli.find_bugs_sweep_cli import print_report
 
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("attach-bugs", short_help="List and (optional) add bugs to ADVISORY")

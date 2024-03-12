@@ -130,7 +130,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         )
         flexmock(BugValidator).should_receive("validate").and_return()
         flexmock(verify_attached_bugs_cli).should_receive("categorize_bugs_by_type").and_return(
-            {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}}
+            {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}}, []
         )
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly', '4.6.50', 'verify-attached-bugs'])

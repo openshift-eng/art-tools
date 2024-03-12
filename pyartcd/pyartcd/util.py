@@ -6,12 +6,14 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union, Iterable
+from typing import Dict, Optional, Union, Iterable
 
 import yaml
 
+import artcommonlib
 from artcommonlib.arch_util import go_suffix_for_arch
-from doozerlib import assembly, model
+from artcommonlib.assembly import assembly_type
+from artcommonlib.model import Model
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 
@@ -45,18 +47,6 @@ def isolate_el_version_in_branch(branch_name: str) -> Optional[int]:
         return int(match.group(1))
 
     return None
-
-
-def isolate_major_minor_in_group(group_name: str) -> Tuple[int, int]:
-    """
-    Given a group name, determines whether is contains
-    a OCP major.minor version. If it does, it returns the version value as (int, int).
-    If it is not found, (None, None) is returned.
-    """
-    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
-    if not match:
-        return None, None
-    return int(match[1]), int(match[2])
 
 
 def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
@@ -144,25 +134,26 @@ async def load_assembly(group: str, assembly: str, key: str = '',
 
 
 def get_assembly_type(releases_config: Dict, assembly_name: str):
-    return assembly.assembly_type(model.Model(releases_config), assembly_name)
+    return assembly_type(Model(releases_config), assembly_name)
 
 
 def get_assembly_basis(releases_config: Dict, assembly_name: str):
-    return assembly.assembly_basis(model.Model(releases_config), assembly_name)
+    return artcommonlib.assembly.assembly_basis(Model(releases_config), assembly_name)
 
 
 def get_assembly_promotion_permits(releases_config: Dict, assembly_name: str):
-    return assembly._assembly_config_struct(model.Model(releases_config), assembly_name, 'promotion_permits', [])
+    return artcommonlib.assembly.assembly_config_struct(
+        Model(releases_config), assembly_name, 'promotion_permits', [])
 
 
 def get_release_name_for_assembly(group_name: str, releases_config: Dict, assembly_name: str):
-    return doozerutil.get_release_name_for_assembly(group_name, model.Model(releases_config), assembly_name)
+    return doozerutil.get_release_name_for_assembly(group_name, Model(releases_config), assembly_name)
 
 
 def get_rpm_if_pinned_directly(releases_config: Dict, assembly_name: str, rpm_name: str) -> dict:
     # this does not consider inherited assemblies
     # use with caution
-    pinned_rpms = model.Model(releases_config).releases[assembly_name].assembly.members.rpms
+    pinned_rpms = Model(releases_config).releases[assembly_name].assembly.members.rpms
     return next((rpm['metadata']['is'] for rpm in pinned_rpms if rpm['distgit_key'] == rpm_name), dict())
 
 

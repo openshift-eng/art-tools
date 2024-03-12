@@ -9,14 +9,13 @@ from typing import Dict, List, Optional, Set, Tuple
 import yaml
 
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import util
-from doozerlib.assembly import AssemblyTypes
 from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib import exectools
-from doozerlib.model import Model
 from doozerlib import brew
-from artcommonlib import rhcos
+from artcommonlib import rhcos, exectools
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.runtime import Runtime
@@ -69,8 +68,13 @@ async def gen_assembly_from_releases(ctx, runtime: Runtime, nightlies: Tuple[str
                                      auto_previous: bool, graph_url: Optional[str], graph_content_stable: Optional[str],
                                      graph_content_candidate: Optional[str], suggestions_url: Optional[str],
                                      output_file: Optional[str]):
+    # Initialize group config: we need this to determine the canonical builders behavior
+    runtime.initialize(config_only=True)
 
-    runtime.initialize(mode='both', clone_distgits=False, clone_source=False, prevent_cloning=True)
+    if runtime.group_config.canonical_builders_from_upstream:
+        runtime.initialize(mode="both", clone_distgits=True, clone_source=False, prevent_cloning=False)
+    else:
+        runtime.initialize(mode='both', clone_distgits=False, clone_source=False, prevent_cloning=True)
 
     assembly_def = await GenAssemblyCli(
         runtime=runtime,

@@ -1,14 +1,14 @@
 import click
 
-from artcommonlib import rhcos, format_util
+from artcommonlib import rhcos, format_util, logutil
 from artcommonlib.format_util import green_print
-from elliottlib import util, errata, logutil
+from elliottlib import util, errata
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option)
 from elliottlib.cli.common import click_coroutine
 from elliottlib.rpm_utils import parse_nvr
 
-_LOGGER = logutil.getLogger(__name__)
+_LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("go", short_help="Get version of Go for advisory builds")

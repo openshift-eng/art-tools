@@ -18,16 +18,20 @@ from typing import Dict, List, Optional, Tuple, Union
 import semver
 import yaml
 
+import artcommonlib
+from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, GO_ARCHES
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
-from doozerlib.model import Missing, Model
+from artcommonlib.model import Model, Missing
+from artcommonlib.util import isolate_major_minor_in_group
 
 try:
     from reprlib import repr
 except ImportError:
     pass
 
-from doozerlib import assembly, constants, exectools
+from doozerlib import constants
 from functools import lru_cache
 
 DICT_EMPTY = object()
@@ -101,19 +105,6 @@ def mkdirs(path, mode=0o755):
     :param mode: create directories with mode
     """
     pathlib.Path(str(path)).mkdir(mode=mode, parents=True, exist_ok=True)
-
-
-@contextmanager
-def timer(out_method, msg):
-    caller = getframeinfo(stack()[2][0])  # Line that called this method
-    caller_caller = getframeinfo(stack()[3][0])  # Line that called the method calling this method
-    start_time = datetime.now()
-    try:
-        yield
-    finally:
-        time_elapsed = datetime.now() - start_time
-        entry = f'Time elapsed (hh:mm:ss.ms) {time_elapsed} in {os.path.basename(caller.filename)}:{caller.lineno} from {os.path.basename(caller_caller.filename)}:{caller_caller.lineno}:{caller_caller.code_context[0].strip() if caller_caller.code_context else ""} : {msg}'
-        out_method(entry)
 
 
 def analyze_debug_timing(file):
@@ -539,31 +530,20 @@ async def find_manifest_list_sha(pull_spec):
     return image_data['listDigest']
 
 
-def isolate_major_minor_in_group(group_name: str) -> Tuple[int, int]:
-    """
-    Given a group name, determines whether is contains
-    a OCP major.minor version. If it does, it returns the version value as (int, int).
-    If it is not found, (None, None) is returned.
-    """
-    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
-    if not match:
-        return None, None
-    return int(match[1]), int(match[2])
-
-
-def get_release_name(assembly_type: assembly.AssemblyTypes, group_name: str, assembly_name: str, release_offset: Optional[int]):
+def get_release_name(assembly_type: artcommonlib.assembly.AssemblyTypes, group_name: str, assembly_name: str,
+                     release_offset: Optional[int]):
     major, minor = isolate_major_minor_in_group(group_name)
     if major is None or minor is None:
         raise ValueError(f"Invalid group name: {group_name}")
-    if assembly_type == assembly.AssemblyTypes.CUSTOM:
+    if assembly_type == AssemblyTypes.CUSTOM:
         if release_offset is None:
             raise ValueError("release_offset is required for a CUSTOM release.")
         release_name = f"{major}.{minor}.{release_offset}-assembly.{assembly_name}"
-    elif assembly_type in [assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.PREVIEW]:
+    elif assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
         if release_offset is not None:
             raise ValueError(f"release_offset can't be set for a {assembly_type.value} release.")
         release_name = f"{major}.{minor}.0-{assembly_name}"
-    elif assembly_type == assembly.AssemblyTypes.STANDARD:
+    elif assembly_type == AssemblyTypes.STANDARD:
         if release_offset is not None:
             raise ValueError("release_offset can't be set for a STANDARD release.")
         release_name = f"{assembly_name}"
@@ -575,17 +555,17 @@ def get_release_name(assembly_type: assembly.AssemblyTypes, group_name: str, ass
 def get_release_name_for_assembly(group_name: str, releases_config: Model, assembly_name: str):
     """ Get release name for an assembly.
     """
-    assembly_type = assembly.assembly_type(releases_config, assembly_name)
-    patch_version = assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
-    if assembly_type is assembly.AssemblyTypes.CUSTOM:
-        patch_version = assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
+    assembly_type = artcommonlib.assembly.assembly_type(releases_config, assembly_name)
+    patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
+    if assembly_type is AssemblyTypes.CUSTOM:
+        patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
         # If patch_version is not set, go through the chain of assembly inheritance and determine one
         current_assembly = assembly_name
         while patch_version is None:
             parent_assembly = releases_config.releases[current_assembly].assembly.basis.assembly
             if parent_assembly is Missing:
                 break
-            if assembly.assembly_type(releases_config, parent_assembly) is assembly.AssemblyTypes.STANDARD:
+            if artcommonlib.assembly.assembly_type(releases_config, parent_assembly) is AssemblyTypes.STANDARD:
                 patch_version = int(parent_assembly.rsplit('.', 1)[-1])
                 break
             current_assembly = parent_assembly

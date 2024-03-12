@@ -1,9 +1,8 @@
 """
 Utility functions for general interactions with Brew and Builds
 """
-
+from artcommonlib import logutil
 # stdlib
-from elliottlib.model import Missing
 import json
 import logging
 import ssl
@@ -18,11 +17,12 @@ import koji
 import requests
 from requests_gssapi import HTTPSPNEGOAuth
 
+from artcommonlib.model import Missing
 # ours
-from elliottlib import constants, exceptions, logutil
+from elliottlib import constants, exceptions
 from elliottlib.util import total_size
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 def get_tagged_builds(tag_component_tuples: Iterable[Tuple[str, Optional[str]]], build_type: Optional[str], event: Optional[int], session: koji.ClientSession) -> List[Optional[List[Dict]]]:

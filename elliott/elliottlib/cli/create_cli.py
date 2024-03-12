@@ -1,18 +1,18 @@
 import click
 import datetime
-import elliottlib
+from artcommonlib import logutil
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.exectools import cmd_assert
 from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
-from elliottlib.exectools import cmd_assert
 from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
 from elliottlib.util import YMD, validate_release_date, \
     validate_email_address, exit_unauthorized
 from elliottlib import errata
-from elliottlib import assembly
 
 
-LOGGER = elliottlib.logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("create", short_help="Create a new advisory")
@@ -123,7 +123,7 @@ advisory.
         # https://gitlab.cee.redhat.com/releng/g-chat-notifier/notifier/-/blob/3d71698a45de9f847cb272d18a5a27dccf9521a0/notifier/etera_controller.py#L128
         # https://issues.redhat.com/browse/ART-8758
         # Do not leave a comment for a custom assembly type
-        if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type is not assembly.AssemblyTypes.CUSTOM:
+        if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type is not AssemblyTypes.CUSTOM:
             major, minor = runtime.get_major_minor()
             comment = {"release": f"{major}.{minor}", "kind": art_advisory_key, "impetus": "standard"}
             errata.add_comment(erratum.errata_id, comment)

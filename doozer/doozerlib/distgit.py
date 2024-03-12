@@ -4,7 +4,6 @@ import errno
 import glob
 import hashlib
 import io
-import json
 import logging
 import os
 import pathlib
@@ -13,7 +12,6 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import datetime
 from multiprocessing import Event, Lock
 from typing import Dict, List, Optional, Tuple, Union, Set
 
@@ -26,19 +24,18 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil, build_util, exectools
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
+from artcommonlib.model import Missing, Model, ListModel
+from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib import constants, exectools, logutil, state, util
-from doozerlib.assembly import AssemblyTypes
+from doozerlib import constants, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
-from doozerlib.model import ListModel, Missing, Model
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
-from doozerlib.pushd import Dir
-from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
@@ -65,7 +62,7 @@ CONTAINER_YAML_HEADER = """
 # May be added to based on group/image config
 BASE_IGNORE = [".git", ".oit"]
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 def recursive_overwrite(src, dest, ignore=set()):
@@ -87,8 +84,7 @@ def pull_image(url):
         time.sleep(60)
 
     exectools.retry(
-        3, wait_f=wait,
-        task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
+        retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
 
 
 def map_image_name(name, image_map):
@@ -479,9 +475,10 @@ class ImageDistGitRepo(DistGitRepo):
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
-            # and find a related alternative_upstream config stanza
-            if self.upstream_intended_el_version:
-                self._update_image_config()
+            # and find a related alternative_upstream config stanza. This won't happen if:
+            # 1. we failed to determine upstream rhel version
+            # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
+            self._update_image_config()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1017,6 +1014,7 @@ class ImageDistGitRepo(DistGitRepo):
             state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
             return (self.metadata.distgit_key, False)
 
+        owners = list(self.config.owners) if self.config.owners and self.config.owners is not Missing else []
         action = "build"
         release = self.org_release if self.org_release is not None else '?'
         record = {
@@ -1024,7 +1022,7 @@ class ImageDistGitRepo(DistGitRepo):
             "dockerfile": "%s/Dockerfile" % self.distgit_dir,
             "distgit": self.metadata.distgit_key,
             "image": self.org_image_name,
-            "owners": ",".join(list(self.config.owners) if self.config.owners is not Missing else []),
+            "owners": ",".join(owners),
             "version": self.org_version,
             "release": release,
             "message": "Unknown failure",
@@ -1608,34 +1606,8 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
 
-        if canonical_builders_from_upstream is Missing:
-            # Default case: override using ART's config
-            return False
-        elif canonical_builders_from_upstream == 'auto':
-            # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
-            try:
-                feature_freeze_date = ReleaseSchedule(self.runtime).get_ff_date()
-                return datetime.now() < feature_freeze_date
-            except ChildProcessError:
-                # Could not access Gitlab: display a warning and fallback to default
-                self.logger.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
-                return False
-            except ValueError as e:
-                # A GITLAB token env var was not provided: display a warning and fallback to default
-                self.logger.warning(f'Fallback to default ART config: {e}')
-                return False
-        elif canonical_builders_from_upstream in ['on', True]:
-            # yaml parser converts bare 'on' to True, same for 'off' and False
-            return True
-        elif canonical_builders_from_upstream in ['off', False]:
-            return False
-        else:
-            # Invalid value
-            self.logger.warning(
-                'Invalid value provided for "canonical_builders_from_upstream": %s',
-                canonical_builders_from_upstream
-            )
-            return False
+        return build_util.canonical_builders_enabled(
+            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
@@ -1714,6 +1686,18 @@ class ImageDistGitRepo(DistGitRepo):
         that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
         """
 
+        if not self.upstream_intended_el_version:
+            # Could not determine upstream rhel version: do not match upstream builders
+            self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            self.should_match_upstream = False
+            return
+
+        elif self.upstream_intended_el_version == self.art_intended_el_version:
+            # ART/upstream el versions match: do not merge configs, but match upstream builders
+            self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
+            self.should_match_upstream = True
+            return
+
         # Check if there is an alternative configuration matching upstream RHEL version
         alt_configs = self.config.alternative_upstream
         matched = False
@@ -1726,27 +1710,19 @@ class ImageDistGitRepo(DistGitRepo):
 
         if not matched:
             # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
+            # Besides, ART and upstream intended rhel versions do not match, therefore fallback to default ART's config
             self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
                                 self.upstream_intended_el_version)
+            self.should_match_upstream = False
 
-            # If ART and upstream intended rhel versions do not match, fallback to default ART's config
-            if self.art_intended_el_version != self.upstream_intended_el_version:
-                self.logger.warning('ART is using rhel-%s, while upstream is using rhel-%s: will not match upstream',
-                                    self.art_intended_el_version, self.upstream_intended_el_version)
-                self.should_match_upstream = False
-                return
-
-            # Even with no matching 'when' clause, rhel versions match so we can use canonical builders from upstream
+        else:
+            # We found an alternative_upstream config stanza. We can match upstream
             self.should_match_upstream = True
-            return
-
-        # We found an alternative_upstream config stanza. We can match upstream
-        self.should_match_upstream = True
-        # Distgit branch must be changed to track the alternative one
-        self.branch = self.config.distgit.branch
-        # Also update metadata config
-        self.metadata.config = self.config
-        self.metadata.targets = self.metadata.determine_targets()
+            # Distgit branch must be changed to track the alternative one
+            self.branch = self.config.distgit.branch
+            # Also update metadata config
+            self.metadata.config = self.config
+            self.metadata.targets = self.metadata.determine_targets()
 
     def _rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
@@ -2003,8 +1979,9 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 release_suffix = ''
 
-            # Environment variables that will be always be injected into the Dockerfile.
-            env_vars = {  # Set A
+            # Environment variables that will be injected into the Dockerfile
+            # unless content.set_build_variables=False
+            build_update_env_vars = {  # Set A
                 'OS_GIT_MAJOR': major_version,
                 'OS_GIT_MINOR': minor_version,
                 'OS_GIT_PATCH': patch_version,
@@ -2013,20 +1990,25 @@ class ImageDistGitRepo(DistGitRepo):
                 'SOURCE_GIT_TREE_STATE': 'clean',
                 'BUILD_VERSION': version,
                 'BUILD_RELEASE': release if release else '',
-                '__doozer_group': self.runtime.group,
-                '__doozer_key': self.metadata.distgit_key,
             }
 
+            # Unlike update_env_vars (which can be disabled in metadata with content.set_build_variables=False),
+            # metadata_envs are always injected into doozer builds.
+            metadata_envs: Dict[str, str] = {
+                '__doozer_group': self.runtime.group,
+                '__doozer_key': self.metadata.distgit_key,
+                '__doozer_version': version,  # Useful when build variables are not being injected, but we still need "version" during the build.
+            }
             if self.config.envs:
                 # Allow environment variables to be specified in the ART image metadata
-                env_vars.update(self.config.envs.primitive())
+                metadata_envs.update(self.config.envs.primitive())
 
             df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
             with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:
                 shutil.copyfileobj(df_fileobj, df)
                 df_fileobj.close()
 
-            self._update_environment_variables(env_vars)
+            self._update_environment_variables(build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
 
             self._reflow_labels()
 
@@ -2298,28 +2280,32 @@ class ImageDistGitRepo(DistGitRepo):
             # Re-write the CSV content.
             pathlib.Path(csv_file).write_text(yaml.dump(csv_obj))
 
-    def _update_environment_variables(self, update_envs, filename='Dockerfile'):
+    def _update_environment_variables(self, build_update_envs: Dict[str, str], metadata_envs: Dict[str, str], filename='Dockerfile'):
         """
         There are three distinct sets of environment variables we need to consider
         in a Dockerfile:
-        Set A) those which doozer calculates on every update
-        Set B) those which doozer can calculate only when upstream source code is available
+        Set A) build environment variables which doozer calculates on every Dockerfile update (build_update_envs)
+        Set B) merge environment variables which doozer can calculate only when upstream source code is available
                (self.env_vars_from_source). If self.env_vars_from_source=None, no merge
                has occurred and we should not try to update envs from source we find in distgit.
-        Set C) those which the Dockerfile author has set for their own purposes (these cannot
-               override doozer's env, but they are free to use other variables names).
+        Set C) metadata environment variable which are those which the Dockerfile author has set for their own purposes (these cannot
+               override doozer's build env values, but they are free to use other variables names).
 
-        :param update_envs: The update environment variables to set (Set A).
+        Sets (A) and (B) can be disabled with .content.set_build_variables=False.
+
+        :param build_update_envs: The update environment variables to set (Set A).
+        :param metadata_envs: Environment variables that should always be included in the rebased Dockerfile.
         :param filename: The Dockerfile name in the distgit dir to edit.
         :return: N/A
         """
 
+        do_set_build_variables = True
         # set_build_variables must be explicitly set to False. If left unset, default to True. If False,
         # we do not inject environment variables into the Dockerfile. This is occasionally necessary
         # for images like the golang builders where these environment variables pollute the environment
         # for code trying to establish their OWN src commit hash, etc.
         if self.config.content.set_build_variables is not Missing and not self.config.content.set_build_variables:
-            return
+            do_set_build_variables = False
 
         dg_path = self.dg_path
         df_path = dg_path.joinpath(filename)
@@ -2330,14 +2316,18 @@ class ImageDistGitRepo(DistGitRepo):
         # going to set. To do so, we repeatedly load the Dockerfile and remove the env variable.
         # In this way, from our example, on the second load and removal, A=1 should be removed.
 
-        # Build a dict of everything we want to set.
-        all_envs = dict(update_envs)
-        all_envs.update(self.env_vars_from_source or {})
+        # Build a dict of everything we want to remove from the Dockerfile.
+        all_envs_to_remove = dict()
+        all_envs_to_remove.update(metadata_envs)
+
+        if do_set_build_variables:
+            all_envs_to_remove.update(build_update_envs)
+            all_envs_to_remove.update(self.env_vars_from_source or {})
 
         while True:
             dfp = DockerfileParser(str(df_path))
             # Find the intersection between envs we want to set and those present in parser
-            envs_intersect = set(list(all_envs.keys())).intersection(set(list(dfp.envs.keys())))
+            envs_intersect = set(list(all_envs_to_remove.keys())).intersection(set(list(dfp.envs.keys())))
 
             if not envs_intersect:  # We've removed everything we want to ultimately set
                 break
@@ -2356,6 +2346,13 @@ class ImageDistGitRepo(DistGitRepo):
         # Now, we want to inject the values we have available. In a Dockerfile, ENV must
         # be set for each build stage. So the ENVs must be set after each FROM.
 
+        # Envs that will be written into the Dockerfile every time it is updated
+        actual_update_envs: Dict[str, str] = dict()
+        actual_update_envs.update(metadata_envs or {})
+
+        if do_set_build_variables:
+            actual_update_envs.update(build_update_envs)
+
         env_update_line_flag = '__doozer=update'
         env_merge_line_flag = '__doozer=merge'
 
@@ -2371,18 +2368,18 @@ class ImageDistGitRepo(DistGitRepo):
 
         # Build up an UPDATE mode environment variable line we want to inject into each stage.
         update_env_line = None
-        if update_envs:
-            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(update_envs)
+        if actual_update_envs:
+            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(actual_update_envs)
 
         # If a merge has occurred, build up a MERGE mode environment variable line we want to inject into each stage.
         merge_env_line = None
-        if self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
+        if do_set_build_variables and self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
             self.env_vars_from_source.update(dict(
                 SOURCE_GIT_COMMIT=self.source_full_sha,
                 SOURCE_GIT_TAG=self.source_latest_tag,
                 SOURCE_GIT_URL=self.public_facing_source_url,
                 SOURCE_DATE_EPOCH=self.source_date_epoch,
-                OS_GIT_VERSION=f'{update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
+                OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
                 OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}'
             ))
 
@@ -2414,7 +2411,7 @@ class ImageDistGitRepo(DistGitRepo):
     def _reflow_labels(self, filename="Dockerfile"):
         """
         The Dockerfile parser we are presently using writes all labels on a single line
-        and occasionally make multiple LABEL statements. Calling this method with a
+        and occasionally makes multiple LABEL statements. Calling this method with a
         Dockerfile in the current working directory will rewrite the file with
         labels at the end in a single statement.
         """

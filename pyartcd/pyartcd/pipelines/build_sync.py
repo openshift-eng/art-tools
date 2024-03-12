@@ -6,10 +6,10 @@ import re
 import click
 import yaml
 from opentelemetry import trace
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import rhcos, redis
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.util import split_git_url
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
@@ -206,7 +206,7 @@ class BuildSyncPipeline:
             self.logger.info('Would have backed up all imagestreams.')
             return
 
-        @exectools.limit_concurrency(500)
+        @limit_concurrency(500)
         async def backup_namespace(ns):
             self.logger.info('Running backup for namespace %s', ns)
 
@@ -244,7 +244,7 @@ class BuildSyncPipeline:
         cmd.extend(glob.glob('*.backup.yaml'))
         await exectools.cmd_assert_async(cmd)
 
-    @exectools.limit_concurrency(500)
+    @limit_concurrency(500)
     async def _tag_into_ci_imagestream(self, arch_suffix, tag):
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
@@ -310,7 +310,6 @@ class BuildSyncPipeline:
         except (ChildProcessError, KeyError) as e:
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def _update_nightly_imagestreams(self):
         """
         Determine the content to update in the ART latest imagestreams and apply those changes on the CI cluster.
@@ -359,7 +358,7 @@ class BuildSyncPipeline:
                 tasks.append(self._publish(filename))
             await asyncio.gather(*tasks)
 
-    @exectools.limit_concurrency(500)
+    @limit_concurrency(500)
     async def _publish(self, filename):
         with open(filename) as f:
             meta = yaml.safe_load(f.read())['metadata']

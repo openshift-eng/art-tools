@@ -5,7 +5,6 @@ Utility functions for general interactions with Brew and Builds
 # stdlib
 import asyncio
 import json
-import logging
 import threading
 import time
 import traceback
@@ -18,13 +17,12 @@ import koji
 import koji_cli.lib
 import requests
 
-from doozerlib import exectools, constants
-
-from . import logutil
-from .model import Missing
+from artcommonlib.model import Missing
+from artcommonlib import logutil, exectools
+from doozerlib import constants
 from .util import total_size
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 # ============================================================================
 # Brew/Koji service interaction functions

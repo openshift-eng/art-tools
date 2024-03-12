@@ -45,7 +45,7 @@ class TestDetectEmbargoCli(TestCase):
             find_embargoed_builds.assert_called_once_with(builds_to_detect, candidate_tags)
         self.assertEqual(actual, expected)
 
-    @patch("doozerlib.exectools.parallel_exec")
+    @patch("artcommonlib.exectools.parallel_exec")
     def test_detect_embargoes_in_pullspecs(self, parallel_exec):
         pullspecs = ["example.com/repo:foo", "example.com/repo:bar"]
         builds = [
@@ -61,7 +61,7 @@ class TestDetectEmbargoCli(TestCase):
             detect_embargoes_in_nvrs.assert_called_once_with(fake_runtime, [f"{n}-{v}-{r}" for n, v, r in nvrs])
         self.assertEqual(actual, expected)
 
-    @patch("doozerlib.exectools.parallel_exec")
+    @patch("artcommonlib.exectools.parallel_exec")
     def test_detect_embargoes_in_releases(self, parallel_exec):
         releases = ["a", "b"]
         release_pullspecs = {
@@ -82,7 +82,7 @@ class TestDetectEmbargoCli(TestCase):
             detect_embargoes_in_pullspecs.reset_mock()
         self.assertEqual(actual, expected)
 
-    @patch("doozerlib.exectools.cmd_assert")
+    @patch("artcommonlib.exectools.cmd_assert")
     def test_get_nvr_by_pullspec(self, fake_cmd_assert):
         pullspec = "registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-cluster-autoscaler:v4.3.25-202006081335"
         expected = ("atomic-openshift-cluster-autoscaler-container", "v4.3.25", "202006081335")
@@ -92,7 +92,7 @@ class TestDetectEmbargoCli(TestCase):
         actual = detect_embargo.get_nvr_by_pullspec(pullspec)
         self.assertEqual(actual, expected)
 
-    @patch("doozerlib.exectools.cmd_assert")
+    @patch("artcommonlib.exectools.cmd_assert")
     def test_get_image_pullspecs_from_release_payload(self, fake_cmd_assert):
         fake_cmd_assert.return_value = ("""
         {"references":{"spec":{"tags":[{"name":"foo","from":{"name":"registry.example.com/foo:abc"}}, {"name":"bar","from":{"name":"registry.example.com/bar:def"}}]}}}

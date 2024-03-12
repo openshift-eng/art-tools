@@ -6,7 +6,8 @@ from urllib.parse import quote
 
 import koji
 
-from doozerlib import brew, distgit, exectools, image, runtime
+from artcommonlib import exectools
+from doozerlib import brew, distgit, image, runtime
 from doozerlib.constants import BREWWEB_URL, DISTGIT_GIT_URL
 from doozerlib.exceptions import DoozerFatalError
 

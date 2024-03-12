@@ -15,13 +15,14 @@ from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
+import artcommonlib
 import doozerlib
-from doozerlib import exectools, logutil
-from doozerlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib import logutil, exectools
+from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib.pushd import Dir
+from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.model import Missing, Model
-from doozerlib.pushd import Dir
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
 
@@ -375,7 +376,7 @@ class Metadata(object):
         """
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
         try:
-            req = exectools.retry(
+            req = artcommonlib.exectools.retry(
                 3, lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200)
         except Exception as e:
@@ -459,16 +460,24 @@ class Metadata(object):
                 raise IOError(msg)
 
             def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate:
-                # 1. Matching an unspecified RPM suffix (e.g. .el7).
-                # 2. Other release components that might be introduced later.
-                # Matching a higher number of builds to avoid getting only the wrong .el<version> one,
-                # which will be then filtered out
+                # Include * after pattern_suffix to tolerate other release components that might be introduced later.
+                # Also include a .el<version> suffix to match the new build pattern
+                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
-                                             pattern=f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}',
-                                             queryOpts={'limit': 10, 'order': '-creation_event_id'},
+                                             pattern=rhel_pattern,
+                                             queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                              **list_builds_kwargs)
+
+                # If no builds were found, the component might still be following the old pattern,
+                # where a .el suffix was not included in the NVR
+                if not builds:
+                    legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    builds = koji_api.listBuilds(packageID=package_id,
+                                                 state=None if build_state is None else build_state.value,
+                                                 pattern=legacy_pattern,
+                                                 queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                                                 **list_builds_kwargs)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
@@ -677,7 +686,9 @@ class Metadata(object):
 
         if not latest_build:
             return RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                               reason=f'Component {component_name} has no latest build for assembly: {self.runtime.assembly}')
+                               reason=f'Component {component_name} has no latest build '
+                                      f'for assembly {self.runtime.assembly} '
+                                      f'and target {el_target}')
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
         latest_build_creation = latest_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC

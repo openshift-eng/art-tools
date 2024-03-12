@@ -1,11 +1,11 @@
-from elliottlib import constants, logutil
+from artcommonlib import logutil
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
 from elliottlib.exceptions import ElliottFatalError
 
 from errata_tool import Erratum
 import click
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command('create-placeholder',

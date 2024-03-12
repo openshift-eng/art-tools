@@ -1,14 +1,13 @@
-import unittest
+from unittest import TestCase
 
 import yaml
 
-from elliottlib.assembly import (assembly_basis_event, assembly_group_config,
-                                 assembly_metadata_config,
-                                 assembly_rhcos_config, merger)
-from elliottlib.model import Missing, Model
+from artcommonlib.assembly import assembly_rhcos_config, assembly_basis_event, assembly_group_config, \
+    assembly_config_struct, assembly_metadata_config, _merger
+from artcommonlib.model import Model, Missing
 
 
-class TestAssembly(unittest.TestCase):
+class TestAssembly(TestCase):
 
     def setUp(self) -> None:
         releases_yml = """
@@ -173,58 +172,9 @@ releases:
 """
         self.releases_config = Model(dict_to_model=yaml.safe_load(releases_yml))
 
-    def test_merger(self):
-        # First value dominates on primitive
-        self.assertEqual(merger(4, 5), 4)
-        self.assertEqual(merger('4', '5'), '4')
-        self.assertEqual(merger(None, '5'), None)
-        self.assertEqual(merger(True, None), True)
-
-        # Dicts are additive
-        self.assertEqual(
-            merger({'x': 5}, None),
-            {'x': 5}
-        )
-
-        self.assertEqual(
-            merger({'x': 5}, {'y': 6}),
-            {'x': 5, 'y': 6}
-        )
-
-        # Depth does not matter
-        self.assertEqual(
-            merger({'r': {'x': 5}}, {'r': {'y': 6}}),
-            {'r': {'x': 5, 'y': 6}}
-        )
-
-        self.assertEqual(
-            merger({'r': {'x': 5, 'y': 7}}, {'r': {'y': 6}}),
-            {'r': {'x': 5, 'y': 7}}
-        )
-
-        # ? key provides default only
-        self.assertEqual(
-            merger({'r': {'x': 5, 'y?': 7}}, {'r': {'y': 6}}),
-            {'r': {'x': 5, 'y': 6}}
-        )
-
-        # ! key dominates completely
-        self.assertEqual(
-            merger({'r!': {'x': 5}}, {'r': {'y': 6}}),
-            {'r': {'x': 5}}
-        )
-
-        # Lists are combined, dupes eliminated, and results sorted
-        self.assertEqual(
-            merger({'r': [1, 2]}, {'r': [1, 3, 4]}),
-            {'r': [1, 2, 3, 4]}
-        )
-
-        # ! key dominates completely
-        self.assertEqual(
-            merger({'r!': [1, 2]}, {'r': [3, 4]}),
-            {'r': [1, 2]}
-        )
+    def test_assembly_rhcos_config(self):
+        rhcos_config = assembly_rhcos_config(self.releases_config, "ART_8")
+        self.assertEqual(len(rhcos_config.dependencies.rpms), 3)
 
     def test_assembly_basis_event(self):
         self.assertEqual(assembly_basis_event(self.releases_config, 'ART_1'), None)
@@ -290,6 +240,117 @@ releases:
         except Exception as e:
             self.fail(f'Expected ValueError on assembly infinite recursion but got: {type(e)}: {e}')
 
+    def test_assembly_config_struct(self):
+        release_configs = {
+            "releases": {
+                "child": {
+                    "assembly": {
+                        "basis": {
+                            "assembly": "parent",
+                        }
+                    }
+                },
+                "parent": {
+                    "assembly": {
+                        "type": "custom"
+                    }
+                },
+            }
+        }
+        actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
+        self.assertEqual(actual, "custom")
+
+        release_configs = {
+            "releases": {
+                "child": {
+                    "assembly": {
+                        "basis": {
+                            "assembly": "parent",
+                        },
+                        "type": "candidate"
+                    }
+                },
+                "parent": {
+                    "assembly": {
+                        "type": "custom"
+                    }
+                },
+            }
+        }
+        actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
+        self.assertEqual(actual, "candidate")
+
+        release_configs = {
+            "releases": {
+                "child": {
+                    "assembly": {
+                        "basis": {
+                            "assembly": "parent",
+                        },
+                    }
+                },
+                "parent": {
+                    "assembly": {
+                    }
+                },
+            }
+        }
+        actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
+        self.assertEqual(actual, "standard")
+
+        release_configs = {
+            "releases": {
+                "child": {
+                    "assembly": {
+                        "basis": {
+                            "assembly": "parent",
+                        },
+                    }
+                },
+                "parent": {
+                    "assembly": {
+                        "type": None
+                    },
+                },
+            }
+        }
+        actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
+        self.assertEqual(actual, None)
+
+        release_configs = {
+            "releases": {
+                "child": {
+                    "assembly": {
+                        "basis": {
+                            "assembly": "parent",
+                        },
+                        "foo": {
+                            "a": 1,
+                            "b": 2
+                        },
+                        "bar": [1, 2, 3]
+                    }
+                },
+                "parent": {
+                    "assembly": {
+                        "foo": {
+                            "b": 3,
+                            "c": 4,
+                        },
+                        "bar": [0, 2, 4]
+                    }
+                },
+            }
+        }
+        actual = assembly_config_struct(Model(release_configs), "child", "foo", {})
+        self.assertEqual(actual, {
+            "a": 1,
+            "b": 2,
+            "c": 4,
+        })
+        actual = assembly_config_struct(Model(release_configs), "child", "bar", [])
+        self.assertEqual(actual, [0, 1, 2, 3, 4])
+
     def test_asembly_metadata_config(self):
 
         meta_config = Model(dict_to_model={
@@ -353,10 +414,62 @@ releases:
         except Exception as e:
             self.fail(f'Expected ValueError on assembly infinite recursion but got: {type(e)}: {e}')
 
-    def test_assembly_rhcos_config(self):
-        rhcos_config = assembly_rhcos_config(self.releases_config, "ART_8")
-        self.assertEqual(len(rhcos_config.dependencies.rpms), 3)
+    def test_merger(self):
+        # First value dominates on primitive
+        self.assertEqual(_merger(4, 5), 4)
+        self.assertEqual(_merger('4', '5'), '4')
+        self.assertEqual(_merger(None, '5'), None)
+        self.assertEqual(_merger(True, None), True)
+        self.assertEqual(_merger([1, 2], [2, 3]), [1, 2, 3])
 
+        # Dicts are additive
+        self.assertEqual(
+            _merger({'x': 5}, None),
+            {'x': 5}
+        )
 
-if __name__ == '__main__':
-    unittest.main()
+        self.assertEqual(
+            _merger({'x': 5}, {'y': 6}),
+            {'x': 5, 'y': 6}
+        )
+
+        # Depth does not matter
+        self.assertEqual(
+            _merger({'r': {'x': 5}}, {'r': {'y': 6}}),
+            {'r': {'x': 5, 'y': 6}}
+        )
+
+        self.assertEqual(
+            _merger({'r': {'x': 5, 'y': 7}}, {'r': {'y': 6}}),
+            {'r': {'x': 5, 'y': 7}}
+        )
+
+        # ? key provides default only
+        self.assertEqual(
+            _merger({'r': {'x': 5, 'y?': 7}}, {'r': {'y': 6}}),
+            {'r': {'x': 5, 'y': 6}}
+        )
+
+        # ! key dominates completely
+        self.assertEqual(
+            _merger({'r!': {'x': 5}}, {'r': {'y': 6}}),
+            {'r': {'x': 5}}
+        )
+
+        # Lists are combined, dupes eliminated, and results sorted
+        self.assertEqual(
+            _merger({'r': [1, 2]}, {'r': [1, 3, 4]}),
+            {'r': [1, 2, 3, 4]}
+        )
+
+        # ! key dominates completely
+        self.assertEqual(
+            _merger({'r!': [1, 2]}, {'r': [3, 4]}),
+            {'r': [1, 2]}
+        )
+
+        # - key removes itself entirely
+        self.assertEqual(
+            _merger({'r-': [1, 2]}, {'r': [3, 4]}),
+            {}
+        )
