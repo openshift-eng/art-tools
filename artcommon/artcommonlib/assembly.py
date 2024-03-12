@@ -230,10 +230,10 @@ def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> 
     """
     defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
 
-    # Do some basic validation here to fail fast
-    if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
-        if defined_permits:
-            raise ValueError(f'STANDARD assemblies like {assembly} do not allow "permits"')
+    # # Do some basic validation here to fail fast
+    # if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
+    #     if defined_permits:
+    #         raise ValueError(f'STANDARD assemblies like {assembly} do not allow "permits"')
 
     for permit in defined_permits:
         if permit.code == AssemblyIssueCode.IMPERMISSIBLE.name:
