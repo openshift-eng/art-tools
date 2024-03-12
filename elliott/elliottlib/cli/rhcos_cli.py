@@ -6,7 +6,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BR
 from artcommonlib.format_util import green_print
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util
-from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.rhcos import get_primary_container_name, get_build_id_from_rhcos_pullspec
 
 
 @cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")
@@ -95,7 +95,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
         build_ids = [get_build_id_from_image_pullspec(runtime, p) for p in payload_pullspecs]
     elif named_assembly:
         rhcos_pullspecs = get_rhcos_pullspecs_from_assembly(runtime)
-        build_ids = [(get_build_id_from_rhcos_pullspec(p, logger), arch) for arch, p in rhcos_pullspecs.items() if
+        build_ids = [(get_build_id_from_rhcos_pullspec(p), arch) for arch, p in rhcos_pullspecs.items() if
                      arch in target_arches]
 
     for build, local_arch in build_ids:
@@ -125,22 +125,6 @@ def get_build_id_from_image_pullspec(runtime, pullspec):
     green_print(f"Image pullspec: {pullspec}")
     build_id, arch = rhcos.get_build_from_payload(runtime, pullspec)
     return build_id, arch
-
-
-def get_build_id_from_rhcos_pullspec(pullspec, logger):
-    logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
-    image_info_str, _ = exectools.cmd_assert(f'oc image info -o json {pullspec}', retries=3)
-    image_info = json.loads(image_info_str)
-
-    try:
-        build_id = image_info['config']['config']['Labels']['version']
-    except KeyError:
-        build_id = image_info['config']['config']['Labels']['org.opencontainers.image.version']
-
-    if not build_id:
-        raise Exception(
-            f'Unable to determine build_id from: {pullspec}. Retrieved image info: {image_info_str}')
-    return build_id
 
 
 def _via_build_id(runtime, build_id, arch, version, packages, go, logger):
