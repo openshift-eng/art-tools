@@ -131,7 +131,12 @@ def get_build_id_from_rhcos_pullspec(pullspec, logger):
     logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
     image_info_str, _ = exectools.cmd_assert(f'oc image info -o json {pullspec}', retries=3)
     image_info = json.loads(image_info_str)
-    build_id = image_info['config']['config']['Labels']['version']
+
+    try:
+        build_id = image_info['config']['config']['Labels']['version']
+    except KeyError:
+        build_id = image_info['config']['config']['Labels']['org.opencontainers.image.version']
+
     if not build_id:
         raise Exception(
             f'Unable to determine build_id from: {pullspec}. Retrieved image info: {image_info_str}')
