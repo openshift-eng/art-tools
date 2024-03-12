@@ -13,14 +13,13 @@ from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
-from artcommonlib.rhcos import get_container_configs
+from artcommonlib.rhcos import get_container_configs, get_build_id_from_rhcos_pullspec
 from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option, click_coroutine)
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.cli.rhcos_cli import get_build_id_from_rhcos_pullspec
 from elliottlib.util import (ensure_erratatool_auth,
                              get_release_version,
                              isolate_el_version_in_brew_tag,
@@ -203,7 +202,7 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
             continue
 
         for arch, pullspec in config['images'].items():
-            build_id = get_build_id_from_rhcos_pullspec(pullspec, runtime.logger)
+            build_id = get_build_id_from_rhcos_pullspec(pullspec)
             if arch not in build_ids_by_arch:
                 build_ids_by_arch[arch] = set()
             build_ids_by_arch[arch].add(build_id)
