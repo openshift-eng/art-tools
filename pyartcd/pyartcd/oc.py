@@ -77,7 +77,7 @@ def get_release_image_info_from_pullspec(pullspec: str) -> (int, str):
 def extract_release_binary(image_pullspec: str, path_args: List[str]) -> (int, str):
     # oc image extract --confirm --only-files --path=/usr/bin/..:<workdir> <pullspec>
     cmd_args = ['extract', '--confirm', '--only-files'] + path_args + [image_pullspec]
-    common_oc_wrapper("extract_image", "image", cmd_args, True, False)
+    return common_oc_wrapper("extract_image", "image", cmd_args, True, True)
 
 
 def get_release_image_pullspec(release_pullspec: str, image: str) -> (int, str):
