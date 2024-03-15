@@ -32,19 +32,23 @@ class Jobs(Enum):
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
 
 
-def init_jenkins():
+def init_jenkins(jenkins_url: Optional[str] = None):
     global jenkins_client
     if jenkins_client:
         return
+
+    if not jenkins_url:
+        jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+
     logger.info('Initializing Jenkins client..')
     requester = CrumbRequester(
         username=os.environ['JENKINS_SERVICE_ACCOUNT'],
         password=os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN'],
-        baseurl=constants.JENKINS_SERVER_URL
+        baseurl=jenkins_url
     )
 
     jenkins_client = Jenkins(
-        constants.JENKINS_SERVER_URL,
+        jenkins_url,
         username=os.environ['JENKINS_SERVICE_ACCOUNT'],
         password=os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN'],
         requester=requester,
@@ -132,7 +136,8 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
     logger.info('Started new build at %s', triggered_build_url)
 
     # Update the description of the new build with the details of the caller job
-    triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL)
+    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, jenkins_url)
     triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
     description = f'Started by upstream project <b>{current_job_name}</b> ' \
                   f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
@@ -166,8 +171,8 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
-
-    response = requests.get(f'{constants.JENKINS_SERVER_URL}/{build_path}/api/json')
+    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    response = requests.get(f'{jenkins_url}/{build_path}/api/json')
     if response.status_code != 200:
         logger.debug('Could not fetch data for build %s', build_path)
         raise ValueError
@@ -361,8 +366,9 @@ def update_title(title: str, append: bool = True):
     """
 
     job = jenkins_client.get_job(current_job_name)
+    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
     build = Build(
-        url=current_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL),
+        url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
         job=job
     )
@@ -387,8 +393,9 @@ def update_description(description: str, append: bool = True):
     """
 
     job = jenkins_client.get_job(current_job_name)
+    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
     build = Build(
-        url=current_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL),
+        url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
         job=job
     )
@@ -403,6 +410,6 @@ def is_api_reachable() -> bool:
     """
     Returns True if Jenkins API is reachable, False otherwise
     """
-
-    endpoint = f'{constants.JENKINS_SERVER_URL}/api/json'
+    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    endpoint = f'{jenkins_url}/api/json'
     return requests.get(endpoint).status_code == 200
