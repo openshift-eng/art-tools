@@ -32,7 +32,7 @@ class Jobs(Enum):
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
 
 
-def init_jenkins(jenkins_url: Optional[str]=None):
+def init_jenkins(jenkins_url: Optional[str] = None):
     global jenkins_client
     if jenkins_client:
         return
