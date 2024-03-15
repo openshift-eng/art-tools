@@ -664,7 +664,7 @@ class Runtime(GroupRuntime):
 
     def initialize_logging(self):
 
-        if self.initialized:
+        if self.initialized or self.logger:
             return
 
         # Three flags control the output modes of the command:
