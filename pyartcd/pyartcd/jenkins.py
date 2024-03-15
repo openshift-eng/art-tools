@@ -395,7 +395,7 @@ def update_description(description: str, append: bool = True):
     job = jenkins_client.get_job(current_job_name)
     jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
     build = Build(
-        url = current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
+        url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
         job=job
     )
