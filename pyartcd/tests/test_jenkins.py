@@ -32,6 +32,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
         triggered_url = 'folder/foo/1'
         os.environ['BUILD_URL'] = 'folder/bar/1'
         os.environ['JOB_NAME'] = 'bar'
+        os.environ['JENKINS_URL'] = 'buildvm.com'
 
         result = jenkins.start_build(job, params, block_until_building=True, watch_building_delay=delay)
         self.assertEqual(result, None)
@@ -55,6 +56,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
         triggered_url = 'folder/foo/1'
         os.environ['BUILD_URL'] = 'folder/bar/1'
         os.environ['JOB_NAME'] = 'bar'
+        os.environ['JENKINS_URL'] = 'buildvm.com'
         mock_build.return_value.poll.return_value = {'result': 'SUCCESS'}
 
         result = jenkins.start_build(job, params, block_until_building=True,
