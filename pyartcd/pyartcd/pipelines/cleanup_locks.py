@@ -15,6 +15,7 @@ from pyartcd.runtime import Runtime
 async def cleanup_locks(runtime: Runtime):
     lock_manager = LockManager([redis.redis_url()])
     active_locks = await lock_manager.get_locks()
+    runtime.logger.info("Found %s active locks", len(active_locks))
 
     removed_locks = []
     jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
