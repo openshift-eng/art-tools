@@ -174,11 +174,11 @@ def is_build_running(build_path: str) -> bool:
     jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
     response = requests.get(f'{jenkins_url}/{build_path}/api/json')
     if response.status_code != 200:
-        logger.debug('Could not fetch data for build %s', build_path)
+        logger.info('Could not fetch data for build %s', build_path)
         raise ValueError
 
     build_data = response.json()
-    logger.debug('Build %s %s in progress',
+    logger.info('Build %s %s in progress',
                  f'{constants.JENKINS_UI_URL}/{build_path}',
                  'is' if build_data['inProgress'] else 'is not')
     return build_data['inProgress']

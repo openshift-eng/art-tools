@@ -25,6 +25,7 @@ async def cleanup_locks(runtime: Runtime):
             # Lock ID is a build URL minus Jenkins server base URL
             build_path = await lock_manager.get_lock_id(lock_name)
             build_url = f'{constants.JENKINS_UI_URL}/{build_path}'
+            runtime.logger.info("Found build_url for lock %s: %s ", lock_name, build_url)
 
             try:
                 is_build_running = jenkins.is_build_running(build_path)
@@ -42,6 +43,7 @@ async def cleanup_locks(runtime: Runtime):
                     runtime.logger.info('Build %s is still running: won\'t delete lock %s', build_path, lock_name)
 
             except ValueError:
+                runtime.logger.info('could not see if build is running.. checking if api is reachable')
                 if jenkins.is_api_reachable():
                     # Make sure Jenkins API are responding
                     # Assume the build is not found because it was manually deleted, and clean up the orphan lock
@@ -49,6 +51,8 @@ async def cleanup_locks(runtime: Runtime):
                                            lock_name, build_path)
                     lock: Lock = await lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
                     await lock_manager.unlock(lock)
+                else:
+                    runtime.logger.info("api isn't reachable :(")
 
     finally:
         await lock_manager.destroy()
