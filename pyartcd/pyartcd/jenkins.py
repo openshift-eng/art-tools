@@ -412,4 +412,5 @@ def is_api_reachable() -> bool:
     """
     jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
     endpoint = f'{jenkins_url}/api/json'
+    logger.info('Trying %s', endpoint)
     return requests.get(endpoint).status_code == 200
