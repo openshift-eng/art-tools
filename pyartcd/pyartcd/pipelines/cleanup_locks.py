@@ -18,7 +18,7 @@ async def cleanup_locks(runtime: Runtime):
     runtime.logger.info("Found %s active locks", len(active_locks))
 
     removed_locks = []
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = jenkins.get_jenkins_url()
 
     try:
         for lock_name in active_locks:
