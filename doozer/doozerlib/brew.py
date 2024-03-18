@@ -337,19 +337,7 @@ latest_tag_change_events = {}
 cache_lock = Lock()
 
 
-def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) -> Dict:
-    """
-    :param runtime:  The doozer runtime
-    :param koji_client: A koji ClientSession.
-    :param build:  A build information dict returned from koji getBuild
-    :param tag: A tag name or tag id which should be assessed.
-    :param inherit: If True, uses tag inheritance.
-    :return: None if the tag has not changed since build OR a change event dict for the build that was tagged
-            after the build argument was built.
-    """
-    build_nvr = build['nvr']
-    build_event_id = build['creation_event_id']
-
+def get_latest_tag_change_event(koji_client, tag, inherit=True):
     with cache_lock:
         latest_tag_change_event = latest_tag_change_events.get(tag, None)
 
@@ -381,6 +369,23 @@ def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) 
         with cache_lock:
             latest_tag_change_events[tag] = latest_tag_change_event
 
+    return latest_tag_change_event
+
+
+def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) -> Dict:
+    """
+    :param runtime:  The doozer runtime
+    :param koji_client: A koji ClientSession.
+    :param build:  A build information dict returned from koji getBuild
+    :param tag: A tag name or tag id which should be assessed.
+    :param inherit: If True, uses tag inheritance.
+    :return: None if the tag has not changed since build OR a change event dict for the build that was tagged
+            after the build argument was built.
+    """
+    build_nvr = build['nvr']
+    build_event_id = build['creation_event_id']
+
+    latest_tag_change_event = get_latest_tag_change_event(koji_client, tag, inherit=inherit)
     if latest_tag_change_event and latest_tag_change_event['create_event'] > build_event_id:
         runtime.logger.debug(f'Found that build of {build_nvr} (event={build_event_id}) occurred before tag changes: {latest_tag_change_event}')
         return latest_tag_change_event

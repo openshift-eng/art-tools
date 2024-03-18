@@ -22,7 +22,7 @@ from doozerlib.cli import cli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.runtime import Runtime
-from doozerlib.brew import get_builds_tags
+from doozerlib.brew import get_builds_tags, get_latest_tag_change_event
 from doozerlib.util import (isolate_el_version_in_brew_tag, mkdirs, strip_epoch, to_nvre)
 from elliottlib import errata
 
@@ -180,13 +180,14 @@ def _assemble_repo(config, nvres: List[str]):
         print('Successfully created repo at: {repo_dir}'.format(repo_dir=dest_arch_path))
 
 
-def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
+def assemble_repo(config, nvres, tags, event_info=None, extra_data: Dict = None):
     """
     Assembles one or more architecture specific repos in the
     dest_dir with the specified nvrs. It is expected by the time this method
     is called that all RPMs are signed if any of those arches requires signing.
     :param config: cli config
     :param nvres: a list of nvres to include.
+    :param tags: a list of tags that nvres belong to.
     :param event_info: The brew event information to encode into the plashet.yml
     :param extra_data: a dictionary of data that will be added to the plashet.yml file
         if the repo is successfully assembled.
@@ -196,6 +197,12 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
     runtime: Runtime = config.runtime
     koji_proxy = runtime.build_retrying_koji_client()
     koji_proxy.gssapi_login()
+
+    tag_info_out = []
+    for tag in tags:
+        latest_tag_change_event = get_latest_tag_change_event(koji_proxy, tag)['create_event']
+        tag_info = {'name': tag, 'latest_event': latest_tag_change_event}
+        tag_info_out.append(tag_info)
 
     with open(os.path.join(config.dest_dir, 'plashet.yml'), mode='w+', encoding='utf-8') as y:
         success = False
@@ -234,6 +241,7 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
                     'concerns': plashet_concerns,
                     'brew_event': event_info or koji_proxy.getLastEvent(),
                     'packages': packages,
+                    'tags': tag_info_out,
                 },
                 'extra': extra_data or {},
             }
@@ -508,7 +516,9 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     signable_components = set()  # a set of RPM component names, which we are allowed to sign.
     historical_nvres = set()
     nvr_product_version = {}
+    tags = []
     for tag, product_version in brew_tag:
+        tags.append(tag)
         released_package_nvre_obj = {}  # maps released package names to the most recently released package nvr object (e.g { 'name': ...,  }
         if tag.endswith(('-candidate', '-hotfix')):
             """
@@ -715,7 +725,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     all_nvres = set()
     all_nvres.update(desired_nvres)
     all_nvres.update(historical_nvres)
-    assemble_repo(config, all_nvres, event_info, extra_data=extra_data)
+    assemble_repo(config, all_nvres, tags, event_info, extra_data=extra_data)
 
 
 @config_plashet.command('for-assembly', short_help='Builds repositories of RPMs explicitly listed as dependencies in the assembly.')
