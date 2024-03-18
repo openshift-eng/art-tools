@@ -169,8 +169,9 @@ def is_build_running(build_path: str) -> bool:
 
     init_jenkins()
     # job/aos-cd-builds/job/build%252Focp4/46902 -> ['aos-cd-builds', 'build%2Focp4', '46902']
-    job_path = build_path.replace('job/', '').replace('25', '').split('/')
-    build_job = jenkins_client.get_job(f"{job_path[0]}/{job_path[1]}").get_build(int(job_path[2]))
+    # %25 is the url escape of %, %2F is the url escape fo /, need to convert %252F to %2F
+    job_path = build_path.replace('job/', '').replace('%252F', '%2F').split('/')
+    build_job = jenkins_client.get_job('/'.join(job_path[:-1]).get_build(int(job_path[-1]))
     return build_job.is_running()  # True / False
 
 
