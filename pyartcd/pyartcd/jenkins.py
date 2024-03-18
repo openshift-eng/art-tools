@@ -160,10 +160,7 @@ def set_build_description(build: Build, description: str):
 
 def is_build_running(build_path: str) -> bool:
     """
-    Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
-    E.g. https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46902/api/json
-
-    The resulting JSON has a field called "inProgress" that is true if the build is still ongoing
+    Check if a job is running
 
     Build paths examples are:
     - job/aos-cd-builds/job/build%252Focp4/46902
@@ -171,17 +168,10 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
-    response = requests.get(f'{jenkins_url}/{build_path}/api/json')
-    if response.status_code != 200:
-        logger.debug('Could not fetch data for build %s', build_path)
-        raise ValueError
-
-    build_data = response.json()
-    logger.debug('Build %s %s in progress',
-                 f'{constants.JENKINS_UI_URL}/{build_path}',
-                 'is' if build_data['inProgress'] else 'is not')
-    return build_data['inProgress']
+    # job/aos-cd-builds/job/build%252Focp4/46902 -> ['aos-cd-builds', 'build%2Focp4', '46902']
+    job_path = build_path.replace('job/', '').replace('25','').split('/')
+    build_job = jenkins_client.get_job(f"{job_path[0]}/{job_path[1]}").get_build(job_path[2])
+    return build_job.is_running() #  True / False
 
 
 @check_env_vars
