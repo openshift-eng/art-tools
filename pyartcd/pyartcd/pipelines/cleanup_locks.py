@@ -15,14 +15,17 @@ from pyartcd.runtime import Runtime
 async def cleanup_locks(runtime: Runtime):
     lock_manager = LockManager([redis.redis_url()])
     active_locks = await lock_manager.get_locks()
+    runtime.logger.info("Found %s active locks", len(active_locks))
 
     removed_locks = []
+    jenkins_url = jenkins.get_jenkins_url()
 
     try:
         for lock_name in active_locks:
             # Lock ID is a build URL minus Jenkins server base URL
             build_path = await lock_manager.get_lock_id(lock_name)
             build_url = f'{constants.JENKINS_UI_URL}/{build_path}'
+            runtime.logger.info("Found build_url for lock %s: %s ", lock_name, build_url)
 
             try:
                 is_build_running = jenkins.is_build_running(build_path)
@@ -31,7 +34,7 @@ async def cleanup_locks(runtime: Runtime):
                 if not is_build_running:
                     runtime.logger.warning('Deleting lock %s that was created by %s that\'s not currently running',
                                            lock_name,
-                                           build_url.replace(constants.JENKINS_SERVER_URL, constants.JENKINS_UI_URL))
+                                           build_url.replace(jenkins_url, constants.JENKINS_UI_URL))
                     lock: Lock = await lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
                     await lock_manager.unlock(lock)
                     removed_locks.append(lock_name)
@@ -40,6 +43,7 @@ async def cleanup_locks(runtime: Runtime):
                     runtime.logger.info('Build %s is still running: won\'t delete lock %s', build_path, lock_name)
 
             except ValueError:
+                runtime.logger.info('could not see if build is running.. checking if api is reachable')
                 if jenkins.is_api_reachable():
                     # Make sure Jenkins API are responding
                     # Assume the build is not found because it was manually deleted, and clean up the orphan lock
@@ -47,6 +51,8 @@ async def cleanup_locks(runtime: Runtime):
                                            lock_name, build_path)
                     lock: Lock = await lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
                     await lock_manager.unlock(lock)
+                else:
+                    runtime.logger.info("api isn't reachable :(")
 
     finally:
         await lock_manager.destroy()
