@@ -32,13 +32,17 @@ class Jobs(Enum):
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
 
 
-def init_jenkins(jenkins_url: Optional[str] = None):
+def get_jenkins_url():
+    url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    return url.rstrip('/')
+
+
+def init_jenkins():
     global jenkins_client
     if jenkins_client:
         return
 
-    if not jenkins_url:
-        jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = get_jenkins_url()
 
     logger.info('Initializing Jenkins client..')
     requester = CrumbRequester(
@@ -136,7 +140,7 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
     logger.info('Started new build at %s', triggered_build_url)
 
     # Update the description of the new build with the details of the caller job
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = get_jenkins_url()
     triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, jenkins_url)
     triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
     description = f'Started by upstream project <b>{current_job_name}</b> ' \
@@ -171,14 +175,14 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = get_jenkins_url()
     response = requests.get(f'{jenkins_url}/{build_path}/api/json')
     if response.status_code != 200:
-        logger.debug('Could not fetch data for build %s', build_path)
+        logger.info('Could not fetch data for build %s', build_path)
         raise ValueError
 
     build_data = response.json()
-    logger.debug('Build %s %s in progress',
+    logger.info('Build %s %s in progress',
                  f'{constants.JENKINS_UI_URL}/{build_path}',
                  'is' if build_data['inProgress'] else 'is not')
     return build_data['inProgress']
@@ -366,7 +370,7 @@ def update_title(title: str, append: bool = True):
     """
 
     job = jenkins_client.get_job(current_job_name)
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = get_jenkins_url()
     build = Build(
         url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
@@ -393,7 +397,7 @@ def update_description(description: str, append: bool = True):
     """
 
     job = jenkins_client.get_job(current_job_name)
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = get_jenkins_url()
     build = Build(
         url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
@@ -410,6 +414,10 @@ def is_api_reachable() -> bool:
     """
     Returns True if Jenkins API is reachable, False otherwise
     """
-    jenkins_url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    jenkins_url = get_jenkins_url()
     endpoint = f'{jenkins_url}/api/json'
+    logger.info('Trying %s', endpoint)
+    resp = requests.get(endpoint)
+    logger.info(resp.status_code)
+    logger.info(resp.text)
     return requests.get(endpoint).status_code == 200
