@@ -116,6 +116,7 @@ def _assemble_repo(config, nvres: List[str]):
     """
 
     for arch_name, signing_mode in config.arch:
+        logger.info(f"assembling repo for {arch_name} now..")
         # These directories shouldn't exist yet. They will be created during assemble.
         dest_arch_path = os.path.join(config.dest_dir, arch_name)
         if config.repo_subdir:
@@ -139,9 +140,7 @@ def _assemble_repo(config, nvres: List[str]):
                     continue
 
                 signed = (signing_mode == 'signed')
-                logger.info('Fetching brewroot arch base path')
                 br_arch_base_path = get_brewroot_arch_base_path(config, nvre, signed)
-                logger.info('Fetched')
 
                 # Include noarch in each arch specific repo.
                 include_arches = [arch_name, 'noarch']
@@ -161,11 +160,8 @@ def _assemble_repo(config, nvres: List[str]):
                         link_name += f'__{config.signing_key_id}'
 
                     package_link_path = os.path.join(links_dir, link_name)
-                    logger.info('Symlinking..')
                     os.symlink(brewroot_arch_path, package_link_path)
-                    logger.info('Listing dir')
                     rpms = os.listdir(package_link_path)
-                    logger.info('Done')
                     if not rpms:
                         raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
 
@@ -178,6 +174,7 @@ def _assemble_repo(config, nvres: List[str]):
                     logger.warning("Unable to find any {arch} rpms for {nvre} in {p} ; this may be ok if the package doesn't support the arch and it is not required for that arch".format(
                         arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed)))
 
+        logger.info("Creating repo...")
         if os.system('cd {repo_dir} && createrepo_c -i rpm_list .'.format(repo_dir=dest_arch_path)) != 0:
             raise IOError('Error creating repo at: {repo_dir}'.format(repo_dir=dest_arch_path))
 
