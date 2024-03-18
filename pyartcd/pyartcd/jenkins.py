@@ -169,9 +169,9 @@ def is_build_running(build_path: str) -> bool:
 
     init_jenkins()
     # job/aos-cd-builds/job/build%252Focp4/46902 -> ['aos-cd-builds', 'build%2Focp4', '46902']
-    job_path = build_path.replace('job/', '').replace('25','').split('/')
-    build_job = jenkins_client.get_job(f"{job_path[0]}/{job_path[1]}").get_build(job_path[2])
-    return build_job.is_running() #  True / False
+    job_path = build_path.replace('job/', '').replace('25', '').split('/')
+    build_job = jenkins_client.get_job(f"{job_path[0]}/{job_path[1]}").get_build(int(job_path[2]))
+    return build_job.is_running()  # True / False
 
 
 @check_env_vars
