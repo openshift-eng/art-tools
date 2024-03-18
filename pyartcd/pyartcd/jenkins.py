@@ -11,6 +11,7 @@ from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
 from jenkinsapi.build import Build
 from jenkinsapi.utils.crumb_requester import CrumbRequester
+from jenkinsapi.custom_exceptions import NotFound
 
 from pyartcd import constants
 
@@ -33,7 +34,7 @@ class Jobs(Enum):
 
 
 def get_jenkins_url():
-    url = os.environ["JENKINS_URL"] or constants.JENKINS_SERVER_URL
+    url = os.environ.get("JENKINS_URL", constants.JENKINS_SERVER_URL)
     return url.rstrip('/')
 
 
@@ -58,7 +59,7 @@ def init_jenkins():
         requester=requester,
         lazy=True
     )
-    logger.info('Connected to Jenkins %s', jenkins_client.version)
+    logger.info('Connected to Jenkins server %s', jenkins_client.base_server_url())
 
 
 def get_build_url():
@@ -71,9 +72,9 @@ def get_build_url():
 def get_build_path():
     """
     Examples:
-    - https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46870/ =>
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/ =>
         job/aos-cd-builds/job/build%252Focp4/46870
-    - https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46870 =>
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870 =>
         job/aos-cd-builds/job/build%252Focp4/46870
     """
 
@@ -88,8 +89,8 @@ def get_build_id() -> str:
 def get_build_id_from_url(build_url: str) -> int:
     """
     Examples:
-    - https://buildvm.hosts.prod.psi.bos.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870/ => 46870
-    - https://buildvm.hosts.prod.psi.bos.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870 => 46870
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870/ => 46870
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870 => 46870
     """
 
     return int(list(filter(None, build_url.split('/')))[-1])
@@ -165,7 +166,7 @@ def set_build_description(build: Build, description: str):
 def is_build_running(build_path: str) -> bool:
     """
     Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
-    E.g. https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46902/api/json
+    E.g. https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46902/api/json
 
     The resulting JSON has a field called "inProgress" that is true if the build is still ongoing
 
@@ -175,17 +176,20 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
-    jenkins_url = get_jenkins_url()
-    response = requests.get(f'{jenkins_url}/{build_path}/api/json')
-    if response.status_code != 200:
-        logger.info('Could not fetch data for build %s', build_path)
-        raise ValueError
-
-    build_data = response.json()
-    logger.info('Build %s %s in progress',
-                 f'{constants.JENKINS_UI_URL}/{build_path}',
-                 'is' if build_data['inProgress'] else 'is not')
-    return build_data['inProgress']
+    job_path, build_number = build_path.rstrip("/").rsplit("/", 1)
+    job_name = job_path.rsplit("/", 1)[1]
+    job_url = jenkins_client.base_server_url() + "/" + job_path
+    try:
+        job = Job(job_url, job_name, jenkins_client)
+    except requests.exceptions.HTTPError as err:
+        if err.response.status_code == 404:
+            return False
+        raise
+    try:
+        build = job.get_build(int(build_number))
+    except NotFound:
+        return False
+    return build.is_running()
 
 
 @check_env_vars
@@ -414,10 +418,10 @@ def is_api_reachable() -> bool:
     """
     Returns True if Jenkins API is reachable, False otherwise
     """
-    jenkins_url = get_jenkins_url()
-    endpoint = f'{jenkins_url}/api/json'
-    logger.info('Trying %s', endpoint)
-    resp = requests.get(endpoint)
-    logger.info(resp.status_code)
-    logger.info(resp.text)
-    return requests.get(endpoint).status_code == 200
+    if jenkins_client is None:
+        return False
+    try:
+        jenkins_client.version
+    except Exception:
+        return False
+    return True
