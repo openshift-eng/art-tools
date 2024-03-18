@@ -139,7 +139,9 @@ def _assemble_repo(config, nvres: List[str]):
                     continue
 
                 signed = (signing_mode == 'signed')
+                logger.info('Fetching brewroot arch base path')
                 br_arch_base_path = get_brewroot_arch_base_path(config, nvre, signed)
+                logger.info('Fetched')
 
                 # Include noarch in each arch specific repo.
                 include_arches = [arch_name, 'noarch']
@@ -159,9 +161,11 @@ def _assemble_repo(config, nvres: List[str]):
                         link_name += f'__{config.signing_key_id}'
 
                     package_link_path = os.path.join(links_dir, link_name)
+                    logger.info('Symlinking..')
                     os.symlink(brewroot_arch_path, package_link_path)
-
+                    logger.info('Listing dir')
                     rpms = os.listdir(package_link_path)
+                    logger.info('Done')
                     if not rpms:
                         raise IOError(f'Did not find any rpms in {brewroot_arch_path}')
 
