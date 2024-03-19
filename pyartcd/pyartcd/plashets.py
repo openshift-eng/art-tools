@@ -228,7 +228,7 @@ def fetch_plashet_latest_brew_event(plashet_path: str):
     res = requests.get(url)
     plashet_yaml = yaml.safe_load(res.content)
     brew_event = plashet_yaml["assemble"]["brew_event"]["id"]
-    return str(brew_event)
+    return brew_event
 
 
 async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.PathLike, name: str, arches: Sequence[str],
@@ -265,7 +265,7 @@ async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.
         "--inherit",
     ])
     if after_brew_event:
-        cmd.extend(["--after-brew-event", after_brew_event])
+        cmd.extend(["--after-brew-event", str(after_brew_event)])
     if include_embargoed:
         cmd.append("--include-embargoed")
     if embargoed_tags:
