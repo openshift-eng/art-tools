@@ -204,6 +204,10 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
             after_brew_event=after_brew_event
         )
 
+        if not local_path:
+            logger.info('Plashet creation was skipped')
+            continue
+
         logger.info('Plashet repo for %s created: %s', repo_type, local_path)
         symlink_path = create_latest_symlink(
             base_dir=base_dir, plashet_name=name)
@@ -283,7 +287,9 @@ async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.
         logger.warning("[Dry run] Would have run %s", cmd)
     else:
         logger.info("Executing %s", cmd)
-        await exectools.cmd_assert_async(cmd, env=os.environ.copy())
+        rc = await exectools.cmd_assert_async(cmd, check=False, env=os.environ.copy())
+        if rc == 2:  # plashet run was skipped
+            return None
     return os.path.abspath(Path(base_dir, name))
 
 

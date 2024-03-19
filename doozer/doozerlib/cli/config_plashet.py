@@ -527,20 +527,25 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                 package_name = build['package_name']
                 released_package_nvre_obj[package_name] = parse_nvr(to_nvre(build))
 
-        component_builds: Dict[str, Dict] = {}  # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
-        pinned_nvres: Dict[str, str] = {}  # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
+        # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
+        component_builds: Dict[str, Dict] = {}
+
+        # rpms pinned to the runtime assembly either by "is" or group dependencies;
+        # keys are rpm component names, values are nvres
+        pinned_nvres: Dict[str, str] = {}
 
         if runtime.assembly_basis_event:
             # If an assembly has a basis event, it will only query for artifacts from the "stream" assembly.
             logger.info(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
             assembly = 'stream'
 
-        # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only collect the rpm builds specific to that assembly.
+        # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only
+        # collect the rpm builds specific to that assembly.
         tagged_builds = builder.from_tag(tag, inherit, assembly, event=event, after_event=after_brew_event)
         if not tagged_builds:
             logger.info(f"Tag {tag} has no change for tagged rpms since --after-brew-event={after_brew_event}. "
                         "Skipping plashet generation")
-            exit(0)
+            exit(2)  # we use this special exit code to indicate we skipped
 
         component_builds.update(tagged_builds)
         signable_components |= tagged_builds.keys()  # components from our tag are always signable
