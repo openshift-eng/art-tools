@@ -228,7 +228,7 @@ def fetch_plashet_latest_brew_event(plashet_path: str):
     res = requests.get(url)
     plashet_yaml = yaml.safe_load(res.content)
     brew_event = plashet_yaml["assemble"]["brew_event"]["id"]
-    return brew_event
+    return str(brew_event)
 
 
 async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.PathLike, name: str, arches: Sequence[str],

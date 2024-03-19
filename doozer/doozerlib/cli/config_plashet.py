@@ -468,7 +468,8 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
 @click.option('--inherit', required=False, default=False, is_flag=True,
               help='Descend into brew tag inheritance')
 @click.option('--after-brew-event', help='Only run if any tagged rpms changed after this brew event')
-def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], embargoed_brew_tag: Tuple[str, ...], embargoed_nvr: Tuple[str, ...], signing_advisory_id: Optional[int], signing_advisory_mode: str,
+def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], embargoed_brew_tag: Tuple[str, ...],
+              embargoed_nvr: Tuple[str, ...], signing_advisory_id: Optional[int], signing_advisory_mode: str,
               poll_for: int, include_previous_for: Tuple[str, ...], include_previous: bool, include_embargoed: bool,
               inherit: bool, after_brew_event: Optional[int]):
     """
