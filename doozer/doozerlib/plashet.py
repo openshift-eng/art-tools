@@ -64,6 +64,7 @@ class PlashetBuilder:
             tagged_builds = self._koji_api.listTagged(tag, latest=False, inherit=inherit, event=event, type='rpm')
             builds = find_latest_builds(tagged_builds, assembly)
 
+        builds = list(builds)
         for b in builds:  # Save to cache
             self._cache_build(b)
 
