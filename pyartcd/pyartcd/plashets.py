@@ -43,14 +43,15 @@ ironic_previous_packages_for_4_15_plus = [
 
 def plashet_config_for_major_minor(major, minor):
     return {
-        "rhel-9-server-ose-rpms-embargoed": {
-            "slug": "el9-embargoed",
-            "tag": f"rhaos-{major}.{minor}-rhel-9-candidate",
-            "product_version": f"OSE-{major}.{minor}-RHEL-9",
-            "include_embargoed": True,
-            "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-9-embargoed"],
-            "include_previous_packages": previous_packages,
-        },
+        # Disable embargoed repos until plashet creation issues are fixed
+        # "rhel-9-server-ose-rpms-embargoed": {
+        #     "slug": "el9-embargoed",
+        #     "tag": f"rhaos-{major}.{minor}-rhel-9-candidate",
+        #     "product_version": f"OSE-{major}.{minor}-RHEL-9",
+        #     "include_embargoed": True,
+        #     "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-9-embargoed"],
+        #     "include_previous_packages": previous_packages,
+        # },
         "rhel-9-server-ose-rpms": {
             "slug": "el9",
             "tag": f"rhaos-{major}.{minor}-rhel-9-candidate",
@@ -69,14 +70,14 @@ def plashet_config_for_major_minor(major, minor):
             # For more info about why this is needed, see https://github.com/openshift-eng/aos-cd-jobs/pull/3920
             "include_previous_packages": ironic_previous_packages_for_4_15_plus if (int(major), int(minor)) >= (4, 15) else [],
         },
-        "rhel-8-server-ose-rpms-embargoed": {
-            "slug": "el8-embargoed",
-            "tag": f"rhaos-{major}.{minor}-rhel-8-candidate",
-            "product_version": f"OSE-{major}.{minor}-RHEL-8",
-            "include_embargoed": True,
-            "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-8-embargoed"],
-            "include_previous_packages": previous_packages,
-        },
+        # "rhel-8-server-ose-rpms-embargoed": {
+        #     "slug": "el8-embargoed",
+        #     "tag": f"rhaos-{major}.{minor}-rhel-8-candidate",
+        #     "product_version": f"OSE-{major}.{minor}-RHEL-8",
+        #     "include_embargoed": True,
+        #     "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-8-embargoed"],
+        #     "include_previous_packages": previous_packages,
+        # },
         "rhel-8-server-ose-rpms": {
             "slug": "el8",
             "tag": f"rhaos-{major}.{minor}-rhel-8-candidate",
@@ -93,14 +94,14 @@ def plashet_config_for_major_minor(major, minor):
             "embargoed_tags": [],  # unlikely to exist until we begin using -gating tag
             "include_previous_packages": [],
         },
-        "rhel-server-ose-rpms-embargoed": {
-            "slug": "el7-embargoed",
-            "tag": f"rhaos-{major}.{minor}-rhel-7-candidate",
-            "product_version": f"RHEL-7-OSE-{major}.{minor}",
-            "include_embargoed": True,
-            "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-7-embargoed"],
-            "include_previous_packages": previous_packages,
-        },
+        # "rhel-server-ose-rpms-embargoed": {
+        #     "slug": "el7-embargoed",
+        #     "tag": f"rhaos-{major}.{minor}-rhel-7-candidate",
+        #     "product_version": f"RHEL-7-OSE-{major}.{minor}",
+        #     "include_embargoed": True,
+        #     "embargoed_tags": [f"rhaos-{major}.{minor}-rhel-7-embargoed"],
+        #     "include_previous_packages": previous_packages,
+        # },
         "rhel-server-ose-rpms": {
             "slug": "el7",
             "tag": f"rhaos-{major}.{minor}-rhel-7-candidate",
