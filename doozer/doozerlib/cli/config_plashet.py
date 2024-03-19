@@ -283,7 +283,8 @@ def is_signed(config, nvre, koji_api: koji.ClientSession):
     unsigned_base = get_brewroot_arch_base_path(config, nvre, False)
 
     sigkey = config.signing_key_id
-    build = koji_api.getBuild(nvre, strict=True)
+    nvr = strip_epoch(nvre)
+    build = koji_api.getBuild(nvr, strict=True)
     rpms = koji_api.listRPMs(buildID=build['id'])
     tasks = []
     with koji_api.multicall(batch=5000) as m:
