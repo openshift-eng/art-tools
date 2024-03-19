@@ -7,6 +7,7 @@ import sys
 import time
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
+import koji
 
 import click
 import requests
@@ -272,32 +273,28 @@ def get_brewroot_arch_base_path(config, nvre, signed):
         )
 
 
-def is_signed(config, nvre):
+def is_signed(config, nvre, koji_api: koji.ClientSession):
     """
     :param config: cli config object
     :param nvre: The nvr to check
     :return: Returns whether the specified nvr is signed with the signing key id. An exception
     will be raise if the nvr can't be found at all in the brew root (i.e. unsigned can't be found).
     """
-    signed_base = get_brewroot_arch_base_path(config, nvre, True)
     unsigned_base = get_brewroot_arch_base_path(config, nvre, False)
 
-    if os.path.isdir(signed_base):
-        # The signed directory exists, but we also want to make sure that the RPM counts match
-        # the unsigned directories. This eliminates a potential race condition between a nvr
-        # being signed and the time it takes to populate the brewroot directories.
+    sigkey = config.signing_key_id
+    build = koji_api.getBuild(nvre, strict=True)
+    rpms = koji_api.listRPMs(buildID=build['id'])
+    tasks = []
+    with koji_api.multicall(batch=5000) as m:
+        for rpm in rpms:
+            tasks.append(m.queryRPMSigs(rpm_id=rpm['id'], sigkey=sigkey))
 
-        signed_rpm_count = len(glob.glob(f'{signed_base}/**/*.rpm', recursive=True))
-        # Note the structure brewroot has signed under the unsigned directory, so subtract the
-        # signed from the unsigned.
-        unsigned_rpm_count = len(set(glob.glob(f'{unsigned_base}/**/*.rpm', recursive=True)) - set(glob.glob(f'{unsigned_base}/data/**/*.rpm', recursive=True)))
-
-        if unsigned_rpm_count != signed_rpm_count:
-            logger.info(f'Found incomplete signed rpm directory for {nvre}; brewroot may still be being built.')
+    for rpm, task in zip(rpms, tasks):
+        if not any(os.path.exists("%s/%s" % (unsigned_base, koji.pathinfo.signed(rpm, sig['sigkey']))) for sig in task.result):
+            logger.info(f'Found incomplete signed rpm {nvre}; brewroot may still be being built.')
             return False
-        return True
-    else:
-        return False
+    return True
 
 
 def signed_desired(config):
@@ -312,7 +309,7 @@ def signed_desired(config):
             raise IOError(f'Unexpected signing mode for arch {a} (must be signed or unsigned): {mode}')
 
 
-def assert_signed(config, nvre, poll_for=15):
+def assert_signed(config, nvre, koji_api: koji.ClientSession, poll_for=15):
     """
     Raises an exception if the nvr has not been specified by the config signing key.
     :param config: The cli config
@@ -322,7 +319,7 @@ def assert_signed(config, nvre, poll_for=15):
     """
     time_used = 0
 
-    while not is_signed(config, nvre):
+    while not is_signed(config, nvre, koji_api):
         if poll_for <= 0:
             br_arch_base_path = get_brewroot_arch_base_path(config, nvre, True)
             logger.info('Package {nvre} has not been signed; {signed_path} does not exist'.format(
@@ -681,7 +678,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
 
                 for nvre in nvre_set:
                     nvre_obj = parse_nvr(nvre)
-                    if nvre_obj["name"] in signable_components and not is_signed(config, nvre):
+                    if nvre_obj["name"] in signable_components and not is_signed(config, nvre, koji_proxy):
                         logger.info(f'Found an unsigned nvr in nvre set {set_name} (will attempt to sign): {nvre}')
                         nvres_for_advisory.append(nvre)
 
@@ -696,7 +693,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
             # or throw exception on timeout.
             logger.info(f'Waiting for all nvres in set {set_name} to be signed..')
             for nvre in desired_nvres:
-                poll_for -= assert_signed(config, nvre)
+                poll_for -= assert_signed(config, nvre, koji_proxy)
 
     if possible_signing_needed and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
@@ -827,7 +824,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
             nvres_for_advisory = []
 
             for nvre in desired_nvres:
-                if strip_epoch(nvre) in nvr_product_version and not is_signed(config, nvre):
+                if strip_epoch(nvre) in nvr_product_version and not is_signed(config, nvre, koji_proxy):
                     logger.info(f'Found an unsigned nvr (will attempt to sign): {nvre}')
                     nvres_for_advisory.append(nvre)
 
@@ -841,7 +838,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
         # or throw exception on timeout.
         logger.info(f'Waiting for {len(desired_nvres)} nvre(s) to be signed..')
         for nvre in desired_nvres:
-            poll_for -= assert_signed(config, nvre, poll_for)
+            poll_for -= assert_signed(config, nvre, koji_proxy, poll_for)
 
     if signed_desired(config) and signing_advisory_id and signing_advisory_mode == 'clean':
         # Seems that everything is signed; remove builds from the advisory.
@@ -891,7 +888,7 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
         package_nvrs[package_name] = nvr
         replaced.add(package_name)
 
-        if not is_signed(config, nvr):
+        if not is_signed(config, nvr, koji_proxy):
             # For the signing part of the work, bucket each unsigned NVR into
             # a product that can potentially sign it.
             for tag, product_version in brew_tag:
@@ -923,7 +920,7 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
         # or throw exception on timeout.
         logger.info(f'Waiting for all nvre in set {replace} to be signed..')
         for nvr in replace:
-            poll_for -= assert_signed(config, nvr)
+            poll_for -= assert_signed(config, nvr, koji_proxy)
 
     for image_nvr in images:
         image_build = koji_proxy.getBuild(image_nvr)
@@ -970,6 +967,9 @@ def from_advisories(config, advisory_id, module_builds, poll_for):
     Creates a directory containing arch specific yum repository subdirectories based on RPMs
     attached to one or more advisories.
     """
+    runtime: Runtime = config.runtime
+    koji_proxy = runtime.build_retrying_koji_client()
+    koji_proxy.gssapi_login()
     errata_session = requests.session()
 
     nvrs = set()
@@ -986,7 +986,7 @@ def from_advisories(config, advisory_id, module_builds, poll_for):
                 continue
 
             if signed_desired(config):
-                poll_for -= assert_signed(config, nvr, poll_for=poll_for)
+                poll_for -= assert_signed(config, nvr, koji_proxy, poll_for=poll_for)
 
             nvrs.add(nvr)
 
