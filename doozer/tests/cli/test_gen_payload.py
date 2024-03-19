@@ -623,7 +623,7 @@ spec:
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool push from-spec /tmp/isname.manifest-list.yaml")
+            "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
         self.assertEqual(buffer.getvalue().strip(), """
 image: quay.io/org/repo:spam
 manifests:

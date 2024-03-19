@@ -1233,8 +1233,13 @@ class GenPayloadCli:
         async with aiofiles.open(release_payload_ml_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(ml_dict, default_flow_style=False))
 
+        auth_opt = ""
+        if os.environ.get("XDG_RUNTIME_DIR"):
+            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+            if Path(auth_file).is_file():
+                auth_opt = f"--docker-cfg={auth_file}"
         # Construct the top level manifest list release payload
-        await exectools.cmd_assert_async(f"manifest-tool push from-spec {str(release_payload_ml_path)}", retries=3)
+        await exectools.cmd_assert_async(f"manifest-tool {auth_opt} push from-spec {str(release_payload_ml_path)}", retries=3)
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
         sha = await find_manifest_list_sha(multi_release_dest)
         return exchange_pullspec_tag_for_shasum(multi_release_dest, sha)
