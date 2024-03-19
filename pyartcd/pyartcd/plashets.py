@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Sequence, Optional, Tuple
 
 import yaml
+import requests
 
 from pyartcd import exectools, constants, util
 from pyartcd.constants import PLASHET_REMOTE_HOST
