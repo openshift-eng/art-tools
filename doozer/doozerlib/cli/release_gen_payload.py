@@ -1161,7 +1161,7 @@ class GenPayloadCli:
         if os.environ.get("XDG_RUNTIME_DIR"):
             auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
             if Path(auth_file).is_file():
-                auth_opt = f"--docker-cfg=${auth_file}"
+                auth_opt = f"--docker-cfg={auth_file}"
         await exectools.cmd_assert_async(f"manifest-tool {auth_opt} push from-spec {str(component_manifest_path)}", retries=3)
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
