@@ -467,8 +467,10 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
               help='If specified, embargoed/unshipped RPMs will be included in the plashet')
 @click.option('--inherit', required=False, default=False, is_flag=True,
               help='Descend into brew tag inheritance')
+@click.option('--after-brew-event', help='Only run if any tagged rpms changed after this brew event')
 def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], embargoed_brew_tag: Tuple[str, ...], embargoed_nvr: Tuple[str, ...], signing_advisory_id: Optional[int], signing_advisory_mode: str,
-              poll_for: int, include_previous_for: Tuple[str, ...], include_previous: bool, include_embargoed: bool, inherit: bool):
+              poll_for: int, include_previous_for: Tuple[str, ...], include_previous: bool, include_embargoed: bool,
+              inherit: bool, after_brew_event: Optional[int]):
     """
     The repositories are filled with RPMs derived from the list of
     brew tags. If the RPMs are not signed and a repo should contain signed content,
@@ -533,7 +535,12 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
             assembly = 'stream'
 
         # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only collect the rpm builds specific to that assembly.
-        tagged_builds = builder.from_tag(tag, inherit, assembly, event)
+        tagged_builds = builder.from_tag(tag, inherit, assembly, event=event, after_event=after_brew_event)
+        if not tagged_builds:
+            logger.info(f"Tag {tag} has no change for tagged rpms since --after-brew-event={after_brew_event}. "
+                        "Skipping plashet generation")
+            exit(0)
+
         component_builds.update(tagged_builds)
         signable_components |= tagged_builds.keys()  # components from our tag are always signable
 

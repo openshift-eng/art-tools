@@ -44,12 +44,14 @@ class PlashetBuilder:
         if "epoch" in build:
             self._build_cache[to_nvre(build)] = build
 
-    def from_tag(self, tag: str, inherit: bool, assembly: Optional[str], event: Optional[int] = None) -> Dict[str, Dict]:
+    def from_tag(self, tag: str, inherit: bool, assembly: Optional[str],
+                 event: Optional[int] = None, after_event: Optional[int] = None) -> Dict[str, Dict]:
         """ Returns RPM builds from the specified brew tag
         :param tag: Brew tag name
         :param inherit: Descend into brew tag inheritance
         :param assembly: Assembly name to query. If None, this method will return true latest builds.
         :param event: Brew event ID
+        :param after_event: Only return builds if any tagged rpm changed after this brew event ID
         :return: a dict; keys are component names, values are Brew build dicts
         """
         if not assembly:
@@ -61,10 +63,26 @@ class PlashetBuilder:
             self._logger.info("Finding RPM builds specific to assembly %s in Brew tag %s...", assembly, tag)
             tagged_builds = self._koji_api.listTagged(tag, latest=False, inherit=inherit, event=event, type='rpm')
             builds = find_latest_builds(tagged_builds, assembly)
+
+        for b in builds:  # Save to cache
+            self._cache_build(b)
+
+        if after_event:
+            new_builds = []
+            for b in builds:
+                build = self._koji_api.getBuild(b["nvr"])
+                tag_listing = self._koji_api.queryHistory(table='tag_listing',
+                                                          build=build['id'],
+                                                          tag=tag,
+                                                          beforeEvent=event,
+                                                          afterEvent=after_event)['tag_listing']
+                if tag_listing:
+                    new_builds.append(b)
+            if not new_builds:
+                return dict()
+
         component_builds = {build["name"]: build for build in builds}
         self._logger.info("Found %s RPM builds.", len(component_builds))
-        for build in component_builds.values():  # Save to cache
-            self._cache_build(build)
         return component_builds
 
     def from_pinned_by_is(self, el_version: int, assembly: str, releases_config: Model, rpm_map: Dict[str, RPMMetadata]) -> Dict[str, Dict]:
