@@ -126,10 +126,10 @@ class RebuildGolangRPMsPipeline:
             self.rebuild_art_rpms(art_rpms_for_rebuild)
 
         if not non_art_rpms_for_rebuild:
-            _LOGGER.info(f'All non-ART rpms are using given golang builds!')
+            _LOGGER.info('All non-ART rpms are using given golang builds!')
             return
 
-        _LOGGER.info(f'Building non-ART rpms...')
+        _LOGGER.info('Building non-ART rpms...')
         _, author, _ = await exectools.cmd_gather_async('git config user.name')
         _, email, _ = await exectools.cmd_gather_async('git config user.email')
         author = author.strip()

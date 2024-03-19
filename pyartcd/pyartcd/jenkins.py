@@ -265,9 +265,6 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
     # SKIP_PLASHETS defaults to True for manual builds, setting to False for scheduled
     params['SKIP_PLASHETS'] = False
 
-    if dry_run:
-        params['DRY_RUN'] = True
-
     return start_build(
         job=Jobs.OCP4,
         params=params,
