@@ -230,10 +230,14 @@ def fetch_plashet_latest_brew_event(plashet_path: str):
     url = ("https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/"
            f"{plashet_path}/latest/plashet.yml")
     logger.info(f"Fetching {url} to get last brew event")
-    res = requests.get(url)
-    plashet_yaml = yaml.safe_load(res.content)
-    logger.info(plashet_yaml)
-    brew_event = plashet_yaml["assemble"]["brew_event"]["id"]
+    brew_event = None
+    try:
+        res = requests.get(url)
+        plashet_yaml = yaml.safe_load(res.content)
+        brew_event = plashet_yaml["assemble"]["brew_event"]["id"]
+    except Exception as ex:
+        logger.error("Could not find brew_event at %s: %s", url, ex)
+
     return brew_event
 
 
