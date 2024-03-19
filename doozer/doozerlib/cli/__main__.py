@@ -252,6 +252,10 @@ installonly_limit=3
     if dry_run:
         return
 
+    if not os.path.isdir(output):
+        yellow_print('Creating outputdir: {}'.format(output))
+        exectools.cmd_assert('mkdir -p {}'.format(output))
+
     if not os.path.isdir(cachedir):
         yellow_print('Creating cachedir: {}'.format(cachedir))
         exectools.cmd_assert('mkdir -p {}'.format(cachedir))
@@ -291,6 +295,8 @@ installonly_limit=3
                     runtime.logger.warning('Failed to sync repo {} but marked as optional: {}'.format(repo.name, err))
                     optional_fails.append(repo.name)
             else:
+                if not os.path.isdir(os.path.join(output, repo.name)):
+                    exectools.cmd_assert('mkdir -p {}'.format(os.path.join(output, repo.name)))
                 rc, out, err = exectools.cmd_gather('createrepo_c {}'.format(os.path.join(output, repo.name)))
                 if rc != 0:
                     if not repo.cs_optional:
