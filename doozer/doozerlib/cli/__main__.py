@@ -294,16 +294,6 @@ installonly_limit=3
                 else:
                     runtime.logger.warning('Failed to sync repo {} but marked as optional: {}'.format(repo.name, err))
                     optional_fails.append(repo.name)
-            else:
-                if not os.path.isdir(os.path.join(output, repo.name)):
-                    exectools.cmd_assert('mkdir -p {}'.format(os.path.join(output, repo.name)))
-                rc, out, err = exectools.cmd_gather('createrepo_c {}'.format(os.path.join(output, repo.name)))
-                if rc != 0:
-                    if not repo.cs_optional:
-                        raise DoozerFatalError(err)
-                    else:
-                        runtime.logger.warning('Failed to run createrepo_c on {} but marked as optional: {}'.format(repo.name, err))
-                        optional_fails.append(repo.name)
     finally:
         yc_file.close()
         shutil.rmtree(metadata_dir, ignore_errors=True)
