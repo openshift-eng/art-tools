@@ -182,7 +182,9 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
         logger.info('Building plashet repo for %s', repo_type)
         slug = config['slug']
         name = f'{timestamp.year}-{timestamp.month:02}/{revision}'
-        base_dir = Path(working_dir, f'plashets/{major}.{minor}/{assembly}/{slug}')
+        plashet_path = f"{major}.{minor}/{assembly}/{slug}"
+        base_dir = Path(working_dir, f'plashets/{plashet_path}')
+        after_brew_event = fetch_plashet_latest_brew_event(plashet_path)
         local_path = await build_plashet_from_tags(
             group_param=group_param,
             assembly=assembly,
@@ -197,7 +199,8 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
             include_previous_packages=config['include_previous_packages'],
             data_path=data_path,
             dry_run=dry_run,
-            doozer_working=doozer_working
+            doozer_working=doozer_working,
+            after_brew_event=after_brew_event
         )
 
         logger.info('Plashet repo for %s created: %s', repo_type, local_path)
@@ -217,12 +220,23 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
     return plashets_built
 
 
+async def fetch_plashet_latest_brew_event(plashet_path: str):
+    # Example https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/4.16/stream/el8/latest/plashet.yml
+    url = ("https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/"
+           f"{plashet_path}/latest/plashet.yml")
+    res = requests.get(url)
+    plashet_yaml = yaml.safe_load(res.content)
+    brew_event = plashet_yaml["assemble"]["brew_event"]["id"]
+    return brew_event
+
+
 async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.PathLike, name: str, arches: Sequence[str],
                                   include_embargoed: bool, signing_mode: str, signing_advisory: int,
                                   tag_pvs: Sequence[Tuple[str, str]], embargoed_tags: Optional[Sequence[str]],
                                   include_previous_packages: Optional[Sequence[str]] = None,
                                   poll_for: int = 0, data_path: str = constants.OCP_BUILD_DATA_URL,
-                                  doozer_working: str = 'doozer-working', dry_run: bool = False):
+                                  doozer_working: str = 'doozer-working', after_brew_event: Optional[int] = None,
+                                  dry_run: bool = False):
     """
     Builds Plashet repo with "from-tags"
     """
@@ -249,6 +263,8 @@ async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.
         "--signing-advisory-mode", "clean",
         "--inherit",
     ])
+    if after_brew_event:
+        cmd.extend(["--after-brew-event", after_brew_event])
     if include_embargoed:
         cmd.append("--include-embargoed")
     if embargoed_tags:
