@@ -1157,7 +1157,12 @@ class GenPayloadCli:
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(dict(image=output_pullspec, manifests=manifests), default_flow_style=False))
-        await exectools.cmd_assert_async(f"manifest-tool push from-spec {str(component_manifest_path)}", retries=3)
+        auth_opt = ""
+        if os.environ.get("XDG_RUNTIME_DIR"):
+            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+            if Path(auth_file).is_file():
+                auth_opt = f"--docker-cfg=${auth_file}"
+        await exectools.cmd_assert_async(f"manifest-tool {auth_opt} push from-spec {str(component_manifest_path)}", retries=3)
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
         sha = await find_manifest_list_sha(output_pullspec)

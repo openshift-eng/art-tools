@@ -576,7 +576,7 @@ spec:
         await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
+            "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
         ml = yaml.safe_load(buffer.getvalue())
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
