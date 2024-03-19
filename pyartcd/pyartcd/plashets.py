@@ -220,7 +220,7 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
     return plashets_built
 
 
-async def fetch_plashet_latest_brew_event(plashet_path: str):
+def fetch_plashet_latest_brew_event(plashet_path: str):
     # Example https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/4.16/stream/el8/latest/plashet.yml
     url = ("https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/"
            f"{plashet_path}/latest/plashet.yml")
