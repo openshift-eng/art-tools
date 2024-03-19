@@ -252,6 +252,10 @@ installonly_limit=3
     if dry_run:
         return
 
+    if not os.path.isdir(output):
+        yellow_print('Creating outputdir: {}'.format(output))
+        exectools.cmd_assert('mkdir -p {}'.format(output))
+
     if not os.path.isdir(cachedir):
         yellow_print('Creating cachedir: {}'.format(cachedir))
         exectools.cmd_assert('mkdir -p {}'.format(cachedir))
