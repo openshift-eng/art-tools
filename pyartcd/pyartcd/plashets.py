@@ -229,8 +229,10 @@ def fetch_plashet_latest_brew_event(plashet_path: str):
     # Example https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/4.16/stream/el8/latest/plashet.yml
     url = ("https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets/"
            f"{plashet_path}/latest/plashet.yml")
+    logger.info(f"Fetching {url} to get last brew event")
     res = requests.get(url)
     plashet_yaml = yaml.safe_load(res.content)
+    logger.info(plashet_yaml)
     brew_event = plashet_yaml["assemble"]["brew_event"]["id"]
     return brew_event
 
