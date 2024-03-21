@@ -130,11 +130,17 @@ class RebuildGolangRPMsPipeline:
             return
 
         _LOGGER.info('Building non-ART rpms...')
+
         _, author, _ = await exectools.cmd_gather_async('git config user.name')
         _, email, _ = await exectools.cmd_gather_async('git config user.email')
         author = author.strip()
         email = email.strip()
+        if not email.endswith('@redhat.com'):
+            raise ValueError(f'git config user.email {email} does not end with @redhat.com')
+        if email == "noreply@redhat.com":
+            email = "aos-team-art@redhat.com"
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
+
         for el_v, rpms in non_art_rpms_for_rebuild.items():
             for rpm in rpms:
                 try:
@@ -216,8 +222,6 @@ class RebuildGolangRPMsPipeline:
         _LOGGER.info(f'{rpm}/{branch} - New release in specfile: {spec.release}')
 
         _LOGGER.info(f'{rpm}/{branch} - Adding changelog entry in specfile')
-        if not email.endswith('@redhat.com'):
-            raise ValueError(f'git config user.email {email} does not end with @redhat.com')
         spec.add_changelog_entry(
             bump_msg,
             author=author,
@@ -227,9 +231,6 @@ class RebuildGolangRPMsPipeline:
 
         if self.runtime.dry_run:
             _LOGGER.info(f"{rpm}/{branch} - Dry run, would've committed changes and triggered build")
-            return
-
-        if not click.confirm(f"{rpm}/{branch} - Commit changes and trigger build?"):
             return
 
         spec.save()
