@@ -15,6 +15,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Union
 from urllib.parse import quote
+
+from openshift_client import OpenShiftPythonException
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import (RetryCallState, RetryError, retry,
@@ -679,18 +681,28 @@ class PromotePipeline:
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
-                extract_release_binary(oc_mirror_pullspec, [f"--path=/usr/bin/oc-mirror:{client_mirror_dir}"])
-                # archive file
-                with tarfile.open(f"{client_mirror_dir}/oc-mirror.tar.gz", "w:gz") as tar:
-                    tar.add(f"{client_mirror_dir}/oc-mirror", arcname="oc-mirror")
-                # calc shasum
-                with open(f"{client_mirror_dir}/oc-mirror.tar.gz", 'rb') as f:
-                    shasum = hashlib.sha256(f.read()).hexdigest()
-                # write shasum to sha256sum.txt
-                with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                    f.write(f"{shasum}  oc-mirror.tar.gz\n")
-                # remove oc-mirror
-                os.remove(f"{client_mirror_dir}/oc-mirror")
+                try:
+                    multi_rhel_path = [f"--path=/usr/bin/oc-mirror.{rhel}:{client_mirror_dir}" for rhel in
+                                       ["rhel8", "rhel9"]]
+                    extract_release_binary(oc_mirror_pullspec, multi_rhel_path)
+                    Path(client_mirror_dir, 'oc-mirror.rhel8').rename(f'{client_mirror_dir}/oc-mirror')
+                except OpenShiftPythonException:
+                    extract_release_binary(oc_mirror_pullspec, [f'--path=/usr/bin/oc-mirror:{client_mirror_dir}'])
+
+                for file in Path(client_mirror_dir).glob('oc-mirror*'):
+                    # archive file
+                    tarball = Path(f'{file}.tar.gz')
+                    with tarfile.open(tarball, "w:gz") as tar:
+                        tar.add(f"{file}", arcname="oc-mirror")
+                    # calc shasum
+                    with open(tarball, 'rb') as f:
+                        shasum = hashlib.sha256(f.read()).hexdigest()
+                    # write shasum to sha256sum.txt
+                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
+                        f.write(f"{shasum}  {tarball.name}\n")
+                    # remove extracted file
+                    file.unlink()
+
             else:
                 self._logger.error("Error get oc-mirror image from release pullspec")
 
