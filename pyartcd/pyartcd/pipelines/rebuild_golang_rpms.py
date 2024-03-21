@@ -134,6 +134,7 @@ class RebuildGolangRPMsPipeline:
         _, email, _ = await exectools.cmd_gather_async('git config user.email')
         author = author.strip()
         email = email.strip()
+        _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
         for el_v, rpms in non_art_rpms_for_rebuild.items():
             for rpm in rpms:
                 try:
