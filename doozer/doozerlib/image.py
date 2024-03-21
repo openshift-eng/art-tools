@@ -373,12 +373,6 @@ class ImageMetadata(Metadata):
                     self.logger.info(f'will be rebuilt because a builder or parent image changed: {builder_image_name}')
                     return self, RebuildHint(RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built')
 
-            self.logger.info("Checking if buildroot of image %s has changed", self.distgit_key)
-            build_root_change = brew.has_tag_changed_since_build(runtime, koji_api, image_build, buildroot_tag, inherit=True)
-            if build_root_change:
-                self.logger.info(f'Image will be rebuilt due to buildroot change since {image_nvr} (last build event={image_build_event_id}). Build root change: [{build_root_change}]')
-                return self, RebuildHint(RebuildHintCode.BUILD_ROOT_CHANGING, f'Buildroot tag changes since {image_nvr} was built')
-
             self.logger.info("Getting RPMs contained in %s", image_nvr)
             bbii = BrewBuildImageInspector(self.runtime, image_build)
 
