@@ -53,7 +53,7 @@ RUN groupadd --gid "$USER_GID" "$USERNAME" \
     && chmod 0440 /etc/sudoers.d/"$USERNAME"
 
 # Configure Kerberos
-COPY .devcontainer/krb5-redhat.conf /etc/krb5.conf.d/
+COPY artcommon/configs/krb5-redhat.conf /etc/krb5.conf.d/
 
 # Preinstall dependencies and doozer
 WORKDIR /workspaces/doozer
