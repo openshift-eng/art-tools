@@ -1210,9 +1210,17 @@ class PromotePipeline:
         dest_manifest_list_path = self._working_dir / f"{release_name}.manifest-list.yaml"
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
+
+        auth_opt = ""
+        if os.environ.get("XDG_RUNTIME_DIR"):
+            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+            if Path(auth_file).is_file():
+                auth_opt = f"--docker-cfg={auth_file}"
+
         cmd = [
-            "manifest-tool", "push", "from-spec", "--", f"{dest_manifest_list_path}"
+            "manifest-tool", auth_opt, "push", "from-spec", "--", f"{dest_manifest_list_path}"
         ]
+
         if self.runtime.dry_run:
             self._logger.warning("[DRY RUN] Would have run %s", cmd)
             return
