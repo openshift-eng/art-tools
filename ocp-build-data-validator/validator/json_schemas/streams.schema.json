@@ -30,6 +30,16 @@
                 },
                 "aliases": {
                     "type": "array"
+                },
+                "okd": {
+                    "type": "object",
+                    "properties": {
+                        "image": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "This literal pullspec will be when resolving this image for OKD alignment"
+                        }
+                    }
                 }
             },
             "required": [
