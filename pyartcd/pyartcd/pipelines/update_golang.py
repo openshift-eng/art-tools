@@ -17,6 +17,7 @@ from pyartcd.runtime import Runtime
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import BuildStates
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
+from elliottlib import util as elliottutil
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,20 +114,27 @@ class UpdateGolangPipeline:
             raise IOError(f'No brew package is defined for {component}')
         package_id = package_info['id']
         builder_nvrs = {}
-        for el_v in el_nvr_map.keys():
+        for el_v, go_nvr in el_nvr_map.items():
             pattern = f"{component}-v{go_version}-*el{el_v}*"
             builds = self.koji_session.listBuilds(packageID=package_id,
                                                   state=BuildStates.COMPLETE.value,  # complete
                                                   pattern=pattern,
                                                   queryOpts={'limit': 1, 'order': '-creation_event_id'})
             if builds:
-                nvr = [b['nvr'] for b in builds][0]
-                builder_nvrs[el_v] = nvr
+                build = builds[0]
+                go_nvr_map = elliottutil.get_golang_container_nvrs(
+                    [(build['name'], build['version'], build['release'])],
+                    _LOGGER
+                )  # {'1.20.12-2.el9_3': {('openshift-golang-builder-container', 'v1.20.12',
+                # '202403212137.el9.g144a3f8.el9')}}
+                builder_go_vr = list(go_nvr_map.keys())[0]
+                if builder_go_vr in go_nvr:
+                    builder_nvrs[el_v] = build['nvr']
 
         need_update = False
-        if builder_nvrs:
-            _LOGGER.info(f"Found builder nvrs for this version {builder_nvrs}. Checking if they are being used in "
-                         "streams.yml")
+        if len(builder_nvrs) == len(el_nvr_map):  # existing builders found for all rhel versions
+            _LOGGER.info(f"Found builder nvrs built with desired golang builds: {builder_nvrs}. Checking if they are "
+                         "being used in streams.yml")
             github_token = os.environ.get('GITHUB_TOKEN')
             if not github_token:
                 raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
@@ -163,10 +171,11 @@ class UpdateGolangPipeline:
             else:
                 red_print("Please update streams.yml")
         else:
+            missing_in = el_nvr_map.keys() - builder_nvrs.keys()
             # Make sure builder branches are updated for building
-            _LOGGER.info("Did not find any existing builder images. Verifying builder branches are updated for "
-                         "building")
-            for el_v, nvr in el_nvr_map.items():
+            _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
+                         "Verifying builder branches are updated for building")
+            for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
                 _LOGGER.info(
                     "Please trigger job at https://saml.buildvm.openshift.eng.bos.redhat.com:8888/job/aos-cd-builds"
