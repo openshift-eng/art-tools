@@ -237,6 +237,10 @@ class FindBugsGolangCli:
         bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
 
         def is_valid(b: JIRABug):
+            # Do not touch embargoed bugs
+            if b.bug.fields.security.name == "Embargoed Security Issue":
+                return False
+
             # golang compiler cve title text always has `golang:`
             # this ignores golang lib cves like `podman: net/http, golang.org/x/net/http2:`
             if 'golang:' not in b.summary:
