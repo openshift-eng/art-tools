@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date
-from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
+from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage
 from elliottlib.errata import get_brew_builds
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -301,6 +301,7 @@ class PrepareReleasePipeline:
                 continue
             try:
                 self.change_advisory_state(advisory, "QE")
+                push_cdn_stage(advisory)
             except Exception as ex:
                 _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
                 await self._slack_client.say_in_thread(f"Unable to move {impetus} advisory {advisory} to QE. Details in log.")
