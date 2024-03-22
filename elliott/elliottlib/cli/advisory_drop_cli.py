@@ -8,7 +8,7 @@ from requests_gssapi import HTTPSPNEGOAuth
 from elliottlib.cli.common import cli
 from elliottlib.constants import errata_drop_url
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.errata import remove_dependent_advisories, remove_blocking_advisories_depends
+from elliottlib.errata import remove_dependent_advisories, remove_blocking_advisories_depends, change_advisory_batch
 
 
 @cli.command("advisory-drop", short_help="Drop advisory")
@@ -45,6 +45,8 @@ def advisory_drop_cli(advisory):
         remove_dependent_advisories(advisory)
         adv.commit()
 
+    # Clear advisory batch
+    change_advisory_batch(advisory_id=advisory, batch_id=None, clear_batch=True)
     # Drop advisory
     url = errata_drop_url.format(id=advisory)
     data = 'utf8=%E2%9C%93&reason=Dropping+unused+advisory%21&commit=Dropping+unused+advisory'
