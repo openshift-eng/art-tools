@@ -12,6 +12,7 @@ from artcommonlib.constants import BREW_HUB
 from artcommonlib.format_util import green_print, yellow_print, red_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from pyartcd import exectools
+from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.rpm_utils import parse_nvr
@@ -32,6 +33,10 @@ class UpdateGolangPipeline:
         self.art_jira = art_jira
         self.permit_missing_qe_tag = permit_missing_qe_tag
         self.koji_session = koji.ClientSession(BREW_HUB)
+
+        self.github_token = os.environ.get('GITHUB_TOKEN')
+        if not self.github_token:
+            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
 
     async def run(self):
         # validate that the ocp version allows given rhel versions
@@ -107,8 +112,8 @@ class UpdateGolangPipeline:
         _LOGGER.info('All builds are tagged and available!')
 
         # Make a sanity check if a builder nvr exists for this version and if it's already pinned
-        _LOGGER.info(f"Checking if any builder image builds exist for {go_version} in brew")
         component = GOLANG_BUILDER_CVE_COMPONENT
+        _LOGGER.info(f"Checking if {component} builds exist for given golang builds")
         package_info = self.koji_session.getPackage(component)
         if not package_info:
             raise IOError(f'No brew package is defined for {component}')
@@ -129,20 +134,17 @@ class UpdateGolangPipeline:
                 # '202403212137.el9.g144a3f8.el9')}}
                 builder_go_vr = list(go_nvr_map.keys())[0]
                 if builder_go_vr in go_nvr:
+                    _LOGGER.info(f"Found existing builder image: {build['nvr']} built with {go_nvr}")
                     builder_nvrs[el_v] = build['nvr']
 
         need_update = False
         if len(builder_nvrs) == len(el_nvr_map):  # existing builders found for all rhel versions
-            _LOGGER.info(f"Found builder nvrs built with desired golang builds: {builder_nvrs}. Checking if they are "
-                         "being used in streams.yml")
-            github_token = os.environ.get('GITHUB_TOKEN')
-            if not github_token:
-                raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
+            _LOGGER.info(f"Checking if existing builder images are being used in streams.yml")
 
             owner, repo = 'openshift-eng', 'ocp-build-data'
             branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
 
-            api = GhApi(owner=owner, repo=repo, token=github_token)
+            api = GhApi(owner=owner, repo=repo, token=self.github_token)
             blob = api.repos.get_content(filename, ref=branch)
             group_config = yaml.safe_load(base64.b64decode(blob['content']))
             major_go, minor_go, _ = go_version.split('.')
@@ -178,22 +180,18 @@ class UpdateGolangPipeline:
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
                 _LOGGER.info(
-                    "Please trigger job at https://saml.buildvm.openshift.eng.bos.redhat.com:8888/job/aos-cd-builds"
+                    f"Please trigger job at {constants.JENKINS_UI_URL}/job/aos-cd-builds"
                     "/job/build%252Fgolang-builder/ "
                     f"with params GOLANG_VERSION={go_version} RHEL_VERSION={el_v}")
 
     def verify_golang_builder_repo(self, el_v, go_version):
         # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
-        github_token = os.environ.get('GITHUB_TOKEN')
-        if not github_token:
-            raise ValueError("GITHUB_TOKEN environment variable is required to fetch build data repo contents")
-
         owner, repo = 'openshift-eng', 'ocp-build-data'
         major_go, minor_go, patch_go = go_version.split('.')
         go_v = f"{major_go}.{minor_go}"
         branch, filename = f'rhel-{el_v}-golang-{go_v}', 'group.yml'
 
-        api = GhApi(owner=owner, repo=repo, token=github_token)
+        api = GhApi(owner=owner, repo=repo, token=self.github_token)
         blob = api.repos.get_content(filename, ref=branch)
         group_config = yaml.safe_load(base64.b64decode(blob['content']))
         content_repo_url = self.get_content_repo_url(el_v)
