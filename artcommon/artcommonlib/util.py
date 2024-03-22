@@ -76,6 +76,18 @@ def split_git_url(url) -> (str, str, str):
     return server, org, repo_name
 
 
+def download_file_from_github(repository, branch, path, token: str, destination):
+    server, org, repo_name = split_git_url(repository)
+    url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
+    headers = {"Authorization": f"token {token}"}
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        with open(str(destination), "wb") as f:
+            f.write(response.content)
+    else:
+        raise IOError(f'Failed to download {url} from github')
+
+
 def merge_objects(a, b):
     """ Merges two, potentially deep, objects into a new one and returns the result.
     'a' is layered over 'b' and is dominant when necessary. The output is 'c'.
