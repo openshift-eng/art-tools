@@ -681,14 +681,14 @@ class PromotePipeline:
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
-                try:
-                    multi_rhel_path = [f"--path=/usr/bin/oc-mirror.{rhel}:{client_mirror_dir}" for rhel in
-                                       ["rhel8", "rhel9"]]
-                    extract_release_binary(oc_mirror_pullspec, multi_rhel_path)
-                    Path(client_mirror_dir, 'oc-mirror.rhel8').rename(f'{client_mirror_dir}/oc-mirror')
-                except OpenShiftPythonException:
-                    extract_release_binary(oc_mirror_pullspec, [f'--path=/usr/bin/oc-mirror:{client_mirror_dir}'])
+                multi_rhel_path = [f"--path=/usr/bin/oc-mirror*:{client_mirror_dir}"]
+                extract_release_binary(oc_mirror_pullspec, multi_rhel_path)  # will exit with 0 even if no files are exacted
 
+                # if oc-mirror.rhel8 exists, rename it to oc-mirror
+                if Path(client_mirror_dir, 'oc-mirror.rhel8').exists():
+                    Path(client_mirror_dir, 'oc-mirror.rhel8').replace(f'{client_mirror_dir}/oc-mirror')
+
+                files_extracted = 0
                 for file in Path(client_mirror_dir).glob('oc-mirror*'):
                     # archive file
                     tarball = Path(f'{file}.tar.gz')
@@ -702,7 +702,9 @@ class PromotePipeline:
                         f.write(f"{shasum}  {tarball.name}\n")
                     # remove extracted file
                     file.unlink()
-
+                    files_extracted += 1
+                if files_extracted == 0:
+                    self._logger.error("No binaries extracted from the oc-mirror image")
             else:
                 self._logger.error("Error get oc-mirror image from release pullspec")
 
