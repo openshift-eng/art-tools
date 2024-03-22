@@ -686,7 +686,7 @@ class PromotePipeline:
                                        ["rhel8", "rhel9"]]
                     extract_release_binary(oc_mirror_pullspec, multi_rhel_path)
                     Path(client_mirror_dir, 'oc-mirror.rhel8').rename(f'{client_mirror_dir}/oc-mirror')
-                except OpenShiftPythonException:
+                except (OpenShiftPythonException, FileNotFoundError):
                     extract_release_binary(oc_mirror_pullspec, [f'--path=/usr/bin/oc-mirror:{client_mirror_dir}'])
 
                 for file in Path(client_mirror_dir).glob('oc-mirror*'):
