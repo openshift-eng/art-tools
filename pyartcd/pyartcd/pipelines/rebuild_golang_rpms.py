@@ -10,6 +10,7 @@ from specfile import Specfile
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.release_util import split_el_suffix_in_release
 from pyartcd import exectools
+from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.rpm_utils import parse_nvr
@@ -159,7 +160,8 @@ class RebuildGolangRPMsPipeline:
         return [c['name'].rstrip('.yml') for c in content if c['name'].endswith('.yml')]
 
     def rebuild_art_rpms(self, rpms):
-        _LOGGER.info(f"Trigger job at https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/build with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
+        _LOGGER.info(f"Trigger job at {constants.JENKINS_UI_URL}/job/aos-cd-builds/job/build%252Focp4/build "
+                     f"with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
                      f"PIN_BUILDS=True BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}")
         # jenkins.start_ocp4(
         #     build_version=self.ocp_version,
