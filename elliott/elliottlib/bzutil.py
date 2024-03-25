@@ -20,6 +20,7 @@ from errata_tool.jira_issue import JiraIssue as ErrataJira
 from errata_tool.bug import Bug as ErrataBug
 from bugzilla.bug import Bug
 from koji import ClientSession
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import logutil, exectools
 from elliottlib import constants, exceptions, errata, util
@@ -584,6 +585,7 @@ class BugTracker:
         raise NotImplementedError
 
 
+@retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
 def get_jira_name_id_mapping() -> dict:
     """
     Assuming that no two JIRA fields have the same name
