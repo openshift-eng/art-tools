@@ -245,7 +245,7 @@ class FindBugsKernelCli:
             "description": bug.description,
             "issuetype": {"name": "Bug"},
             "versions": [{"name": ocp_target_version[:ocp_target_version.rindex(".")]}],
-            f"{JIRABugTracker.FIELD_TARGET_VERSION}": [{
+            f"{JIRABugTracker.field_target_version}": [{
                 "name": ocp_target_version,
             }],
             "labels": ["art:cloned-kernel-bug", f"art:bz#{bug.id}"],

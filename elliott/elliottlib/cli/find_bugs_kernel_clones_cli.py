@@ -88,7 +88,7 @@ class FindBugsKernelClonesCli:
             components = {c.name for c in bug.fields.components}
             if config.target_jira.component not in components:
                 raise ValueError(f"Jira {key} is not set to component {config.target_jira.component}")
-            target_versions = getattr(bug.fields, JIRABugTracker.FIELD_TARGET_VERSION)
+            target_versions = getattr(bug.fields, JIRABugTracker.field_target_version)
             target_releases = {t.name for t in target_versions}
             if config.target_jira.target_release not in target_releases:
                 raise ValueError(f"Jira {key} has invalid target version: {target_versions}")
