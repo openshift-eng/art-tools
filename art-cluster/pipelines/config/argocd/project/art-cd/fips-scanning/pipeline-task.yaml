@@ -26,7 +26,7 @@ spec:
 
         kinit -kt /tmp/keytab/keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@IPA.REDHAT.COM
 
-        artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs) 
+        artcd -vv scan-fips --version $(params.version) --nvrs $(params.nvrs) 
 
       securityContext:
         runAsGroup: 0
