@@ -124,7 +124,7 @@ class BuildMicroShiftPipeline:
                     message = (f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to "
                                "rebuild.")
                     self._logger.info(message)
-                    await self.slack_client.say_in_thread(message)
+                    await self.slack_client.say_in_thread(message=message, reaction="art-attention")
                     nvrs = list(pinned_nvrs.values())
                 else:
                     nvrs = await self._find_builds()
