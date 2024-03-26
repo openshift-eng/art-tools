@@ -15,8 +15,6 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Union
 from urllib.parse import quote
-
-from openshift_client import OpenShiftPythonException
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import (RetryCallState, RetryError, retry,
@@ -26,7 +24,7 @@ from tenacity import (RetryCallState, RetryError, retry,
 from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, \
     go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.exectools import to_thread
+from artcommonlib.exectools import to_thread, manifest_tool
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd.locks import Lock
@@ -681,30 +679,18 @@ class PromotePipeline:
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
-                multi_rhel_path = [f"--path=/usr/bin/oc-mirror*:{client_mirror_dir}"]
-                extract_release_binary(oc_mirror_pullspec, multi_rhel_path)  # will exit with 0 even if no files are exacted
-
-                # if oc-mirror.rhel8 exists, rename it to oc-mirror
-                if Path(client_mirror_dir, 'oc-mirror.rhel8').exists():
-                    Path(client_mirror_dir, 'oc-mirror.rhel8').replace(f'{client_mirror_dir}/oc-mirror')
-
-                files_extracted = 0
-                for file in Path(client_mirror_dir).glob('oc-mirror*'):
-                    # archive file
-                    tarball = Path(f'{file}.tar.gz')
-                    with tarfile.open(tarball, "w:gz") as tar:
-                        tar.add(f"{file}", arcname="oc-mirror")
-                    # calc shasum
-                    with open(tarball, 'rb') as f:
-                        shasum = hashlib.sha256(f.read()).hexdigest()
-                    # write shasum to sha256sum.txt
-                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                        f.write(f"{shasum}  {tarball.name}\n")
-                    # remove extracted file
-                    file.unlink()
-                    files_extracted += 1
-                if files_extracted == 0:
-                    self._logger.error("No binaries extracted from the oc-mirror image")
+                extract_release_binary(oc_mirror_pullspec, [f"--path=/usr/bin/oc-mirror:{client_mirror_dir}"])
+                # archive file
+                with tarfile.open(f"{client_mirror_dir}/oc-mirror.tar.gz", "w:gz") as tar:
+                    tar.add(f"{client_mirror_dir}/oc-mirror", arcname="oc-mirror")
+                # calc shasum
+                with open(f"{client_mirror_dir}/oc-mirror.tar.gz", 'rb') as f:
+                    shasum = hashlib.sha256(f.read()).hexdigest()
+                # write shasum to sha256sum.txt
+                with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
+                    f.write(f"{shasum}  oc-mirror.tar.gz\n")
+                # remove oc-mirror
+                os.remove(f"{client_mirror_dir}/oc-mirror")
             else:
                 self._logger.error("Error get oc-mirror image from release pullspec")
 
@@ -1225,6 +1211,7 @@ class PromotePipeline:
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
 
+        await manifest_tool(["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run)
         auth_opt = ""
         if os.environ.get("XDG_RUNTIME_DIR"):
             auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")

@@ -15,6 +15,7 @@ from datetime import datetime
 from fcntl import fcntl, F_GETFL, F_SETFL
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
+from pathlib import Path
 from typing import Optional, Tuple, Union, List, Dict
 from urllib.request import urlopen
 
@@ -511,3 +512,27 @@ def unpack_tuple_args(func):
     def wrapper(args):
         return func(*args)
     return wrapper
+
+
+async def manifest_tool(options, dry_run=False, retries=3):
+    auth_opt = ""
+    if os.environ.get("XDG_RUNTIME_DIR"):
+        auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+        if Path(auth_file).is_file():
+            auth_opt = f"--docker-cfg={auth_file}"
+
+    if isinstance(options, str):
+        cmd = f'manifest-tool {auth_opt} {options}'
+
+    elif isinstance(options, list):
+        cmd = ['manifest-tool', auth_opt]
+        cmd.extend(options)
+
+    else:
+        raise ValueError('Invalid type for manifest-tool options provided')
+
+    if dry_run:
+        logger.warning("[DRY RUN] Would have run %s", cmd)
+        return
+
+    await cmd_assert_async(cmd, retries=retries)
