@@ -151,28 +151,26 @@ PRESENT advisory. Here are some examples:
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
                                            nvrp[3], session=requests.Session())
     )
-    previous = len(unshipped_builds)
-    unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds, include_shipped)
-    if len(unshipped_builds) != previous:
-        click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
-                   f'these ART advisories: {attached_to_advisories}')
+
+    # if we want to attach found builds to an advisory -> filter out already attached builds
+    # if we want to report on found builds -> do not filter out
+    if advisory_id:
+        previous = len(unshipped_builds)
+        unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds, include_shipped)
+        if len(unshipped_builds) != previous:
+            click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
+                       f'these ART advisories: {attached_to_advisories}')
 
     _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
 
     if not unshipped_builds:
-        green_print('No builds needed to be attached.')
+        green_print('No unshipped builds found. To include shipped builds, use --include-shipped')
         return
 
     if not advisory_id:
-        click.echo('The following {n} builds '.format(n=len(unshipped_builds)), nl=False)
-        click.secho('may be attached', bold=True, nl=False)
-        click.echo(' to an advisory:')
+        click.echo(f'Found {len(unshipped_builds)} builds: ')
         for b in sorted(unshipped_builds):
             click.echo(' ' + b.nvr)
-        return
-
-    if not unshipped_builds:
-        # Do not change advisory state unless strictly necessary
         return
 
     try:
