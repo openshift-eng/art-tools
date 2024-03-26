@@ -1,10 +1,10 @@
 from typing import OrderedDict, Optional, Tuple
 from datetime import datetime
-from artcommonlib.constants import RELEASE_SCHEDULES
-import requests
 import re
 
-from artcommonlib.model import Model
+import requests
+
+from artcommonlib.constants import RELEASE_SCHEDULES
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -111,12 +111,17 @@ def get_assembly_release_date(assembly, group):
     """
     assembly_release_date = None
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    for release in release_schedules.json()['all_ga_tasks']:
-        if assembly in release['name']:
-            # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-            assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-            break
-    return assembly_release_date
+
+    try:
+        for release in release_schedules.json()['all_ga_tasks']:
+            if assembly in release['name']:
+                # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
+                assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+                break
+        return assembly_release_date
+
+    except KeyError:
+        return None
 
 
 def get_inflight(assembly, group):
