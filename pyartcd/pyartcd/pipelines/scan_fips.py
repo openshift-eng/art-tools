@@ -44,7 +44,7 @@ class ScanFips:
                 slack_thread = slack_response["message"]["ts"]
 
                 await self.slack_client.upload_file(
-                    file=result,  # Need to be str
+                    content=result,  # Need to be str
                     initial_comment="Build NVRs",
                     thread_ts=slack_thread)
             else:
