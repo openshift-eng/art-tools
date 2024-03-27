@@ -426,6 +426,8 @@ class Metadata(object):
 
             el_ver = None
             if self.meta_type == 'image':
+                if not el_target:
+                    el_target = self.branch_el_target()
                 ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
             else:
                 # RPMs do not have a 'v' in front of their version; images do.
@@ -489,8 +491,6 @@ class Metadata(object):
                 # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
                 # version, if they do.
                 if self.meta_type == 'image':
-                    if not el_target:
-                        el_target = self.branch_el_target()
                     image_el_ver = f'.el{self.branch_el_target()}'
                     # Ensure the suffix ends the string OR at least terminated by a '.' .
                     el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
