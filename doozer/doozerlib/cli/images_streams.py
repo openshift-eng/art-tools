@@ -800,7 +800,8 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
             'customfield_12319940': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12319940 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
-            'description': description
+            'description': description,
+            "security": {"id": "11697"},  # Restrict to Red Hat Employee
         }
 
         if not dry_run:
