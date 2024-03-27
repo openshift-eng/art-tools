@@ -14,7 +14,7 @@ spec:
       name: doozer_path
       type: string
   steps:
-    - image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:base
+    - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:base
       name: run-script
       resources: {}
       script: |
