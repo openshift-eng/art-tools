@@ -8,8 +8,14 @@ class ImageMetadata(Metadata):
 
     def __init__(self, runtime, data_obj):
         super(ImageMetadata, self).__init__('image', runtime, data_obj)
-        self.image_name = self.config.name
-        self.image_name_short = self.image_name.split('/')[-1]
+
+    @property
+    def image_name(self):
+        return self.config.name
+
+    @property
+    def image_name_short(self):
+        return self.image_name.split('/')[-1]
 
     @property
     def base_only(self):
