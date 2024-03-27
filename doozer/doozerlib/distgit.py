@@ -2089,6 +2089,11 @@ class ImageDistGitRepo(DistGitRepo):
         self.logger.info("Saved config digest %s to .oit/config_digest", digest)
 
     def _find_previous_versions(self, pattern_suffix='') -> Set[str]:
+        versions = self._find_previous_brew_versions()
+        versions.update(self._find_previous_shipped_versions())
+        return versions
+
+    def _find_previous_brew_versions(self, pattern_suffix='') -> Set[str]:
         """
         Returns: Searches brew for builds of this operator in order and processes them into a set of versions.
         These version may or may not have shipped.
@@ -2113,7 +2118,11 @@ class ImageDistGitRepo(DistGitRepo):
                 version = '.'.join(version_components)
                 versions.add(version)
 
+
             return versions
+
+    def _find_previous_shipped_versions(self) -> Set[str]:
+        return set()
 
     def _get_csv_file_and_refs(self, csv_config):
         gvars = self.runtime.group_config.vars
@@ -2258,7 +2267,7 @@ class ImageDistGitRepo(DistGitRepo):
                     sr_file.truncate()
                     sr_file.write(sr_file_str)
 
-        previous_build_versions: List[str] = self._find_previous_versions()
+        previous_build_versions: Set[str] = self._find_previous_versions()
         if previous_build_versions:
             # We need to inject "skips" versions for https://issues.redhat.com/browse/OCPBUGS-6066 .
             # We have the versions, but it needs to be written into the CSV under spec.skips.
