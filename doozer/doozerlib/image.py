@@ -18,9 +18,7 @@ class ImageMetadata(Metadata):
 
     def __init__(self, runtime: "doozerlib.Runtime", data_obj: Dict, commitish: Optional[str] = None, clone_source: Optional[bool] = False, prevent_cloning: Optional[bool] = False):
         super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
-        self.image_name = self.config.name
         self.required = self.config.get('required', False)
-        self.image_name_short = self.image_name.split('/')[-1]
         self.parent = None
         self.children = []  # list of ImageMetadata which use this image as a parent.
         self.dependencies: Set[str] = set()
@@ -33,6 +31,14 @@ class ImageMetadata(Metadata):
             self.children.append(dependent)
         if clone_source:
             runtime.resolve_source(self)
+
+    @property
+    def image_name(self):
+        return self.config.name
+
+    @property
+    def image_name_short(self):
+        return self.config.name.split('/')[-1]
 
     def get_assembly_rpm_package_dependencies(self, el_ver: int) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
