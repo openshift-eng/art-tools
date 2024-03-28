@@ -712,7 +712,7 @@ class JIRABugTracker(BugTracker):
 
     def add_comment(self, bugid: str, comment: str, private: bool, noop=False):
         if noop:
-            logger.info(f"Would have added a private={private} comment to {bugid}")
+            logger.info(f"Would have added a private={private} comment to {bugid}: {comment}")
             return
         if private:
             self._client.add_comment(bugid, comment, visibility={'type': 'group', 'value': 'Red Hat Employee'})
