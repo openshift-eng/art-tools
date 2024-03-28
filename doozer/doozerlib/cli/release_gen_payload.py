@@ -761,24 +761,43 @@ class GenPayloadCli:
             False: dict()
         }
 
+        # Filter out embargoed builds to mirror to public quay
+        filtered_payload_entries_for_arch = {}
+        for arch, payload_entries in self.payload_entries_for_arch.items():
+            filtered_payload_entries = {}
+            for payload_tag_name, payload_entry in payload_entries.items():
+                if payload_entry.build_inspector.is_under_embargo():
+                    # We do not want embargoed builds to get leaked to public quay
+                    continue
+                filtered_payload_entries[payload_tag_name] = payload_entry
+            filtered_payload_entries_for_arch[arch] = filtered_payload_entries
+
         # Ensure that all payload images have been mirrored before updating
         # the imagestream. Otherwise, the imagestream will fail to import the
         # image.
         tasks = []
         for arch, payload_entries in self.private_payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries, True))
-        for arch, payload_entries in self.payload_entries_for_arch.items():
+        for arch, payload_entries in filtered_payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries))
         await asyncio.gather(*tasks)
 
         await asyncio.sleep(120)
 
-        # Update the imagestreams being monitored by the release controller.
+        # Update public imagestream
         tasks = []
-        for arch, payload_entries in self.payload_entries_for_arch.items():
-            for private_mode in self.privacy_modes:
-                self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
+        private_mode = False
+        for arch, payload_entries in filtered_payload_entries_for_arch.items():
+            self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
+            tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
+        await asyncio.gather(*tasks)
+
+        # Update private imagestream
+        tasks = []
+        private_mode = True
+        for arch, payload_entries in self.private_payload_entries_for_arch.items():
+            self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
+            tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
         await asyncio.gather(*tasks)
 
         if self.apply_multi_arch:
