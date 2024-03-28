@@ -904,6 +904,9 @@ class Ocp4Pipeline:
         else:
             self.runtime.logger.warning('Skipping plashets creation as SKIP_PLASHETS was set to True')
 
+        # Find MODIFIED bugs for the target-releases, and set them to ON_QA
+        await self._sweep()
+
         # Rebase and build images
         if self.build_plan.build_images:
             if self.mass_rebuild:
@@ -920,9 +923,6 @@ class Ocp4Pipeline:
 
         # Mirror RPMs
         await self._mirror_rpms()
-
-        # Find MODIFIED bugs for the target-releases, and set them to ON_QA
-        await self._sweep()
 
         # All good
         self._report_success()
