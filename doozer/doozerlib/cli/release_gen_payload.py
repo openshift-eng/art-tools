@@ -784,12 +784,21 @@ class GenPayloadCli:
 
         await asyncio.sleep(120)
 
-        # Update the imagestreams being monitored by the release controller.
+        # Update public imagestream
         tasks = []
+        private_mode = False
         for arch, payload_entries in filtered_payload_entries_for_arch.items():
-            for private_mode in self.privacy_modes:
-                self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
+            self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
+            tasks.append(
+                self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
+        await asyncio.gather(*tasks)
+
+        # Update private imagestream
+        tasks = []
+        private_mode = True
+        for arch, payload_entries in self.private_payload_entries_for_arch.items():
+            self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
+            tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
         await asyncio.gather(*tasks)
 
         if self.apply_multi_arch:
