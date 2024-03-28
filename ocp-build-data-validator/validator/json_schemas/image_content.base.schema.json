@@ -202,6 +202,47 @@
           "$ref": "#/properties/source/properties/ci_alignment"
         },
         "ci_alignment-": {},
+
+        "okd_alignment": {
+          "type": "object",
+          "properties": {
+            "tag_name": {
+              "description": "The image will be promoted into the OKD imagestream with this tag (defaults to payload tag name)",
+              "type": "string",
+              "minLength": 1
+            },
+            "tag_name?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/tag_name"
+            },
+            "tag_name!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/tag_name"
+            },
+            "tag_name-": {},
+
+            "image": {
+              "description": "This literal pullspec will be used in place of building a non payload image for OKD",
+              "type": "string",
+              "minLength": 1
+            },
+            "image?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/image"
+            },
+            "image!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/image"
+            },
+            "image-": {}
+          },
+          "additionalProperties": false
+        },
+        "okd_alignment?": {
+          "$ref": "#/properties/source/properties/okd_alignment"
+        },
+        "okd_alignment!": {
+          "$ref": "#/properties/source/properties/okd_alignment"
+        },
+        "okd_alignment-": {},
+
+
         "dockerfile": {
           "type": "string",
           "minLength": 1
