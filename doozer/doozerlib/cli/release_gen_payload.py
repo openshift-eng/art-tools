@@ -789,8 +789,7 @@ class GenPayloadCli:
         private_mode = False
         for arch, payload_entries in filtered_payload_entries_for_arch.items():
             self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-            tasks.append(
-                self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
+            tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
         await asyncio.gather(*tasks)
 
         # Update private imagestream
