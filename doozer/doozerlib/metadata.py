@@ -426,6 +426,8 @@ class Metadata(object):
 
             el_ver = None
             if self.meta_type == 'image':
+                if not el_target:
+                    el_target = self.branch_el_target()
                 ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
             else:
                 # RPMs do not have a 'v' in front of their version; images do.
