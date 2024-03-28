@@ -463,6 +463,7 @@ class Metadata(object):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
                 rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
+                assert 'None' not in rhel_pattern
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=rhel_pattern,
@@ -472,12 +473,17 @@ class Metadata(object):
                 # If no builds were found, the component might still be following the old pattern,
                 # where a .el suffix was not included in the NVR
                 if not builds:
+                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
+
                     legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    assert 'None' not in legacy_pattern
                     builds = koji_api.listBuilds(packageID=package_id,
                                                  state=None if build_state is None else build_state.value,
                                                  pattern=legacy_pattern,
                                                  queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                                  **list_builds_kwargs)
+                    if not builds:
+                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
