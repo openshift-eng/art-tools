@@ -236,7 +236,6 @@ cachedir={}/$basearch/$releasever
 keepcache=0
 debuglevel=2
 logfile={}/yum.log
-exactarch=1
 obsoletes=1
 gpgcheck=1
 plugins=1
@@ -249,9 +248,6 @@ installonly_limit=3
     content = "{}\n\n{}".format(yum_conf, repos_content)
 
     print("repo config:\n", content)
-
-    if dry_run:
-        return
 
     if not os.path.isdir(output):
         yellow_print('Creating outputdir: {}'.format(output))
@@ -284,9 +280,21 @@ installonly_limit=3
                 continue
 
             color_print('Syncing repo {}'.format(repo.name), 'blue')
-            cmd = f'reposync --download-metadata -c {yc_file.name} -p {output} --delete --arch {arch} --repoid {repo.name}'
+            cmd = ('dnf '
+                   f'--config {yc_file.name} '
+                   f'--repoid {repo.name} '
+                   'reposync '
+                   f'--arch {arch} '
+                   '--delete '
+                   '--download-metadata '
+                   f'--metadata-path {metadata_dir} '
+                   f'--download-path {output} '
+                   )
             if repo.is_reposync_latest_only():
-                cmd += ' -n'
+                cmd += '--newest-only '
+
+            if dry_run:
+                cmd += '--urls '
 
             rc, out, err = exectools.cmd_gather(cmd, realtime=True)
             if rc != 0:
