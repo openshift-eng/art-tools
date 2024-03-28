@@ -285,6 +285,7 @@ installonly_limit=3
                    f'--repoid {repo.name} '
                    'reposync '
                    f'--arch {arch} '
+                   '--arch noarch '
                    '--delete '
                    '--download-metadata '
                    f'--metadata-path {metadata_dir} '
