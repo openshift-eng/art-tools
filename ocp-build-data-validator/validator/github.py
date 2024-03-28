@@ -165,6 +165,7 @@ def has_permitted_repo(data):
         'openshift/cluster-monitoring-operator',  # max version 3.11
         'openshift/service-catalog',  # max version 3.11
         'openshift/node_exporter',  # max version 3.11
+        'openshift/kubernetes',  # config tweak
         'openshift/prometheus-alertmanager',  # max version 3.11
         'openshift/eventrouter',  # max version 4.6
         'openshift/cluster-capacity',  # max version 3.11
