@@ -489,7 +489,8 @@ class ScanOshCli:
             "components": [{"name": potential_component}],
             "security": {"id": "11697"},  # Restrict to Red Hat Employee
             "summary": summary,
-            "description": description
+            "description": description,
+            "labels": ["art:sast", f"art:package:{build['package_name']}"],
         }
 
         # Get the latest OPEN tickets (if any) for the component
