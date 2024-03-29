@@ -24,6 +24,7 @@ from artcommonlib.rhcos import RhcosMissingContainerException
 async def no_sleep(arg):
     pass
 
+
 rgp_cli.asyncio.sleep = no_sleep
 
 
@@ -171,6 +172,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             nonlocal build_id
             build_id += 1
             return dict(spam=dict(id=build_id))
+
         ai = flexmock(Mock(AssemblyInspector), get_group_rpm_build_dicts=rpm_build_dict)
 
         # test when we should be tagging for GC prevention
@@ -302,15 +304,19 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_sync_payloads(self):
         runtime = MagicMock(group_config=Model(dict(multi_arch=dict(enabled=True))))
         gpcli = rgp_cli.GenPayloadCli(runtime, apply_multi_arch=True)
-        gpcli.payload_entries_for_arch = dict(x86_64=["x86_entries"], aarch64=["arm_entries"])
+        payload_entry_test = rgp_cli.PayloadEntry(
+            issues=[], dest_pullspec="eggs_pullspec",
+            build_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
+        )
+        gpcli.payload_entries_for_arch = {"x86_64": {"x86_entries": payload_entry_test}}
 
         gpcli.mirror_payload_content = AsyncMock()
         gpcli.generate_specific_payload_imagestreams = AsyncMock()
         gpcli.sync_heterogeneous_payloads = AsyncMock()
 
         await gpcli.sync_payloads()
-        self.assertEqual(gpcli.mirror_payload_content.await_count, 2)
-        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 2)
+        self.assertEqual(gpcli.mirror_payload_content.await_count, 0)
+        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 0)
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
 
     @patch("aiofiles.open")
