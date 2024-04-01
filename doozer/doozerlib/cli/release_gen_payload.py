@@ -793,11 +793,8 @@ class GenPayloadCli:
             tasks = []
             for arch, payload_entries in payload_entries_for_each_arch:
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(self.generate_specific_payload_imagestreams(arch,
-                                                                         private_mode,
-                                                                         payload_entries,
-                                                                         multi_specs
-                                                                         ))
+                tasks.append(self.generate_specific_payload_imagestreams(
+                    arch, private_mode, payload_entries, multi_specs))
             await asyncio.gather(*tasks)
 
         if self.apply_multi_arch:
