@@ -772,7 +772,7 @@ class GenPayloadCli:
                 filtered_payload_entries[payload_tag_name] = payload_entry
 
             if filtered_payload_entries:
-                # Sometimes all builds might be embargoed, hence the variable can be empty
+                # Sync if there are any builds for this arch, otherwise omit the arch entirely
                 filtered_payload_entries_for_arch[arch] = filtered_payload_entries
 
         # Ensure that all payload images have been mirrored before updating
