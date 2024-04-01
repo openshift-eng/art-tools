@@ -792,7 +792,7 @@ class GenPayloadCli:
         for private_mode, payload_entries_for_each_arch in [(False, filtered_payload_entries_for_arch),
                                                             (True, self.private_payload_entries_for_arch)]:
             tasks = []
-            for arch, payload_entries in payload_entries_for_each_arch:
+            for arch, payload_entries in payload_entries_for_each_arch.items():
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
                 tasks.append(self.generate_specific_payload_imagestreams(
                     arch, private_mode, payload_entries, multi_specs))
