@@ -766,8 +766,9 @@ class GenPayloadCli:
         for arch, payload_entries in self.payload_entries_for_arch.items():
             filtered_payload_entries = {}
             for payload_tag_name, payload_entry in payload_entries.items():
-                if payload_entry.build_inspector.is_under_embargo():
+                if payload_entry.rhcos_build is None and payload_entry.build_inspector.is_under_embargo():
                     # We do not want embargoed builds to get leaked to public quay
+                    # RHCOS builds are considered non-embargoed for now
                     continue
                 filtered_payload_entries[payload_tag_name] = payload_entry
 
