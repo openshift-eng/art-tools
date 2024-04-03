@@ -80,6 +80,10 @@ class CheckBugsPipeline:
         return '.'.join([major, str(int(minor) + 1)])
 
     async def _find_regressions(self):
+        # Do nothing for EOL releases
+        if self.group_config['software_lifecycle']['phase'] == 'eol':
+            return
+
         # Check pre-release
         next_minor = self.get_next_minor(self.version)
         if not await self._is_build_permitted(next_minor):
