@@ -273,7 +273,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues[0].code, AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS)
 
     def test_summarize_issue_permits(self):
-        gpcli = rgp_cli.GenPayloadCli()
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
         gpcli.assembly_issues = [
             Mock(AssemblyIssue, code=AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS, component="spam", msg=""),
             Mock(AssemblyIssue, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED, component="eggs", msg=""),
@@ -285,7 +285,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertFalse(report["eggs"][0]["permitted"])
 
     def test_assess_assembly_viability(self):
-        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True)
+        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True, runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
 
         gpcli.payload_permitted, gpcli.emergency_ignore_issues = True, False
         gpcli.assess_assembly_viability()
