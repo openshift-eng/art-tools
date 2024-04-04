@@ -170,7 +170,7 @@ class Metadata(object):
             else:
                 # Ooof.. it is not defined in the assembly, so we need to find it dynamically.
                 self.logger.info("A commitish is not explicitly specified for %s. Determining from the latest build...", self.name)
-                build_obj = self.get_latest_build(default=None, el_target=self.determine_rhel_targets()[0])
+                build_obj = self.get_latest_build(default=None, el_target=self.determine_rhel_targets()[0], assembly=self.runtime.assembly)
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
                     self.logger.debug(f'Pinning upstream source to commit of last assembly selected build ({build_obj["id"]}) -> commit {self.commitish} ')
