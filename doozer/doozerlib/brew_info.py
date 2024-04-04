@@ -217,7 +217,10 @@ class BrewBuildImageInspector:
                 self._nvr = image_labels['com.redhat.component'] + '-' + image_labels['version'] + '-' + image_labels['release']
                 self._brew_build_obj = koji_api.getBuild(self._nvr, strict=True)
 
-            self._build_pullspec = self._brew_build_obj['extra']['image']['index']['pull'][0]
+            try:
+                self._build_pullspec = self._brew_build_obj['extra']['image']['index']['pull'][0]
+            except Exception as e:
+                raise ValueError(f"Could not find pullspec for {self._nvr if self._nvr else build}: {e}")
             self._brew_build_id = self._brew_build_obj['id']
 
     def get_manifest_list_digest(self) -> str:
