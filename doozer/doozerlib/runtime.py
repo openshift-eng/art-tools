@@ -104,6 +104,7 @@ class Runtime(GroupRuntime):
         self.logger = None
         self.data_path = None
         self.data_dir = None
+        self.group_commitish = None
         self.latest_parent_version = False
         self.rhpkg_config = None
         self._koji_client_session = None
@@ -382,7 +383,7 @@ class Runtime(GroupRuntime):
 
         if '@' in self.group:
             self.group, self.group_commitish = self.group.split('@', 1)
-        else:
+        elif self.group_commitish is None:
             self.group_commitish = self.group
 
         if group_only:
