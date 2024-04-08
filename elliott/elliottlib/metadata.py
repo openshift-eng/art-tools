@@ -276,7 +276,7 @@ class Metadata(object):
                     if build_util.canonical_builders_enabled(canonical_builders_from_upstream, self.runtime) and \
                             self.config.alternative_upstream is not Missing:
                         el_target = self.branch_el_target() - 1
-                el_suffix = f'.el{el_target}' if el_target else ''
+                el_suffix = f'el{el_target}' if el_target else ''
 
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
