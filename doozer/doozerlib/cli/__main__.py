@@ -288,7 +288,6 @@ installonly_limit=3
                    '--arch noarch '
                    '--delete '
                    '--download-metadata '
-                   f'--metadata-path {metadata_dir} '
                    f'--download-path {output} '
                    )
             if repo.is_reposync_latest_only():
