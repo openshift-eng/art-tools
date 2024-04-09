@@ -780,10 +780,7 @@ def create_batch(release_version, release_date):
         "is_active": True
     }
     response = ErrataConnector()._post("/api/v1/batches", data=data)
-    if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to create batch with code {response.status_code} and error: {response.text}')
-    else:
-        return response.json()['data']['id']
+    return response.json()['data']['id']
 
 
 def change_advisory_batch(advisory_id, batch_id, clear_batch=False):
@@ -799,8 +796,6 @@ def change_advisory_batch(advisory_id, batch_id, clear_batch=False):
         response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"clear_batch": True})
     else:
         response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"batch_id": batch_id})
-    if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to create update advisory batch with code {response.status_code} and error: {response.text}')
 
 
 def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
