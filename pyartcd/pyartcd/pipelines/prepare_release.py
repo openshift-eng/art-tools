@@ -156,6 +156,7 @@ class PrepareReleasePipeline:
                     if not batch_id:
                         # Create a batch for a release if not created
                         batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
+                        _LOGGER.info(f"Created errata batch id {batch_id} for release {self.release_name}")
                     if ad == "advance":
                         # Set release date to one week before
                         # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
@@ -174,6 +175,7 @@ class PrepareReleasePipeline:
                     if batch_id:
                         # Connect advisory to the batch_id
                         change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
+                        _LOGGER.info(f"Connected advisory {advisories[ad]} to the batch id {batch_id}")
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
 
