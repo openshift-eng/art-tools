@@ -879,7 +879,6 @@ class Ocp4Pipeline:
             version_queue_name=queue
         )
 
-
     async def _check_fips(self):
         cmd = [
             "doozer",
