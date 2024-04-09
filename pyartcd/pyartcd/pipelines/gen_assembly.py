@@ -231,10 +231,10 @@ class GenAssemblyPipeline:
         if self.auto_trigger_build_sync:
             self._logger.info("Triggering build-sync")
             build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
-            # we're not passing doozer_data_path to build-sync because we always create branch on the base repo
             start_build_sync(build_version=build_version,
                              assembly=self.assembly,
-                             doozer_data_path=self.data_path,
+                             doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
+                             # to build-sync because we always create branch on the base repo
                              doozer_data_gitref=branch)
 
         return result
