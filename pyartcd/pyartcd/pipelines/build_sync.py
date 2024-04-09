@@ -33,7 +33,8 @@ class BuildSyncPipeline:
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
-            self.group, self.assembly
+            self.group, self.assembly,
+            self.data_path, self.doozer_data_gitref
         )
         return self
 
