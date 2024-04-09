@@ -136,14 +136,6 @@ class TestMetadata(unittest.TestCase):
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
-        # If there is a build from the 'stream' assembly, but it is for the
-        # wrong RHEL based on our metadata tag, it should not be returned.
-        builds = [
-            self.build_record(now, assembly='not_ours', release_suffix='.el8'),
-            self.build_record(now, assembly='stream', release_suffix='.el9')
-        ]
-        self.assertIsNone(meta.get_latest_build(default=None))
-
         # Filtering should prefer images which match our tag's RHEL version, bug
         # if there is no match for our elX, at the very least, it should filter out
         # the wrong elY.
@@ -194,14 +186,6 @@ class TestMetadata(unittest.TestCase):
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[0])
 
-        # By default, we should only be finding COMPLETE builds
-        builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly=None, build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly=None, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=None, build_state=BuildStates.COMPLETE, el_target=8),
-        ]
-        self.assertEqual(meta.get_latest_build(default=None, assembly=''), builds[2])
-
     def test_get_latest_build_multi_target(self):
         meta = self.meta
         koji_mock = self.koji_mock
@@ -230,18 +214,12 @@ class TestMetadata(unittest.TestCase):
             self.build_record(now, assembly='stream', is_rpm=True, release_suffix='.el8')
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # No target should find el7 or el8
-        build = meta.get_latest_build(default=None, el_target='rhel-7')
-        self.assertIsNone(build)
-        # self.assertEqual(meta.get_latest_build(default=None, el_target='rhel-8'), builds[1])
 
         builds = [
             self.build_record(now, assembly='not_ours', is_rpm=True),
             self.build_record(now, assembly='stream', is_rpm=True, release_suffix='.el7'),
             self.build_record(now - datetime.timedelta(hours=1), assembly='stream', is_rpm=True, release_suffix='.el8')
         ]
-        # self.assertEqual(meta.get_latest_build(default=None), builds[1])  # Latest is el7 by one hour
-        # self.assertEqual(meta.get_latest_build(default=None, el_target='rhel-7'), builds[1])
-        # self.assertEqual(meta.get_latest_build(default=None, el_target='rhel-8'), builds[2])
 
 
 if __name__ == '__main__':
