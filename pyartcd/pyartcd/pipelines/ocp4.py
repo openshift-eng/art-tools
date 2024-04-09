@@ -883,7 +883,7 @@ class Ocp4Pipeline:
         cmd = [
             "doozer",
             "--group",
-            f"openshift-{self.version}",
+            f"openshift-{self.version.stream}",
             "images:scan-fips",
             "--nvrs",
             f"{','.join(self.success_nvrs)}"
