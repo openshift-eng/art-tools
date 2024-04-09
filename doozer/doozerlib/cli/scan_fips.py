@@ -24,11 +24,21 @@ class ScanFipsCli:
 
     @limit_concurrency(16)
     async def run_get_problem_nvrs(self, build: tuple):
-        rc, out, _ = await cmd_gather_async(f"check-payload scan image --spec {build[1]}")
+        rc_scan, out_scan, _ = await cmd_gather_async(f"sudo check-payload scan image --spec {build[1]}")
+
+        # Eg: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator
+        name = build[1].split("@")[0]
+        clean_command = "sudo podman images --format '{{.ID}} {{.Repository}}' | " +  f"grep {name} | " + \
+                         "awk '{print $1}' | xargs -I {} podman rmi {}"
+        rc_clean, _, _ = await cmd_gather_async(clean_command)
+
+        if rc_clean != 0:
+            raise Exception(f"Could not clean image: {clean_command}")
 
         # The command will fail if it's not run on root, so need to make sure of that first during debugging
         # If it says successful run, it means that the command ran correctly
-        return None if rc == 0 and "Successful run" in out else build
+        return None if rc_scan == 0 and "Successful run" in out_scan else build
+
 
     async def run(self):
         # Get the list of NVRs to scan for
