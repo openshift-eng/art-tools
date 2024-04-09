@@ -28,9 +28,12 @@ class ScanFipsCli:
 
         # Eg: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator
         name = build[1].split("@")[0]
+
+        self.runtime.logger.info(f"Cleaning image {name}")
         clean_command = "sudo podman images --format '{{.ID}} {{.Repository}}' | " + f"grep {name} | " + \
                         "awk '{print $1}' | xargs -I {} podman rmi {}"
         rc_clean, _, _ = await cmd_gather_async(clean_command)
+        self.runtime.logger.info(f"Cleaned image successfully")
 
         if rc_clean != 0:
             raise Exception(f"Could not clean image: {clean_command}")
