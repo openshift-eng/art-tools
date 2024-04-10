@@ -555,6 +555,7 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
+        os.environ['XDG_RUNTIME_DIR'] = 'fake'
         runtime = MagicMock(uuid="uuid")
         gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
@@ -576,7 +577,7 @@ spec:
         await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool --docker-cfg=/run/user/1000/containers/auth.json push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
+            "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
         ml = yaml.safe_load(buffer.getvalue())
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
@@ -609,6 +610,7 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_release_manifest_list(self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock):
+        os.environ['XDG_RUNTIME_DIR'] = 'fake'
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
         exec_mock.return_value = None  # do not actually execute command
@@ -623,7 +625,7 @@ spec:
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool --docker-cfg=/run/user/1000/containers/auth.json push from-spec /tmp/isname.manifest-list.yaml")
+            "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
         self.assertEqual(buffer.getvalue().strip(), """
 image: quay.io/org/repo:spam
 manifests:
