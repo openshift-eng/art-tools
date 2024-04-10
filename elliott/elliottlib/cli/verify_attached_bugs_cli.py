@@ -82,7 +82,7 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
     # placeholder
     non_flaw_bugs = [b for b in bugs if b.is_ocp_bug()]
 
-    validator.validate(non_flaw_bugs, verify_bug_status, no_verify_blocking_bugs)
+    validator.validate(non_flaw_bugs, verify_bug_status, no_verify_blocking_bugs, is_attached=True)
 
     # skip advisory type check if advisories are
     # manually passed in, and we don't know their type
@@ -176,12 +176,13 @@ class BugValidator:
     async def close(self):
         await self.errata_api.close()
 
-    def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool):
+    def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
+                 is_attached: bool = False):
         non_flaw_bugs = self.filter_bugs_by_release(non_flaw_bugs, complain=True)
         self._find_invalid_trackers(non_flaw_bugs)
         if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
-            self._verify_blocking_bugs(blocking_bugs_for)
+            self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
 
         if verify_bug_status:
             self._verify_bug_status(non_flaw_bugs)
@@ -406,7 +407,7 @@ class BugValidator:
         k = {bug: [blocking_bugs[b] for b in bug.depends_on if b in blocking_bugs] for bug in bugs}
         return k
 
-    def _verify_blocking_bugs(self, blocking_bugs_for):
+    def _verify_blocking_bugs(self, blocking_bugs_for, is_attached=False):
         # complain about blocking bugs that aren't verified or shipped
         for bug, blockers in blocking_bugs_for.items():
             for blocker in blockers:
@@ -434,6 +435,16 @@ class BugValidator:
                         message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of bug " \
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
                     self._complain(message)
+                if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
+                    blocker_advisories = blocker.all_advisory_ids()
+                    if not blocker_advisories:
+                        if self.output == 'text':
+                            message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
+                                f"{blocker.id} which is on {blocker.status} but not attached to any advisory"
+                        elif self.output == 'slack':
+                            message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
+                                f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
+                        self._complain(message)
 
     def _verify_bug_status(self, bugs):
         # complain about bugs that are not yet ON_QA or more.
