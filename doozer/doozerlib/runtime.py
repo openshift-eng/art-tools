@@ -147,6 +147,7 @@ class Runtime(GroupRuntime):
         self.sources_dir = None
 
         self.distgits_dir = None
+        self.k_distgits_dir = None
 
         self.record_log = None
         self.record_log_path = None
@@ -338,7 +339,9 @@ class Runtime(GroupRuntime):
                 os.makedirs(self.working_dir)
 
         self.distgits_dir = os.path.join(self.working_dir, "distgits")
+        self.k_distgits_dir = os.path.join(self.working_dir, "k_distgits")
         self.distgits_diff_dir = os.path.join(self.working_dir, "distgits-diffs")
+        self.k_distgits_diff_dir = os.path.join(self.working_dir, "k_distgits-diffs")
         self.sources_dir = os.path.join(self.working_dir, "sources")
         self.record_log_path = os.path.join(self.working_dir, "record.log")
         self.brew_logs_dir = os.path.join(self.working_dir, "brew-logs")
@@ -1033,12 +1036,16 @@ class Runtime(GroupRuntime):
             self.record_log.write("%s\n" % record)
             self.record_log.flush()
 
-    def add_distgits_diff(self, distgit, diff):
+    def add_distgits_diff(self, distgit, diff, konflux=False):
         """
         Records the diff of changes applied to a distgit repo.
         """
+        if konflux:
+            distgit_path = self.k_distgits_diff_dir
+        else:
+            distgit_path = self.distgits_diff_dir
 
-        with io.open(os.path.join(self.distgits_diff_dir, distgit + '.patch'), 'w', encoding='utf-8') as f:
+        with io.open(os.path.join(distgit_path, distgit + '.patch'), 'w', encoding='utf-8') as f:
             f.write(diff)
 
     def resolve_image(self, distgit_name, required=True):

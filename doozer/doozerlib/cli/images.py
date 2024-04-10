@@ -17,6 +17,7 @@ from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
+from doozerlib.k_distgit import KonfluxImageDistGitRepo
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
 
@@ -337,6 +338,113 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
                     state.record_image_fail(lstate, meta, success)
                 dgr.wait_on_cgit_file()
 
+        except Exception as ex:
+            # Only the message will recorded in the state. Make sure we print out a stacktrace in the logs.
+            traceback.print_exc()
+
+            owners = image_meta.config.owners
+            owners = ",".join(list(owners) if owners is not Missing else [])
+            runtime.add_record(
+                "distgit_commit_failure",
+                distgit=image_meta.qualified_name,
+                image=image_meta.config.name,
+                owners=owners,
+                message=str(ex).replace("|", ""),
+            )
+            msg = str(ex)
+            state.record_image_fail(lstate, image_meta, msg, runtime.logger)
+            return False
+        return True
+
+    jobs = exectools.parallel_exec(
+        lambda image_meta, terminate_event: dgr_rebase(image_meta, terminate_event),
+        metas,
+    )
+    jobs.get()
+
+    state.record_image_finish(lstate)
+
+    failed = []
+    for img, status in lstate['images'].items():
+        if status is not True:  # anything other than true is fail
+            failed.append(img)
+
+    if failed:
+        msg = "The following non-critical images failed to rebase:\n{}".format('\n'.join(failed))
+        yellow_print(msg)
+
+    if lstate['status'] == state.STATE_FAIL or lstate['success'] == 0:
+        raise DoozerFatalError('One or more images failed. See state.yaml')
+
+
+@cli.command("k:images:rebase", short_help="Refresh a group's distgit content from source content.")
+@click.option("--version", metavar='VERSION', default=None, callback=validate_semver_major_minor_patch,
+              help="Version string to populate in Dockerfiles. \"auto\" gets version from atomic-openshift RPM")
+@click.option("--release", metavar='RELEASE', default=None, help="Release string to populate in Dockerfiles.")
+@click.option("--embargoed", is_flag=True, help="Add .p1 to the release string for all images, which indicates those images have embargoed fixes")
+@click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
+              default="unsigned",
+              help="Repo group type to use for version autodetection scan (e.g. signed, unsigned).")
+@click.option("--force-yum-updates", is_flag=True, default=False,
+              help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.")
+@option_commit_message
+@option_push
+@pass_runtime
+def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool):
+    """
+    Reusing most of the code from 'images_rebase' for now, since we might need to change once we discuss with the Konflux team
+    """
+    runtime.initialize(clone_distgits=False)
+
+    if runtime.group_config.public_upstreams and (release is None or release != "+" and not release.endswith(".p?")):
+        raise click.BadParameter("You must explicitly specify a `release` ending with `.p?` (or '+') when there is a public upstream mapping in ocp-build-data.")
+
+    # This is ok to run if automation is frozen as long as you are not pushing
+    if push:
+        runtime.assert_mutation_is_permitted()
+
+    cmd = runtime.command
+    runtime.state[cmd] = dict(state.TEMPLATE_IMAGE)
+    lstate = runtime.state[cmd]  # get local convenience copy
+
+    # If not pushing, do not clean up our work
+    runtime.remove_tmp_working_dir = push
+
+    # Get the version from the atomic-openshift package in the RPM repo
+    if version == "auto":
+        version = runtime.auto_version(repo_type)
+
+    if version and not runtime.valid_version(version):
+        raise ValueError(
+            "invalid version string: {}, expecting like v3.4 or v1.2.3".format(version)
+        )
+
+    metas = runtime.ordered_image_metas()
+    lstate['total'] = len(metas)
+
+    def dgr_rebase(image_meta, terminate_event):
+        if image_meta.config.konflux.enabled not in [True, "True", "true", "yes"]:
+            runtime.logger.info(f"Skipping konflux rebase for component {image_meta.config.name} since its not enabled "
+                                f"in config")
+        try:
+            k_dgr = KonfluxImageDistGitRepo(image_meta)
+            if embargoed:
+                k_dgr.private_fix = True
+            (real_version, real_release) = k_dgr.rebase_dir(version, release, terminate_event, force_yum_updates)
+            sha = k_dgr.commit(message, log_diff=True)
+            k_dgr.tag(real_version, real_release)
+            runtime.add_record(
+                "k_distgit_commit",
+                distgit=image_meta.qualified_name,
+                image=image_meta.config.name,
+                sha=sha,
+            )
+            state.record_image_success(lstate, image_meta)
+
+            if push:
+                (meta, success) = k_dgr.push()
+                if success is not True:
+                    state.record_image_fail(lstate, meta, success)
         except Exception as ex:
             # Only the message will recorded in the state. Make sure we print out a stacktrace in the logs.
             traceback.print_exc()
