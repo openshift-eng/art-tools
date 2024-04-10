@@ -14,11 +14,12 @@ import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue, assembly_basis
+from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Model
 from doozerlib import rpm_utils
 import yaml
-from artcommonlib import rhcos
+from artcommonlib import rhcos, exectools
 from artcommonlib.rhcos import RhcosMissingContainerException
 import openshift_client as oc
 from opentelemetry import trace
@@ -36,7 +37,6 @@ from doozerlib.runtime import Runtime
 from doozerlib.telemetry import start_as_current_span_async
 from doozerlib.util import isolate_nightly_name_components
 from artcommonlib.util import convert_remote_git_to_https
-from doozerlib import exectools
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import find_manifest_list_sha
 
@@ -1158,7 +1158,12 @@ class GenPayloadCli:
         # write the manifest list to a file and push it to the registry.
         async with aiofiles.open(component_manifest_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(dict(image=output_pullspec, manifests=manifests), default_flow_style=False))
-        await exectools.cmd_assert_async(f"manifest-tool push from-spec {str(component_manifest_path)}", retries=3)
+        auth_opt = ""
+        if os.environ.get("XDG_RUNTIME_DIR"):
+            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+            if Path(auth_file).is_file():
+                auth_opt = f"--docker-cfg={auth_file}"
+        await exectools.cmd_assert_async(f"manifest-tool {auth_opt} push from-spec {str(component_manifest_path)}", retries=3)
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
         sha = await find_manifest_list_sha(output_pullspec)
@@ -1229,8 +1234,8 @@ class GenPayloadCli:
         async with aiofiles.open(release_payload_ml_path, mode="w+") as ml:
             await ml.write(yaml.safe_dump(ml_dict, default_flow_style=False))
 
-        # Construct the top level manifest list release payload
-        await exectools.cmd_assert_async(f"manifest-tool push from-spec {str(release_payload_ml_path)}", retries=3)
+        await manifest_tool(f'push from-spec {str(release_payload_ml_path)}')
+
         # if we are actually pushing a manifest list, then we should derive a sha256 based pullspec
         sha = await find_manifest_list_sha(multi_release_dest)
         return exchange_pullspec_tag_for_shasum(multi_release_dest, sha)

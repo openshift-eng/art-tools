@@ -14,7 +14,8 @@ import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
+from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
@@ -26,9 +27,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_basis, get_assembly_type,
-                          isolate_el_version_in_release, load_group_config,
-                          load_releases_config)
+from pyartcd.util import (get_assembly_type, isolate_el_version_in_release, load_group_config, load_releases_config)
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -74,7 +73,7 @@ class BuildMicroShiftPipeline:
         await oc.registry_login(self.runtime)
 
         assembly_type = AssemblyTypes.STREAM
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
 
         try:
             group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
@@ -174,7 +173,7 @@ class BuildMicroShiftPipeline:
                     await self.slack_client.say_in_thread(message)
                 except Exception as err:
                     self._logger.warning("Failed to trigger microshift_sync job: %s", err)
-                    message = "@release-artists Please start <https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888" \
+                    message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
                               "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
                     await self.slack_client.say_in_thread(message)
 
@@ -332,7 +331,13 @@ class BuildMicroShiftPipeline:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
             with open(path) as f:
                 result = json.load(f)
-        return cast(List[str], result["builds"])
+
+        nvrs = cast(List[str], result["builds"])
+
+        # microshift builds are special in that they build for each assembly after payload is promoted
+        # and they include the assembly name in its build name
+        # so make sure found nvrs are related to assembly
+        return [n for n in nvrs if isolate_assembly_in_release(n) == self.assembly]
 
     async def _rebase_and_build_rpm(self, version, release: str, custom_payloads: Optional[Dict[str, str]]) -> List[str]:
         """ Rebase and build RPM

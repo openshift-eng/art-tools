@@ -6,7 +6,7 @@ import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Union, Iterable
+from typing import Dict, Optional, Union, Iterable
 
 import yaml
 
@@ -47,18 +47,6 @@ def isolate_el_version_in_branch(branch_name: str) -> Optional[int]:
         return int(match.group(1))
 
     return None
-
-
-def isolate_major_minor_in_group(group_name: str) -> Tuple[int, int]:
-    """
-    Given a group name, determines whether is contains
-    a OCP major.minor version. If it does, it returns the version value as (int, int).
-    If it is not found, (None, None) is returned.
-    """
-    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
-    if not match:
-        return None, None
-    return int(match[1]), int(match[2])
 
 
 def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:

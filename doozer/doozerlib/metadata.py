@@ -15,14 +15,14 @@ from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
+import artcommonlib
 import doozerlib
-from artcommonlib import logutil
+from artcommonlib import logutil, exectools
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from doozerlib import exectools
+from artcommonlib.pushd import Dir
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.pushd import Dir
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
 
@@ -376,7 +376,7 @@ class Metadata(object):
         """
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
         try:
-            req = exectools.retry(
+            req = artcommonlib.exectools.retry(
                 3, lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200)
         except Exception as e:
@@ -463,6 +463,7 @@ class Metadata(object):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
                 rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
+                assert 'None' not in rhel_pattern
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=rhel_pattern,
@@ -472,12 +473,17 @@ class Metadata(object):
                 # If no builds were found, the component might still be following the old pattern,
                 # where a .el suffix was not included in the NVR
                 if not builds:
+                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
+
                     legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    assert 'None' not in legacy_pattern
                     builds = koji_api.listBuilds(packageID=package_id,
                                                  state=None if build_state is None else build_state.value,
                                                  pattern=legacy_pattern,
                                                  queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                                  **list_builds_kwargs)
+                    if not builds:
+                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from

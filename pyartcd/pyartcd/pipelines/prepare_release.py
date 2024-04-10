@@ -444,8 +444,15 @@ class PrepareReleasePipeline:
                 old = await f.read()
             releases_config = yaml.load(old)
             group_config = releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {})
-            group_config["advisories"] = advisories
-            group_config["release_jira"] = jira_issue_key
+
+            # Assembly key names are not always exact, they can end in special chars like !,?,-
+            # to indicate special inheritance rules. So respect those
+            # https://art-docs.engineering.redhat.com/assemblies/#inheritance-rules
+            advisory_key = next(k for k in group_config.keys() if k.startswith("advisories"))
+            release_jira_key = next(k for k in group_config.keys() if k.startswith("release_jira"))
+
+            group_config[advisory_key] = advisories
+            group_config[release_jira_key] = jira_issue_key
             out = StringIO()
             yaml.dump(releases_config, out)
             async with aiofiles.open(repo / "releases.yml", "w") as f:
@@ -630,11 +637,11 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
     def _render_jira_template(fields: Dict, template_vars: Dict):
         fields.copy()
         try:
-            fields["summary"] = jinja2.Template(fields["summary"]).render(template_vars)
+            fields["summary"] = jinja2.Template(fields["summary"], autoescape=True).render(template_vars)
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         try:
-            fields["description"] = jinja2.Template(fields["description"]).render(template_vars)
+            fields["description"] = jinja2.Template(fields["description"], autoescape=True).render(template_vars)
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         return fields

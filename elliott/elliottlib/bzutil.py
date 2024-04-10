@@ -8,7 +8,6 @@ import re
 import urllib.parse
 import xmlrpc.client
 import bugzilla
-import click
 import os
 import requests
 from requests_gssapi import HTTPSPNEGOAuth
@@ -21,9 +20,10 @@ from errata_tool.jira_issue import JiraIssue as ErrataJira
 from errata_tool.bug import Bug as ErrataBug
 from bugzilla.bug import Bug
 from koji import ClientSession
+from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib import logutil
-from elliottlib import constants, exceptions, exectools, errata, util
+from artcommonlib import logutil, exectools
+from elliottlib import constants, exceptions, errata, util
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
@@ -290,7 +290,7 @@ class JIRABug(Bug):
 
     @property
     def blocked_by_bz(self):
-        url = getattr(self.bug.fields, JIRABugTracker.FIELD_BLOCKED_BY_BZ)
+        url = getattr(self.bug.fields, JIRABugTracker.field_blocked_by_bz)
         if not url:
             return None
         bug_id = re.search(r"id=(\d+)", url)
@@ -300,7 +300,7 @@ class JIRABug(Bug):
 
     @property
     def target_release(self):
-        tr_field = getattr(self.bug.fields, JIRABugTracker.FIELD_TARGET_VERSION)
+        tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
         if not tr_field:
             raise ValueError(f'bug {self.id} does not have `Target Version` field set')
         return [x.name for x in tr_field]
@@ -365,19 +365,19 @@ class JIRABug(Bug):
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']
-        field = getattr(self.bug.fields, JIRABugTracker.FIELD_RELEASE_BLOCKER)
+        field = getattr(self.bug.fields, JIRABugTracker.field_release_blocker)
         if field:
             return field.value == 'Approved'
         return False
 
     def _get_blocked_reason(self):
-        field = getattr(self.bug.fields, JIRABugTracker.FIELD_BLOCKED_REASON)
+        field = getattr(self.bug.fields, JIRABugTracker.field_blocked_reason)
         if field:
             return field.value
         return None
 
     def _get_severity(self):
-        field = getattr(self.bug.fields, JIRABugTracker.FIELD_SEVERITY)
+        field = getattr(self.bug.fields, JIRABugTracker.field_severity)
         if field:
             if "Urgent" in field.value:
                 return "Urgent"
@@ -585,15 +585,35 @@ class BugTracker:
         raise NotImplementedError
 
 
+@retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
+def get_jira_name_id_mapping() -> dict:
+    """
+    Assuming that no two JIRA fields have the same name
+    """
+    result_json = requests.get(constants.JIRA_API_FIELD).json()
+
+    mapping = {}
+    for field in result_json:
+        mapping[field["name"]] = field["id"]
+
+    return mapping
+
+
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    # Prefer to query by user visible Field Name. Context: https://issues.redhat.com/browse/ART-7053
-    FIELD_BLOCKED_BY_BZ = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
-    FIELD_TARGET_VERSION = 'customfield_12319940'  # "Target Version"
-    FIELD_RELEASE_BLOCKER = 'customfield_12319743'  # "Release Blocker"
-    FIELD_BLOCKED_REASON = 'customfield_12316544'  # "Blocked Reason"
-    FIELD_SEVERITY = 'customfield_12316142'  # "Severity"
+    FIELD_BLOCKED_BY_BZ_NAME = 'Blocked by Bugzilla Bug'
+    FIELD_TARGET_VERSION_NAME = 'Target Version'
+    FIELD_RELEASE_BLOCKER_NAME = 'Release Blocker'
+    FIELD_BLOCKED_REASON_NAME = 'Blocked Reason'
+    FIELD_SEVERITY_NAME = 'Severity'
+
+    mapping = get_jira_name_id_mapping()
+    field_blocked_by_bz = mapping[FIELD_BLOCKED_BY_BZ_NAME]
+    field_target_version = mapping[FIELD_TARGET_VERSION_NAME]
+    field_release_blocker = mapping[FIELD_RELEASE_BLOCKER_NAME]
+    field_blocked_reason = mapping[FIELD_BLOCKED_REASON_NAME]
+    field_severity = mapping[FIELD_SEVERITY_NAME]
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -675,7 +695,7 @@ class JIRABugTracker(BugTracker):
             'issuetype': {'name': 'Bug'},
             'components': [{'name': 'Release'}],
             'versions': [{'name': self.config.get('version')[0]}],  # Affects Version/s
-            self.FIELD_TARGET_VERSION: [{'name': self.config.get('target_release')[0]}],  # Target Version
+            self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
             'description': bug_description

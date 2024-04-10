@@ -47,7 +47,7 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
             "fields.labels": ["art:cloned-kernel-bug"],
             "fields.project.key": "OCPBUGS",
             "fields.components": [component],
-            f"fields.{JIRABugTracker.FIELD_TARGET_VERSION}": [target_release],
+            f"fields.{JIRABugTracker.field_target_version}": [target_release],
         })
         actual = cli._get_jira_bugs(jira_client, ["FOO-1", "FOO-2", "FOO-3"], self._config)
         self.assertEqual([bug.key for bug in actual], ["FOO-1", "FOO-2", "FOO-3"])

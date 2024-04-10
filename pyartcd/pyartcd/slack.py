@@ -66,7 +66,7 @@ class SlackClient:
         # https://api.slack.com/methods/reactions.add
         if reaction:
             await self._client.reactions_add(
-                channel=self.channel,
+                channel=response.data["channel"],
                 name=reaction,
                 timestamp=response.data["ts"]
             )

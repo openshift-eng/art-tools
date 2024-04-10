@@ -1,10 +1,10 @@
-from typing import OrderedDict, Optional
+from typing import OrderedDict, Optional, Tuple
 from datetime import datetime
-from artcommonlib.constants import RELEASE_SCHEDULES
-import requests
 import re
 
-from artcommonlib.model import Model
+import requests
+
+from artcommonlib.constants import RELEASE_SCHEDULES
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -111,12 +111,17 @@ def get_assembly_release_date(assembly, group):
     """
     assembly_release_date = None
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-    for release in release_schedules.json()['all_ga_tasks']:
-        if assembly in release['name']:
-            # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-            assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-            break
-    return assembly_release_date
+
+    try:
+        for release in release_schedules.json()['all_ga_tasks']:
+            if assembly in release['name']:
+                # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
+                assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+                break
+        return assembly_release_date
+
+    except KeyError:
+        return None
 
 
 def get_inflight(assembly, group):
@@ -194,3 +199,16 @@ def deep_merge(dict1, dict2):
             merged[key] = value
 
     return merged
+
+
+def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Given a group name, determines whether it contains an OCP {major}.{minor} version.
+    If it does, it returns the version value as (int, int).
+    If it is not found, (None, None) is returned.
+    """
+
+    match = re.fullmatch(r"openshift-(\d+).(\d+)", group_name)
+    if not match:
+        return None, None
+    return int(match[1]), int(match[2])

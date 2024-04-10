@@ -1,3 +1,6 @@
+import json
+
+from artcommonlib import exectools, logutil
 from artcommonlib.model import ListModel, Model
 from artcommonlib.runtime import GroupRuntime
 
@@ -9,6 +12,8 @@ default_primary_container = dict(
     name="machine-os-content",
     build_metadata_key="oscontainer",
     primary=True)
+
+logger = logutil.get_logger(__name__)
 
 
 class RhcosMissingContainerException(Exception):
@@ -61,7 +66,8 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     """
     key = container_conf.build_metadata_key
     if key not in build_meta:
-        raise RhcosMissingContainerException(f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata")
+        raise RhcosMissingContainerException(
+            f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata")
 
     container = build_meta[key]
 
@@ -76,3 +82,28 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     #     "image": "registry.ci.openshift.org/rhcos/rhel-coreos@sha256:b8e1064cae637f..."
     # },
     return container['image']
+
+
+def get_build_id_from_rhcos_pullspec(pullspec):
+    """
+    Extract the RHCOS build ID from an image pullspec. Starting from 4.16, the version is extracted from a new label
+    "org.opencontainers.image.version". Prefer this if present and fall back to the "version" label if not.
+
+    Raises:
+         - a ChildProcessError if oc fails fetching the build info
+         - a generic Exception if the required labels are not found
+    """
+
+    logger.info(f"Looking up BuildID from RHCOS pullspec: {pullspec}")
+
+    image_info_str, _ = exectools.cmd_assert(f'oc image info -o json {pullspec}', retries=3)
+    image_info = Model(json.loads(image_info_str))
+    labels = image_info.config.config.Labels
+
+    if not (build_id := labels.get('org.opencontainers.image.version', None)):
+        build_id = labels.version
+
+    if not build_id:
+        raise Exception(f'Unable to determine build_id from: {pullspec}. Retrieved image info: {image_info_str}')
+
+    return build_id

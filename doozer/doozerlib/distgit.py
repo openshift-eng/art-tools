@@ -4,7 +4,6 @@ import errno
 import glob
 import hashlib
 import io
-import json
 import logging
 import os
 import pathlib
@@ -13,7 +12,6 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import datetime
 from multiprocessing import Event, Lock
 from typing import Dict, List, Optional, Tuple, Union, Set
 
@@ -26,19 +24,18 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion, logutil, build_util
+from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model, ListModel
+from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib import constants, exectools, state, util
+from doozerlib import constants, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
-from doozerlib.pushd import Dir
-from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
@@ -87,8 +84,7 @@ def pull_image(url):
         time.sleep(60)
 
     exectools.retry(
-        3, wait_f=wait,
-        task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
+        retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
 
 
 def map_image_name(name, image_map):

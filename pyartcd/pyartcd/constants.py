@@ -27,12 +27,12 @@ MIRROR_CLIENTS = {
 OCP_BUILD_DATA_URL = 'https://github.com/openshift-eng/ocp-build-data'
 
 # This is the URL that buildvm itself uses to resolve Jenkins
-# It shall be used by jenkinsapi to start new builds
-JENKINS_SERVER_URL = 'https://buildvm.hosts.prod.psi.bos.redhat.com:8443'
+# an alternative to JENKINS_URL env var set by Jenkins
+JENKINS_SERVER_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
 
 # This is the URL that humans behind a VPN use to browse Jenkins UI
 # It shall be used to print clickable logs that redirect the user to the triggered job page
-JENKINS_UI_URL = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888'
+JENKINS_UI_URL = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com'
 
 MIRROR_BASE_URL = 'https://mirror.openshift.com'
 

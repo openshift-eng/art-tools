@@ -11,7 +11,7 @@ services:
     - ../:/workspaces/doozer:cached,z
     - ${HOME:-}${USERPROFILE:-}/.ssh:/home/dev/.ssh:ro,cached,z
     - ./settings.yaml:/home/dev/.config/doozer/settings.yaml:ro,cached,z
-    - ./krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
+    - artcommon/configs/krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
     - ./brewkoji.conf:/etc/koji.conf.d/brewkoji.conf:ro,cached,z
     - dev-doozer-working-dir:/workspaces/doozer-working-dir:delegated,z
     - dev-doozer-cache-dir:/workspaces/doozer-cache:delegated,z

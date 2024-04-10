@@ -1,10 +1,11 @@
 from future import standard_library
 
 import artcommonlib.util
-from artcommonlib import assertion, logutil
+from artcommonlib import assertion, logutil, exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
 from artcommonlib.model import Model, Missing
+from artcommonlib.pushd import Dir
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -31,9 +32,7 @@ from jira import JIRA
 
 from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
-from . import exectools
 from . import dblib
-from .pushd import Dir
 
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata
@@ -105,6 +104,7 @@ class Runtime(GroupRuntime):
         self.logger = None
         self.data_path = None
         self.data_dir = None
+        self.group_commitish = None
         self.latest_parent_version = False
         self.rhpkg_config = None
         self._koji_client_session = None
@@ -383,7 +383,7 @@ class Runtime(GroupRuntime):
 
         if '@' in self.group:
             self.group, self.group_commitish = self.group.split('@', 1)
-        else:
+        elif self.group_commitish is None:
             self.group_commitish = self.group
 
         if group_only:
@@ -665,7 +665,7 @@ class Runtime(GroupRuntime):
 
     def initialize_logging(self):
 
-        if self.initialized:
+        if self.initialized or self.logger:
             return
 
         # Three flags control the output modes of the command:
@@ -1507,7 +1507,7 @@ class Runtime(GroupRuntime):
         return re.match(r"^v\d+((\.\d+)+)?$", version) is not None
 
     def clone_distgits(self, n_threads=None):
-        with util.timer(self.logger.info, 'Full runtime clone'):
+        with exectools.timer(self.logger.info, 'Full runtime clone'):
             if n_threads is None:
                 n_threads = self.global_opts['distgit_threads']
             return exectools.parallel_exec(

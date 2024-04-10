@@ -43,7 +43,13 @@ class GenAssemblyPipeline:
         self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
-        self.in_flight = in_flight if in_flight else get_inflight(assembly, group)
+        if in_flight:
+            self.in_flight = in_flight
+        elif not custom:
+            self.in_flight = get_inflight(assembly, group)
+        else:
+            self.in_flight = None
+
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.pre_ga_mode = pre_ga_mode
@@ -225,10 +231,10 @@ class GenAssemblyPipeline:
         if self.auto_trigger_build_sync:
             self._logger.info("Triggering build-sync")
             build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
-            # we're not passing doozer_data_path to build-sync because we always create branch on the base repo
             start_build_sync(build_version=build_version,
                              assembly=self.assembly,
-                             doozer_data_path=self.data_path,
+                             doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
+                             # to build-sync because we always create branch on the base repo
                              doozer_data_gitref=branch)
 
         return result

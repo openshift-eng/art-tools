@@ -261,6 +261,9 @@ class Metadata(object):
                 nonlocal el_target
 
                 if self.meta_type == 'image':
+                    if not el_target:
+                        el_target = self.branch_el_target()
+
                     # For pre-releases, if canonical builders are enabled and alternative_upstream config is defined,
                     # consider rhel 8 as the normal build target. Even if this is an approximation, it is very realistic
                     # that the alternative config is downgrading the image to rhelX-1 while upstream aligns to ART's
@@ -278,6 +281,7 @@ class Metadata(object):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
                 rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{el_suffix}*'
+                assert 'None' not in rhel_pattern
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=rhel_pattern,
@@ -287,12 +291,17 @@ class Metadata(object):
                 # If no builds were found, the component might still be following the old pattern,
                 # where a .el suffix was not included in the NVR
                 if not builds:
+                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
+
                     legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    assert 'None' not in legacy_pattern
                     builds = koji_api.listBuilds(packageID=package_id,
                                                  state=None if build_state is None else build_state.value,
                                                  pattern=legacy_pattern,
                                                  queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                                  **list_builds_kwargs)
+                    if not builds:
+                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from

@@ -138,7 +138,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.runtime.group_config.rhcos = Model(dict(payload_tags=[alt_container]))
         self.assertEqual(("dummy", "test@sha256:abcd1234alt"), rhcos.RHCOSBuildFinder(self.runtime, "4.4").latest_container())
 
-    @patch('doozerlib.exectools.cmd_assert')
+    @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_rhcos_build_inspector(self, rhcos_build_meta_mock, cmd_assert_mock):
         """
@@ -180,7 +180,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rhcos_build.get_package_build_objects()['dbus']['nvr'], 'dbus-1.12.8-12.el8_3')
         self.assertEqual(rhcos_build.get_container_digest(), test_digest)
 
-    @patch('doozerlib.exectools.cmd_assert')
+    @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_rhcos_build_inspector_extension(self, rhcos_build_meta_mock, cmd_assert_mock):
         """
@@ -201,7 +201,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.assertIn("qemu-img-6.2.0-11.module+el8.6.0+16538+01ea313d.6",
                       rhcos_build.get_rpm_nvrs())  # epoch stripped
 
-    @patch('doozerlib.exectools.cmd_assert')
+    @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_inspector_get_container_pullspec(self, rhcos_build_meta_mock, cmd_assert_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
@@ -217,7 +217,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RhcosMissingContainerException):
             rhcos_build.get_container_pullspec(Model(container_conf))
 
-    @patch('doozerlib.exectools.cmd_assert')
+    @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     async def test_find_non_latest_rpms_with_missing_enabled_repos(self, rhcos_build_meta_mock, cmd_assert_mock):
         # mock out the things RHCOSBuildInspector calls in __init__
@@ -233,7 +233,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
     @patch('doozerlib.rhcos.RHCOSBuildInspector.get_os_metadata_rpm_list')
     @patch("doozerlib.repos.Repo.get_repodata_threadsafe")
-    @patch('doozerlib.exectools.cmd_assert')
+    @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     async def test_find_non_latest_rpms(self, rhcos_build_meta_mock: Mock, cmd_assert_mock: Mock,
                                         get_repodata_threadsafe: AsyncMock, get_os_metadata_rpm_list: Mock):

@@ -11,6 +11,7 @@ from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
 from jenkinsapi.build import Build
 from jenkinsapi.utils.crumb_requester import CrumbRequester
+from jenkinsapi.custom_exceptions import NotFound
 
 from pyartcd import constants
 
@@ -32,25 +33,33 @@ class Jobs(Enum):
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
 
 
+def get_jenkins_url():
+    url = os.environ.get("JENKINS_URL", constants.JENKINS_SERVER_URL)
+    return url.rstrip('/')
+
+
 def init_jenkins():
     global jenkins_client
     if jenkins_client:
         return
+
+    jenkins_url = get_jenkins_url()
+
     logger.info('Initializing Jenkins client..')
     requester = CrumbRequester(
         username=os.environ['JENKINS_SERVICE_ACCOUNT'],
         password=os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN'],
-        baseurl=constants.JENKINS_SERVER_URL
+        baseurl=jenkins_url
     )
 
     jenkins_client = Jenkins(
-        constants.JENKINS_SERVER_URL,
+        jenkins_url,
         username=os.environ['JENKINS_SERVICE_ACCOUNT'],
         password=os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN'],
         requester=requester,
         lazy=True
     )
-    logger.info('Connected to Jenkins %s', jenkins_client.version)
+    logger.info('Connected to Jenkins server %s', jenkins_client.base_server_url())
 
 
 def get_build_url():
@@ -63,9 +72,9 @@ def get_build_url():
 def get_build_path():
     """
     Examples:
-    - https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46870/ =>
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/ =>
         job/aos-cd-builds/job/build%252Focp4/46870
-    - https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46870 =>
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870 =>
         job/aos-cd-builds/job/build%252Focp4/46870
     """
 
@@ -80,8 +89,8 @@ def get_build_id() -> str:
 def get_build_id_from_url(build_url: str) -> int:
     """
     Examples:
-    - https://buildvm.hosts.prod.psi.bos.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870/ => 46870
-    - https://buildvm.hosts.prod.psi.bos.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870 => 46870
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870/ => 46870
+    - https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8443/job/aos-cd-builds/job/build%252Focp4/46870 => 46870
     """
 
     return int(list(filter(None, build_url.split('/')))[-1])
@@ -132,7 +141,8 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
     logger.info('Started new build at %s', triggered_build_url)
 
     # Update the description of the new build with the details of the caller job
-    triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL)
+    jenkins_url = get_jenkins_url()
+    triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, jenkins_url)
     triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
     description = f'Started by upstream project <b>{current_job_name}</b> ' \
                   f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
@@ -156,7 +166,7 @@ def set_build_description(build: Build, description: str):
 def is_build_running(build_path: str) -> bool:
     """
     Fetches build data using API endpoint {JENKINS_SERVER_URL}/{BUILD_PATH}/api/json
-    E.g. https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Focp4/46902/api/json
+    E.g. https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46902/api/json
 
     The resulting JSON has a field called "inProgress" that is true if the build is still ongoing
 
@@ -166,17 +176,20 @@ def is_build_running(build_path: str) -> bool:
     """
 
     init_jenkins()
-
-    response = requests.get(f'{constants.JENKINS_SERVER_URL}/{build_path}/api/json')
-    if response.status_code != 200:
-        logger.debug('Could not fetch data for build %s', build_path)
-        raise ValueError
-
-    build_data = response.json()
-    logger.debug('Build %s %s in progress',
-                 f'{constants.JENKINS_UI_URL}/{build_path}',
-                 'is' if build_data['inProgress'] else 'is not')
-    return build_data['inProgress']
+    job_path, build_number = build_path.rstrip("/").rsplit("/", 1)
+    job_name = job_path.rsplit("/", 1)[1]
+    job_url = jenkins_client.base_server_url() + "/" + job_path
+    try:
+        job = Job(job_url, job_name, jenkins_client)
+    except requests.exceptions.HTTPError as err:
+        if err.response.status_code == 404:
+            return False
+        raise
+    try:
+        build = job.get_build(int(build_number))
+    except NotFound:
+        return False
+    return build.is_running()
 
 
 @check_env_vars
@@ -361,8 +374,9 @@ def update_title(title: str, append: bool = True):
     """
 
     job = jenkins_client.get_job(current_job_name)
+    jenkins_url = get_jenkins_url()
     build = Build(
-        url=current_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL),
+        url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
         job=job
     )
@@ -387,8 +401,9 @@ def update_description(description: str, append: bool = True):
     """
 
     job = jenkins_client.get_job(current_job_name)
+    jenkins_url = get_jenkins_url()
     build = Build(
-        url=current_build_url.replace(constants.JENKINS_UI_URL, constants.JENKINS_SERVER_URL),
+        url=current_build_url.replace(constants.JENKINS_UI_URL, jenkins_url),
         buildno=int(list(filter(None, current_build_url.split('/')))[-1]),
         job=job
     )
@@ -403,6 +418,10 @@ def is_api_reachable() -> bool:
     """
     Returns True if Jenkins API is reachable, False otherwise
     """
-
-    endpoint = f'{constants.JENKINS_SERVER_URL}/api/json'
-    return requests.get(endpoint).status_code == 200
+    if jenkins_client is None:
+        return False
+    try:
+        jenkins_client.version
+    except Exception:
+        return False
+    return True

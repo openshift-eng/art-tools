@@ -4,7 +4,8 @@ import sys
 import shutil
 import pathlib
 import logging
-from doozerlib import exectools
+
+from artcommonlib import exectools
 
 DOOZER_CMD = [sys.executable, "-m", "doozerlib.cli"]
 

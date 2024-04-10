@@ -5,12 +5,12 @@ from copy import deepcopy
 
 import doozerlib
 from artcommonlib.model import Missing, Model
+from artcommonlib.pushd import Dir
 from doozerlib import util
 from doozerlib import brew, coverity
 from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
-from doozerlib.pushd import Dir
 from doozerlib.rpm_utils import parse_nvr, to_nevra
 
 
@@ -18,9 +18,7 @@ class ImageMetadata(Metadata):
 
     def __init__(self, runtime: "doozerlib.Runtime", data_obj: Dict, commitish: Optional[str] = None, clone_source: Optional[bool] = False, prevent_cloning: Optional[bool] = False):
         super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
-        self.image_name = self.config.name
         self.required = self.config.get('required', False)
-        self.image_name_short = self.image_name.split('/')[-1]
         self.parent = None
         self.children = []  # list of ImageMetadata which use this image as a parent.
         self.dependencies: Set[str] = set()
@@ -33,6 +31,14 @@ class ImageMetadata(Metadata):
             self.children.append(dependent)
         if clone_source:
             runtime.resolve_source(self)
+
+    @property
+    def image_name(self):
+        return self.config.name
+
+    @property
+    def image_name_short(self):
+        return self.config.name.split('/')[-1]
 
     def get_assembly_rpm_package_dependencies(self, el_ver: int) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
@@ -372,12 +378,6 @@ class ImageMetadata(Metadata):
                 if image_build_event_id < builder_brew_build['creation_event_id']:
                     self.logger.info(f'will be rebuilt because a builder or parent image changed: {builder_image_name}')
                     return self, RebuildHint(RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built')
-
-            self.logger.info("Checking if buildroot of image %s has changed", self.distgit_key)
-            build_root_change = brew.has_tag_changed_since_build(runtime, koji_api, image_build, buildroot_tag, inherit=True)
-            if build_root_change:
-                self.logger.info(f'Image will be rebuilt due to buildroot change since {image_nvr} (last build event={image_build_event_id}). Build root change: [{build_root_change}]')
-                return self, RebuildHint(RebuildHintCode.BUILD_ROOT_CHANGING, f'Buildroot tag changes since {image_nvr} was built')
 
             self.logger.info("Getting RPMs contained in %s", image_nvr)
             bbii = BrewBuildImageInspector(self.runtime, image_build)

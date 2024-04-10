@@ -3,7 +3,9 @@
 
 from future import standard_library
 
+from artcommonlib import exectools
 from artcommonlib.logutil import get_logger
+from artcommonlib.pushd import Dir
 
 standard_library.install_aliases()
 import yaml
@@ -12,8 +14,6 @@ import urllib.parse
 import os
 import shutil
 import io
-from . import exectools
-from .pushd import Dir
 from doozerlib import constants
 
 
@@ -176,8 +176,9 @@ class GitData(object):
 
         self.origin_url, _ = exectools.cmd_assert(f'git -C {self.data_path} remote get-url origin', strip=True)
         self.commit_hash, _ = exectools.cmd_assert(f'git -C {self.data_path} rev-parse HEAD', strip=True)
-
-        self.logger.info(f'On commit: {self.commit_hash}')
+        ref, _ = exectools.cmd_assert(f'git -C {self.data_path} rev-parse --abbrev-ref HEAD', strip=True)
+        ref_s = f"({ref})" if ref != "HEAD" else ""
+        self.logger.info(f'On commit: {self.commit_hash} {ref_s}')
 
         if not os.path.isdir(self.data_dir):
             raise GitDataPathException('{} is not a valid sub-directory in the data'.format(self.sub_dir))

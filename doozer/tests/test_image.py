@@ -7,6 +7,7 @@ from unittest import IsolatedAsyncioTestCase, mock
 
 from flexmock import flexmock
 
+from artcommonlib import exectools
 from artcommonlib.model import Model
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
@@ -15,7 +16,7 @@ try:
     from importlib import reload
 except ImportError:
     pass
-from doozerlib import exectools, image, brew_info
+from doozerlib import image, brew_info
 
 TEST_YAML = """---
 name: 'openshift/test'

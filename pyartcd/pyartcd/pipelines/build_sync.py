@@ -6,10 +6,10 @@ import re
 import click
 import yaml
 from opentelemetry import trace
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import rhcos, redis
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.util import split_git_url
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
@@ -33,7 +33,8 @@ class BuildSyncPipeline:
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
-            self.group, self.assembly
+            self.group, self.assembly,
+            self.data_path, self.doozer_data_gitref
         )
         return self
 
@@ -206,7 +207,7 @@ class BuildSyncPipeline:
             self.logger.info('Would have backed up all imagestreams.')
             return
 
-        @exectools.limit_concurrency(500)
+        @limit_concurrency(500)
         async def backup_namespace(ns):
             self.logger.info('Running backup for namespace %s', ns)
 
@@ -244,7 +245,7 @@ class BuildSyncPipeline:
         cmd.extend(glob.glob('*.backup.yaml'))
         await exectools.cmd_assert_async(cmd)
 
-    @exectools.limit_concurrency(500)
+    @limit_concurrency(500)
     async def _tag_into_ci_imagestream(self, arch_suffix, tag):
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
@@ -358,7 +359,7 @@ class BuildSyncPipeline:
                 tasks.append(self._publish(filename))
             await asyncio.gather(*tasks)
 
-    @exectools.limit_concurrency(500)
+    @limit_concurrency(500)
     async def _publish(self, filename):
         with open(filename) as f:
             meta = yaml.safe_load(f.read())['metadata']
@@ -494,7 +495,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
     try:
         # Only for stream assembly, lock the build to avoid parallel runs
         if assembly == 'stream':
-            # https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
+            # https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
             # will return job/aos-cd-builds/job/build%252Fbuild-sync/40333
             lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
             runtime.logger.info('Lock identifier: %s', lock_identifier)

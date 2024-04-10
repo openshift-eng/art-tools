@@ -6,9 +6,14 @@ from typing import Optional
 
 import click
 
+from artcommonlib import redis
+from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd import constants, exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.jenkins import get_build_url
 from pyartcd.runtime import Runtime
+
+ART_NOTIFY_FREQUENCY = 5
 
 
 class TagRPMsPipeline:
@@ -24,12 +29,19 @@ class TagRPMsPipeline:
         if self.data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = self.data_path
 
+        major, minor = isolate_major_minor_in_group(group)
+        self.fail_count_name = f'count:tag-rpms-failure:{major}-{minor}'
+
+        self.slack_client = runtime.new_slack_client()
+        self.slack_client.bind_channel(group)
+
+        self.logger = runtime.logger
+
+        self.job_run = get_build_url()
+
     async def run(self):
-        logger = self._runtime.logger
-        slack_client = self._runtime.new_slack_client()
-        slack_client.bind_channel(self.group)
         try:
-            logger.info("Running doozer config:tag-rpms for %s...", self.group)
+            self.logger.info("Running doozer config:tag-rpms for %s...", self.group)
             report = await self.tag_rpms()
             untagged = False
             tagged = False
@@ -56,11 +68,11 @@ class TagRPMsPipeline:
                 if tagged:
                     message += "If you untag a build manually, it will not be re-tagged by this job again.\n\n"
             if untagged or tagged:  # Don't spam release-artists if nothing changed
-                await slack_client.say(f":white_check_mark: Hi @release-artists ,\n{message}")
+                await self.slack_client.say(f":white_check_mark: Hi @release-artists ,\n{message}")
         except Exception as err:
             error_message = f"Error running tag-rpms: {err}\n {traceback.format_exc()}"
-            logger.error(error_message)
-            await slack_client.say(f":warning: {error_message}")
+            self.logger.error(error_message)
+            await self.slack_client.say(f":warning: {error_message}")
             raise
 
     async def tag_rpms(self):
@@ -77,9 +89,30 @@ class TagRPMsPipeline:
         if self._runtime.dry_run:
             cmd.append("--dry-run")
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
-        # example out:
-        # {"untagged": {"test-target-tag": ["bar-1.0.0-1"]}, "tagged": {"test-target-tag": ["bar-1.0.2-1", "foo-1.0.1-1"]}}
+        # example out: {"untagged": {"test-target-tag": ["bar-1.0.0-1"]},
+        #               "tagged": {"test-target-tag": ["bar-1.0.2-1", "foo-1.0.1-1"]}}
         return json.loads(out)
+
+    async def handle_success(self):
+        res = await redis.delete_key(self.fail_count_name)
+        if res:
+            self.logger.debug('Fail count "%s" deleted', self.fail_count_name)
+
+    async def handle_failure(self):
+        # Increment failure count
+        current_count = await redis.get_value(self.fail_count_name)
+        if current_count is None:  # does not yet exist in Redis
+            current_count = 0
+        fail_count = int(current_count) + 1
+        self.logger.info('Failure count for %s: %s', self.group, fail_count)
+
+        # Update fail counter on Redis
+        await redis.set_value(self.fail_count_name, fail_count)
+
+        # Notify ART
+        if fail_count % ART_NOTIFY_FREQUENCY == 0:
+            await self.slack_client.say(f'tag_rpms for {self.group} failed {fail_count} times. '
+                                        f'See <{self.job_run}|job> logs for details"')
 
 
 @cli.command("tag-rpms", short_help="Tag and untag rpms for rpm delivery")
@@ -91,4 +124,11 @@ class TagRPMsPipeline:
 @click_coroutine
 async def tag_rpms_cli(runtime: Runtime, data_path: Optional[str], group: str):
     pipeline = TagRPMsPipeline(runtime=runtime, data_path=data_path, group=group)
-    await pipeline.run()
+
+    try:
+        await pipeline.run()
+        await pipeline.handle_success()
+
+    except ChildProcessError:
+        await pipeline.handle_failure()
+        raise
