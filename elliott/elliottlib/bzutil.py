@@ -608,11 +608,13 @@ def get_jira_name_id_mapping() -> dict:
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    field_blocked_by_bz = None
-    field_target_version = None
-    field_release_blocker = None
-    field_blocked_reason = None
-    field_severity = None
+    # There are several @property function defined, which requires the values to be available at compile time
+    # We later override them at runtime, so that if the field name changes, we'll still get the updated one
+    field_blocked_by_bz = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
+    field_target_version = 'customfield_12319940'  # "Target Version"
+    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
+    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
+    field_severity = 'customfield_12316142'  # "Severity"
 
     @classmethod
     def _set_jira_name_id_mapping(cls):
