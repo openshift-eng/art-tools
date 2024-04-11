@@ -402,19 +402,25 @@ class JIRABug(Bug):
         return ('Placeholder' in self.summary) and (self.component == 'Release') and ('Automation' in self.keywords)
 
     def _get_blocks(self):
-        # link "blocks"
         blocks = []
         for link in self.bug.fields.issuelinks:
+            # link "blocks"
             if link.type.name == "Blocks" and hasattr(link, "outwardIssue"):
                 blocks.append(link.outwardIssue.key)
+            # link "is depended on by"
+            if link.type.name == "Depend" and hasattr(link, "inwardIssue"):
+                blocks.append(link.inwardIssue.key)
         return blocks
 
     def _get_depends(self):
-        # link "is blocked by"
         depends = []
         for link in self.bug.fields.issuelinks:
+            # link "is blocked by"
             if link.type.name == "Blocks" and hasattr(link, "inwardIssue"):
                 depends.append(link.inwardIssue.key)
+            # link "depends on"
+            if link.type.name == "Depend" and hasattr(link, "outwardIssue"):
+                depends.append(link.outwardIssue.key)
         return depends
 
     @staticmethod
