@@ -153,7 +153,7 @@ class PrepareReleasePipeline:
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
-                    if not batch_id:
+                    if not batch_id and assembly_type == AssemblyTypes.STANDARD:
                         # Create a batch for a release if not created
                         batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
                         _LOGGER.info(f"Created errata batch id {batch_id} for release {self.release_name}")
@@ -172,7 +172,7 @@ class PrepareReleasePipeline:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
                                                           release_date=self.release_date)
-                    if batch_id:
+                    if batch_id and assembly_type == AssemblyTypes.STANDARD:
                         # Connect advisory to the batch_id
                         change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
                         _LOGGER.info(f"Connected advisory {advisories[ad]} to the batch id {batch_id}")
