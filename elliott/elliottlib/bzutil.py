@@ -608,18 +608,26 @@ def get_jira_name_id_mapping() -> dict:
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    FIELD_BLOCKED_BY_BZ_NAME = 'Blocked by Bugzilla Bug'
-    FIELD_TARGET_VERSION_NAME = 'Target Version'
-    FIELD_RELEASE_BLOCKER_NAME = 'Release Blocker'
-    FIELD_BLOCKED_REASON_NAME = 'Blocked Reason'
-    FIELD_SEVERITY_NAME = 'Severity'
+    field_blocked_by_bz = None
+    field_target_version = None
+    field_release_blocker = None
+    field_blocked_reason = None
+    field_severity = None
 
-    mapping = get_jira_name_id_mapping()
-    field_blocked_by_bz = mapping[FIELD_BLOCKED_BY_BZ_NAME]
-    field_target_version = mapping[FIELD_TARGET_VERSION_NAME]
-    field_release_blocker = mapping[FIELD_RELEASE_BLOCKER_NAME]
-    field_blocked_reason = mapping[FIELD_BLOCKED_REASON_NAME]
-    field_severity = mapping[FIELD_SEVERITY_NAME]
+    @classmethod
+    def _set_jira_name_id_mapping(cls):
+        FIELD_BLOCKED_BY_BZ_NAME = 'Blocked by Bugzilla Bug'
+        FIELD_TARGET_VERSION_NAME = 'Target Version'
+        FIELD_RELEASE_BLOCKER_NAME = 'Release Blocker'
+        FIELD_BLOCKED_REASON_NAME = 'Blocked Reason'
+        FIELD_SEVERITY_NAME = 'Severity'
+
+        mapping = get_jira_name_id_mapping()
+        cls.field_blocked_by_bz = mapping[FIELD_BLOCKED_BY_BZ_NAME]
+        cls.field_target_version = mapping[FIELD_TARGET_VERSION_NAME]
+        cls.field_release_blocker = mapping[FIELD_RELEASE_BLOCKER_NAME]
+        cls.field_blocked_reason = mapping[FIELD_BLOCKED_REASON_NAME]
+        cls.field_severity = mapping[FIELD_SEVERITY_NAME]
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -647,6 +655,7 @@ class JIRABugTracker(BugTracker):
         super().__init__(config, 'jira')
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
+        self._set_jira_name_id_mapping()
 
     @property
     def product(self):
