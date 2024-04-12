@@ -60,8 +60,6 @@ class BuildSyncPipeline:
 
         self.slack_client = self.runtime.new_slack_client()
         self.slack_client.bind_channel(f'openshift-{self.version}')
-        self.release_artist_slack_handle = "[dry-run]" if self.runtime.dry_run else "@release-artists"  # do not ping
-        # release-artists for dry-run
 
     async def comment_on_assembly_pr(self, text_body):
         """
@@ -143,7 +141,7 @@ class BuildSyncPipeline:
             # Comment on the PR that the job succeeded
             text_body = f"Build sync job [run]({self.job_run}) succeeded!"
             await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say_in_thread(f"{self.release_artists_slack_handle} <{self.job_run}|build-sync> "
+            await self.slack_client.say_in_thread(f"@release-artists <{self.job_run}|build-sync> "
                                                   f"for assembly {self.assembly} succeeded!")
 
         #  All good: delete fail counter
@@ -405,25 +403,14 @@ class BuildSyncPipeline:
         if self.assembly != 'stream':
             text_body = f"Build sync job [run]({self.job_run}) failed!"
             await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say_in_thread(f"{self.release_artist_slack_handle} <{self.job_run}|build sync> "
+            await self.slack_client.say_in_thread(f"@release-artists <{self.job_run}|build sync> "
                                                   f"for assembly {self.assembly} failed!")
             if permitted_false_assembly_issues:
                 await self.slack_client.say_in_thread("Permitted false assembly issues: ``"
                                                       f"`{permitted_false_assembly_issues}```")
             raise
 
-        async def _notify_stream_failure(channel):
-            msg = f'Pipeline has failed to assemble release payload for {self.version} ' \
-                  f'(assembly {self.assembly}) {fail_count} times.'
-            msg_details = f"Blocking assembly issues: ```{permitted_false_assembly_issues}```"
-
-            response_data = await self.slack_client.bind_channel(channel).say(msg)
-            thread_ts = response_data["ts"]
-            if permitted_false_assembly_issues:
-                await slack_client.say(msg_details, thread_ts=thread_ts)
-
         if self.runtime.dry_run:
-            await _notify_stream_failure(f'openshift-{self.version}')
             raise
 
         # Increment failure count
@@ -439,6 +426,16 @@ class BuildSyncPipeline:
         # Less than 2 failures, just break the build
         if fail_count < 2:
             raise
+
+        async def _notify_stream_failure(channel):
+            msg = f'Pipeline has failed to assemble release payload for {self.version} ' \
+                  f'(assembly {self.assembly}) {fail_count} times.'
+            msg_details = f"Blocking assembly issues: ```{permitted_false_assembly_issues}```"
+
+            response_data = await self.slack_client.bind_channel(channel).say(msg)
+            thread_ts = response_data["ts"]
+            if permitted_false_assembly_issues:
+                await slack_client.say(msg_details, thread_ts=thread_ts)
 
         # TODO https://issues.redhat.com/browse/ART-5657
         async def notify_stream_failure():
