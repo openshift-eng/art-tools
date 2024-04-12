@@ -60,6 +60,8 @@ class BuildSyncPipeline:
 
         self.slack_client = self.runtime.new_slack_client()
         self.slack_client.bind_channel(f'openshift-{self.version}')
+        self.release_artist_slack_handle = "[dry-run]" if self.runtime.dry_run else "@release-artists"  # do not ping
+        # release-artists for dry-run
 
     async def comment_on_assembly_pr(self, text_body):
         """
@@ -141,14 +143,14 @@ class BuildSyncPipeline:
             # Comment on the PR that the job succeeded
             text_body = f"Build sync job [run]({self.job_run}) succeeded!"
             await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say(f"@release-artists <{self.job_run}|build-sync> "
-                                        f"for assembly {self.assembly} succeeded!")
+            await self.slack_client.say_in_thread(f"{self.release_artists_slack_handle} <{self.job_run}|build-sync> "
+                                                  f"for assembly {self.assembly} succeeded!")
 
         #  All good: delete fail counter
         if self.assembly == 'stream' and not self.runtime.dry_run:
             current_count = await redis.get_value(self.fail_count_name)
             if current_count and int(current_count) > 1:
-                await self.slack_client.say(f"<{self.job_run}|build-sync> succeeded!")
+                await self.slack_client.say_in_thread(f"<{self.job_run}|build-sync> succeeded!")
 
             res = await redis.delete_key(self.fail_count_name)
             if res:
@@ -309,7 +311,7 @@ class BuildSyncPipeline:
             await asyncio.gather(*tasks)
 
         except (ChildProcessError, KeyError) as e:
-            await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
+            await self.slack_client.say_in_thread(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
     async def _update_nightly_imagestreams(self):
         """
@@ -398,16 +400,31 @@ class BuildSyncPipeline:
             report = yaml.safe_load(f.read())
         return report.get('permitted_false', None)
 
-
     async def handle_failure(self):
         permitted_false_assembly_issues = self.get_permitted_false_assembly_issues()
         if self.assembly != 'stream':
             text_body = f"Build sync job [run]({self.job_run}) failed!"
             await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say(f"@release-artists <{self.job_run}|build sync> "
-                                        f"for assembly {self.assembly} failed!")
+            await self.slack_client.say_in_thread(f"{self.release_artist_slack_handle} <{self.job_run}|build sync> "
+                                                  f"for assembly {self.assembly} failed!")
             if permitted_false_assembly_issues:
-                await self.slack_client.say(f"Permitted false assembly issues: ```{permitted_false_assembly_issues}```")
+                await self.slack_client.say_in_thread("Permitted false assembly issues: ``"
+                                                      f"`{permitted_false_assembly_issues}```")
+            raise
+
+        async def _notify_stream_failure(channel):
+            msg = f'Pipeline has failed to assemble release payload for {self.version} ' \
+                  f'(assembly {self.assembly}) {fail_count} times.'
+            msg_details = f"Blocking assembly issues: ```{permitted_false_assembly_issues}```"
+
+            response_data = await self.slack_client.bind_channel(channel).say(msg)
+            thread_ts = response_data["ts"]
+            if permitted_false_assembly_issues:
+                await slack_client.say(msg_details, thread_ts=thread_ts)
+
+        if self.runtime.dry_run:
+            await _notify_stream_failure(f'openshift-{self.version}')
+            raise
 
         # Increment failure count
         current_count = await redis.get_value(self.fail_count_name)
@@ -419,43 +436,36 @@ class BuildSyncPipeline:
         # Update fail counter on Redis
         await redis.set_value(self.fail_count_name, fail_count)
 
-        # Less than 2 failures, assembly != stream: just break the build
-        if fail_count < 2 or self.assembly != 'stream':
+        # Less than 2 failures, just break the build
+        if fail_count < 2:
             raise
 
-        # More than 2 failures: we need to notify ART and #forum-release before breaking the build
-        slack_client = self.runtime.new_slack_client()
-        msg = f'Pipeline has failed to assemble release payload for {self.version} ' \
-              f'(assembly {self.assembly}) {fail_count} times. Blocking assembly issues: ' \
-              f'```{permitted_false_assembly_issues}```'
-
         # TODO https://issues.redhat.com/browse/ART-5657
-        if 10 <= fail_count <= 50:
-            art_notify_frequency = 5
-            forum_release_notify_frequency = 10
+        async def notify_stream_failure():
+            if 10 <= fail_count <= 50:
+                art_notify_frequency = 5
+                forum_release_notify_frequency = 10
+            elif 50 <= fail_count <= 200:
+                art_notify_frequency = 10
+                forum_release_notify_frequency = 50
+            elif fail_count > 200:
+                art_notify_frequency = 100
+                forum_release_notify_frequency = 100
+            else:
+                # Default notify frequency
+                art_notify_frequency = 2
+                forum_release_notify_frequency = 5
 
-        elif 50 <= fail_count <= 200:
-            art_notify_frequency = 10
-            forum_release_notify_frequency = 50
+            # Spam ourselves a little more often than forum-ocp-release
+            if fail_count % art_notify_frequency == 0:
+                await _notify_stream_failure(f'openshift-{self.version}')
 
-        elif fail_count > 200:
-            art_notify_frequency = 100
-            forum_release_notify_frequency = 100
+            if fail_count % forum_release_notify_frequency == 0:
+                # For GA releases, let forum-ocp-release know why no new builds
+                if self.group_runtime.group_config['software_lifecycle']['phase'] == 'release':
+                    await _notify_stream_failure('#forum-ocp-release')
 
-        else:
-            # Default notify frequency
-            art_notify_frequency = 2
-            forum_release_notify_frequency = 5
-
-        # Spam ourselves a little more often than forum-ocp-release
-        if fail_count % art_notify_frequency == 0:
-            slack_client.bind_channel(f'openshift-{self.version}')
-            await slack_client.say(msg)
-
-        if fail_count % forum_release_notify_frequency == 0:
-            # For GA releases, let forum-ocp-release know why no new builds
-            if self.group_runtime.group_config['software_lifecycle']['phase'] == 'release':
-                slack_client.bind('#forum-ocp-release').say(msg)
+        await notify_stream_failure()
 
 
 @cli.command('build-sync')
@@ -529,8 +539,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
 
     except (RuntimeError, ChildProcessError):
         # Only for 'stream' assembly, track failure to enable future notifications
-        if assembly == 'stream' and not runtime.dry_run:
-            await pipeline.handle_failure()
+        await pipeline.handle_failure()
 
         # Re-raise the exception to make the job as failed
         raise
