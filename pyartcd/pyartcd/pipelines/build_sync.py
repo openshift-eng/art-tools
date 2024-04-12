@@ -58,7 +58,7 @@ class BuildSyncPipeline:
         self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
         self.job_run = get_build_url()
 
-        self.slack_client = self.runtime.new_slack_client()
+        self.slack_client = self.runtime.new_slack_client(dry_run=False)
         self.slack_client.bind_channel(f'openshift-{self.version}')
 
     async def comment_on_assembly_pr(self, text_body):
@@ -403,8 +403,7 @@ class BuildSyncPipeline:
         if self.assembly != 'stream':
             text_body = f"Build sync job [run]({self.job_run}) failed!"
             await self.comment_on_assembly_pr(text_body)
-            self.slack_client.dry_run = False
-            await self.slack_client.say_in_thread(f"[dry-run] <{self.job_run}|build sync> "
+            await self.slack_client.say_in_thread(f"<{self.job_run}|build sync> "
                                                   f"for assembly {self.assembly} failed!")
             if permitted_false_assembly_issues:
                 await self.slack_client.say_in_thread("Permitted false assembly issues: ``"
