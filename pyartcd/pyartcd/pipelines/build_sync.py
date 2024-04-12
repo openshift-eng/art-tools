@@ -403,7 +403,8 @@ class BuildSyncPipeline:
         if self.assembly != 'stream':
             text_body = f"Build sync job [run]({self.job_run}) failed!"
             await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say_in_thread(f"@release-artists <{self.job_run}|build sync> "
+            self.slack_client.dry_run = False
+            await self.slack_client.say_in_thread(f"[dry-run] <{self.job_run}|build sync> "
                                                   f"for assembly {self.assembly} failed!")
             if permitted_false_assembly_issues:
                 await self.slack_client.say_in_thread("Permitted false assembly issues: ``"
