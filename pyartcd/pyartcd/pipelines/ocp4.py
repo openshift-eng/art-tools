@@ -581,7 +581,7 @@ class Ocp4Pipeline:
             self.runtime.logger.error(error_msg)
             self.runtime.logger.error(traceback.format_exc())
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(error_msg)
+            await self._slack_client.say("Failed building compose")
             raise
 
         if self.assembly == 'stream':
@@ -799,7 +799,8 @@ class Ocp4Pipeline:
             self.runtime.logger.error(error_msg)
             self.runtime.logger.error(traceback.format_exc())
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(error_msg)
+            await self._slack_client.say(f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to "
+                                         f"art-srv-enterprise S3")
             raise
 
     async def _sweep(self):

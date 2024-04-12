@@ -72,7 +72,7 @@ class TagRPMsPipeline:
         except Exception as err:
             error_message = f"Error running tag-rpms: {err}\n {traceback.format_exc()}"
             self.logger.error(error_message)
-            await self.slack_client.say(f":warning: {error_message}")
+            await self.slack_client.say(":warning: Error running tag-rpms")
             raise
 
     async def tag_rpms(self):
