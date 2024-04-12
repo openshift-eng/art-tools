@@ -591,35 +591,14 @@ class BugTracker:
         raise NotImplementedError
 
 
-@retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-def get_jira_name_id_mapping() -> dict:
-    """
-    Assuming that no two JIRA fields have the same name
-    """
-    result_json = requests.get(constants.JIRA_API_FIELD).json()
-
-    mapping = {}
-    for field in result_json:
-        mapping[field["name"]] = field["id"]
-
-    return mapping
-
-
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    FIELD_BLOCKED_BY_BZ_NAME = 'Blocked by Bugzilla Bug'
-    FIELD_TARGET_VERSION_NAME = 'Target Version'
-    FIELD_RELEASE_BLOCKER_NAME = 'Release Blocker'
-    FIELD_BLOCKED_REASON_NAME = 'Blocked Reason'
-    FIELD_SEVERITY_NAME = 'Severity'
-
-    mapping = get_jira_name_id_mapping()
-    field_blocked_by_bz = mapping[FIELD_BLOCKED_BY_BZ_NAME]
-    field_target_version = mapping[FIELD_TARGET_VERSION_NAME]
-    field_release_blocker = mapping[FIELD_RELEASE_BLOCKER_NAME]
-    field_blocked_reason = mapping[FIELD_BLOCKED_REASON_NAME]
-    field_severity = mapping[FIELD_SEVERITY_NAME]
+    field_blocked_by_bz = ''
+    field_target_version = ''
+    field_release_blocker = ''
+    field_blocked_reason = ''
+    field_severity = ''
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -647,6 +626,17 @@ class JIRABugTracker(BugTracker):
         super().__init__(config, 'jira')
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
+        for f in self._client.fields():
+            if f['name'] == 'Blocked by Bugzilla Bug':
+                self.field_blocked_by_bz = f['id']
+            if f['name'] == 'Target Version':
+                self.field_target_version = f['id']
+            if f['name'] == 'Release Blocker':
+                self.field_release_blocker = f['id']
+            if f['name'] == 'Blocked Reason':
+                self.field_blocked_reason = f['id']
+            if f['name'] == 'Severity':
+                self.field_severity = f['id']
 
     @property
     def product(self):

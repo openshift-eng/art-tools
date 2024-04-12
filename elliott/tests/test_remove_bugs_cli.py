@@ -14,7 +14,9 @@ class RemoveBugsTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
 
         advisory = flexmock(errata_id='999', errata_bugs=[1, 2, 3], jira_issues=['OCPBUGS-3', 'OCPBUGS-4', 'OCPBUGS-5'])
         flexmock(errata).should_receive("Advisory").and_return(advisory)
@@ -34,7 +36,9 @@ class RemoveBugsTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
 
         bz_bug_ids = [1, 2, 3]
         jira_bug_ids = ["OCPBUGS-1", "OCPBUGS-2"]
