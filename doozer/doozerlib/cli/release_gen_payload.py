@@ -708,11 +708,13 @@ class GenPayloadCli:
         """
 
         payload_permitted = True
-        assembly_issues_report: Dict[str, List[Dict]] = dict()
+        assembly_issues_report: Dict[str, Dict[str, List[Dict]]] = {'permitted_true': dict(), 'permitted_false': dict()}
         for ai in self.assembly_issues:
             permitted = assembly_inspector.does_permit(ai)
             payload_permitted &= permitted  # If anything not permitted, payload not permitted
-            assembly_issues_report.setdefault(ai.component, []).append(dict(
+            permitted_key = 'permitted_true' if permitted else 'permitted_false'
+            permit_report = assembly_issues_report[permitted_key]
+            permit_report.setdefault(ai.component, []).append(dict(
                 code=ai.code.name,
                 msg=ai.msg,
                 permitted=permitted
