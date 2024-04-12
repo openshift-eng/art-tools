@@ -20,7 +20,9 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("update_bug_status").once()
 
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("get_bug").with_args("OCPBUGS-1").and_return(jira_bug)
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
 
@@ -33,7 +35,9 @@ class RepairBugsTestCase(unittest.TestCase):
         bug = flexmock(id="OCPBUGS-1", status="MODIFIED", summary="Placeholder")
         flexmock(Runtime).should_receive("initialize")
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("get_bug").with_args("OCPBUGS-1").and_return(bug)
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'repair-bugs', '--close-placeholder', '--id', 'OCPBUGS-1',
@@ -71,7 +75,9 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("add_comment").once()
 
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("get_bug").with_args("OCPBUGS-1").and_return(jira_bug)
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
         flexmock(JIRABugTracker).should_receive("add_comment").once()
