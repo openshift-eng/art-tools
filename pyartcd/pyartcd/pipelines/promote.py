@@ -401,8 +401,7 @@ class PromotePipeline:
 
         except Exception as err:
             self._logger.exception(err)
-            error_message = f"Error promoting release {release_name}: {err}\n {traceback.format_exc()}"
-            message = f"Promoting release {release_name} failed with: {error_message}"
+            message = f"Promoting release {release_name} failed"
             await self._slack_client.say_in_thread(message)
             raise
 

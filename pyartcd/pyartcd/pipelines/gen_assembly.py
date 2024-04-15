@@ -103,7 +103,7 @@ class GenAssemblyPipeline:
         except Exception as err:
             error_message = f"Error generating assembly definition: {err}\n {traceback.format_exc()}"
             self._logger.error(error_message)
-            await self._slack_client.say(error_message, slack_thread)
+            await self._slack_client.say(f"Error generating assembly definition for {self.assembly}", slack_thread)
             raise
 
     async def _get_nightlies(self):
