@@ -594,11 +594,13 @@ class BugTracker:
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    field_blocked_by_bz = ''
-    field_target_version = ''
-    field_release_blocker = ''
-    field_blocked_reason = ''
-    field_severity = ''
+    # There are several @property function defined, which requires the values to be available at compile time
+    # We later override them at runtime, so that if the field name changes, we'll still get the updated one
+    field_blocked_by_bz = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
+    field_target_version = 'customfield_12319940'  # "Target Version"
+    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
+    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
+    field_severity = 'customfield_12316142'  # "Severity"
 
     @staticmethod
     def get_config(runtime) -> Dict:
