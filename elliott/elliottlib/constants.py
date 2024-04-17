@@ -128,4 +128,4 @@ errata_get_erratum_url = errata_url + "/api/v1/erratum/{id}"
 errata_post_erratum_url = errata_url + "/api/v1/erratum"
 errata_get_advisories_for_bug_url = errata_url + "/bugs/{id}/advisories.json"
 
-JIRA_API_FIELD = "https://issues.redhat.com/rest/api/2/field"
+JIRA_SERVER_URL = "https://issues.redhat.com"

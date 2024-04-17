@@ -29,7 +29,27 @@ from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
 from elliottlib.util import isolate_timestamp_in_release, chunk
 
+
 logger = logutil.get_logger(__name__)
+
+
+def get_jira_client() -> JIRA:
+    token_auth = os.environ.get("JIRA_TOKEN")
+    if not token_auth:
+        raise ValueError(f"elliott requires login credentials for {constants.JIRA_SERVER_URL}. Set a JIRA_TOKEN env var ")
+    client = JIRA(constants.JIRA_SERVER_URL, token_auth=token_auth)
+    return client
+
+
+def get_jira_field_id(client, field_name):
+    """
+    Returns the field id for a given field name
+    """
+    fields = client.fields()
+    for field in fields:
+        if field['name'] == field_name:
+            return field['id']
+    raise ValueError(f"Could not find field {field_name} in {constants.JIRA_SERVER_URL}")
 
 
 # This is easier to patch in unit tests
@@ -210,6 +230,7 @@ class BugzillaBug(Bug):
 class JIRABug(Bug):
     def __init__(self, bug_obj: Issue):
         super().__init__(bug_obj)
+        self.jira_client = None
 
     @property
     def id(self):
@@ -290,7 +311,9 @@ class JIRABug(Bug):
 
     @property
     def blocked_by_bz(self):
-        url = getattr(self.bug.fields, JIRABugTracker.field_blocked_by_bz)
+        if not self.jira_client:
+            self.jira_client = get_jira_client()
+        url = getattr(self.bug.fields, get_jira_field_id(self.jira_client, "Blocked by Bugzilla Bug"))
         if not url:
             return None
         bug_id = re.search(r"id=(\d+)", url)
@@ -300,7 +323,9 @@ class JIRABug(Bug):
 
     @property
     def target_release(self):
-        tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
+        if not self.jira_client:
+            self.jira_client = get_jira_client()
+        tr_field = getattr(self.bug.fields, get_jira_field_id(self.jira_client, "Target Version"))
         if not tr_field:
             raise ValueError(f'bug {self.id} does not have `Target Version` field set')
         return [x.name for x in tr_field]
@@ -365,19 +390,25 @@ class JIRABug(Bug):
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']
-        field = getattr(self.bug.fields, JIRABugTracker.field_release_blocker)
+        if not self.jira_client:
+            self.jira_client = get_jira_client()
+        field = getattr(self.bug.fields, get_jira_field_id(self.jira_client, "Release Blocker"))
         if field:
             return field.value == 'Approved'
         return False
 
     def _get_blocked_reason(self):
-        field = getattr(self.bug.fields, JIRABugTracker.field_blocked_reason)
+        if not self.jira_client:
+            self.jira_client = get_jira_client()
+        field = getattr(self.bug.fields, get_jira_field_id(self.jira_client, "Blocked Reason"))
         if field:
             return field.value
         return None
 
     def _get_severity(self):
-        field = getattr(self.bug.fields, JIRABugTracker.field_severity)
+        if not self.jira_client:
+            self.jira_client = get_jira_client()
+        field = getattr(self.bug.fields, get_jira_field_id(self.jira_client, "Severity"))
         if field:
             if "Urgent" in field.value:
                 return "Urgent"
@@ -594,14 +625,6 @@ class BugTracker:
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    # There are several @property function defined, which requires the values to be available at compile time
-    # We later override them at runtime, so that if the field name changes, we'll still get the updated one
-    field_blocked_by_bz = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
-    field_target_version = 'customfield_12319940'  # "Target Version"
-    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
-    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
-    field_severity = 'customfield_12316142'  # "Severity"
-
     @staticmethod
     def get_config(runtime) -> Dict:
         major, minor = runtime.get_major_minor()
@@ -628,17 +651,6 @@ class JIRABugTracker(BugTracker):
         super().__init__(config, 'jira')
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
-        for f in self._client.fields():
-            if f['name'] == 'Blocked by Bugzilla Bug':
-                self.field_blocked_by_bz = f['id']
-            if f['name'] == 'Target Version':
-                self.field_target_version = f['id']
-            if f['name'] == 'Release Blocker':
-                self.field_release_blocker = f['id']
-            if f['name'] == 'Blocked Reason':
-                self.field_blocked_reason = f['id']
-            if f['name'] == 'Severity':
-                self.field_severity = f['id']
 
     @property
     def product(self):
@@ -693,7 +705,7 @@ class JIRABugTracker(BugTracker):
             'issuetype': {'name': 'Bug'},
             'components': [{'name': 'Release'}],
             'versions': [{'name': self.config.get('version')[0]}],  # Affects Version/s
-            self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
+            get_jira_field_id(self._client, "Target Version"): [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
             'description': bug_description

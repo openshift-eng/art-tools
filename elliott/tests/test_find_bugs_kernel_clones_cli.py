@@ -8,8 +8,6 @@ from jira import JIRA, Issue
 from artcommonlib.assembly import AssemblyTypes
 from elliottlib.cli.find_bugs_kernel_clones_cli import FindBugsKernelClonesCli
 from elliottlib.config_model import KernelBugSweepConfig
-from elliottlib.bzutil import JIRABugTracker
-from elliottlib import early_kernel
 
 
 class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
@@ -32,7 +30,8 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
             },
         })
 
-    def test_get_jira_bugs(self):
+    @patch("elliottlib.cli.find_bugs_kernel_clones_cli.get_jira_field_id")
+    def test_get_jira_bugs(self, get_jira_field_id: Mock):
         runtime = MagicMock()
         cli = FindBugsKernelClonesCli(
             runtime=runtime, trackers=[], bugs=[], move=True, update_tracker=True, dry_run=False)
@@ -41,13 +40,14 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
         component.configure_mock(name="RHCOS")
         target_release = MagicMock()
         target_release.configure_mock(name="4.14.0")
+        get_jira_field_id.return_value = "customfield_12319940"
         jira_client.issue.side_effect = lambda key: MagicMock(spec=Issue, **{
             "key": key,
             "fields": MagicMock(),
             "fields.labels": ["art:cloned-kernel-bug"],
             "fields.project.key": "OCPBUGS",
             "fields.components": [component],
-            f"fields.{JIRABugTracker.field_target_version}": [target_release],
+            "fields.customfield_12319940": [target_release],
         })
         actual = cli._get_jira_bugs(jira_client, ["FOO-1", "FOO-2", "FOO-3"], self._config)
         self.assertEqual([bug.key for bug in actual], ["FOO-1", "FOO-2", "FOO-3"])

@@ -11,8 +11,6 @@ from artcommonlib.assembly import AssemblyTypes
 from elliottlib.cli.find_bugs_kernel_cli import FindBugsKernelCli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.runtime import Runtime
-from elliottlib.bzutil import JIRABugTracker
-from elliottlib import early_kernel
 
 
 class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
@@ -69,7 +67,8 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         self.assertEqual([b.id for b in actual], expected_bug_ids)
         _get_and_filter_bugs.assert_called_once_with(bz_client, expected_bug_ids, bz_target_releases)
 
-    def test_clone_bugs1(self):
+    @patch("elliottlib.cli.find_bugs_kernel_cli.get_jira_field_id")
+    def test_clone_bugs1(self, get_jira_field_id: Mock):
         # Test cloning a bug that has not already been cloned
         runtime = MagicMock()
         cli = FindBugsKernelCli(
@@ -93,6 +92,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         cli._tracker_map = {
             bug_id: tracker for bug_id in range(5)
         }
+        get_jira_field_id.return_value = "customfield_12319940"
         actual = cli._clone_bugs(jira_client, bugs, conf)
         expected_fields = {
             "project": {"key": "TARGET-PROJECT"},
@@ -103,13 +103,14 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
-            f"{JIRABugTracker.field_target_version}": [{"name": "4.14.z"}],
+            "customfield_12319940": [{"name": "4.14.z"}],
             "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"]
         }
         jira_client.create_issue.assert_called_once_with(expected_fields)
         self.assertEqual([b for b in actual], [1])
 
-    def test_clone_bugs2(self):
+    @patch("elliottlib.cli.find_bugs_kernel_cli.get_jira_field_id")
+    def test_clone_bugs2(self, get_jira_field_id: Mock):
         # Test cloning a bug that has already been cloned
         runtime = MagicMock()
         cli = FindBugsKernelCli(
@@ -136,6 +137,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         cli._tracker_map = {
             bug_id: tracker for bug_id in range(5)
         }
+        get_jira_field_id.return_value = "customfield_12319940"
         actual = cli._clone_bugs(jira_client, bugs, conf)
         expected_fields = {
             "project": {"key": "TARGET-PROJECT"},
@@ -146,7 +148,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "description": "Cloned from https://example.com/1 by OpenShift ART Team.\n\n----\nfake description 1",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
-            f"{JIRABugTracker.field_target_version}": [{"name": "4.14.z"}],
+            "customfield_12319940": [{"name": "4.14.z"}],
             "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"]
         }
         found_issues[0].update.assert_called_once_with(expected_fields)
@@ -169,7 +171,8 @@ TRACKER-1	1	BUG-1	Verified	test bug 1
 TRACKER-1	2	N/A	Verified	test bug 2
 """.strip())
 
-    def test_new_jira_fields_from_bug(self):
+    @patch("elliottlib.cli.find_bugs_kernel_cli.get_jira_field_id")
+    def test_new_jira_fields_from_bug(self, get_jira_field_id: Mock):
         bug = MagicMock(spec=Bug, id=12345, cf_zstream_target_release="8.6.0",
                         weburl="https://example.com/12345",
                         groups=[], priority="high", keywords=[],
@@ -183,9 +186,11 @@ TRACKER-1	2	N/A	Verified	test bug 2
             component="Target Component",
             version="4.14", target_release="4.14.z",
             candidate_brew_tag="fake-candidate", prod_brew_tag="fake-prod")
+        get_jira_field_id.return_value = "customfield_12319940"
+        jira_client = MagicMock(spec=JIRA)
 
         # Test 1: new jira fields for a public bug
-        actual = FindBugsKernelCli._new_jira_fields_from_bug(bug, "4.12.z", tracker.key, conf)
+        actual = FindBugsKernelCli._new_jira_fields_from_bug(jira_client, bug, "4.12.z", tracker.key, conf)
         expected = {
             "project": {"key": "TARGET-PROJECT"},
             "components": [{"name": "Target Component"}],
@@ -195,14 +200,14 @@ TRACKER-1	2	N/A	Verified	test bug 2
             "description": "Cloned from https://example.com/12345 by OpenShift ART Team.\n\n----\nfake description 12345",
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.12"}],
-            f"{JIRABugTracker.field_target_version}": [{"name": "4.12.z"}],
+            "customfield_12319940": [{"name": "4.12.z"}],
             "labels": ["art:cloned-kernel-bug", "art:bz#12345", "art:kmaint:TRACKER-1"],
         }
         self.assertEqual(actual, expected)
 
         # Test 2: new jira fields for a private bug
         bug.groups = ["private"]
-        actual = FindBugsKernelCli._new_jira_fields_from_bug(bug, "4.12.z", tracker.key, conf)
+        actual = FindBugsKernelCli._new_jira_fields_from_bug(jira_client, bug, "4.12.z", tracker.key, conf)
         self.assertEqual(actual["security"], {'name': 'Red Hat Employee'})
 
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._print_report")

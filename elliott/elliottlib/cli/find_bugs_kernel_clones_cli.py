@@ -13,7 +13,7 @@ from elliottlib import Runtime, early_kernel
 from elliottlib.cli.common import cli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import JIRABugTracker
+from elliottlib.bzutil import get_jira_field_id
 
 
 # [lmeyer] I like terms to distinguish between the two types of Jira issues we deal with here.
@@ -88,7 +88,7 @@ class FindBugsKernelClonesCli:
             components = {c.name for c in bug.fields.components}
             if config.target_jira.component not in components:
                 raise ValueError(f"Jira {key} is not set to component {config.target_jira.component}")
-            target_versions = getattr(bug.fields, JIRABugTracker.field_target_version)
+            target_versions = getattr(bug.fields, get_jira_field_id(jira_client, "Target Version"))
             target_releases = {t.name for t in target_versions}
             if config.target_jira.target_release not in target_releases:
                 raise ValueError(f"Jira {key} has invalid target version: {target_versions}")

@@ -15,7 +15,7 @@ from elliottlib import Runtime, constants, early_kernel
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import JIRABugTracker
+from elliottlib.bzutil import get_jira_field_id
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
@@ -166,7 +166,7 @@ class FindBugsKernelCli:
             found_issues = cast(List[Issue], _search_issues(jira_client, jql_str=jql_str))
             if not found_issues:  # this bug is not already cloned into OCP Jira
                 logger.info("Creating JIRA for bug %s...", bug.weburl)
-                fields = self._new_jira_fields_from_bug(bug, ocp_target_release, kmaint_tracker_key, conf)
+                fields = self._new_jira_fields_from_bug(jira_client, bug, ocp_target_release, kmaint_tracker_key, conf)
                 if not self.dry_run:
                     issue = jira_client.create_issue(fields)
                     jira_client.add_remote_link(issue.key, {"title": f"BZ{bug_id}", "url": bug.weburl})
@@ -180,7 +180,7 @@ class FindBugsKernelCli:
                 result[bug_id] = found_issues
                 if not self.reconcile:
                     continue
-                fields = self._new_jira_fields_from_bug(bug, ocp_target_release, kmaint_tracker_key, conf)
+                fields = self._new_jira_fields_from_bug(jira_client, bug, ocp_target_release, kmaint_tracker_key, conf)
                 for issue in found_issues:
                     if issue.fields.status.name.lower() == "closed":
                         logger.info("No need to reconcile %s because it is Closed.", issue.key)
@@ -223,7 +223,7 @@ class FindBugsKernelCli:
             return
 
     @staticmethod
-    def _new_jira_fields_from_bug(bug: Bug, ocp_target_version: str, kmaint_tracker: Optional[str], conf: KernelBugSweepConfig.TargetJiraConfig):
+    def _new_jira_fields_from_bug(jira_client, bug: Bug, ocp_target_version: str, kmaint_tracker: Optional[str], conf: KernelBugSweepConfig.TargetJiraConfig):
         summary = f"{bug.summary} [rhocp-{ocp_target_version}]"
         if not summary.startswith("kernel"):  # ensure bug summary start with "kernel"
             summary = "kernel[-rt]: " + summary
@@ -245,7 +245,7 @@ class FindBugsKernelCli:
             "description": bug.description,
             "issuetype": {"name": "Bug"},
             "versions": [{"name": ocp_target_version[:ocp_target_version.rindex(".")]}],
-            f"{JIRABugTracker.field_target_version}": [{
+            get_jira_field_id(jira_client, "Target Version"): [{
                 "name": ocp_target_version,
             }],
             "labels": ["art:cloned-kernel-bug", f"art:bz#{bug.id}"],
