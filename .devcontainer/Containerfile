@@ -25,6 +25,8 @@ RUN dnf install -y \
     bash-completion vim tmux procps-ng psmisc wget net-tools iproute socat \
     # install rcm-tools
     koji brewkoji rhpkg \
+    # add sigstore cosign tool
+    https://download.eng.bos.redhat.com/brewroot/vol/rhel-8/packages/cosign/2.2.2/3/x86_64/cosign-2.2.2-3.x86_64.rpm \
  && dnf clean all \
  && ln -sfn /usr/bin/python3 /usr/bin/python   # make "python" available
 
@@ -33,6 +35,8 @@ ARG OC_VERSION=latest
 RUN wget -O /tmp/openshift-client-linux-"$OC_VERSION".tar.gz https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/"$OC_VERSION"/openshift-client-linux.tar.gz \
   && tar -C /usr/local/bin -xzf  /tmp/openshift-client-linux-"$OC_VERSION".tar.gz oc kubectl \
   && rm /tmp/openshift-client-linux-"$OC_VERSION".tar.gz
+# install yq
+RUN GOBIN=/usr/bin/ go install github.com/mikefarah/yq/v4@latest
 
 # change default locale to en_US.UTF-8 - tito requires this
 RUN echo 'LANG="en_US.UTF-8"' > /etc/locale.conf
@@ -60,11 +64,11 @@ WORKDIR /workspaces/art-tools
 COPY . .
 RUN chown "$USERNAME" -R /workspaces/art-tools
 RUN sudo -u "$USERNAME" pip3 install --user -U "pip>=22.3" "setuptools>=64"
+RUN sudo -u "$USERNAME" pip3 install --user -e ./artcommon
 RUN sudo -u "$USERNAME" pip3 install --user -e ./doozer
 RUN sudo -u "$USERNAME" pip3 install --user -e ./elliott
 RUN sudo -u "$USERNAME" pip3 install --user -e ./pyartcd
 RUN cd elliott && sudo -u "$USERNAME" pip3 install --user -e .[tests]
-RUN GOBIN=/usr/bin/ go install github.com/mikefarah/yq/v4@latest
 USER "$USER_UID"
 ENV ELLIOTT_DATA_PATH=https://github.com/openshift-eng/ocp-build-data \
     _ELLIOTT_DATA_PATH=/workspaces/ocp-build-data \

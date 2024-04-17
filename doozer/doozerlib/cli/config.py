@@ -5,6 +5,7 @@ import yaml
 import sys
 import io
 import pathlib
+import re
 from typing import Dict
 from ghapi.core import GhApi
 
@@ -163,16 +164,19 @@ def config_read_group(runtime, key, as_len, as_yaml, permit_missing_group, defau
 
 def get_releases(runtime) -> dict:
     """
-    Uses GitHub API to fecth releases.yaml from openshift-eng/ocp-build-data for a given group
+    Uses GitHub API to fetch releases.yaml from openshift-eng/ocp-build-data for a given group
 
     Parses the file and returns it as a dictionary
     """
 
-    if not os.environ.get('GITHUB_TOKEN', None):
-        raise DoozerFatalError('A GITHUB_TOKEN environment variable must be defined!')
-    github_token = os.environ['GITHUB_TOKEN']
+    if not runtime.data_path.startswith('https://'):
+        # assume data_path is a local path; GhApi couldn't handle other sources anyway
+        with open(f'{runtime.data_path}/releases.yml', 'r') as file:
+            return yaml.safe_load(file)
 
-    # TODO: data_path can be a local path in which case this will fail
+    if not (github_token := os.environ.get('GITHUB_TOKEN')):
+        raise DoozerFatalError('A GITHUB_TOKEN environment variable must be defined!')
+
     owner = runtime.data_path.split('/')[-2]
     api = GhApi(owner=owner, repo='ocp-build-data', token=github_token)
     blob = api.repos.get_content('releases.yml', ref=runtime.group_commitish)
