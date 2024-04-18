@@ -302,7 +302,9 @@ async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLi
 
     # Copy local dir to remote
     cmd = [
-        "rsync", "-av", "--links", "--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
+        "rsync", "-av", 
+        "--copy-links", # FIXME: --links should be used when remote vm ocp-artifacts gets access to up to date brewroot
+        "--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
         "--perms", "--", f"{local_base_dir}/", f"{PLASHET_REMOTE_HOST}:{remote_base_dir}"
     ]
 
