@@ -1362,6 +1362,16 @@ class ImageDistGitRepo(DistGitRepo):
             elif node.kind in ["operator", "command"]:
                 cmd_nodes.append(node)
 
+        # remove dockerfile directive options that bashlex doesn't parse (e.g "RUN --mount=foobar")
+        # https://docs.docker.com/reference/dockerfile/#run
+        docker_cmd_options = []
+        for word in cmd.split():
+            if word.startswith("--"):
+                docker_cmd_options.append(word)
+                cmd = cmd.replace(word, "")
+            else:
+                break
+
         try:
             append_nodes_from(bashlex.parse(cmd)[0])
         except bashlex.errors.ParsingError as e:
@@ -1409,6 +1419,8 @@ class ImageDistGitRepo(DistGitRepo):
             # wrapping commands/args in quotes, or with commands that aren't valid
             # to begin with. let's not worry about that; it need not be invulnerable.
 
+        if docker_cmd_options:
+            cmd = " ".join(docker_cmd_options) + " " + cmd
         return changed, cmd
 
     def _clean_repos(self, dfp):
