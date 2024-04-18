@@ -62,7 +62,7 @@ class RpmMirror:
 class Ocp4Pipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
                  pin_builds: bool, build_rpms: str, rpm_list: str, build_images: str, image_list: str,
-                 skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool=False,
+                 skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool = False,
                  lock_identifier: str = None):
 
         self.runtime = runtime
