@@ -79,22 +79,20 @@ def images_streams():
 @click.option('--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, only these stream names will be mirrored.')
 @click.option('--only-if-missing', default=False, is_flag=True, help='Only mirror the image if there is presently no equivalent image upstream.')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Append "test" to destination images to exercise live-test-mode buildconfigs')
+@click.option('--force', default=False, is_flag=True, help='Force the mirror operation even if not defined in config upstream.')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
-def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, dry_run):
+def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, force, dry_run):
     runtime.initialize(clone_distgits=False, clone_source=False)
     runtime.assert_mutation_is_permitted()
 
-    if streams:
-        user_specified = True
-    else:
-        user_specified = False
+    if not streams:
         streams = runtime.get_stream_names()
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
-        if config.mirror is True or user_specified:
+        if config.mirror is True or force:
             upstream_dest = config.upstream_image
             mirror_arm = False
             if upstream_dest is Missing:
@@ -176,13 +174,17 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, dry
 
 
 @images_streams.command('check-upstream', short_help='Dumps information about CI buildconfigs/mirrored images associated with this group.')
+@click.option('--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, '
+                                                                                            'only check these streams')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
 @pass_runtime
-def images_streams_check_upstream(runtime, live_test_mode):
+def images_streams_check_upstream(runtime, streams, live_test_mode):
     runtime.initialize(clone_distgits=False, clone_source=False)
 
     istags_status = []
-    upstreaming_entries = _get_upstreaming_entries(runtime)
+    if not streams:
+        streams = runtime.get_stream_names()
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
 
@@ -286,9 +288,11 @@ def _get_upstreaming_entries(runtime, stream_names=None):
     :return: Returns a map[name] => { transform: '...', upstream_image.... } where name is a stream name or distgit key.
     """
 
+    fetch_image_metas = False
     if not stream_names:
         # If not specified, use all.
         stream_names = runtime.get_stream_names()
+        fetch_image_metas = True
 
     upstreaming_entries = {}
     streams_config = runtime.streams
@@ -299,16 +303,17 @@ def _get_upstreaming_entries(runtime, stream_names=None):
         if config.upstream_image is not Missing:
             upstreaming_entries[stream] = streams_config[stream]
 
-    # Some images also have their own upstream information. This allows them to
-    # be mirrored out into upstream, optionally transformed, and made available as builder images for
-    # other images without being in streams.yml.
-    for image_meta in runtime.ordered_image_metas():
-        if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
-            upstream_entry = Model(dict_to_model=image_meta.config.content.source.ci_alignment.primitive())  # Make a copy
-            upstream_entry['image'] = image_meta.pull_url()  # Make the image metadata entry match what would exist in streams.yml.
-            if upstream_entry.final_user is Missing:
-                upstream_entry.final_user = image_meta.config.final_stage_user
-            upstreaming_entries[image_meta.distgit_key] = upstream_entry
+    if fetch_image_metas:
+        # Some images also have their own upstream information. This allows them to
+        # be mirrored out into upstream, optionally transformed, and made available as builder images for
+        # other images without being in streams.yml.
+        for image_meta in runtime.ordered_image_metas():
+            if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
+                upstream_entry = Model(dict_to_model=image_meta.config.content.source.ci_alignment.primitive())  # Make a copy
+                upstream_entry['image'] = image_meta.pull_url()  # Make the image metadata entry match what would exist in streams.yml.
+                if upstream_entry.final_user is Missing:
+                    upstream_entry.final_user = image_meta.config.final_stage_user
+                upstreaming_entries[image_meta.distgit_key] = upstream_entry
 
     return upstreaming_entries
 
