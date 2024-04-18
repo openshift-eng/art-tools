@@ -62,7 +62,8 @@ class RpmMirror:
 class Ocp4Pipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
                  pin_builds: bool, build_rpms: str, rpm_list: str, build_images: str, image_list: str,
-                 skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, lock_identifier: str = None):
+                 skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool=False,
+                 lock_identifier: str = None):
 
         self.runtime = runtime
         self.assembly = assembly
@@ -82,6 +83,7 @@ class Ocp4Pipeline:
         self.rpm_mirror.url = f'{constants.MIRROR_BASE_URL}/enterprise/enterprise/{self.version.stream}'
         self.all_image_build_failed = False
         self.comment_on_pr = comment_on_pr
+        self.copy_links = copy_links
 
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.data_path = data_path
@@ -566,7 +568,8 @@ class Ocp4Pipeline:
                 doozer_working=self._doozer_working,
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
-                dry_run=self.runtime.dry_run
+                dry_run=self.runtime.dry_run,
+                copy_links=self.copy_links
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -961,11 +964,13 @@ class Ocp4Pipeline:
 @click.option('--ignore-locks', is_flag=True, default=False,
               help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
 @click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
+@click.option('--copy-links', is_flag=True, default=False,
+              help='Call rsync with --copy-links instead of --links')
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str, pin_builds: bool,
                build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
-               mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool):
+               mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool, copy_links: bool):
 
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
@@ -985,7 +990,8 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         skip_plashets=skip_plashets,
         mail_list_failure=mail_list_failure,
         lock_identifier=lock_identifier,
-        comment_on_pr=comment_on_pr
+        comment_on_pr=comment_on_pr,
+        copy_links=copy_links
     )
 
     if ignore_locks:
