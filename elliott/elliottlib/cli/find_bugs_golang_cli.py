@@ -22,14 +22,15 @@ from pyartcd import constants as pyartcd_constants
 
 
 class FindBugsGolangCli:
-    def __init__(self, runtime: Runtime, pullspec: str, cve_id, analyze: bool,
-                 fixed_in_nvr, update_tracker: bool, dry_run: bool):
+    def __init__(self, runtime: Runtime, pullspec: str, cve_id: str, analyze: bool,
+                 fixed_in_nvr: str, update_tracker: bool, art_jira: str, dry_run: bool):
         self._runtime = runtime
         self._logger = runtime.logger
         self.cve_id = cve_id
         self.analyze = analyze
         self.fixed_in_nvr = fixed_in_nvr
         self.update_tracker = update_tracker
+        self.art_jira = art_jira
         self.dry_run = dry_run
 
         # cache
@@ -214,7 +215,8 @@ class FindBugsGolangCli:
 
         go_nvr_map = get_golang_rpm_nvrs(nvrs, self._logger)
         if fixed_in_nvr:
-            fixed_nvrs = []
+            final_fixed_nvrs = []
+            final_fixed_in_nvrs = []
             comment = ''
             for go_build in go_nvr_map.keys():
                 fix_found = False
@@ -224,13 +226,16 @@ class FindBugsGolangCli:
                         formatted_nvrs = [f'{n[0]}-{n[1]}-{n[2]}' for n in go_nvr_map[go_build]]
                         self._logger.info(f'NVRs found to be built with the desired golang build {go_build}: '
                                           f'{formatted_nvrs}')
-                        fixed_nvrs.extend(formatted_nvrs)
+                        final_fixed_in_nvrs.append(f)
+                        final_fixed_nvrs.extend(formatted_nvrs)
+                        break
                 if not fix_found:
                     self._logger.info(f'NVRs found to be on different golang build {go_build}: {go_nvr_map[go_build]}')
 
-            fixed = len(fixed_nvrs) == len(nvrs)
+            fixed = len(final_fixed_nvrs) == len(nvrs)
             if fixed:
-                comment = f"Component NVRs found in to be built with golang builds containing fix: {formatted_nvrs}"
+                comment = (f"Component NVRs {final_fixed_nvrs} in ART candidate tags found to be built with golang "
+                           f"builds containing fix: {final_fixed_in_nvrs}")
             return fixed, comment
         else:
             return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
@@ -373,9 +378,10 @@ class FindBugsGolangCli:
 
             if fixed:
                 if self.update_tracker:
-                    # TODO: fix this
-                    message = "Refer to ART ticket for details"
-                    comment = f"{comment}. {message}"
+                    if not self.art_jira:
+                        raise ElliottFatalError("Please provide ART Jira ticket for reference with --art-jira")
+                    message = f"Refer to {self.art_jira} for details"
+                    comment = f"{comment}. \n{message}"
                     if bug.status in ['New', 'ASSIGNED', 'POST']:
                         self.jira_tracker.update_bug_status(bug, 'MODIFIED', comment=comment, noop=self.dry_run)
                     else:
@@ -403,6 +409,7 @@ class FindBugsGolangCli:
               is_flag=True,
               default=False,
               help="If a tracker bug is fixed then comment with analysis and move to ON_QA")
+@click.option('--art-jira', required=True, help='Related ART Jira ticket for reference e.g. ART-1234')
 @click.option("--dry-run", "--noop",
               is_flag=True,
               default=False,
@@ -410,7 +417,8 @@ class FindBugsGolangCli:
 @click.pass_obj
 @click_coroutine
 async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, analyze: bool,
-                               fixed_in_nvr, update_tracker: bool, dry_run: bool):
+                               fixed_in_nvr, update_tracker: bool,
+                               art_jira: str, dry_run: bool):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
     Pass in --cve-id to fetch bugs for a specific CVE ID
@@ -431,14 +439,18 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, analyze:
 
     $ elliott -g openshift-4.14 find-bugs:golang --analyze
 
+    # Specify fixed in nvrs
+
+    $ elliott -g openshift-4.14 find-bugs:golang --analyze --fixed-in-nvr golang-1.20.12-2.el9_3 --fixed-in-nvr
+    golang-1.20.12-1.el8_9
+
     # Determine if currently open golang tracker bugs are fixed against 4.14.8 assembly.
 
     $ elliott -g openshift-4.14 --assembly 4.14.8 find-bugs:golang --analyze
 
-    # Determine if currently open golang tracker bugs are fixed against nightly
+    # Update bugs which are determined to be fixed
 
-    $ elliott -g openshift-4.14 find-bugs:golang --pullspec
-    registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2024-04-09-154626
+    $ elliott -g openshift-4.14 find-bugs:golang --analyze --update-tracker --art-jira ART-1234 --dry-run
 
     """
     runtime.initialize(mode="rpms")  # disabled=True for microshift
@@ -462,6 +474,7 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, analyze:
         analyze=analyze,
         fixed_in_nvr=fixed_in_nvr,
         update_tracker=update_tracker,
+        art_jira=art_jira,
         dry_run=dry_run
     )
     await cli.run()
