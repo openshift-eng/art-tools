@@ -1,7 +1,10 @@
+import functools
+
 import click
 import re
 
 from typing import Dict, List
+from prettytable import PrettyTable
 
 from elliottlib import Runtime, constants, early_kernel
 from elliottlib.cli.common import cli, click_coroutine
@@ -19,11 +22,12 @@ from pyartcd import constants as pyartcd_constants
 
 
 class FindBugsGolangCli:
-    def __init__(self, runtime: Runtime, pullspec: str, cve_id, fixed_in_nvr,
-                 update_tracker: bool, dry_run: bool):
+    def __init__(self, runtime: Runtime, pullspec: str, cve_id, analyze: bool,
+                 fixed_in_nvr, update_tracker: bool, dry_run: bool):
         self._runtime = runtime
         self._logger = runtime.logger
         self.cve_id = cve_id
+        self.analyze = analyze
         self.fixed_in_nvr = fixed_in_nvr
         self.update_tracker = update_tracker
         self.dry_run = dry_run
@@ -264,7 +268,7 @@ class FindBugsGolangCli:
         bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
 
         def is_valid(b: JIRABug):
-            if self.cve_id and not b.summary.startswith(self.cve_id):
+            if self.cve_id and b.cve_id != self.cve_id:
                 return False
 
             # Do not touch embargoed bugs
@@ -280,10 +284,37 @@ class FindBugsGolangCli:
             return not (comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT)
 
         bugs = [b for b in bugs if is_valid(b)]
-        bugs = sorted(bugs, key=lambda b: b.id)
         logger.info(f"Found {len(bugs)} bugs")
+        if not bugs:
+            return
+
+        cves = sorted(set([b.cve_id for b in bugs]))
+        logger.info(f"Found bugs for {len(cves)} CVEs: {cves}")
+
+        def compare(b1, b2):
+            # compare function for a bug
+            # sort by CVE ID
+            # CVEIDs created earlier would be at the top
+            # CVE-2023-XYZ takes precedence over CVE-2024-XYZ
+            if b1.cve_id < b2.cve_id:
+                return 1
+            elif b1.cve_id == b2.cve_id:
+                # if CVE IDs are same, sort by created date
+                # bugs created earlier would be at the top
+                return b1.created_days_ago() < b2.created_days_ago()
+            else:
+                return -1
+        bugs = sorted(bugs, key=functools.cmp_to_key(compare))
+
+        table = PrettyTable()
+        table.align = "l"
+        table.field_names = ["ID", "CVE", "pscomponent", "Status", "Age (days)"]
         for b in bugs:
-            logger.info(f"{b.id} status={b.status} component={b.whiteboard_component}")
+            table.add_row([b.id, b.cve_id, b.whiteboard_component, b.status, b.created_days_ago()])
+        print(table)
+
+        if not self.analyze:
+            return
 
         self.flaw_bugs: Dict[int, BugzillaBug] = {}
         fixed_bugs, unfixed_bugs = [], []
@@ -334,6 +365,8 @@ class FindBugsGolangCli:
               help="Pullspec of release payload to check against. If not provided, latest accepted nightly will be used")
 @click.option("--cve-id",
               help="CVE ID (example: CVE-2024-1394) that trackers should be fetched for")
+@click.option("--analyze", is_flag=True,
+              help="Analyze if found bugs are fixed")
 @click.option("--fixed-in-nvr", multiple=True,
               help="golang build nvr (example: golang-1.20.12-2.el9_3) that given CVE(s) fixed in")
 @click.option("--update-tracker",
@@ -346,20 +379,36 @@ class FindBugsGolangCli:
               help="Don't change anything")
 @click.pass_obj
 @click_coroutine
-async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, fixed_in_nvr, update_tracker: bool,
-                               dry_run: bool):
-    """Find golang tracker bugs in jira and determine if they are fixed.
-    Trackers are fetched from the OCPBUGS project that are assigned to Release component
-    Passing in an assembly is the most straightforward way to analyze golang-builder as well as rpm trackers.
-    Use --pullspec <nightly_pullspec> to determine for builds in a nightly.
+async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, analyze: bool,
+                               fixed_in_nvr, update_tracker: bool, dry_run: bool):
+    """Find golang security tracker bugs in jira and determine if they are fixed.
+    Trackers are fetched from the OCPBUGS project
+    Pass in --cve-id to fetch bugs for a specific CVE ID
+    Pass in --analyze to determine if found bugs are fixed.
+    By default, fixed-in-golang-version is fetched from flaw bug metadata
+    Pass in --fixed-in-nvr to specify that given CVE(s) are fixed in given golang build nvrs
+    Bugs are compared with latest builds in `stream` assembly by default. Pass --assembly to specify.
+    For openshift-golang-builder-container build, use --pullspec <payload_pullspec> to determine if fixed for builds in
+    given pullspec
     Note: rpm trackers cannot be processed if --pullspec is used, for that rely on --assembly.
     --update-tracker: If a tracker bug is fixed then comment on it with analysis and move the bug state to ON_QA
 
+    # Fetch open golang tracker bugs in 4.14
+
+    $ elliott -g openshift-4.14 find-bugs:golang
+
+    # Determine if currently open golang tracker bugs are fixed in stream assembly.
+
+    $ elliott -g openshift-4.14 find-bugs:golang --analyze
+
     # Determine if currently open golang tracker bugs are fixed against 4.14.8 assembly.
 
-    $ elliott -g openshift-4.14 --assembly 4.14.8 find-bugs:golang
+    $ elliott -g openshift-4.14 --assembly 4.14.8 find-bugs:golang --analyze
 
-    $ elliott -g openshift-4.14 find-bugs:golang --pullspec quay.io/openshift-release-dev/ocp-release:4.14.8-x86_64
+    # Determine if currently open golang tracker bugs are fixed against nightly
+
+    $ elliott -g openshift-4.14 find-bugs:golang --pullspec
+    registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2024-04-09-154626
 
     """
     runtime.initialize(mode="rpms")  # disabled=True for microshift
@@ -380,6 +429,7 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, fixed_in
         runtime=runtime,
         pullspec=pullspec,
         cve_id=cve_id,
+        analyze=analyze,
         fixed_in_nvr=fixed_in_nvr,
         update_tracker=update_tracker,
         dry_run=dry_run
