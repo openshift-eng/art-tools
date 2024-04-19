@@ -409,7 +409,7 @@ class FindBugsGolangCli:
               is_flag=True,
               default=False,
               help="If a tracker bug is fixed then comment with analysis and move to ON_QA")
-@click.option('--art-jira', required=True, help='Related ART Jira ticket for reference e.g. ART-1234')
+@click.option('--art-jira', help='Related ART Jira ticket for reference e.g. ART-1234')
 @click.option("--dry-run", "--noop",
               is_flag=True,
               default=False,
