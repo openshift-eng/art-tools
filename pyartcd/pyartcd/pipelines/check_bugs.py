@@ -7,6 +7,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
 BASE_URL = 'https://api.openshift.com/api/upgrades_info/v1/graph?arch=amd64&channel=fast'
+OCP_BUILD_DATA_URL = 'https://github.com/openshift-eng/ocp-build-data'
 
 
 class CheckBugsPipeline:
@@ -86,6 +87,15 @@ class CheckBugsPipeline:
 
         # Check pre-release
         next_minor = self.get_next_minor(self.version)
+
+        # Check if the branch exist on GitHub first
+        rc, _, _ = await exectools.cmd_gather_async(f'git ls-remote --exit-code '
+                                                    f'--heads {OCP_BUILD_DATA_URL} '
+                                                    f'openshift-{next_minor}', check=False)
+        if rc != 0:
+            self.logger.info(f'Next minor branch openshift-{next_minor} doesnt exist, probably because its not time yet.')
+            return
+
         if not await self._is_build_permitted(next_minor):
             self.logger.info('Skipping regression checks for %s as %s is not in "release" state',
                              self.version, next_minor)
