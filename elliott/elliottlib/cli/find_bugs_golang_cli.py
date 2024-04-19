@@ -1,5 +1,5 @@
 import functools
-
+import requests
 import click
 import re
 
@@ -51,6 +51,12 @@ class FindBugsGolangCli:
                                      "flaw bug for now")
                 return None
             self.flaw_bugs[flaw_id] = flaw_bug
+        if 'golang:' not in flaw_bug.summary.lower():
+            self._logger.warning(f"{flaw_bug.id} doesn't have `golang:` in title. title=`{flaw_bug.summary}`. "
+                                 "It does not look like a golang compiler cve and therefore we cannot trust it's "
+                                 "`Fixed in Version` field. Run with --fixed-in-nvr to specify the golang compiler "
+                                 "nvr this CVE is fixed in. Ignoring it for now")
+            return None
 
         fixed_in = flaw_bug.fixed_in
         # value can be "golang 1.20.9, golang 1.21.2"
@@ -290,6 +296,15 @@ class FindBugsGolangCli:
 
         cves = sorted(set([b.cve_id for b in bugs]))
         logger.info(f"Found bugs for {len(cves)} CVEs: {cves}")
+        cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
+        for cve_id in cves:
+            response = requests.get(cve_url.format(cve_id=cve_id))
+            try:
+                data = response.json()
+            except Exception as e:
+                logger.warning(f"Could not fetch CVE data for {cve_id}. Is bug embargoed?: {e}")
+                continue
+            logger.info(f"{cve_id} - {data['bugzilla']['description']} - {data['bugzilla']['url']}")
 
         def compare(b1, b2):
             # compare function for a bug
@@ -311,10 +326,25 @@ class FindBugsGolangCli:
         table.field_names = ["ID", "CVE", "pscomponent", "Status", "Age (days)"]
         for b in bugs:
             table.add_row([b.id, b.cve_id, b.whiteboard_component, b.status, b.created_days_ago()])
-        print(table)
+        click.echo(table)
 
         if not self.analyze:
             return
+
+        if not self.fixed_in_nvr:
+            # golang compiler cve title text always has `golang:`
+            # we cannot auto determine fix version for
+            # golang lib cves e.g. `podman: net/http, golang.org/x/net/http2:`, `golang-fips/openssl:`
+            # so warn if not running with --fixed-in-nvr
+            invalid_bugs = sorted(b.id for b in bugs if 'golang:' not in b.summary.lower())
+            bugs = [b for b in bugs if 'golang:' in b.summary.lower()]
+            if invalid_bugs:
+                logger.warning("These bugs do not have `golang:` in title, therefore they do not look like golang "
+                               "compiler cves and we cannot auto-determine their fixed-in-golang-version. Run "
+                               f"with --fixed-in-nvr to specify the golang compiler nvr these CVEs are fixed in. {invalid_bugs}")
+
+        if not bugs:
+            exit(1)
 
         self.flaw_bugs: Dict[int, BugzillaBug] = {}
         fixed_bugs, unfixed_bugs = [], []
