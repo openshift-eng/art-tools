@@ -1,6 +1,7 @@
 import json
 import os.path
 import shutil
+import time
 import traceback
 
 import click
@@ -561,6 +562,9 @@ class Ocp4Pipeline:
 
         # Build compose
         try:
+            timeout = 30 # minutes
+            self.runtime.logger.info(f'Waiting until we can be reasonably sure ocp-artifacts copy of brew root is up to date: {timeout} minutes')
+            time.sleep(timeout * 60 * 60)
             plashets_built = await plashets.build_plashets(
                 stream=self.version.stream,
                 release=self.version.release,
