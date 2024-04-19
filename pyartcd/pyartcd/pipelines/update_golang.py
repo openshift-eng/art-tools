@@ -139,7 +139,7 @@ class UpdateGolangPipeline:
 
         need_update = False
         if len(builder_nvrs) == len(el_nvr_map):  # existing builders found for all rhel versions
-            _LOGGER.info(f"Checking if existing builder images are being used in streams.yml")
+            _LOGGER.info("Checking if existing builder images are being used in streams.yml")
 
             owner, repo = 'openshift-eng', 'ocp-build-data'
             branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
