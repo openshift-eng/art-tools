@@ -99,7 +99,6 @@ class Bug:
             return cve_id.group()
         return None
 
-
     @staticmethod
     def get_target_release(bugs: List[Bug]) -> str:
         """
