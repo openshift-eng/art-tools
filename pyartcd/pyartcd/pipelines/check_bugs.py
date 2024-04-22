@@ -22,6 +22,8 @@ class CheckBugsPipeline:
     async def run(self):
         # Load group config
         self.group_config = await util.load_group_config(group=f'openshift-{self.version}', assembly='stream')
+        if self.group_config['software_lifecycle']['phase'] != 'release':
+            return None
 
         # Find issues
         await asyncio.gather(*[self._find_blockers(), self._find_regressions()])
