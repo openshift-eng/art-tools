@@ -13,7 +13,7 @@ from artcommonlib.constants import BREW_HUB
 from artcommonlib.format_util import green_print, yellow_print, red_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from pyartcd import exectools
-from pyartcd import constants
+from pyartcd import jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.rpm_utils import parse_nvr
@@ -337,5 +337,6 @@ The new NVRs are:
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str):
+async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str,
+                        scratch: bool = False):
     await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira, scratch).run()
