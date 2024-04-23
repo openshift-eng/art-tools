@@ -24,14 +24,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str],
-                 permit_missing_qe_tag: bool, art_jira: str):
+    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str):
         self.runtime = runtime
         self.ocp_version = ocp_version
         self.create_ticket = create_ticket
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
-        self.permit_missing_qe_tag = permit_missing_qe_tag
         self.koji_session = koji.ClientSession(BREW_HUB)
 
         self.github_token = os.environ.get('GITHUB_TOKEN')
@@ -94,12 +92,6 @@ class UpdateGolangPipeline:
                 if self.is_latest_build(el_v, nvr):
                     raise ValueError(f'{nvr} is already the latest build, run '
                                      'only with nvrs that are not latest or run without --create-tagging-ticket')
-                # check if all the necessary tags exist
-                if not self.has_necessary_tags(nvr):
-                    if self.permit_missing_qe_tag:
-                        _LOGGER.warning(f'{nvr} does not have the necessary qe tags, but --permit-missing-qe-tag was used')
-                        continue
-                    raise ValueError(f'{nvr} does not have the necessary qe tags. Use --permit-missing-qe-tag to ignore this')
 
             _LOGGER.info('Creating Jira ticket to tag golang builds in buildroots')
             self.create_jira_ticket(el_nvr_map, go_version)
@@ -231,14 +223,6 @@ class UpdateGolangPipeline:
         url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
         return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
 
-    def has_necessary_tags(self, nvr: str) -> bool:
-        tag_regex = r'^RH[EBS]A-.*(pending|released)$'
-        tags = [t['name'] for t in self.koji_session.listTags(build=nvr)]
-        if any(re.match(tag_regex, t) for t in tags):
-            return True
-        _LOGGER.info(f'NVR {nvr} does not have any tags matching {tag_regex}')
-        return False
-
     def is_latest_build(self, el_v: int, nvr: str) -> bool:
         build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
         _LOGGER.info(f'Checking build root {build_tag} for latest build')
@@ -303,12 +287,9 @@ The new NVRs are:
 @click.option('--ocp-version', required=True, help='OCP version to update golang for')
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
-@click.option('--permit-missing-qe-tag', is_flag=True, default=False,
-              help='Permit missing qe tags on builds')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str],
-                        permit_missing_qe_tag: bool, art_jira: str):
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, permit_missing_qe_tag, art_jira).run()
+async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str):
+    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira).run()
