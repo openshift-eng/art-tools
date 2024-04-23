@@ -8,13 +8,14 @@ from ghapi.all import GhApi
 from specfile import Specfile
 
 from artcommonlib.constants import BREW_HUB
-from artcommonlib.release_util import split_el_suffix_in_release
 from pyartcd import exectools
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from doozerlib.rpm_utils import parse_nvr
 from elliottlib import util as elliottutil
+from pyartcd.pipelines.update_golang import (is_latest_and_available,
+                                             extract_and_validate_golang_nvrs)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,51 +29,7 @@ class RebuildGolangRPMsPipeline:
         self.koji_session = koji.ClientSession(BREW_HUB)
 
     async def run(self):
-        # validate that the ocp version allows given rhel versions
-        # TODO: we can deduce this from streams.yml keys that are defined for the group
-        # for now we will hardcode this mapping
-        ocp_el_map = {
-            '4.10': {7, 8},
-            '4.11': {7, 8},
-            '4.12': {8, 9},
-            '4.13': {8, 9},
-            '4.14': {8, 9},
-            '4.15': {8, 9},
-            '4.16': {8, 9},
-        }
-        if self.ocp_version not in ocp_el_map:
-            raise click.BadParameter(f'OCP version is not supported right now: {self.ocp_version}')
-
-        supported_els = ocp_el_map[self.ocp_version]
-        if len(self.go_nvrs) > len(supported_els):
-            raise click.BadParameter(f'There should be max 1 nvr for each supported rhel version: {supported_els}')
-
-        # extract & validate rhel versions and golang versions from nvrs
-        el_nvr_map = dict()  # {8: 'golang-1.16.7-1.el8', 9: 'golang-1.16.7-1.el9'}
-        go_version = None
-        for nvr in self.go_nvrs:
-            parsed_nvr = parse_nvr(nvr)
-            name = parsed_nvr['name']
-            if not (name == 'golang' or name.startswith('go-toolset')):
-                raise ValueError(f'Only golang/go-toolset nvrs are supported, found: {name}')
-            if go_version and go_version != parsed_nvr['version']:
-                raise ValueError(f'All nvrs should have the same golang version, found: {go_version} and'
-                                 f' {parsed_nvr["version"]}')
-            go_version = parsed_nvr['version']
-
-            _, el_version = split_el_suffix_in_release(parsed_nvr['release'])
-            # el_version is either None or something like "el8"
-            if not el_version:
-                raise ValueError(f'Cannot detect an el version in NVR {nvr}')
-            el_version = int(el_version[2:])
-            if el_version not in supported_els:
-                raise ValueError(f'Unsupported RHEL version detected for nvr {nvr}, supported versions are:'
-                                 f' {supported_els}')
-            if el_version in el_nvr_map:
-                raise ValueError(f'Cannot have two nvrs for the same rhel version: {nvr},'
-                                 f' {el_nvr_map[el_version]}')
-            el_nvr_map[el_version] = nvr
-
+        go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
 
@@ -80,7 +37,7 @@ class RebuildGolangRPMsPipeline:
         _LOGGER.info('Checking if golang builds are tagged and available in rpm buildroots')
         error_msg = ""
         for el_v, nvr in el_nvr_map.items():
-            if await self.is_latest_and_available(el_v, nvr):
+            if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
                 _LOGGER.info(f"{nvr} is tagged and available in buildroot")
             else:
                 msg = f"{nvr} is not tagged and available in buildroot. "
@@ -249,29 +206,6 @@ class RebuildGolangRPMsPipeline:
         latest_builds = [b['nvr'] for b in self.koji_session.listTagged(tag, latest=True)]
         rpms = [b for b in latest_builds if not ('-container' in b or b.startswith('rhcos-'))]
         return rpms
-
-    def is_latest_build(self, el_v: int, nvr: str) -> bool:
-        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
-        _LOGGER.info(f'Checking build root {build_tag}')
-        parsed_nvr = parse_nvr(nvr)
-        latest_build = self.koji_session.getLatestBuilds(build_tag, package=parsed_nvr['name'])
-        if not latest_build:  # if this happens, investigate
-            raise ValueError(f'Cannot find latest {parsed_nvr["name"]} build in {build_tag}. Please investigate.')
-        if nvr == latest_build[0]['nvr']:
-            return True
-        return False
-
-    async def is_latest_and_available(self, el_v: int, nvr: str) -> bool:
-        if not self.is_latest_build(el_v, nvr):
-            return False
-
-        # If regen repo has been run this would take a few seconds
-        # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
-        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
-        _LOGGER.info(f'Checking build root {build_tag}')
-        cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1'
-        rc, _, _ = await exectools.cmd_gather_async(cmd)
-        return rc == 0
 
 
 @cli.command('rebuild-golang-rpms')
