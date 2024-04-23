@@ -6,6 +6,7 @@ import os
 import yaml
 import base64
 from typing import List
+from datetime import datetime
 from ghapi.all import GhApi
 
 from artcommonlib.constants import BREW_HUB
@@ -92,13 +93,20 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
 
 
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str):
+    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str,
+                 scratch: bool = False):
         self.runtime = runtime
+        self.dry_run = runtime.dry_run
+        self.scratch = scratch
         self.ocp_version = ocp_version
         self.create_ticket = create_ticket
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
+
+        self._doozer_working_dir = self._working_dir / "doozer-working"
+        self._doozer_env_vars = os.environ.copy()
+        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._doozer_working_dir)
 
         self.github_token = os.environ.get('GITHUB_TOKEN')
         if not self.github_token:
@@ -108,6 +116,13 @@ class UpdateGolangPipeline:
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
+
+        title_update = f"{self.ocp_version}:{go_version}:el{el_nvr_map.keys()}"
+        if self.create_ticket:
+            title_update += ' [create-ticket]'
+        if self.dry_run:
+            title_update += ' [dry-run]'
+        jenkins.update_title(title_update)
 
         # if requested, create ticket for tagging request
         if self.create_ticket:
@@ -195,10 +210,39 @@ class UpdateGolangPipeline:
                          "Verifying builder branches are updated for building")
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
-                _LOGGER.info(
-                    f"Please trigger job at {constants.JENKINS_UI_URL}/job/aos-cd-builds"
-                    "/job/build%252Fgolang-builder/ "
-                    f"with params GOLANG_VERSION={go_version} RHEL_VERSION={el_v}")
+                await self._rebase(go_version)
+                await self._build()
+
+    async def _rebase(self, go_version):
+        _LOGGER.info("Rebasing...")
+        version = f"v{go_version}"
+        release = datetime.now().strftime('%Y%m%d%H%M')
+        cmd = [
+            "doozer",
+            "--group", f"openshift-{self.ocp_version}",
+            "images:rebase",
+            "--version", version,
+            "--release", release,
+            "--message", f"bumping to {version}-{release}"
+        ]
+        if not self.dry_run:
+            cmd += " --push"
+        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
+
+    async def _build(self):
+        _LOGGER.info("Building...")
+        cmd = [
+            "doozer",
+            "--group", f"openshift-{self.ocp_version}",
+            "images:build",
+            "--repo-type", "unsigned",
+            "--push-to-defaults"
+        ]
+        if self.dry_run:
+            cmd += "--dry-run"
+        if self.scratch:
+            cmd += "--scratch"
+        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
     def verify_golang_builder_repo(self, el_v, go_version):
         # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
@@ -286,6 +330,7 @@ The new NVRs are:
 
 @cli.command('update-golang')
 @click.option('--ocp-version', required=True, help='OCP version to update golang for')
+@click.option('--scratch', is_flag=True, default=False, help='Build images in scratch mode')
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
@@ -293,4 +338,4 @@ The new NVRs are:
 @pass_runtime
 @click_coroutine
 async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str):
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira).run()
+    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira, scratch).run()
