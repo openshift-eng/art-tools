@@ -104,7 +104,7 @@ class UpdateGolangPipeline:
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
 
-        self._doozer_working_dir = self._working_dir / "doozer-working"
+        self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._doozer_working_dir)
 
