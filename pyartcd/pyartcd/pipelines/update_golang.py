@@ -122,6 +122,7 @@ class UpdateGolangPipeline:
             title_update += ' [create-ticket]'
         if self.dry_run:
             title_update += ' [dry-run]'
+        jenkins.init_jenkins()
         jenkins.update_title(title_update)
 
         # if requested, create ticket for tagging request
