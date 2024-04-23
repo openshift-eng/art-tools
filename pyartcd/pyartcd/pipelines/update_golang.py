@@ -211,16 +211,17 @@ class UpdateGolangPipeline:
                          "Verifying builder branches are updated for building")
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
-                await self._rebase(go_version)
-                await self._build()
+                await self._rebase(el_v, go_version)
+                await self._build(el_v, go_version)
 
-    async def _rebase(self, go_version):
+    async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
+        branch = self.get_golang_branch(el_v, go_version)
         version = f"v{go_version}"
         release = datetime.now().strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
-            "--group", f"openshift-{self.ocp_version}",
+            "--group", branch,
             "images:rebase",
             "--version", version,
             "--release", release,
@@ -230,11 +231,12 @@ class UpdateGolangPipeline:
             cmd += " --push"
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-    async def _build(self):
+    async def _build(self, el_v, go_version):
         _LOGGER.info("Building...")
+        branch = self.get_golang_branch(el_v, go_version)
         cmd = [
             "doozer",
-            "--group", f"openshift-{self.ocp_version}",
+            "--group", branch,
             "images:build",
             "--repo-type", "unsigned",
             "--push-to-defaults"
@@ -245,12 +247,17 @@ class UpdateGolangPipeline:
             cmd += "--scratch"
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-    def verify_golang_builder_repo(self, el_v, go_version):
-        # read group.yml from the branch rhel-{el_v}-golang-{go_v} using ghapi
-        owner, repo = 'openshift-eng', 'ocp-build-data'
-        major_go, minor_go, patch_go = go_version.split('.')
+    @staticmethod
+    def get_golang_branch(el_v, go_version):
+        major_go, minor_go, _ = go_version.split('.')
         go_v = f"{major_go}.{minor_go}"
-        branch, filename = f'rhel-{el_v}-golang-{go_v}', 'group.yml'
+        return f'rhel-{el_v}-golang-{go_v}'
+
+    def verify_golang_builder_repo(self, el_v, go_version):
+        # read group.yml from the golang branch using ghapi
+        owner, repo = 'openshift-eng', 'ocp-build-data'
+        branch = self.get_golang_branch(el_v, go_version)
+        filename = 'group.yml'
 
         api = GhApi(owner=owner, repo=repo, token=self.github_token)
         blob = api.repos.get_content(filename, ref=branch)
