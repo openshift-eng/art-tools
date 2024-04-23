@@ -117,7 +117,7 @@ class UpdateGolangPipeline:
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
 
-        title_update = f"{self.ocp_version}:{go_version}:el{el_nvr_map.keys()}"
+        title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
         if self.create_ticket:
             title_update += ' [create-ticket]'
         if self.dry_run:
