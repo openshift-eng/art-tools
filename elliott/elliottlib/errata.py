@@ -803,6 +803,20 @@ def change_advisory_batch(advisory_id, batch_id, clear_batch=False):
         raise IOError(f'Failed to create update advisory batch with code {response.status_code} and error: {response.text}')
 
 
+def lock_batch(release_version, batch_id):
+    """Update lock status of a batch.
+    PUT /api/v1/batches/{id}
+    """
+    data = {
+        "name": f"OCP {release_version}",
+        "release_name": "RHOSE ASYNC - AUTO",
+        "is_locked": True
+    }
+    response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', data=data)
+    if response.status_code != requests.codes.created:
+        raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
+
+
 def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """Update the metadata for some or all files in this advisory.
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-put-apiv1erratumidfilemeta
