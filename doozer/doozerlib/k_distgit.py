@@ -77,6 +77,8 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             at_start=True,
             all_stages=True,
         )
+
+        # Put back original yum config
         dfp.add_lines(
             "\n# Start Konflux-specific steps",
             "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/",
