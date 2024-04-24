@@ -536,6 +536,9 @@ class OLMBundle(object):
 
     @property
     def branch(self):
+        config = self.runtime.image_map[self.operator_name].config
+        if 'distgit' in config and 'branch' in config['distgit']:
+            return config['distgit']['branch']
         return self.runtime.group_config.branch.format(**self.runtime.group_config.vars)
 
     @property
