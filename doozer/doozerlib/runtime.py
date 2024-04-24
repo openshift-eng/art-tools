@@ -364,6 +364,9 @@ class Runtime(GroupRuntime):
         if not os.path.isdir(self.distgits_diff_dir):
             os.mkdir(self.distgits_diff_dir)
 
+        if not os.path.isdir(self.k_distgits_diff_dir):
+            os.mkdir(self.k_distgits_diff_dir)
+
         if not os.path.isdir(self.sources_dir):
             os.mkdir(self.sources_dir)
 

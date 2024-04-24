@@ -1,11 +1,9 @@
 import os
 import pathlib
-from typing import Union
 from dockerfile_parse import DockerfileParser
 from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.pushd import Dir
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.metadata import Metadata
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
@@ -19,6 +17,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         self.distgit_dir = os.path.join(self.runtime.k_distgits_dir, self.metadata.distgit_key)
         self.dg_path = pathlib.Path(self.distgit_dir)
         self.upstream_branch = ""
+        self.is_konflux = True
 
         if autoclone:
             self.clone()
@@ -38,7 +37,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         git_args = ["--no-single-branch", "--branch", branch]
         self.runtime.git_clone(url, self.distgit_dir, gitargs=git_args)
 
-    def push(self) -> Union[Metadata, bool]:
+    def push(self):
         """
         Push to the appropriate branch on openshift-priv
         """
@@ -85,3 +84,18 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "# End Konflux-specific steps\n"
         )
         return version, release
+
+    def wait_for_rebase(self, image_name, terminate_event):
+        """ Wait for image_name to be rebased. """
+        image = self.runtime.resolve_image(image_name, False)
+        if image is None:
+            self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
+            return
+        dgr = image.k_distgit_repo()
+        self.logger.info("Waiting for image rebase: %s" % image_name)
+        dgr.rebase_event.wait()
+        if not dgr.rebase_status:  # failed to rebase
+            raise IOError(f"Error rebasing image: {self.metadata.qualified_name} ({image_name} was waiting)")
+        self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
+        if terminate_event.is_set():
+            raise KeyboardInterrupt()
