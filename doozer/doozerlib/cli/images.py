@@ -426,6 +426,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
         if image_meta.config.konflux.enabled not in [True, "True", "true", "yes"]:
             runtime.logger.info(f"Skipping konflux rebase for component {image_meta.config.name} since its not enabled "
                                 f"in config")
+            return
         try:
             k_dgr = KonfluxImageDistGitRepo(image_meta)
             if embargoed:

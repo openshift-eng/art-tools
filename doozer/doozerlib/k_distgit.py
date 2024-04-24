@@ -18,6 +18,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         # Using k_distgits_dir which points to the new konflux dir
         self.distgit_dir = os.path.join(self.runtime.k_distgits_dir, self.metadata.distgit_key)
         self.dg_path = pathlib.Path(self.distgit_dir)
+        self.upstream_branch = ""
 
         if autoclone:
             self.clone()
@@ -42,8 +43,8 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         Push to the appropriate branch on openshift-priv
         """
         # Figure out which branch to push to
-        branch = f"art-<{self.runtime.group}>-assembly-<{self.runtime.assembly}>-dgk-<{self.name}>"
-        self.logger.info(f"Setting upstream branch to: {branch}")
+        self.upstream_branch = f"art:{self.runtime.group}:assembly:{self.runtime.assembly}:dgk:{self.name}"
+        self.logger.info(f"Setting upstream branch to: {self.upstream_branch}")
 
         with Dir(self.dg_path):
             self.logger.info("Pushing konflux repository %s", self.name)
@@ -53,8 +54,8 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
                 # time, a single push invocation can take hours to complete -- making the
                 # timeout value counterproductive. Limit to 5 simultaneous pushes.
                 with self.runtime.get_named_semaphore('k_distgit::push', count=5):
-                    exectools.cmd_assert(f"git checkout -b {branch}")
-                    exectools.cmd_assert(f"git push --set-upstream origin {branch}", retries=3)
+                    exectools.cmd_assert(f"git checkout -b {self.upstream_branch}")
+                    exectools.cmd_assert(f"git push --set-upstream origin {self.upstream_branch}", retries=3)
             except IOError as e:
                 return self.metadata, repr(e)
         return self.metadata, True
@@ -69,13 +70,16 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         dfp = DockerfileParser(path=str(self.dg_path.joinpath('Dockerfile')))
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         dfp.add_lines(
-            "# Konflux-specific steps",
+            "\n# Start Konflux-specific steps",
             "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/",
             "COPY .oit/signed.repo /etc/yum.repos.d/",
-            "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/",
-            "# end Konflux-specific steps",
+            "# End Konflux-specific steps\n",
             at_start=True,
             all_stages=True,
         )
-
+        dfp.add_lines(
+            "\n# Start Konflux-specific steps",
+            "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/",
+            "# End Konflux-specific steps\n"
+        )
         return version, release
