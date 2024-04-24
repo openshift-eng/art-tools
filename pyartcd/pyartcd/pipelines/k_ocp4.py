@@ -47,7 +47,6 @@ class KonfluxPipeline:
             '--latest-parent-version', f'--images={self.image_list}', 'k:images:rebase',
             f'--version=v{self.version.stream}', f'--release={self.version.release}', '--push',
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
-            '--dry-run'
         ])
 
         if self.runtime.dry_run:
