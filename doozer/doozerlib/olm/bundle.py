@@ -610,12 +610,12 @@ class OLMBundle(object):
 
     @property
     def target(self):
-        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
+        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', self.branch)
         if target_match:
             el_target = int(target_match.group(1))
             return self.runtime.get_default_candidate_brew_tag(el_target=el_target) or '{}-candidate'.format(self.branch)
         else:
-            raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
+            raise IOError(f'Unable to determine rhel version from branch: {self.branch}')
 
     @property
     def valid_subscription_label(self):
