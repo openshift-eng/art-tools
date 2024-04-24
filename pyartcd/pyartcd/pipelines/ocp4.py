@@ -883,6 +883,38 @@ class Ocp4Pipeline:
             version_queue_name=queue
         )
 
+    async def _check_fips(self):
+        cmd = [
+            "doozer",
+            "--group",
+            f"openshift-{self.version.stream}",
+            "images:scan-fips",
+            "--nvrs",
+            f"{','.join(self.success_nvrs)}"
+        ]
+
+        _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
+
+        result_json = json.loads(result)
+
+        self.runtime.logger.info(f"Result: {json.dumps(result_json, indent=4)}")
+
+        if result_json:
+            # alert release artists
+            if not self.runtime.dry_run:
+                message = ":warning: @release-artists FIPS scan has failed for some builds"
+                slack_response = await self._slack_client.say(message=message)
+                slack_thread = slack_response["message"]["ts"]
+
+                await self._slack_client.say(
+                    message=result,
+                    thread_ts=slack_thread,
+                )
+            else:
+                self.runtime.logger.info("[DRY RUN] Would have messaged slack")
+        else:
+            self.runtime.logger.info("No issues")
+
     async def run(self):
         await self._initialize()
 
@@ -930,6 +962,9 @@ class Ocp4Pipeline:
 
         # All good
         self._report_success()
+
+        # Run FIPS scan on successfully built images
+        await self._check_fips()
 
 
 @cli.command("ocp4",
