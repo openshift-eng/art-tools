@@ -10,7 +10,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
     """
     It's not technically distgit anymore, but using the same name for simplicity
     """
-    def __init__(self, metadata, autoclone=True):
+    def __init__(self, metadata, autoclone=True, dry_run=False):
         super(KonfluxImageDistGitRepo, self).__init__(metadata, autoclone=False)
 
         # Using k_distgits_dir which points to the new konflux dir
@@ -18,6 +18,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         self.dg_path = pathlib.Path(self.distgit_dir)
         self.upstream_branch = ""
         self.is_konflux = True
+        self.dry_run = dry_run
 
         if autoclone:
             self.clone()
@@ -45,6 +46,9 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         self.upstream_branch = f"art:{self.runtime.group}:assembly:{self.runtime.assembly}:dgk:{self.name}"
         self.logger.info(f"Setting upstream branch to: {self.upstream_branch}")
 
+        if self.dry_run:
+            self.logger.info(f"Would have pushed to branch {self.upstream_branch} in openshift-priv")
+            return
         with Dir(self.dg_path):
             self.logger.info("Pushing konflux repository %s", self.name)
             try:

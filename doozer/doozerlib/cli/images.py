@@ -387,10 +387,11 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
               help="Repo group type to use for version autodetection scan (e.g. signed, unsigned).")
 @click.option("--force-yum-updates", is_flag=True, default=False,
               help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.")
+@click.option("--dry-run", default=False, is_flag=True, help="Do not push anything, but only print push operations.")
 @option_commit_message
 @option_push
 @pass_runtime
-def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool):
+def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, dry_run: bool):
     """
     Reusing most of the code from 'images_rebase' for now, since we might need to change once we discuss with the Konflux team
     """
@@ -428,7 +429,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
                                 f"in config")
             return
         try:
-            k_dgr = KonfluxImageDistGitRepo(image_meta)
+            k_dgr = KonfluxImageDistGitRepo(image_meta, dry_run=dry_run)
             if embargoed:
                 k_dgr.private_fix = True
             (real_version, real_release) = k_dgr.rebase_dir(version, release, terminate_event, force_yum_updates)
