@@ -43,7 +43,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         Push to the appropriate branch on openshift-priv
         """
         # Figure out which branch to push to
-        self.upstream_branch = f"art:{self.runtime.group}:assembly:{self.runtime.assembly}:dgk:{self.name}"
+        self.upstream_branch = f"art-<{self.runtime.group}>-assembly-<{self.runtime.assembly}>-dgk-<{self.name}>"
         self.logger.info(f"Setting upstream branch to: {self.upstream_branch}")
 
         if self.dry_run:
@@ -51,16 +51,14 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             return
         with Dir(self.dg_path):
             self.logger.info("Pushing konflux repository %s", self.name)
-            try:
-                # When initializing new release branches, a large amount of data needs to
-                # be pushed. If every repo within a release is being pushed at the same
-                # time, a single push invocation can take hours to complete -- making the
-                # timeout value counterproductive. Limit to 5 simultaneous pushes.
-                with self.runtime.get_named_semaphore('k_distgit::push', count=5):
-                    exectools.cmd_assert(f"git checkout -b {self.upstream_branch}")
-                    exectools.cmd_assert(f"git push --set-upstream origin {self.upstream_branch}", retries=3)
-            except IOError as e:
-                return self.metadata, repr(e)
+            # When initializing new release branches, a large amount of data needs to
+            # be pushed. If every repo within a release is being pushed at the same
+            # time, a single push invocation can take hours to complete -- making the
+            # timeout value counterproductive. Limit to 5 simultaneous pushes.
+            with self.runtime.get_named_semaphore('k_distgit::push', count=5):
+                exectools.cmd_assert(f"git checkout -b {self.upstream_branch}")
+                exectools.cmd_assert(f"git push --set-upstream origin {self.upstream_branch}", retries=3)
+
         return self.metadata, True
 
     def add_distgits_diff(self, diff):
