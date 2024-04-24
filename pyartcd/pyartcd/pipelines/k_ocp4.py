@@ -50,6 +50,9 @@ class KonfluxPipeline:
             '--dry-run'
         ])
 
+        if self.runtime.dry_run:
+            cmd.append('--dry-run')
+
         await exectools.cmd_assert_async(cmd)
 
     async def run(self):
