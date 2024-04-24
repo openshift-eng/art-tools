@@ -60,6 +60,11 @@ class ScanFipsCli:
             # Find the registry pull spec
             build_info = self.koji_session.getBuild(nvr)
 
+            # Identify if its an RPM, and skip it
+            if "git+https://pkgs.devel.redhat.com/git/rpms/" in build_info["source"]:
+                self.runtime.logger.info(f"Skipping {nvr} since its an RPM")
+                continue
+
             # Eg registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator@sha256:da95750d31cb1b9539f664d2d6255727fa8d648e93150ae92ed84a9e993753be
             # from https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=2777601
             pull_spec = build_info["extra"]["image"]["index"]["pull"][0]
