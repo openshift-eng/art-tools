@@ -39,9 +39,9 @@ class ScanFipsCli:
 
         # `out` has multiple lines in {{.ID}} {{.Repository}} format
         for image in out.strip().split("\n"):
-            self.runtime.logger.info(f"Trying to clean image {image}")
             image_id, image_name = image.split(" ")  # c706f2c4, registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
             if name_without_sha == image_name:
+                self.runtime.logger.info(f"Trying to clean image {image}")
                 rmi_cmd_rc, _, rmi_cmd_err = cmd_gather(f"podman rmi {image_id}")
 
                 if rmi_cmd_rc != 0:
