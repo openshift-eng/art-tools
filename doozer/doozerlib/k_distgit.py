@@ -57,7 +57,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             # timeout value counterproductive. Limit to 5 simultaneous pushes.
             with self.runtime.get_named_semaphore('k_distgit::push', count=5):
                 exectools.cmd_assert(f"git checkout -b {self.upstream_branch}")
-                exectools.cmd_assert(f"git push --set-upstream origin {self.upstream_branch}", retries=3)
+                exectools.cmd_assert(f"git push --set-upstream origin {self.upstream_branch} -f", retries=3)
 
         return self.metadata, True
 
