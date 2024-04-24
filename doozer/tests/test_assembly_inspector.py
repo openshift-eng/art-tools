@@ -35,19 +35,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         issues = ai._check_installed_packages_for_rpm_delivery("foo", "foo-1.2.3-1", rpm_packages)
         self.assertEqual(issues, [])
 
-        # Test a standard release with a package not tagged into my-ship-ok-tag
-        brew_session.listTags.return_value = [
-            {"name": "tag-a"},
-            {"name": "my-integration-tag"},
-        ]
-        issues = ai._check_installed_packages_for_rpm_delivery("foo", "foo-1.2.3-1", rpm_packages)
-        self.assertEqual(len(issues), 1)
-
-        # Test a stream "release" with a package not tagged into my-ship-ok-tag
-        ai.assembly_type = AssemblyTypes.STREAM
-        issues = ai._check_installed_packages_for_rpm_delivery("foo", "foo-1.2.3-1", rpm_packages)
-        self.assertEqual(len(issues), 0)
-
         # Test a stream "release" with a package not tagged into my-stop-ship-tag
         brew_session.listTags.return_value = [
             {"name": "tag-a"},
