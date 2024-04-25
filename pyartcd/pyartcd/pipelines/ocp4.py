@@ -902,7 +902,7 @@ class Ocp4Pipeline:
         if result_json:
             # alert release artists
             if not self.runtime.dry_run:
-                message = ":warning: @release-artists FIPS scan has failed for some builds"
+                message = ":warning: @ashwin FIPS scan has failed for some builds"
                 slack_response = await self._slack_client.say(message=message)
                 slack_thread = slack_response["message"]["ts"]
 
