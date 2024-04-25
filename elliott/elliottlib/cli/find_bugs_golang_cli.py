@@ -35,8 +35,8 @@ class FindBugsGolangCli:
 
         # cache
         self.pullspec = pullspec
-        self.flaw_bugs = None
-        self.go_nvr_map = None
+        self.flaw_bugs: Dict[int, BugzillaBug] = {}
+        self.go_nvr_map = {}
         self.rpm_nvrps = None
 
         self.jira_tracker: JIRABugTracker = self._runtime.get_bug_tracker("jira")
@@ -299,9 +299,11 @@ class FindBugsGolangCli:
         if not bugs:
             return
 
-        cves = sorted(set([b.cve_id for b in bugs]))
-        logger.info(f"Found bugs for {len(cves)} CVEs: {cves}")
+        cves = sorted(set([b.cve_id for b in bugs]), reverse=True)
         cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
+        cve_table = PrettyTable()
+        cve_table.align = "l"
+        cve_table.field_names = ["Bugzilla ID", "CVE", "Title (short)", "Fixed in Versions"]
         for cve_id in cves:
             response = requests.get(cve_url.format(cve_id=cve_id))
             try:
@@ -309,7 +311,17 @@ class FindBugsGolangCli:
             except Exception as e:
                 logger.warning(f"Could not fetch CVE data for {cve_id}. Is bug embargoed?: {e}")
                 continue
-            logger.info(f"{cve_id} - {data['bugzilla']['description']} - {data['bugzilla']['url']}")
+
+            flaw_id = data['bugzilla']['id']
+            title = data['bugzilla']['description']
+            # something like `CVE-2024-24785 golang: html/template: errors returned from MarshalJSON methods may break template escaping`
+            # extract `golang: html/template` which is the most important bit
+            match = re.search(r'golang: ([\w, /]+:)?', title)
+            comp_in_title = match[0].rstrip(':')
+            fixed_in_versions = sorted(self.flaw_fixed_in(flaw_id))
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, fixed_in_versions])
+        click.echo(f"Found trackers for {len(cves)} CVEs")
+        click.echo(cve_table)
 
         def compare(b1, b2):
             # compare function for a bug
@@ -328,9 +340,10 @@ class FindBugsGolangCli:
 
         table = PrettyTable()
         table.align = "l"
-        table.field_names = ["ID", "CVE", "pscomponent", "Status", "Age (days)"]
+        table.field_names = ["Jira ID", "CVE", "pscomponent", "Status", "Age (days)"]
         for b in bugs:
             table.add_row([b.id, b.cve_id, b.whiteboard_component, b.status, b.created_days_ago()])
+        click.echo(f"Found {len(bugs)} trackers in Jira")
         click.echo(table)
 
         if not self.analyze:
@@ -351,7 +364,6 @@ class FindBugsGolangCli:
         if not bugs:
             exit(1)
 
-        self.flaw_bugs: Dict[int, BugzillaBug] = {}
         fixed_bugs, unfixed_bugs = [], []
         for bug in bugs:
             component = bug.whiteboard_component
