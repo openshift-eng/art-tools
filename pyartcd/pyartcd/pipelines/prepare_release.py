@@ -22,6 +22,7 @@ from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.errata import get_brew_builds
+from elliottlib.errata import create_batch, change_advisory_batch, lock_batch
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
@@ -140,6 +141,7 @@ class PrepareReleasePipeline:
             self.check_blockers()
 
         advisories = {}
+        batch_id = None
 
         if self.default_advisories:
             advisories = group_config.get("advisories", {})
@@ -151,6 +153,10 @@ class PrepareReleasePipeline:
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
+                    if not batch_id and assembly_type == AssemblyTypes.STANDARD:
+                        # Create a batch for a release if not created
+                        batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
+                        _LOGGER.info(f"Created errata batch id {batch_id} for release {self.release_name}")
                     if ad == "advance":
                         # Set release date to one week before
                         # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
@@ -166,6 +172,13 @@ class PrepareReleasePipeline:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
                                                           release_date=self.release_date)
+                    if batch_id and assembly_type == AssemblyTypes.STANDARD:
+                        # Connect advisory to the batch_id
+                        change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
+                        _LOGGER.info(f"Advisory {advisories[ad]} connected to the batch id {batch_id}")
+            if batch_id:
+                lock_batch(release_version=self.release_name, batch_id=batch_id)
+                _LOGGER.info(f"Batch id {batch_id} locked for release {self.release_name}")
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
 
