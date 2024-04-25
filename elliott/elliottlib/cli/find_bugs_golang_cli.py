@@ -3,7 +3,7 @@ import requests
 import click
 import re
 
-from typing import Dict, List
+from typing import Dict, List, Union
 from prettytable import PrettyTable
 
 from elliottlib import Runtime, constants, early_kernel
@@ -42,16 +42,26 @@ class FindBugsGolangCli:
         self.jira_tracker: JIRABugTracker = self._runtime.get_bug_tracker("jira")
         self.bz_tracker: BugzillaBugTracker = self._runtime.get_bug_tracker("bugzilla")
 
-    def flaw_fixed_in(self, flaw_id):
+    def get_flaw_bug(self, flaw_id: str):
         if flaw_id in self.flaw_bugs:
-            flaw_bug = self.flaw_bugs[flaw_id]
+            return self.flaw_bugs[flaw_id]
+
+        flaw_bug = self.bz_tracker.get_bug(flaw_id)
+        if not flaw_bug:
+            self._logger.warning(f"Could not find flaw bug {flaw_id} in bugzilla, please investigate. Ignoring "
+                                 "flaw bug for now")
+            return None
+        self.flaw_bugs[flaw_id] = flaw_bug
+        return flaw_bug
+
+    def flaw_fixed_in(self, flaw_id: Union[str, BugzillaBug]):
+        if isinstance(flaw_id, BugzillaBug):
+            flaw_bug = flaw_id
         else:
-            flaw_bug = self.bz_tracker.get_bug(flaw_id)
+            flaw_bug = self.get_flaw_bug(flaw_id)
             if not flaw_bug:
-                self._logger.warning(f"Could not find flaw bug {flaw_id} in bugzilla, please investigate. Ignoring "
-                                     "flaw bug for now")
                 return None
-            self.flaw_bugs[flaw_id] = flaw_bug
+
         if 'golang:' not in flaw_bug.summary.lower():
             self._logger.warning(f"{flaw_bug.id} doesn't have `golang:` in title. title=`{flaw_bug.summary}`. "
                                  "It does not look like a golang compiler cve and therefore we cannot trust it's "
@@ -303,7 +313,7 @@ class FindBugsGolangCli:
         cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
         cve_table = PrettyTable()
         cve_table.align = "l"
-        cve_table.field_names = ["Bugzilla ID", "CVE", "Title (short)", "Fixed in Versions"]
+        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions"]
         for cve_id in cves:
             response = requests.get(cve_url.format(cve_id=cve_id))
             try:
@@ -314,12 +324,15 @@ class FindBugsGolangCli:
 
             flaw_id = data['bugzilla']['id']
             title = data['bugzilla']['description']
-            # something like `CVE-2024-24785 golang: html/template: errors returned from MarshalJSON methods may break template escaping`
+            # something like `golang: html/template: errors returned from MarshalJSON methods may break template escaping`
             # extract `golang: html/template` which is the most important bit
-            match = re.search(r'golang: ([\w, /]+:)?', title)
-            comp_in_title = match[0].rstrip(':')
-            fixed_in_versions = sorted(self.flaw_fixed_in(flaw_id))
-            cve_table.add_row([flaw_id, cve_id, comp_in_title, fixed_in_versions])
+            flaw_bug = self.get_flaw_bug(flaw_id)
+            try:
+                comp_in_title = title.rsplit(':', 1)[0].strip()
+            except Exception as e:
+                logger.warning(f"Could not extract component from title {title}: {e}")
+                comp_in_title = 'Unknown'
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in])
         click.echo(f"Found trackers for {len(cves)} CVEs")
         click.echo(cve_table)
 
