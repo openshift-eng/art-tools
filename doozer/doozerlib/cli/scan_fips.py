@@ -57,6 +57,11 @@ class ScanFipsCli:
         image_pullspec_mapping = []
 
         for nvr in self.nvrs:
+            # Skip CI builds since it won't be shipped
+            if nvr.startswith("ci-openshift"):
+                self.runtime.logger.info(f"Skipping {nvr} since its a CI build")
+                continue
+
             # Find the registry pull spec
             build_info = self.koji_session.getBuild(nvr)
 
