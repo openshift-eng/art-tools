@@ -103,6 +103,7 @@ class TestJIRABug(unittest.TestCase):
         bug_id = 123456
         bug = flexmock(key='OCPBUGS-1',
                        fields=flexmock(customfield_12322152=f'bugzilla.com/id={bug_id}'))
+        flexmock(JIRABugTracker).should_receive("field_blocked_by_bz").and_return("customfield_12322152")
         self.assertEqual(JIRABug(bug).blocked_by_bz, bug_id)
 
     def test_depends_on(self):

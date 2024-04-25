@@ -1,6 +1,7 @@
-from typing import OrderedDict, Optional, Tuple
+from typing import OrderedDict, Optional, Tuple, Iterable, List
 from datetime import datetime
 import re
+import asyncio
 
 import requests
 
@@ -212,3 +213,52 @@ def isolate_major_minor_in_group(group_name: str) -> Tuple[Optional[int], Option
     if not match:
         return None, None
     return int(match[1]), int(match[2])
+
+
+async def run_limited_unordered(func, args: Iterable, limit: int) -> List:
+    """
+    limit the concurrency of asyncio tasks - adapted from https://death.andgravity.com/limit-concurrency
+    :param func: async function to run against the args
+    :param args: collection of args to be run (each arg is a list of parameters to func)
+    :param limit: max number of tasks to run concurrently
+    :return: an iterator of the task results (not necessarily in the order of args given)
+
+    example usage:
+      async def foo(bar, baz):
+        await asyncio.sleep(1)
+        return bar + baz
+
+      print(await run_limited_unordered(foo, {(1, 2), (3, 4), ...}, limit=2))
+      -> [3, 7, ...]  # (after a wait of len(args)/2)
+    """
+    return [it async for it in run_limited_generator(func, args, limit)]
+
+
+async def run_limited_generator(func, args: Iterable, limit: int) -> Iterable:
+    tasks = map(lambda params: func(*params), args)
+    async for task in _limit_concurrency(tasks, limit):
+        yield await task
+
+
+async def _limit_concurrency(tasks: List, limit: int):
+    tasks = iter(tasks)
+    complete = False
+    pending = set()
+
+    while pending or not complete:
+        while len(pending) < limit and not complete:
+            try:
+                task = next(tasks)
+            except StopIteration:
+                complete = True
+            else:
+                pending.add(asyncio.ensure_future(task))
+
+        if not pending:
+            return
+
+        done, pending = await asyncio.wait(
+            pending, return_when=asyncio.FIRST_COMPLETED
+        )
+        while done:
+            yield done.pop()

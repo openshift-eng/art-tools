@@ -402,19 +402,25 @@ class JIRABug(Bug):
         return ('Placeholder' in self.summary) and (self.component == 'Release') and ('Automation' in self.keywords)
 
     def _get_blocks(self):
-        # link "blocks"
         blocks = []
         for link in self.bug.fields.issuelinks:
+            # link "blocks"
             if link.type.name == "Blocks" and hasattr(link, "outwardIssue"):
                 blocks.append(link.outwardIssue.key)
+            # link "is depended on by"
+            if link.type.name == "Depend" and hasattr(link, "inwardIssue"):
+                blocks.append(link.inwardIssue.key)
         return blocks
 
     def _get_depends(self):
-        # link "is blocked by"
         depends = []
         for link in self.bug.fields.issuelinks:
+            # link "is blocked by"
             if link.type.name == "Blocks" and hasattr(link, "inwardIssue"):
                 depends.append(link.inwardIssue.key)
+            # link "depends on"
+            if link.type.name == "Depend" and hasattr(link, "outwardIssue"):
+                depends.append(link.outwardIssue.key)
         return depends
 
     @staticmethod
@@ -585,35 +591,16 @@ class BugTracker:
         raise NotImplementedError
 
 
-@retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-def get_jira_name_id_mapping() -> dict:
-    """
-    Assuming that no two JIRA fields have the same name
-    """
-    result_json = requests.get(constants.JIRA_API_FIELD).json()
-
-    mapping = {}
-    for field in result_json:
-        mapping[field["name"]] = field["id"]
-
-    return mapping
-
-
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    FIELD_BLOCKED_BY_BZ_NAME = 'Blocked by Bugzilla Bug'
-    FIELD_TARGET_VERSION_NAME = 'Target Version'
-    FIELD_RELEASE_BLOCKER_NAME = 'Release Blocker'
-    FIELD_BLOCKED_REASON_NAME = 'Blocked Reason'
-    FIELD_SEVERITY_NAME = 'Severity'
-
-    mapping = get_jira_name_id_mapping()
-    field_blocked_by_bz = mapping[FIELD_BLOCKED_BY_BZ_NAME]
-    field_target_version = mapping[FIELD_TARGET_VERSION_NAME]
-    field_release_blocker = mapping[FIELD_RELEASE_BLOCKER_NAME]
-    field_blocked_reason = mapping[FIELD_BLOCKED_REASON_NAME]
-    field_severity = mapping[FIELD_SEVERITY_NAME]
+    # There are several @property function defined, which requires the values to be available at compile time
+    # We later override them at runtime, so that if the field name changes, we'll still get the updated one
+    field_blocked_by_bz = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
+    field_target_version = 'customfield_12319940'  # "Target Version"
+    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
+    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
+    field_severity = 'customfield_12316142'  # "Severity"
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -641,6 +628,17 @@ class JIRABugTracker(BugTracker):
         super().__init__(config, 'jira')
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
+        for f in self._client.fields():
+            if f['name'] == 'Blocked by Bugzilla Bug':
+                self.field_blocked_by_bz = f['id']
+            if f['name'] == 'Target Version':
+                self.field_target_version = f['id']
+            if f['name'] == 'Release Blocker':
+                self.field_release_blocker = f['id']
+            if f['name'] == 'Blocked Reason':
+                self.field_blocked_reason = f['id']
+            if f['name'] == 'Severity':
+                self.field_severity = f['id']
 
     @property
     def product(self):
@@ -712,7 +710,7 @@ class JIRABugTracker(BugTracker):
 
     def add_comment(self, bugid: str, comment: str, private: bool, noop=False):
         if noop:
-            logger.info(f"Would have added a private={private} comment to {bugid}")
+            logger.info(f"Would have added a private={private} comment to {bugid}: {comment}")
             return
         if private:
             self._client.add_comment(bugid, comment, visibility={'type': 'group', 'value': 'Red Hat Employee'})

@@ -32,6 +32,9 @@ class ImageMetadata(Metadata):
         if clone_source:
             runtime.resolve_source(self)
 
+    def __str__(self):
+        return self.name
+
     @property
     def image_name(self):
         return self.config.name

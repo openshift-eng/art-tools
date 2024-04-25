@@ -115,7 +115,7 @@ def plashet_config_for_major_minor(major, minor):
 async def build_plashets(stream: str, release: str, assembly: str = 'stream',
                          doozer_working: str = 'doozer-working',
                          data_path: str = constants.OCP_BUILD_DATA_URL,
-                         data_gitref: str = '', dry_run: bool = False) -> dict:
+                         data_gitref: str = '', dry_run: bool = False, copy_links: bool = False) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
     based on -candidate tags. Based on release state, those repos can be signed
@@ -128,6 +128,7 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
     :param data_path: ocp-build-data fork to use
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
     :param dry_run: do not actually run the command, just log it
+    :param copy_links: transform symlink into referent file/dir
 
     Returns a list describing the plashets that have been built. The dict will look like this:
     {
@@ -206,7 +207,7 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
 
         remote_base_dir = Path(f'/mnt/data/pub/RHOCP/plashets/{major}.{minor}/{assembly}/{slug}')
         logger.info('Copying %s to remote host...', base_dir)
-        await copy_to_remote(base_dir, remote_base_dir, dry_run=dry_run)
+        await copy_to_remote(base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
 
         plashets_built[repo_type] = {
             'plashetDirName': revision,
@@ -277,7 +278,8 @@ def create_latest_symlink(base_dir: os.PathLike, plashet_name: str):
     return symlink_path
 
 
-async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLike, dry_run: bool = False):
+async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLike,
+                         dry_run: bool = False, copy_links: bool = False):
     """
     Copies plashet out to remote host (ocp-artifacts)
     """
@@ -301,10 +303,13 @@ async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLi
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
     # Copy local dir to remote
-    cmd = [
-        "rsync", "-av", "--links", "--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
-        "--perms", "--", f"{local_base_dir}/", f"{PLASHET_REMOTE_HOST}:{remote_base_dir}"
-    ]
+    cmd = ["rsync", "-av"]
+    if copy_links:
+        cmd.append('--copy-links')
+    else:
+        cmd.append('--links')
+    cmd.extend(["--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
+                "--perms", "--", f"{local_base_dir}/", f"{PLASHET_REMOTE_HOST}:{remote_base_dir}"])
 
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)
