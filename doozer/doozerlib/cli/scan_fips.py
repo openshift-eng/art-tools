@@ -33,7 +33,7 @@ class ScanFipsCli:
         name_without_sha = pull_spec.split("@")[0]
 
         # c706f2c4 registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
-        rc, out, err = cmd_gather("podman images --format '{{.ID}} {{.Repository}}'")
+        rc, out, err = cmd_gather("sudo podman images --format '{{.ID}} {{.Repository}}'")
         if rc != 0:
             raise Exception(err)
 
@@ -42,7 +42,7 @@ class ScanFipsCli:
             image_id, image_name = image.split(" ")  # c706f2c4, registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
             if name_without_sha == image_name:
                 self.runtime.logger.info(f"Trying to clean image {image}")
-                rmi_cmd_rc, _, rmi_cmd_err = cmd_gather(f"podman rmi {image_id}")
+                rmi_cmd_rc, _, rmi_cmd_err = cmd_gather(f"sudo podman rmi {image_id}")
 
                 if rmi_cmd_rc != 0:
                     raise Exception(rmi_cmd_err)
