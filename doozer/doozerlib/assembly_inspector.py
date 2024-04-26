@@ -48,6 +48,19 @@ class AssemblyInspector:
         self._release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
         for image_meta in runtime.get_for_release_image_metas():
             latest_build_obj = image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
+            true_latest_build_obj = image_meta.get_latest_build(default=None,
+                                                                el_target=image_meta.branch_el_target(),
+                                                                complete_before_event=-1)
+            if latest_build_obj != true_latest_build_obj:
+                from datetime import datetime
+                with runtime.shared_koji_client_session() as koji_session:
+                    ts_og = koji_session.getEvent(runtime.brew_event)['ts']
+                    ts = datetime.utcfromtimestamp(ts_og)
+                raise ValueError(f"Latest build {latest_build_obj['nvr']} is not the true latest build"
+                                 f" {true_latest_build_obj['nvr']} for image {image_meta.distgit_key}.\n"
+                                 f"Brew event: {runtime.brew_event} timestamp: {ts_og} {ts} UTC. \n"
+                                 f"Latest build completion ts: {true_latest_build_obj['completion_ts']} {true_latest_build_obj['completion_time']}\n"
+                                 )
             if latest_build_obj:
                 self._release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
             else:
