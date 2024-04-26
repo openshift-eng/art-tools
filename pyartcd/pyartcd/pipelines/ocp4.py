@@ -964,7 +964,8 @@ class Ocp4Pipeline:
         self._report_success()
 
         # Run FIPS scan on successfully built images
-        await self._check_fips()
+        # Deactivating temporarily since images being pruned properly in ocp4 runs
+        # await self._check_fips()
 
 
 @cli.command("ocp4",
