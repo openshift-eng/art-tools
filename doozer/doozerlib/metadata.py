@@ -442,11 +442,15 @@ class Metadata(object):
             if assembly is None:
                 assembly = self.runtime.assembly
 
-            list_builds_kwargs = {'completeBefore': None}  # extra kwargs that will be passed to koji_api.listBuilds invocations
-            if complete_before_event is not None and complete_before_event >= 0:
-                # listBuilds accepts timestamps, not brew events, so convert brew event into seconds since the epoch
-                complete_before_ts = koji_api.getEvent(complete_before_event)['ts']
-                list_builds_kwargs['completeBefore'] = complete_before_ts
+            list_builds_kwargs = {}  # extra kwargs that will be passed to koji_api.listBuilds invocations
+            if complete_before_event is not None:
+                if complete_before_event < 0:
+                    # By setting the parameter to None, it tells the koji wrapper to not bound the brew event.
+                    list_builds_kwargs['completeBefore'] = None
+                else:
+                    # listBuilds accepts timestamps, not brew events, so convert brew event into seconds since the epoch
+                    complete_before_ts = koji_api.getEvent(complete_before_event)['ts']
+                    list_builds_kwargs['completeBefore'] = complete_before_ts
 
             def default_return():
                 msg = f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', assembly: '{assembly}', build_state: '{build_state.name}', el_target: '{el_target}'"
