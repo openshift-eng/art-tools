@@ -797,7 +797,7 @@ def change_advisory_batch(advisory_id, batch_id=None, clear_batch=False):
     """
     if clear_batch:
         response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"clear_batch": True})
-   else:
+    else:
         if batch_id is None:
             raise ValueError("batch_id is required")
         response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"batch_id": batch_id})
