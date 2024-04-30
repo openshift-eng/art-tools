@@ -177,7 +177,7 @@ class PrepareReleasePipeline:
                         change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
                         _LOGGER.info(f"Advisory {advisories[ad]} connected to the batch id {batch_id}")
                     else:
-                        change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id, clear_batch=True)
+                        change_advisory_batch(advisory_id=advisories[ad], clear_batch=True)
                         _LOGGER.info(f"Clear batch setting for non release advisory {advisories[ad]}")
             if batch_id:
                 lock_batch(release_version=self.release_name, batch_id=batch_id)

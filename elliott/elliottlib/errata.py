@@ -786,7 +786,7 @@ def create_batch(release_version, release_date):
         return response.json()['data']['id']
 
 
-def change_advisory_batch(advisory_id, batch_id, clear_batch=False):
+def change_advisory_batch(advisory_id, batch_id=None, clear_batch=False):
     """Change the batch details for an advisory.
     POST /api/v1/erratum/{id}/change_batch
     Request body may contain:
@@ -797,6 +797,8 @@ def change_advisory_batch(advisory_id, batch_id, clear_batch=False):
     """
     if clear_batch:
         response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"clear_batch": True})
+    elif batch_id is None:
+        raise ValueError("batch_id is required")
     else:
         response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', data={"batch_id": batch_id})
     if response.status_code != requests.codes.created:
