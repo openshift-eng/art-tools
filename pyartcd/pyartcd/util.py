@@ -49,7 +49,7 @@ def isolate_el_version_in_branch(branch_name: str) -> Optional[int]:
     return None
 
 
-def isolate_major_minor_in_group(group_name: str) -> Tuple[int, int]:
+def isolate_major_minor_in_group(group_name: str):
     """
     Given a group name, determines whether is contains
     a OCP major.minor version. If it does, it returns the version value as (int, int).
@@ -60,7 +60,7 @@ def isolate_major_minor_in_group(group_name: str) -> Tuple[int, int]:
         return None, None
     return int(match[1]), int(match[2])
 
-  
+
 def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
     """
     Use /api/v1/external_tests API to check if builds on advisory have failed greenwave_cvp test
