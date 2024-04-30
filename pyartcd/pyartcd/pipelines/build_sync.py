@@ -6,10 +6,10 @@ import re
 import click
 import yaml
 from opentelemetry import trace
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import rhcos, redis
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.exectools import limit_concurrency
 from artcommonlib.util import split_git_url
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
@@ -33,7 +33,8 @@ class BuildSyncPipeline:
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
-            self.group, self.assembly
+            self.group, self.assembly,
+            self.data_path, self.doozer_data_gitref
         )
         return self
 
@@ -67,7 +68,7 @@ class BuildSyncPipeline:
 
         # Keeping in try-except so that job doesn't fail because of any error here
         try:
-            _, owner, repository = split_git_url(self.data_path)
+            _, _, repository = split_git_url(self.data_path)
             branch = self.doozer_data_gitref
             token = os.environ.get('GITHUB_TOKEN')
 
@@ -78,7 +79,7 @@ class BuildSyncPipeline:
             if match:
                 repo_owner = match.group(1)
 
-            api = GhApi(owner=owner, repo=repository, token=token)
+            api = GhApi(owner=constants.GITHUB_OWNER, repo=repository, token=token)
 
             # Check if the doozer_data_gitref is given then, if not
             # then it set the branch to openshift-{major}.{minor}
@@ -102,7 +103,7 @@ class BuildSyncPipeline:
             pr_number = prs[0]["number"]
 
             if self.runtime.dry_run:
-                self.logger.warning(f"[DRY RUN] Would have commented on PR {owner}/{repository}/pull/{pr_number} "
+                self.logger.warning(f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} "
                                     f"with the message: \n {text_body}")
                 return
 
@@ -114,7 +115,7 @@ class BuildSyncPipeline:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
     async def run(self):
-        if self.assembly not in ('stream', 'test'):
+        if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
             await self.comment_on_assembly_pr(text_body)
@@ -178,13 +179,13 @@ class BuildSyncPipeline:
             self.logger.info('Triggering %s release controller to cut new release using previously synced builds...',
                              arch)
             suffix = go_suffix_for_arch(arch, is_private=False)
-            cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi8 ' \
+            cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi9 ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller'
             _, out, _, = await exectools.cmd_gather_async(cmd)
             self.logger.info('oc output: %s', out)
 
             self.logger.info('Sleeping so that release controller has time to react...')
-            await asyncio.sleep(60)
+            await asyncio.sleep(120)
 
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag ' \
                 f'{self.version}-art-latest{suffix}:trigger-release-controller -d'
@@ -202,7 +203,11 @@ class BuildSyncPipeline:
         various release controller namespaces should be performed.
         """
 
-        @exectools.limit_concurrency(500)
+        if self.runtime.dry_run:
+            self.logger.info('Would have backed up all imagestreams.')
+            return
+
+        @limit_concurrency(500)
         async def backup_namespace(ns):
             self.logger.info('Running backup for namespace %s', ns)
 
@@ -240,7 +245,7 @@ class BuildSyncPipeline:
         cmd.extend(glob.glob('*.backup.yaml'))
         await exectools.cmd_assert_async(cmd)
 
-    @exectools.limit_concurrency(500)
+    @limit_concurrency(500)
     async def _tag_into_ci_imagestream(self, arch_suffix, tag):
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
@@ -254,7 +259,11 @@ class BuildSyncPipeline:
                          arch_suffix, self.version, tag, tag_pullspec)
         cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} ' \
               f'tag {tag_pullspec} {self.version}:{tag}'
-        await exectools.cmd_gather_async(cmd)
+
+        if self.runtime.dry_run:
+            self.logger.info('Would have executed: "%s"', ' '.join(cmd))
+        else:
+            await exectools.cmd_gather_async(cmd)
 
         if not arch_suffix:
             # Tag the image into the imagestream for private CI from openshift-priv.
@@ -262,7 +271,11 @@ class BuildSyncPipeline:
                              self.version, tag, tag_pullspec)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-private ' \
                   f'tag {tag_pullspec} {self.version}-priv:{tag}'
-            await exectools.cmd_gather_async(cmd)
+
+            if self.runtime.dry_run:
+                self.logger.info('Would have executed: "%s"', ' '.join(cmd))
+            else:
+                await exectools.cmd_gather_async(cmd)
 
     async def _populate_ci_imagestreams(self):
         """"
@@ -298,7 +311,6 @@ class BuildSyncPipeline:
         except (ChildProcessError, KeyError) as e:
             await self.slack_client.say(f'Unable to mirror CoreOS images to CI for {self.version}: {e}')
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def _update_nightly_imagestreams(self):
         """
         Determine the content to update in the ART latest imagestreams and apply those changes on the CI cluster.
@@ -347,7 +359,7 @@ class BuildSyncPipeline:
                 tasks.append(self._publish(filename))
             await asyncio.gather(*tasks)
 
-    @exectools.limit_concurrency(500)
+    @limit_concurrency(500)
     async def _publish(self, filename):
         with open(filename) as f:
             meta = yaml.safe_load(f.read())['metadata']
@@ -483,7 +495,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
     try:
         # Only for stream assembly, lock the build to avoid parallel runs
         if assembly == 'stream':
-            # https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
+            # https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Fbuild-sync/40333/
             # will return job/aos-cd-builds/job/build%252Fbuild-sync/40333
             lock_identifier = get_build_url().replace(f'{constants.JENKINS_UI_URL}/', '')
             runtime.logger.info('Lock identifier: %s', lock_identifier)

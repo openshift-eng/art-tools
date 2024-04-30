@@ -2,10 +2,12 @@ import json
 from tenacity import retry, stop_after_attempt, wait_fixed
 from urllib import request
 
+from artcommonlib import exectools
 from artcommonlib.arch_util import brew_suffix_for_arch
 from artcommonlib.format_util import red_print
-from elliottlib import exectools, constants
-from artcommonlib.rhcos import get_primary_container_name
+from elliottlib import constants
+from artcommonlib.rhcos import (get_primary_container_name,
+                                get_build_id_from_rhcos_pullspec)
 
 
 def release_url(runtime, version, arch="x86_64", private=False):
@@ -84,13 +86,12 @@ def _build_meta(runtime, build_id, version, arch="x86_64", private=False, meta_t
 
 
 def get_build_from_payload(runtime, payload_pullspec):
+    out, _ = exectools.cmd_assert(["oc", "image", "info", "-o", "json", payload_pullspec])
+    arch = json.loads(out)["config"]["architecture"]
     rhcos_tag = get_primary_container_name(runtime)
     out, _ = exectools.cmd_assert(["oc", "adm", "release", "info", "--image-for", rhcos_tag, "--", payload_pullspec])
     rhcos_pullspec = out.split('\n')[0]
-    out, _ = exectools.cmd_assert(["oc", "image", "info", "-o", "json", rhcos_pullspec])
-    image_info = json.loads(out)
-    build_id = image_info["config"]["config"]["Labels"]["version"]
-    arch = image_info["config"]["architecture"]
+    build_id = get_build_id_from_rhcos_pullspec(rhcos_pullspec)
     return build_id, arch
 
 

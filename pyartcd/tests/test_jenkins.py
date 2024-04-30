@@ -32,6 +32,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
         triggered_url = 'folder/foo/1'
         os.environ['BUILD_URL'] = 'folder/bar/1'
         os.environ['JOB_NAME'] = 'bar'
+        os.environ['JENKINS_URL'] = 'buildvm.com'
 
         result = jenkins.start_build(job, params, block_until_building=True, watch_building_delay=delay)
         self.assertEqual(result, None)
@@ -55,6 +56,7 @@ class TestJenkinsStartBuild(unittest.TestCase):
         triggered_url = 'folder/foo/1'
         os.environ['BUILD_URL'] = 'folder/bar/1'
         os.environ['JOB_NAME'] = 'bar'
+        os.environ['JENKINS_URL'] = 'buildvm.com'
         mock_build.return_value.poll.return_value = {'result': 'SUCCESS'}
 
         result = jenkins.start_build(job, params, block_until_building=True,
@@ -75,9 +77,9 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(jenkins.get_build_path(), None)
 
         # Trailing slash will be removed
-        os.environ['BUILD_URL'] = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/' \
+        os.environ['BUILD_URL'] = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' \
                                   'job/aos-cd-builds/job/build%252Focp4/46870/'
-        self.assertEqual(jenkins.get_build_url(), 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/'
+        self.assertEqual(jenkins.get_build_url(), 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/'
                                                   'job/aos-cd-builds/job/build%252Focp4/46870')
 
         # Build path
@@ -85,10 +87,10 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(build_path, 'job/aos-cd-builds/job/build%252Focp4/46870')
 
     def test_get_build_id_from_url(self):
-        build_url = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/' \
+        build_url = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' \
                     'job/aos-cd-builds/job/build%252Focp4/46870/'
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)
 
-        build_url = 'https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/' \
+        build_url = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' \
                     'job/aos-cd-builds/job/build%252Focp4/46870'
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)

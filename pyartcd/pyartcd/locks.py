@@ -23,6 +23,12 @@ class Keys(enum.Enum):
     MASS_REBUILD_QUEUE = 'appdata:mass-rebuild-queue'
 
 
+# Use a BIG timeout value so that locks do not silently expire.
+# Effectively we do not want to rely on lock timeout being reached
+# since we usually start a long-running job/operation & after acquiring lock do not
+# check its validity again (if this pattern changes then we should change this).
+DEFAULT_LOCK_TIMEOUT = 60 * 60 * 96  # 96 hours
+
 # This constant defines for each lock type:
 # - how many times the lock manager should try to acquire the lock before giving up
 # - the sleep interval between two consecutive retries, in seconds
@@ -31,37 +37,37 @@ LOCK_POLICY = {
     Lock.OLM_BUNDLE: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 4,  # 4 hours
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.MIRRORING_RPMS: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 6,  # 6 hours
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.PLASHET: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 12,  # 12 hours
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.BUILD: {
         'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 24,  # 24 hours
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 24,  # 24 hours
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.SIGNING: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 2,  # 2 hour
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.BUILD_SYNC: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': 60 * 60 * 2,  # 2 hour
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
 }
 
@@ -112,17 +118,21 @@ class LockManager(Aioredlock):
 
     async def lock(self, resource, *args, **kwargs):
         self.logger.info('Trying to acquire lock %s', resource)
-        lock = await super().lock(resource, *args, **kwargs)
-        self.logger.info('Acquired resource %s', lock.resource)
+        try:
+            lock = await super().lock(resource, *args, **kwargs)
+            self.logger.info('Acquired lock %s', resource)
+        except LockError:
+            self.logger.error('Failed acquiring lock %s', resource)
+            raise
         return lock
 
     async def unlock(self, lock):
+        self.logger.info('Releasing lock "%s"', lock.resource)
         try:
-            self.logger.info('Releasing lock "%s"', lock.resource)
             await super().unlock(lock)
             self.logger.info('Lock released')
         except LockError:
-            self.logger.warning('Failed releasing lock %s', lock.resource)
+            self.logger.error('Failed releasing lock %s', lock.resource)
             raise
 
     async def get_lock_id(self, resource) -> str:
@@ -195,10 +205,5 @@ async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: st
 
         async with await lock_manager.lock(resource=lock_name, lock_identifier=lock_id):
             return await coro
-
-    except LockError as e:
-        lock_manager.logger.error('Failed acquiring lock %s: %s', lock_name, e)
-        raise
-
     finally:
         await lock_manager.destroy()

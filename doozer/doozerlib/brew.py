@@ -5,10 +5,10 @@ Utility functions for general interactions with Brew and Builds
 # stdlib
 import asyncio
 import json
-import logging
 import threading
 import time
 import traceback
+from datetime import datetime
 from enum import Enum
 from multiprocessing import Lock
 from typing import BinaryIO, Callable, Dict, Iterable, List, Optional, Tuple
@@ -18,13 +18,12 @@ import koji
 import koji_cli.lib
 import requests
 
-from doozerlib import exectools, constants
-
-from . import logutil
-from .model import Missing
+from artcommonlib.model import Missing
+from artcommonlib import logutil, exectools
+from doozerlib import constants
 from .util import total_size
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 # ============================================================================
 # Brew/Koji service interaction functions
@@ -645,7 +644,13 @@ class KojiWrapper(koji.ClientSession):
             elif method_name == 'listBuilds':
                 if 'completeBefore' not in kwargs and 'createdBefore' not in kwargs:
                     kwargs = kwargs or {}
-                    kwargs['completeBefore'] = self.___before_timestamp
+                    # Recently brew started returning outdated results for filtering via float timestamps.
+                    # Using a date string works around this issue.
+                    # See https://issues.redhat.com/browse/RHELBLD-15024
+                    dt = None
+                    if self.___before_timestamp:
+                        dt = str(datetime.utcfromtimestamp(self.___before_timestamp))
+                    kwargs['completeBefore'] = dt
             elif method_name in KojiWrapper.methods_with_event:
                 if 'event' not in kwargs:
                     # Only set the kwarg if the caller didn't

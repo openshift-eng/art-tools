@@ -1,10 +1,11 @@
 import click
 import sys
 import traceback
+
+from artcommonlib import exectools
+from artcommonlib.model import Missing
 from doozerlib import Runtime
-from doozerlib.model import Missing
 from doozerlib.cli import cli, pass_runtime
-from doozerlib import exectools
 from typing import Optional, Tuple
 from doozerlib.olm.bundle import OLMBundle
 
@@ -228,7 +229,13 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
         elasticsearch-operator-container-v4.2.30-202004240858 \
         cluster-logging-operator-container-v4.2.30-202004240858
     """
-    runtime.initialize(clone_distgits=False)
+
+    runtime.initialize(config_only=True)
+
+    if runtime.group_config.canonical_builders_from_upstream:
+        runtime.initialize(clone_distgits=True)
+    else:
+        runtime.initialize(clone_distgits=False)
 
     if not operator_nvrs:
         # If this verb is run without operator NVRs, query Brew for all operator builds

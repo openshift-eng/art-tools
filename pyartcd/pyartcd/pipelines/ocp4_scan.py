@@ -170,9 +170,11 @@ class Ocp4ScanPipeline:
 
 @cli.command('ocp4-scan')
 @click.option('--version', required=True, help='OCP version to scan')
+@click.option('--ignore-locks', is_flag=True, default=False,
+              help='Do not wait for other builds in this version to complete (only allowed in dry-run mode)')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan(runtime: Runtime, version: str):
+async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
     lock = Lock.BUILD
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path()
@@ -182,13 +184,20 @@ async def ocp4_scan(runtime: Runtime, version: str):
     pipeline = Ocp4ScanPipeline(runtime, version)
     jenkins.init_jenkins()
 
-    await locks.run_with_lock(
-        coro=pipeline.run(),
-        lock=lock,
-        lock_name=lock_name,
-        lock_id=lock_identifier,
-        skip_if_locked=True
-    )
+    if ignore_locks:
+        # Already checked by aos-cd-jobs, but you never know...
+        if not runtime.dry_run:
+            raise RuntimeError('--ignore-locks can only by used with --dry-run')
+        await pipeline.run()
+
+    else:
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=lock,
+            lock_name=lock_name,
+            lock_id=lock_identifier,
+            skip_if_locked=True
+        )
 
     # A build can be skipped because it's frozen, or because there's another run ongoing in the same group
     # Signal this by adding a [SKIPPED] tag to the build title

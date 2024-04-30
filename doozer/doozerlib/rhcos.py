@@ -9,15 +9,16 @@ import koji
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib.arch_util import brew_suffix_for_arch
+from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from doozerlib import brew, exectools, logutil
-from doozerlib.model import Model
+from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
+from doozerlib import brew
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
-from artcommonlib import rhcos
+from artcommonlib import rhcos, logutil, exectools
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 class RHCOSNotFound(Exception):
@@ -188,15 +189,7 @@ class RHCOSBuildInspector:
         # trust the exact pullspec in releases.yml instead of what we find in the RHCOS release
         # browser.
         for tag, pullspec in pullspec_for_tag.items():
-            try:
-                image_info_str, _ = exectools.cmd_assert(f'oc image info -o json {pullspec}', retries=3)
-            except ChildProcessError as e:
-                raise Exception(f'Error fetching RHCOS build {build_id}: {e}')
-
-            image_info = Model(json.loads(image_info_str))
-            image_build_id = image_info.config.config.Labels.version
-            if not image_build_id:
-                raise Exception(f'Unable to determine RHCOS build_id from tag {tag} pullspec {pullspec}. Retrieved image info: {image_info_str}')
+            image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
             if self.build_id and self.build_id != image_build_id:
                 raise Exception(f'Found divergent RHCOS build_id for {pullspec_for_tag}. {image_build_id} versus'
                                 f' {self.build_id}')

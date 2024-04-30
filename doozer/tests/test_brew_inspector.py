@@ -9,7 +9,7 @@ import logging
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from doozerlib.image import BrewBuildImageInspector
+from doozerlib.brew_info import BrewBuildImageInspector
 
 
 class MockRuntime(object):
@@ -39,7 +39,7 @@ class TestBrewBuildImageInspector(unittest.TestCase):
     def tearDown(self):
         pass
 
-    @patch("doozerlib.exectools.cmd_assert")
+    @patch("artcommonlib.exectools.cmd_assert")
     def test_info_parsing(self, fake_cmd_assert):
         """
         Tests the brew build inspector abstraction to ensure it correctly parses and utilizes

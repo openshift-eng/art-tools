@@ -2,8 +2,8 @@
 
 import unittest
 
+from artcommonlib import exectools
 from tests_functional import DoozerRunnerTestCase
-from doozerlib import image, exectools, model
 
 
 class TestSanity(DoozerRunnerTestCase):

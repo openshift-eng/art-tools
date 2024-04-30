@@ -4,9 +4,10 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 from errata_tool import Erratum
 
+from artcommonlib import logutil
+from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
-from elliottlib import bzutil, constants, logutil
-from elliottlib.assembly import assembly_issues_config
+from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -15,14 +16,14 @@ from elliottlib.bzutil import Bug
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 @cli.command("verify-attached-bugs",
              short_help="Run validations on bugs attached to release advisories and report results")
 @click.option("--verify-bug-status", is_flag=True,
-              help="Check that bugs of advisories are all VERIFIED or more",
-              type=bool, default=False)
+              help="Check that bugs of advisories are all ON_QA or more",
+              type=bool, default=True)
 @click.option("--verify-flaws", is_flag=True,
               help="Check that flaw bugs are attached and associated with respective builds",
               type=bool, default=False)
@@ -51,7 +52,7 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     - Bugs aren't attached to multiple advisories. To skip use --skip-multiple-advisories-check.
 
     Additional validations:
-    - Bug Status (--verify-bug-status): All bugs are in at least in VERIFIED state
+    - Bug Status (--verify-bug-status): All bugs are in at least in ON_QA state
     - Flaw Bugs (--verify-flaws): All flaw bugs are attached to advisories (using attach-cve-flaws logic) and
     associated with respective builds. Verify advisory type is RHSA when applicable, and CVE names field is correct.
 
@@ -81,7 +82,7 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
     # placeholder
     non_flaw_bugs = [b for b in bugs if b.is_ocp_bug()]
 
-    validator.validate(non_flaw_bugs, verify_bug_status, no_verify_blocking_bugs)
+    validator.validate(non_flaw_bugs, verify_bug_status, no_verify_blocking_bugs, is_attached=True)
 
     # skip advisory type check if advisories are
     # manually passed in, and we don't know their type
@@ -103,13 +104,14 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
 
     if validator.problems:
         if validator.output != 'slack':
-            red_print(f"Found the following problems: {validator.problems}")
-            red_print("Some bug problems were listed above. Please investigate.")
+            print("Found the following problems, please investigate")
+            for p in validator.problems:
+                print(p)
         exit(1)
 
 
 @cli.command("verify-bugs", short_help="Verify bugs included in an assembly (default --assembly=stream)")
-@click.option("--verify-bug-status", is_flag=True, help="Check that bugs of advisories are all VERIFIED or more",
+@click.option("--verify-bug-status", is_flag=True, help="Check that bugs of advisories are all ON_QA or more",
               type=bool, default=False)
 @click.option("--no-verify-blocking-bugs", is_flag=True,
               help="Don't check if there are open bugs for the next minor version blocking bugs for this minor version",
@@ -174,19 +176,32 @@ class BugValidator:
     async def close(self):
         await self.errata_api.close()
 
-    def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool):
+    def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
+                 is_attached: bool = False):
         non_flaw_bugs = self.filter_bugs_by_release(non_flaw_bugs, complain=True)
         self._find_invalid_trackers(non_flaw_bugs)
         if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
-            self._verify_blocking_bugs(blocking_bugs_for)
+            self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
 
         if verify_bug_status:
             self._verify_bug_status(non_flaw_bugs)
 
     def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
-        bugs_by_type = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map, permitted_bug_ids=permitted_bug_ids,
-                                               permissive=True)
+        advance_release = False
+        if "advance" in advisory_id_map:
+            if "metadata" in advisory_id_map:
+                if len(advisory_bug_map[advisory_id_map["advance"]]) > len(advisory_bug_map[advisory_id_map["metadata"]]):
+                    advance_release = True
+            else:
+                advance_release = True
+        operator_bundle_advisory = "advance" if advance_release else "metadata"
+        bugs_by_type, issues = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map,
+                                                       permitted_bug_ids=permitted_bug_ids,
+                                                       permissive=True, operator_bundle_advisory=operator_bundle_advisory)
+        for i in issues:
+            self._complain(i)
+
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
 
@@ -285,21 +300,20 @@ class BugValidator:
                 self.errata_api,
                 advisory_id, attached_builds,
                 cve_components_mapping)
+            for cve, cve_package_exclusions in extra_exclusions.items():
+                if cve_package_exclusions:
+                    self._complain(f"On advisory {advisory_id}, {cve} is not associated with Brew components "
+                                   f"{', '.join(sorted(cve_package_exclusions))}."
+                                   " You may need to associate the CVE with the components "
+                                   "in the CVE mapping or drop the tracker bugs.")
+            for cve, cve_package_exclusions in missing_exclusions.items():
+                if cve_package_exclusions:
+                    self._complain(f"On advisory {advisory_id}, {cve} is associated with Brew components "
+                                   f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
+                                   " You may need to explicitly exclude those Brew components from the CVE "
+                                   "mapping or attach the corresponding tracker bugs.")
         except ValueError as e:
             self._complain(e)
-
-        for cve, cve_package_exclusions in extra_exclusions.items():
-            if cve_package_exclusions:
-                self._complain(f"On advisory {advisory_id}, {cve} is not associated with Brew components "
-                               f"{', '.join(sorted(cve_package_exclusions))}."
-                               " You may need to associate the CVE with the components "
-                               "in the CVE mapping or drop the tracker bugs.")
-        for cve, cve_package_exclusions in missing_exclusions.items():
-            if cve_package_exclusions:
-                self._complain(f"On advisory {advisory_id}, {cve} is associated with Brew components "
-                               f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
-                               " You may need to explicitly exclude those Brew components from the CVE "
-                               "mapping or attach the corresponding tracker bugs.")
 
         # Validate `CVE Names` field of the advisory
         advisory_cves = advisory_info["content"]["content"]["cve"].split()
@@ -393,7 +407,7 @@ class BugValidator:
         k = {bug: [blocking_bugs[b] for b in bug.depends_on if b in blocking_bugs] for bug in bugs}
         return k
 
-    def _verify_blocking_bugs(self, blocking_bugs_for):
+    def _verify_blocking_bugs(self, blocking_bugs_for, is_attached=False):
         # complain about blocking bugs that aren't verified or shipped
         for bug, blockers in blocking_bugs_for.items():
             for blocker in blockers:
@@ -421,20 +435,32 @@ class BugValidator:
                         message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of bug " \
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
                     self._complain(message)
+                if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
+                    blocker_advisories = blocker.all_advisory_ids()
+                    if not blocker_advisories:
+                        if self.output == 'text':
+                            message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
+                                f"{blocker.id} which is on {blocker.status} but not attached to any advisory"
+                        elif self.output == 'slack':
+                            message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
+                                f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
+                        self._complain(message)
 
     def _verify_bug_status(self, bugs):
-        # complain about bugs that are not yet VERIFIED or more.
+        # complain about bugs that are not yet ON_QA or more.
+        good_resolution = ['CURRENTRELEASE', 'ERRATA',
+                           'Done', 'Fixed', 'Done-Errata', 'Current Release', 'Errata']
         for bug in bugs:
             if bug.is_flaw_bug():
                 continue
-            if bug.status in ["VERIFIED", "RELEASE_PENDING", "Verified", "Release Pending"]:
+            if bug.status in ["VERIFIED", "RELEASE_PENDING", "Verified", "Release Pending", "ON_QA"]:
                 continue
-            if bug.status in ["CLOSED", "Closed"] and bug.resolution in ["ERRATA", 'Errata']:
+            if bug.status in ["CLOSED", "Closed"] and bug.resolution in good_resolution:
                 continue
             status = f"{bug.status}"
             if bug.status in ['CLOSED', 'Closed']:
                 status = f"{bug.status}: {bug.resolution}"
-            self._complain(f"Bug <{bug.weburl}|{bug.id}> has status {status}")
+            self._complain(f"Bug <{bug.weburl}|{bug.id}> has invalid status {status}")
 
     def _find_invalid_trackers(self, bugs):
         logger.info("Checking for invalid tracker bugs")

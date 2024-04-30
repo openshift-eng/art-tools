@@ -15,13 +15,14 @@ from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
+import artcommonlib
 import doozerlib
-from doozerlib import exectools, logutil
-from doozerlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib import logutil, exectools
+from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib.pushd import Dir
+from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.model import Missing, Model
-from doozerlib.pushd import Dir
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
 
@@ -375,7 +376,7 @@ class Metadata(object):
         """
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
         try:
-            req = exectools.retry(
+            req = artcommonlib.exectools.retry(
                 3, lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200)
         except Exception as e:
@@ -400,6 +401,8 @@ class Metadata(object):
                             '7' for el7, '8' for el8, etc. You can also pass in a brew target that
                             contains '....-rhel-?..' and the number will be extracted. If you want the true
                             latest, leave as None.
+                            For an image, leaving as none will default to the RHEL version in the branch
+                            associated with the metadata.
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param complete_before_event: If a value is specified >= 0, the search will be constrained to builds which completed before
                                       the specified brew_event. If a value is specified < 0, the search will be conducted with no constraint on
@@ -457,19 +460,52 @@ class Metadata(object):
                 raise IOError(msg)
 
             def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate:
-                # 1. Matching an unspecified RPM suffix (e.g. .el7).
-                # 2. Other release components that might be introduced later.
+                # Include * after pattern_suffix to tolerate other release components that might be introduced later.
+                # Also include a .el<version> suffix to match the new build pattern
+                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
+                assert 'None' not in rhel_pattern
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
-                                             pattern=f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}',
+                                             pattern=rhel_pattern,
                                              queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                              **list_builds_kwargs)
+
+                # If no builds were found, the component might still be following the old pattern,
+                # where a .el suffix was not included in the NVR
+                if not builds:
+                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
+
+                    legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    assert 'None' not in legacy_pattern
+                    builds = koji_api.listBuilds(packageID=package_id,
+                                                 state=None if build_state is None else build_state.value,
+                                                 pattern=legacy_pattern,
+                                                 queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                                                 **list_builds_kwargs)
+                    if not builds:
+                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
                 refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
+
+                # .el? was added to images well after assemblies were established. It allows us to build multiple
+                # images out of the same distgit if they differ in RHEL version. Because this was added late, not
+                # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
+                # version, if they do.
+                if self.meta_type == 'image':
+                    image_el_ver = f'.el{self.branch_el_target()}'
+                    # Ensure the suffix ends the string OR at least terminated by a '.' .
+                    el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
+                    if el_refined:
+                        # if there were any images which had .el?, prefer them over the non-qualified.
+                        refined = el_refined
+                    else:
+                        # Everything was eliminated when elX was included. So at least filter out those which possess elY
+                        # where X != Y
+                        el_pattern = re.compile(r'.*\.el\d+.*')
+                        refined = [b for b in refined if not el_pattern.match(b['nvr'])]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we
@@ -656,7 +692,9 @@ class Metadata(object):
 
         if not latest_build:
             return RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                               reason=f'Component {component_name} has no latest build for assembly: {self.runtime.assembly}')
+                               reason=f'Component {component_name} has no latest build '
+                                      f'for assembly {self.runtime.assembly} '
+                                      f'and target {el_target}')
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
         latest_build_creation = latest_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC

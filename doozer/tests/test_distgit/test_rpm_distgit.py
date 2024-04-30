@@ -3,7 +3,8 @@ from pathlib import Path
 
 from unittest.mock import Mock, patch
 
-from doozerlib import distgit, model
+from artcommonlib.model import Model
+from doozerlib import distgit
 
 from .support import TestDistgit
 
@@ -12,7 +13,7 @@ class TestRPMDistGit(TestDistgit):
     def setUp(self):
         super(TestRPMDistGit, self).setUp()
         self.rpm_dg = distgit.RPMDistGitRepo(self.md, autoclone=False)
-        self.rpm_dg.runtime.group_config = model.Model()
+        self.rpm_dg.runtime.group_config = Model()
 
     @patch("aiofiles.open")
     @patch("doozerlib.distgit.exectools.cmd_assert_async", return_value=("foo-1.2.3-1", ""))
@@ -26,7 +27,9 @@ class TestRPMDistGit(TestDistgit):
         self.assertEqual(actual, expected)
         mocked_open.assert_called_once_with(Path("/path/to/distgit/foo.spec"), "r")
         mocked_glob.assert_called_once_with(self.rpm_dg.distgit_dir + "/*.spec")
-        mocked_cmd_assert_async.assert_called_once_with(["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}", "--srpm", "--undefine", "dist", "--", Path("/path/to/distgit/foo.spec")], strip=True)
+        mocked_cmd_assert_async.assert_called_once_with(
+            ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}",
+                "--srpm", "--undefine", "dist", "--", Path("/path/to/distgit/foo.spec")], strip=True)
 
 
 if __name__ == "__main__":

@@ -8,13 +8,14 @@ from flexmock import flexmock
 import io
 from unittest.mock import AsyncMock
 import yaml
-import openshift as oc
+import openshift_client as oc
 
-from doozerlib.assembly import AssemblyIssueCode, AssemblyTypes, AssemblyIssue
+from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue
+from artcommonlib.model import Model
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
-from doozerlib.image import BrewBuildImageInspector, ImageMetadata
-from doozerlib.model import Model
+from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.image import ImageMetadata
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
@@ -215,7 +216,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
         pg_fpe_mock.return_value = ("entries", ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, dict(ppc64le="entries"))
+        self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
         self.assertEqual(gpcli.assembly_issues, ["issues"])
 
     async def test_detect_extend_payload_entry_issues(self):
@@ -313,7 +314,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
 
     @patch("aiofiles.open")
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_mirror_payload_content(self, exec_mock, open_mock):
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True)
         payload_entries = dict(
@@ -551,9 +552,10 @@ spec:
         gpcli.create_multi_manifest_list.assert_awaited_once_with("spam", arch_to_payload_entry, "ocp")
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
+        os.environ['XDG_RUNTIME_DIR'] = 'fake'
         runtime = MagicMock(uuid="uuid")
         gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
@@ -575,12 +577,12 @@ spec:
         await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
+            "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
         ml = yaml.safe_load(buffer.getvalue())
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
 
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("pathlib.Path.open")
     async def test_create_multi_release_images(self, open_mock, exec_mock):
         gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp"))
@@ -605,9 +607,10 @@ spec:
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
     @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.mirror_payload_content")
-    @patch("doozerlib.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_release_manifest_list(self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock):
+        os.environ['XDG_RUNTIME_DIR'] = 'fake'
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
         exec_mock.return_value = None  # do not actually execute command
@@ -622,7 +625,7 @@ spec:
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
         self.assertEqual(
             exec_mock.call_args[0][0],
-            "manifest-tool push from-spec /tmp/isname.manifest-list.yaml")
+            "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
         self.assertEqual(buffer.getvalue().strip(), """
 image: quay.io/org/repo:spam
 manifests:

@@ -7,9 +7,9 @@ import koji
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_print
 from elliottlib import Runtime, early_kernel
-from elliottlib.assembly import AssemblyTypes
 from elliottlib.cli.common import cli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
@@ -88,7 +88,7 @@ class FindBugsKernelClonesCli:
             components = {c.name for c in bug.fields.components}
             if config.target_jira.component not in components:
                 raise ValueError(f"Jira {key} is not set to component {config.target_jira.component}")
-            target_versions = getattr(bug.fields, JIRABugTracker.FIELD_TARGET_VERSION)
+            target_versions = getattr(bug.fields, JIRABugTracker.field_target_version)
             target_releases = {t.name for t in target_versions}
             if config.target_jira.target_release not in target_releases:
                 raise ValueError(f"Jira {key} has invalid target version: {target_versions}")

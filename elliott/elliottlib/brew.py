@@ -1,15 +1,15 @@
 """
 Utility functions for general interactions with Brew and Builds
 """
-
+from artcommonlib import logutil
 # stdlib
-from elliottlib.model import Missing
 import json
 import logging
 import ssl
 import threading
 import time
 import re
+from datetime import datetime
 from enum import Enum
 from typing import Dict, Iterable, List, Optional, Tuple, BinaryIO
 
@@ -18,11 +18,12 @@ import koji
 import requests
 from requests_gssapi import HTTPSPNEGOAuth
 
+from artcommonlib.model import Missing
 # ours
-from elliottlib import constants, exceptions, logutil
+from elliottlib import constants, exceptions
 from elliottlib.util import total_size
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 def get_tagged_builds(tag_component_tuples: Iterable[Tuple[str, Optional[str]]], build_type: Optional[str], event: Optional[int], session: koji.ClientSession) -> List[Optional[List[Dict]]]:
@@ -627,7 +628,13 @@ class KojiWrapper(koji.ClientSession):
             elif method_name == 'listBuilds':
                 if 'completeBefore' not in kwargs and 'createdBefore' not in kwargs:
                     kwargs = kwargs or {}
-                    kwargs['completeBefore'] = self.___before_timestamp
+                    # Recently brew started returning outdated results for filtering via float timestamps.
+                    # Using a date string works around this issue.
+                    # See https://issues.redhat.com/browse/RHELBLD-15024
+                    dt = None
+                    if self.___before_timestamp:
+                        dt = str(datetime.utcfromtimestamp(self.___before_timestamp))
+                    kwargs['completeBefore'] = dt
             elif method_name in KojiWrapper.methods_with_event:
                 if 'event' not in kwargs:
                     # Only set the kwarg if the caller didn't

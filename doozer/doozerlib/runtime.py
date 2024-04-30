@@ -1,7 +1,11 @@
 from future import standard_library
 
 import artcommonlib.util
-from artcommonlib import assertion
+from artcommonlib import assertion, logutil, exectools
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
+    assembly_streams_config
+from artcommonlib.model import Model, Missing
+from artcommonlib.pushd import Dir
 
 standard_library.install_aliases()
 from contextlib import contextmanager
@@ -28,22 +32,17 @@ from jira import JIRA
 
 from artcommonlib.runtime import GroupRuntime
 from doozerlib import gitdata
-from . import logutil
-from . import exectools
 from . import dblib
-from .pushd import Dir
 
 from .image import ImageMetadata
 from .rpmcfg import RPMMetadata
 from doozerlib import state
-from .model import Model, Missing
 from multiprocessing import Lock, RLock, Semaphore
 from .repos import Repos
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import constants
 from doozerlib import util
 from doozerlib import brew
-from doozerlib.assembly import assembly_group_config, assembly_basis_event, assembly_type, AssemblyTypes, assembly_streams_config
 from doozerlib.build_status_detector import BuildStatusDetector
 
 # Values corresponds to schema for group.yml: freeze_automation. When
@@ -102,8 +101,10 @@ class Runtime(GroupRuntime):
         self.quiet = False
         self.load_wip = False
         self.load_disabled = False
+        self.logger = None
         self.data_path = None
         self.data_dir = None
+        self.group_commitish = None
         self.latest_parent_version = False
         self.rhpkg_config = None
         self._koji_client_session = None
@@ -382,7 +383,7 @@ class Runtime(GroupRuntime):
 
         if '@' in self.group:
             self.group, self.group_commitish = self.group.split('@', 1)
-        else:
+        elif self.group_commitish is None:
             self.group_commitish = self.group
 
         if group_only:
@@ -664,7 +665,7 @@ class Runtime(GroupRuntime):
 
     def initialize_logging(self):
 
-        if self.initialized:
+        if self.initialized or self.logger:
             return
 
         # Three flags control the output modes of the command:
@@ -693,7 +694,7 @@ class Runtime(GroupRuntime):
             root_logger.addFilter(logging.Filter("ocp"))
 
         # Get a reference to the logger for doozer
-        self.logger = logutil.getLogger()
+        self.logger = logutil.get_logger()
         self.logger.propagate = False
 
         # levels will be set at the handler level. Make sure master level is low.
@@ -1114,7 +1115,7 @@ class Runtime(GroupRuntime):
 
     def resolve_stream(self, stream_name):
         """
-        :param stream_name: The name of the stream to resolve.
+        :param stream_name: The name of the stream to resolve. The name can also be a stream name alias.
         :return: Resolves and returns the image stream name into its literal value.
                 This is usually a lookup in streams.yml, but can also be overridden on the command line. If
                 the stream_name cannot be resolved, an exception is thrown.
@@ -1124,10 +1125,11 @@ class Runtime(GroupRuntime):
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
 
-        if stream_name not in self.streams:
-            raise IOError("Unable to find definition for stream: %s" % stream_name)
+        for test_stream_name, stream_def in self.streams.items():
+            if stream_name == test_stream_name or ('aliases' in stream_def and stream_name in stream_def['aliases']):
+                return Model(dict_to_model=stream_def)
 
-        return self.streams[stream_name]
+        raise IOError("Unable to find definition for stream: %s" % stream_name)
 
     def get_stream_names(self):
         """
@@ -1505,7 +1507,7 @@ class Runtime(GroupRuntime):
         return re.match(r"^v\d+((\.\d+)+)?$", version) is not None
 
     def clone_distgits(self, n_threads=None):
-        with util.timer(self.logger.info, 'Full runtime clone'):
+        with exectools.timer(self.logger.info, 'Full runtime clone'):
             if n_threads is None:
                 n_threads = self.global_opts['distgit_threads']
             return exectools.parallel_exec(

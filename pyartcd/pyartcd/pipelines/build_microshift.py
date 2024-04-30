@@ -13,7 +13,9 @@ from typing import Dict, Iterable, List, Optional, Tuple, cast
 import click
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
-from doozerlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
+from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
@@ -25,9 +27,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_basis, get_assembly_type,
-                          isolate_el_version_in_release, load_group_config,
-                          load_releases_config)
+from pyartcd.util import (get_assembly_type, isolate_el_version_in_release, load_group_config, load_releases_config)
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -41,7 +41,7 @@ class BuildMicroShiftPipeline:
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
     def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
-                 force: bool, ocp_build_data_url: str, logger: Optional[logging.Logger] = None):
+                 force: bool, data_path: str, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -54,10 +54,7 @@ class BuildMicroShiftPipeline:
         self.slack_client.bind_channel(group)
 
         # determines OCP version
-        match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
-        if not match:
-            raise ValueError(f"Invalid group name: {group}")
-        self._ocp_version = (int(match[1]), int(match[2]))
+        self._ocp_version = get_ocp_version_from_group(group)
 
         # sets environment variables for Elliott and Doozer
         self._elliott_env_vars = os.environ.copy()
@@ -65,18 +62,18 @@ class BuildMicroShiftPipeline:
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
 
-        if not ocp_build_data_url:
-            ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
-        if ocp_build_data_url:
-            self._doozer_env_vars["DOOZER_DATA_PATH"] = ocp_build_data_url
-            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = ocp_build_data_url
+        if not data_path:
+            data_path = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
+        if data_path:
+            self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
+            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
     async def run(self):
         # Make sure our api.ci token is fresh
         await oc.registry_login(self.runtime)
 
         assembly_type = AssemblyTypes.STREAM
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
 
         try:
             group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars)
@@ -176,7 +173,7 @@ class BuildMicroShiftPipeline:
                     await self.slack_client.say_in_thread(message)
                 except Exception as err:
                     self._logger.warning("Failed to trigger microshift_sync job: %s", err)
-                    message = "@release-artists Please start <https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888" \
+                    message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
                               "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
                     await self.slack_client.say_in_thread(message)
 
@@ -227,6 +224,7 @@ class BuildMicroShiftPipeline:
             "--group", self.group,
             "--assembly", self.assembly,
             "find-bugs:sweep",
+            "--permissive",  # this is so we don't error out on non-microshift bugs
             "--use-default-advisory", "microshift"
         ]
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
@@ -333,7 +331,13 @@ class BuildMicroShiftPipeline:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
             with open(path) as f:
                 result = json.load(f)
-        return cast(List[str], result["builds"])
+
+        nvrs = cast(List[str], result["builds"])
+
+        # microshift builds are special in that they build for each assembly after payload is promoted
+        # and they include the assembly name in its build name
+        # so make sure found nvrs are related to assembly
+        return [n for n in nvrs if isolate_assembly_in_release(n) == self.assembly]
 
     async def _rebase_and_build_rpm(self, version, release: str, custom_payloads: Optional[Dict[str, str]]) -> List[str]:
         """ Rebase and build RPM
@@ -428,19 +432,16 @@ class BuildMicroShiftPipeline:
             github_token = os.environ.get('GITHUB_TOKEN')
             if not github_token:
                 raise ValueError("GITHUB_TOKEN environment variable is required to create a pull request")
-            owner = "openshift-eng"
             repo = "ocp-build-data"
-            api = GhApi(owner=owner, repo=repo, token=github_token)
+            api = GhApi(owner=constants.GITHUB_OWNER, repo=repo, token=github_token)
             existing_prs = api.pulls.list(state="open", base=base, head=head)
             if not existing_prs.items:
                 result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
-                api.pulls.merge(owner=owner, repo=repo, pull_number=result.number, merge_method="squash")
-                api.git.delete_ref(owner=owner, repo=repo, ref=f"heads/{branch}")
+                api.pulls.merge(owner=constants.GITHUB_OWNER, repo=repo, pull_number=result.number, merge_method="squash")
             else:
                 pull_number = existing_prs.items[0].number
                 result = api.pulls.update(pull_number=pull_number, title=title, body=body)
-                api.pulls.merge(owner=owner, repo=repo, pull_number=pull_number, merge_method="squash")
-                api.git.delete_ref(owner=owner, repo=repo, ref=f"heads/{branch}")
+                api.pulls.merge(owner=constants.GITHUB_OWNER, repo=repo, pull_number=pull_number, merge_method="squash")
         else:
             self._logger.warning("PR is not created: Nothing to commit.")
         return result
@@ -465,7 +466,7 @@ class BuildMicroShiftPipeline:
 
 
 @cli.command("build-microshift")
-@click.option("--ocp-build-data-url", metavar='BUILD_DATA', default=None,
+@click.option("--data-path", metavar='BUILD_DATA', default=None,
               help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
 @click.option("-g", "--group", metavar='NAME', required=True,
               help="The group of components on which to operate. e.g. openshift-4.9")
@@ -479,8 +480,8 @@ class BuildMicroShiftPipeline:
               help="(For named assemblies) Rebuild even if a build already exists")
 @pass_runtime
 @click_coroutine
-async def build_microshift(runtime: Runtime, ocp_build_data_url: str, group: str, assembly: str, payloads: Tuple[str, ...],
+async def build_microshift(runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
                            no_rebase: bool, force: bool):
     pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-                                       no_rebase=no_rebase, force=force, ocp_build_data_url=ocp_build_data_url)
+                                       no_rebase=no_rebase, force=force, data_path=data_path)
     await pipeline.run()

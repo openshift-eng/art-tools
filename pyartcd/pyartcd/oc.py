@@ -4,11 +4,32 @@ import logging
 
 from pyartcd import exectools
 from pyartcd.runtime import Runtime
-import openshift as octool
+import openshift_client as octool
 from typing import List, Optional
 
 
 logger = logging.getLogger(__name__)
+
+
+async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
+    cmd = ["oc", "image", "info", "--show-multiarch", "-o", "json", "--", pullspec]
+    env = os.environ.copy()
+    env["GOTRACEBACK"] = "all"
+    rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+    if rc != 0:
+        if "not found: manifest unknown" in stderr or "was deleted or has expired" in stderr:
+            # image doesn't exist
+            if raise_if_not_found:
+                raise ValueError(f"Image {pullspec} is not found.")
+            return None
+        raise RuntimeError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+    info = json.loads(stdout)
+    if isinstance(info, list):
+        if not all(isinstance(i, dict) for i in info):
+            raise ValueError(f"Invalid multi-arch image info: {info}")
+    elif not isinstance(info, dict):
+        raise ValueError(f"Invalid image info: {info}")
+    return info
 
 
 async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False):
@@ -20,9 +41,9 @@ async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False
         if "not found: manifest unknown" in stderr or "was deleted or has expired" in stderr:
             # release image doesn't exist
             if raise_if_not_found:
-                raise IOError(f"Image {pullspec} is not found.")
+                raise ValueError(f"Image {pullspec} is not found.")
             return None
-        raise ChildProcessError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
+        raise RuntimeError(f"Error running {cmd}: exit_code={rc}, stdout={stdout}, stderr={stderr}")
     info = json.loads(stdout)
     if not isinstance(info, dict):
         raise ValueError(f"Invalid release info: {info}")
@@ -77,7 +98,7 @@ def get_release_image_info_from_pullspec(pullspec: str) -> (int, str):
 def extract_release_binary(image_pullspec: str, path_args: List[str]) -> (int, str):
     # oc image extract --confirm --only-files --path=/usr/bin/..:<workdir> <pullspec>
     cmd_args = ['extract', '--confirm', '--only-files'] + path_args + [image_pullspec]
-    common_oc_wrapper("extract_image", "image", cmd_args, True, False)
+    return common_oc_wrapper("extract_image", "image", cmd_args, True, True)
 
 
 def get_release_image_pullspec(release_pullspec: str, image: str) -> (int, str):

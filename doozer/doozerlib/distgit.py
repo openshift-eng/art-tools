@@ -4,7 +4,6 @@ import errno
 import glob
 import hashlib
 import io
-import json
 import logging
 import os
 import pathlib
@@ -13,9 +12,7 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import datetime
 from multiprocessing import Event, Lock
-from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional, Tuple, Union, Set
 
 import aiofiles
@@ -27,21 +24,21 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion, redis
+from artcommonlib import assertion, logutil, build_util, exectools
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
+from artcommonlib.model import Missing, Model, ListModel
+from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release
-from doozerlib import constants, exectools, logutil, state, util
-from doozerlib.assembly import AssemblyTypes
+from doozerlib import constants, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.model import ListModel, Missing, Model
+from doozerlib.brew_info import BrewBuildImageInspector
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
-from doozerlib.pushd import Dir
-from doozerlib.release_schedule import ReleaseSchedule
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_version
+from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
 
 # doozer used to be part of OIT
@@ -65,7 +62,7 @@ CONTAINER_YAML_HEADER = """
 # May be added to based on group/image config
 BASE_IGNORE = [".git", ".oit"]
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 
 
 def recursive_overwrite(src, dest, ignore=set()):
@@ -87,8 +84,7 @@ def pull_image(url):
         time.sleep(60)
 
     exectools.retry(
-        3, wait_f=wait,
-        task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
+        retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
 
 
 def map_image_name(name, image_map):
@@ -410,6 +406,13 @@ class DistGitRepo(object):
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
         await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir, retries=3)
 
+    def get_branch_el(self) -> Optional[int]:
+        """
+        Extracts the RHEL version from the tag name and returns the integer value. e.g. 'rhaos-4.16-rhel-7' => 7.
+        If the branch name convention is not recognized, returns None.
+        """
+        return util.isolate_el_version_in_brew_tag(self.branch)
+
     def tag(self, version, release):
         if self.runtime.local:
             return ''  # no tags if local
@@ -461,6 +464,7 @@ class ImageDistGitRepo(DistGitRepo):
         # we need to determine what RHEL version upstream intends to use,
         # and look for a related alternative ART configuration.
         # If found, the image configs will be merged before doing the rebase
+        self.art_intended_el_version = None
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
@@ -468,11 +472,13 @@ class ImageDistGitRepo(DistGitRepo):
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.resolve_source(self.metadata)
+                self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
-            # and find a related alternative_upstream config stanza
-            if self.upstream_intended_el_version:
-                self._update_image_config()
+            # and find a related alternative_upstream config stanza. This won't happen if:
+            # 1. we failed to determine upstream rhel version
+            # 2. upstream and ART rhel versions match: in this case, alternative_upstream is ignored
+            self._update_image_config()
 
         # Initialize our distgit directory, if necessary
         if autoclone:
@@ -1008,6 +1014,7 @@ class ImageDistGitRepo(DistGitRepo):
             state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
             return (self.metadata.distgit_key, False)
 
+        owners = list(self.config.owners) if self.config.owners and self.config.owners is not Missing else []
         action = "build"
         release = self.org_release if self.org_release is not None else '?'
         record = {
@@ -1015,7 +1022,7 @@ class ImageDistGitRepo(DistGitRepo):
             "dockerfile": "%s/Dockerfile" % self.distgit_dir,
             "distgit": self.metadata.distgit_key,
             "image": self.org_image_name,
-            "owners": ",".join(list(self.config.owners) if self.config.owners is not Missing else []),
+            "owners": ",".join(owners),
             "version": self.org_version,
             "release": release,
             "message": "Unknown failure",
@@ -1355,6 +1362,16 @@ class ImageDistGitRepo(DistGitRepo):
             elif node.kind in ["operator", "command"]:
                 cmd_nodes.append(node)
 
+        # remove dockerfile directive options that bashlex doesn't parse (e.g "RUN --mount=foobar")
+        # https://docs.docker.com/reference/dockerfile/#run
+        docker_cmd_options = []
+        for word in cmd.split():
+            if word.startswith("--"):
+                docker_cmd_options.append(word)
+                cmd = cmd.replace(word, "")
+            else:
+                break
+
         try:
             append_nodes_from(bashlex.parse(cmd)[0])
         except bashlex.errors.ParsingError as e:
@@ -1402,6 +1419,8 @@ class ImageDistGitRepo(DistGitRepo):
             # wrapping commands/args in quotes, or with commands that aren't valid
             # to begin with. let's not worry about that; it need not be invulnerable.
 
+        if docker_cmd_options:
+            cmd = " ".join(docker_cmd_options) + " " + cmd
         return changed, cmd
 
     def _clean_repos(self, dfp):
@@ -1424,9 +1443,7 @@ class ImageDistGitRepo(DistGitRepo):
         """
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
-            cmd = f'oc image info {original_parent} -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
-            labels = json.loads(out)['config']['config']['Labels']
+            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
 
             # Get the exact build NVR
             build_nvr = f'{labels["com.redhat.component"]}-{labels["version"]}-{labels["release"]}'
@@ -1444,8 +1461,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # Verify whether the image exists
             self.logger.debug('Checking for upstream equivalent existence, pullspec: %s', upstream_equivalent_pullspec)
-            cmd = f'oc image info {upstream_equivalent_pullspec} --filter-by-os linux/amd64 -o json'
-            out, _ = exectools.cmd_assert(cmd, retries=3)
+            util.oc_image_info__caching(upstream_equivalent_pullspec)
 
             # It does. Use this to rebase FROM directive
             mapped_image = f'{labels["name"]}:{labels["version"]}-{labels["release"]}'
@@ -1475,10 +1491,28 @@ class ImageDistGitRepo(DistGitRepo):
         base = image.member
         from_image_metadata = self.runtime.resolve_image(base, False)
 
-        if self.should_match_upstream:
-            parent = self._resolve_parent(original_parent, dfp)
-            if parent:
-                return parent
+        # Non-builder upstream images (e.g. ocp/4.16:<component> which are not based on
+        # streams.yml entries are usually CI image builds. CI images are the output of
+        # Test Platform cluster builds that are not performed in brew/osbs.
+        # That said, the CI builds typically layer content on top of base images
+        # that ultimately derive from ART images like `openshift-base-rhel?` or
+        # `openshift-enterprise-base...` which ARE built in brew.
+        # In other words, ART creates base images, which serve as parent images
+        # for component builds in CI and those components are promoted by CI
+        # into the ocp/4.x imagestream.
+        # It is these non-nightly component images that upstream Dockerfiles are
+        # reconciled with.
+        # So, if ART inspects these images and tries to determine what brew builds
+        # they are associated with, the logic would detect the original ART base image
+        # and NOT the component the upstream image actually represented .
+        # For example, registry.ci.openshift.org/ocp/4.16:cli has the NVR
+        # openshift-enterprise-base-container-v4.16.0-....
+        # instead of an openshift-enterprise-cli-* NVR.
+        # In short, we cannot treat FROM entries like this as canonical.
+        # if self.should_match_upstream:
+        #     parent = self._resolve_parent(original_parent, dfp)
+        #     if parent:
+        #         return parent
 
         if from_image_metadata is None:
             if not self.runtime.ignore_missing_base:
@@ -1584,34 +1618,8 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
 
-        if canonical_builders_from_upstream is Missing:
-            # Default case: override using ART's config
-            return False
-        elif canonical_builders_from_upstream == 'auto':
-            # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
-            try:
-                feature_freeze_date = ReleaseSchedule(self.runtime).get_ff_date()
-                return datetime.now() < feature_freeze_date
-            except ChildProcessError:
-                # Could not access Gitlab: display a warning and fallback to default
-                self.logger.warning('Failed retrieving release schedule from Gitlab: fallback to using ART\'s config')
-                return False
-            except ValueError as e:
-                # A GITLAB token env var was not provided: display a warning and fallback to default
-                self.logger.warning(f'Fallback to default ART config: {e}')
-                return False
-        elif canonical_builders_from_upstream in ['on', True]:
-            # yaml parser converts bare 'on' to True, same for 'off' and False
-            return True
-        elif canonical_builders_from_upstream in ['off', False]:
-            return False
-        else:
-            # Invalid value
-            self.logger.warning(
-                'Invalid value provided for "canonical_builders_from_upstream": %s',
-                canonical_builders_from_upstream
-            )
-            return False
+        return build_util.canonical_builders_enabled(
+            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
@@ -1627,68 +1635,61 @@ class ImageDistGitRepo(DistGitRepo):
         else:
             return parent
 
+    def _determine_art_rhel_version(self):
+        """
+        Then canonical builders feature is enabled, we will try to match upstream desired builders and base images.
+        To do so, we need to compare upstream and ART intended RHEL version: if they match, just apply upstream FROM
+        clauses; if they don't, ART needs to have an alternative_upstream config stanza in the image configuration.
+        """
+
+        branch = self.config.distgit.branch
+        if branch is Missing:
+            self.logger.warning('Distgit branch undefined for %s, defaulting to group config', self.name)
+            branch = self.runtime.group_config.branch
+        return isolate_rhel_major_from_distgit_branch(branch)
+
     def _determine_upstream_rhel_version(self, source_path) -> Optional[int]:
         """
         The upstream indended RHEL version is obtained from the last build layer as defined in the Dockerfile.
 
-        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, we can extract the os-release file
-        (located at /usr/lib/os-release, symlinked at /etc/os-release) that should always contain a line like this one:
-        VERSION_ID="9.2"
-
-        First, check if it's been stored in Redis already. If so, simply return in.
-        Otherwise, use oc image extract to download that file to a random temporary dir, and parse it. Finally,
-        store it in Redis so to find it next time.
+        Given a pullspec such as registry.ci.openshift.org/ocp/4.15:base-rhel9, use "oc image info" and Brew API
+        to determine the RHEL version. Use an in-memory caching mechanism to store the pullspec/rhel version pair
+        within the same Doozer execution.
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
-
         df_name = self.config.content.source.dockerfile
         if not df_name:
             df_name = 'Dockerfile'
-        df_path = str(pathlib.Path(source_path).joinpath(df_name))
+        subdir = self.config.content.source.path
+        if not subdir:
+            subdir = '.'
+        df_path = str(pathlib.Path(source_path).joinpath(subdir).joinpath(df_name))
 
-        with open(df_path) as f:
-            dfp = DockerfileParser(fileobj=f)
-            parent_images = dfp.parent_images
-
-        # We will infer the rhel version from the last build layer in the upstream Dockerfile
-        last_layer_pullspec = parent_images[-1]
-        redis_key = f'appdata:upstream-el-version:{last_layer_pullspec}'
-
-        # If the pullspec is not tracked in Redis yet, this will return None
-        version = redis.get_value_sync(redis_key)
-        if version:
-            # Already tracked in Redis
-            return version
-
-        # Not tracked yet: let's read it from os-release
+        version = None
         try:
-            # Create a temp dir with a random name to store the os-release file
-            with TemporaryDirectory() as tmpdir:
-                # Extract os-release
-                cmd = ['oc', 'image', 'extract', f'--path=/usr/lib/os-release:{tmpdir}',
-                       last_layer_pullspec, '--confirm']
-                exectools.cmd_assert(cmd)
+            with open(df_path) as f:
+                dfp = DockerfileParser(fileobj=f)
+                parent_images = dfp.parent_images
 
-                # Parse it
-                with open(f'{tmpdir}/os-release') as os_release:
-                    # os-release will contain a line like this: VERSION_ID="9.2"
-                    # We need to eval the result to turn '"9.2"' into '9.2'
-                    version_id = eval([line for line in os_release if 'VERSION_ID' in line][0].split('=')[1])
-                    version = isolate_rhel_major_from_version(version_id)
-                    self.logger.info('Intended upstream RHEL version for %s: %s', self.name, version)
+            # We will infer the rhel version from the last build layer in the upstream Dockerfile
+            last_layer_pullspec = parent_images[-1]
+            image_labels = util.oc_image_info__caching(last_layer_pullspec)['config']['config']['Labels']
+            if 'version' not in image_labels or 'release' not in image_labels:
+                # This does not appear to be a brew image. We can't determine RHEL.
+                return None
 
-                    # Store el version in Redis
-                    redis.set_value_sync(redis_key, version)
+            bbii = BrewBuildImageInspector(self.runtime, last_layer_pullspec)
+            version = bbii.get_rhel_base_version()
 
-        except (ChildProcessError, IndexError) as e:
-            # We could get:
-            #   - a ChildProcessError when we couldn't extract os-release from the pullspec
-            #   - an IndexError when /etc/os-release is not as expected
+        except Exception as e:
+            # Swallow exception as this is not fatal. We just can't determine the
+            # correct canonical upstream RHEL version to use.
             self.logger.warning('Failed determining upstream rhel version: %s', e)
 
         if not version:
             self.logger.warning('Could not determine rhel version from upstream %s', self.name)
+
         return version
 
     def _update_image_config(self):
@@ -1697,29 +1698,43 @@ class ImageDistGitRepo(DistGitRepo):
         that matches upstream RHEL version. If so, merge the 'when' clause content with the main image config
         """
 
+        if not self.upstream_intended_el_version:
+            # Could not determine upstream rhel version: do not match upstream builders
+            self.logger.warning('Unknown upstream rhel version: will not merge configs')
+            self.should_match_upstream = False
+            return
+
+        elif self.upstream_intended_el_version == self.art_intended_el_version:
+            # ART/upstream el versions match: do not merge configs, but match upstream builders
+            self.logger.warning('ART and upstream intended rhel version match: will not merge configs')
+            self.should_match_upstream = True
+            return
+
         # Check if there is an alternative configuration matching upstream RHEL version
-        alt_configs = self.config.get('alternative_upstream', [])
+        alt_configs = self.config.alternative_upstream
         matched = False
-        for alt_config in alt_configs:
+        for alt_config in alt_configs or []:
             if alt_config['when'] == f'el{self.upstream_intended_el_version}':
-                self.logger.info('Merging %s alternative config to match upstream', self.upstream_intended_el_version)
-                self.config.update(alt_config)
+                self.logger.info('Merging rhel%s alternative config to match upstream', self.upstream_intended_el_version)
+                self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
                 matched = True
                 break
 
         if not matched:
-            # there's no 'when' clause matching upstream intended RHEL version: fallback to default ART's config
-            self.should_match_upstream = False
-            self.logger.warning('Could not match upstream because "%s" version is not mapped in alternative_config',
+            # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
+            # Besides, ART and upstream intended rhel versions do not match, therefore fallback to default ART's config
+            self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
                                 self.upstream_intended_el_version)
-            return
+            self.should_match_upstream = False
 
-        # We found an alternative_upstream config stanza. We can match upstream
-        self.should_match_upstream = True
-        # Distgit branch must be changed to track the alternative one
-        self.branch = self.config.distgit.branch
-        # Also update builds targets
-        self.metadata.targets = self.metadata.determine_targets()
+        else:
+            # We found an alternative_upstream config stanza. We can match upstream
+            self.should_match_upstream = True
+            # Distgit branch must be changed to track the alternative one
+            self.branch = self.config.distgit.branch
+            # Also update metadata config
+            self.metadata.config = self.config
+            self.metadata.targets = self.metadata.determine_targets()
 
     def _rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
@@ -1898,6 +1913,9 @@ class ImageDistGitRepo(DistGitRepo):
                 if self.runtime.assembly:
                     release += f'.assembly.{self.runtime.assembly}'
 
+                if self.get_branch_el():
+                    release += ".el" + str(self.get_branch_el())
+
                 dfp.labels['release'] = release
             else:
                 if self.runtime.assembly:
@@ -1963,7 +1981,7 @@ class ImageDistGitRepo(DistGitRepo):
                 df_lines.extend([
                     '',
                     '# RHEL version in final image must match the one in ART\'s config',
-                    f'RUN source /etc/os-release && [[ "$PLATFORM_ID" == platform:el{el_version} ]]'
+                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]'
                 ])
 
             df_content = "\n".join(df_lines)
@@ -1973,8 +1991,9 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 release_suffix = ''
 
-            # Environment variables that will be always be injected into the Dockerfile.
-            env_vars = {  # Set A
+            # Environment variables that will be injected into the Dockerfile
+            # unless content.set_build_variables=False
+            build_update_env_vars = {  # Set A
                 'OS_GIT_MAJOR': major_version,
                 'OS_GIT_MINOR': minor_version,
                 'OS_GIT_PATCH': patch_version,
@@ -1983,20 +2002,25 @@ class ImageDistGitRepo(DistGitRepo):
                 'SOURCE_GIT_TREE_STATE': 'clean',
                 'BUILD_VERSION': version,
                 'BUILD_RELEASE': release if release else '',
-                '__doozer_group': self.runtime.group,
-                '__doozer_key': self.metadata.distgit_key,
             }
 
+            # Unlike update_env_vars (which can be disabled in metadata with content.set_build_variables=False),
+            # metadata_envs are always injected into doozer builds.
+            metadata_envs: Dict[str, str] = {
+                '__doozer_group': self.runtime.group,
+                '__doozer_key': self.metadata.distgit_key,
+                '__doozer_version': version,  # Useful when build variables are not being injected, but we still need "version" during the build.
+            }
             if self.config.envs:
                 # Allow environment variables to be specified in the ART image metadata
-                env_vars.update(self.config.envs.primitive())
+                metadata_envs.update(self.config.envs.primitive())
 
             df_fileobj = self._update_yum_update_commands(force_yum_updates, io.StringIO(df_content))
             with dg_path.joinpath('Dockerfile').open('w', encoding="utf-8") as df:
                 shutil.copyfileobj(df_fileobj, df)
                 df_fileobj.close()
 
-            self._update_environment_variables(env_vars)
+            self._update_environment_variables(build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
 
             self._reflow_labels()
 
@@ -2268,28 +2292,32 @@ class ImageDistGitRepo(DistGitRepo):
             # Re-write the CSV content.
             pathlib.Path(csv_file).write_text(yaml.dump(csv_obj))
 
-    def _update_environment_variables(self, update_envs, filename='Dockerfile'):
+    def _update_environment_variables(self, build_update_envs: Dict[str, str], metadata_envs: Dict[str, str], filename='Dockerfile'):
         """
         There are three distinct sets of environment variables we need to consider
         in a Dockerfile:
-        Set A) those which doozer calculates on every update
-        Set B) those which doozer can calculate only when upstream source code is available
+        Set A) build environment variables which doozer calculates on every Dockerfile update (build_update_envs)
+        Set B) merge environment variables which doozer can calculate only when upstream source code is available
                (self.env_vars_from_source). If self.env_vars_from_source=None, no merge
                has occurred and we should not try to update envs from source we find in distgit.
-        Set C) those which the Dockerfile author has set for their own purposes (these cannot
-               override doozer's env, but they are free to use other variables names).
+        Set C) metadata environment variable which are those which the Dockerfile author has set for their own purposes (these cannot
+               override doozer's build env values, but they are free to use other variables names).
 
-        :param update_envs: The update environment variables to set (Set A).
+        Sets (A) and (B) can be disabled with .content.set_build_variables=False.
+
+        :param build_update_envs: The update environment variables to set (Set A).
+        :param metadata_envs: Environment variables that should always be included in the rebased Dockerfile.
         :param filename: The Dockerfile name in the distgit dir to edit.
         :return: N/A
         """
 
+        do_set_build_variables = True
         # set_build_variables must be explicitly set to False. If left unset, default to True. If False,
         # we do not inject environment variables into the Dockerfile. This is occasionally necessary
         # for images like the golang builders where these environment variables pollute the environment
         # for code trying to establish their OWN src commit hash, etc.
         if self.config.content.set_build_variables is not Missing and not self.config.content.set_build_variables:
-            return
+            do_set_build_variables = False
 
         dg_path = self.dg_path
         df_path = dg_path.joinpath(filename)
@@ -2300,14 +2328,18 @@ class ImageDistGitRepo(DistGitRepo):
         # going to set. To do so, we repeatedly load the Dockerfile and remove the env variable.
         # In this way, from our example, on the second load and removal, A=1 should be removed.
 
-        # Build a dict of everything we want to set.
-        all_envs = dict(update_envs)
-        all_envs.update(self.env_vars_from_source or {})
+        # Build a dict of everything we want to remove from the Dockerfile.
+        all_envs_to_remove = dict()
+        all_envs_to_remove.update(metadata_envs)
+
+        if do_set_build_variables:
+            all_envs_to_remove.update(build_update_envs)
+            all_envs_to_remove.update(self.env_vars_from_source or {})
 
         while True:
             dfp = DockerfileParser(str(df_path))
             # Find the intersection between envs we want to set and those present in parser
-            envs_intersect = set(list(all_envs.keys())).intersection(set(list(dfp.envs.keys())))
+            envs_intersect = set(list(all_envs_to_remove.keys())).intersection(set(list(dfp.envs.keys())))
 
             if not envs_intersect:  # We've removed everything we want to ultimately set
                 break
@@ -2326,6 +2358,13 @@ class ImageDistGitRepo(DistGitRepo):
         # Now, we want to inject the values we have available. In a Dockerfile, ENV must
         # be set for each build stage. So the ENVs must be set after each FROM.
 
+        # Envs that will be written into the Dockerfile every time it is updated
+        actual_update_envs: Dict[str, str] = dict()
+        actual_update_envs.update(metadata_envs or {})
+
+        if do_set_build_variables:
+            actual_update_envs.update(build_update_envs)
+
         env_update_line_flag = '__doozer=update'
         env_merge_line_flag = '__doozer=merge'
 
@@ -2341,18 +2380,18 @@ class ImageDistGitRepo(DistGitRepo):
 
         # Build up an UPDATE mode environment variable line we want to inject into each stage.
         update_env_line = None
-        if update_envs:
-            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(update_envs)
+        if actual_update_envs:
+            update_env_line = f"ENV {env_update_line_flag} " + get_env_set_list(actual_update_envs)
 
         # If a merge has occurred, build up a MERGE mode environment variable line we want to inject into each stage.
         merge_env_line = None
-        if self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
+        if do_set_build_variables and self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
             self.env_vars_from_source.update(dict(
                 SOURCE_GIT_COMMIT=self.source_full_sha,
                 SOURCE_GIT_TAG=self.source_latest_tag,
                 SOURCE_GIT_URL=self.public_facing_source_url,
                 SOURCE_DATE_EPOCH=self.source_date_epoch,
-                OS_GIT_VERSION=f'{update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
+                OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
                 OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}'
             ))
 
@@ -2384,7 +2423,7 @@ class ImageDistGitRepo(DistGitRepo):
     def _reflow_labels(self, filename="Dockerfile"):
         """
         The Dockerfile parser we are presently using writes all labels on a single line
-        and occasionally make multiple LABEL statements. Calling this method with a
+        and occasionally makes multiple LABEL statements. Calling this method with a
         Dockerfile in the current working directory will rewrite the file with
         labels at the end in a single statement.
         """

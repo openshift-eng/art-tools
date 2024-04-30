@@ -13,7 +13,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         runtime = MagicMock()
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
-                                       allow_inconsistency=False, custom=False, arches=(), in_flight=None,
+                                       allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
                                        pre_ga_mode="none")
         actual = asyncio.run(pipeline._get_nightlies())
@@ -97,7 +97,7 @@ releases:
         }})
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
-                                       allow_inconsistency=False, custom=False, arches=(), in_flight=None,
+                                       allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
                                        pre_ga_mode="none")
         pipeline._working_dir = Path("/path/to/working")
@@ -147,7 +147,7 @@ releases:
 
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
-                                       allow_inconsistency=False, custom=False, arches=(), in_flight=None,
+                                       allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
                                        pre_ga_mode="none")
         pipeline._working_dir = Path("/path/to/working")

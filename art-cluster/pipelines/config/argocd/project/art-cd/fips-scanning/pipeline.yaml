@@ -1,0 +1,27 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: fips-pipeline
+spec:
+  params:
+    - description: 'OCP major version, eg: 4.15'
+      name: version
+      type: string
+    - description: 'Space separated NVRs'
+      name: nvrs
+      type: string
+    - description: 'DOOZER_DATA_PATH value'
+      name: doozer_path
+      type: string
+  tasks:
+    - name: run-script
+      params:
+        - name: version
+          value: $(params.version)
+        - name: nvrs
+          value: $(params.nvrs)
+        - name: doozer_path
+          value: $(params.doozer_path)
+      taskRef:
+        kind: Task
+        name: fips-pipeline-task

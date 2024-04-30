@@ -23,14 +23,16 @@ from tenacity import (RetryCallState, RetryError, retry,
 
 from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, \
     go_suffix_for_arch, go_arch_for_brew_arch
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.exectools import to_thread, manifest_tool
 from artcommonlib.rhcos import get_primary_container_name
-from doozerlib import assembly
+from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd.locks import Lock
 from pyartcd.signatory import AsyncSignatory
 from pyartcd.util import nightlies_with_pullspecs
 from pyartcd import constants, exectools, locks, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.exceptions import VerificationError
+from artcommonlib.exceptions import VerificationError
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.s3 import sync_dir_to_s3_mirror
@@ -155,8 +157,7 @@ class PromotePipeline:
         logger.info("Release name: %s", release_name)
 
         self._slack_client.bind_channel(release_name)
-        slack_response = await self._slack_client.say(f"Promoting release `{release_name}` @release-artists")
-        slack_thread = slack_response["message"]["ts"]
+        await self._slack_client.say_in_thread(f"Promoting release `{release_name}` @release-artists")
 
         justifications = []
         try:
@@ -170,7 +171,7 @@ class PromotePipeline:
                 raise ValueError("No arches specified in group config.")
             # Get previous list
             upgrades_str: Optional[str] = group_config.get("upgrades")
-            if upgrades_str is None and assembly_type not in [assembly.AssemblyTypes.CUSTOM]:
+            if upgrades_str is None and assembly_type not in [AssemblyTypes.CUSTOM]:
                 raise ValueError(f"Group config for assembly {self.assembly} is missing the required `upgrades` field. If no upgrade edges are expected, please explicitly set the `upgrades` field to empty string.")
             previous_list = list(map(lambda s: s.strip(), upgrades_str.split(","))) if upgrades_str else []
             # Ensure all versions in previous list are valid semvers.
@@ -180,7 +181,7 @@ class PromotePipeline:
             impetus_advisories = group_config.get("advisories", {})
 
             # Check for blocker bugs
-            if self.skip_blocker_bug_check or assembly_type in [assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.CUSTOM, assembly.AssemblyTypes.PREVIEW]:
+            if self.skip_blocker_bug_check or assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
                 logger.info("Blocker Bug check is skipped.")
             else:
                 logger.info("Checking for blocker bugs...")
@@ -193,7 +194,7 @@ class PromotePipeline:
                     justifications.append(justification)
                 logger.info("No blocker bugs found.")
 
-            if assembly_type == assembly.AssemblyTypes.STANDARD:
+            if assembly_type == AssemblyTypes.STANDARD:
                 # Attempt to move all advisories to QE
                 tasks = []
                 for impetus, advisory in impetus_advisories.items():
@@ -213,7 +214,7 @@ class PromotePipeline:
             image_advisory = impetus_advisories.get("image", 0)
             errata_url = ""
 
-            if assembly_type in [assembly.AssemblyTypes.STANDARD, assembly.AssemblyTypes.CANDIDATE]:
+            if assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE]:
                 if image_advisory <= 0:
                     err = VerificationError(f"No associated image advisory for {self.assembly} is defined.")
                     justification = self._reraise_if_not_permitted(err, "NO_ERRATA", permits)
@@ -222,7 +223,7 @@ class PromotePipeline:
                     logger.info("Verifying associated image advisory %s...", image_advisory)
                     image_advisory_info = await self.get_advisory_info(image_advisory)
                     try:
-                        if assembly_type != assembly.AssemblyTypes.CANDIDATE:
+                        if assembly_type != AssemblyTypes.CANDIDATE:
                             self.verify_advisory_status(image_advisory_info)
                     except VerificationError as err:
                         logger.warn("%s", err)
@@ -238,6 +239,9 @@ class PromotePipeline:
             if self.skip_attached_bug_check:
                 logger.info("Skip checking attached bugs.")
             else:
+                logger.info("Verifying attached bugs...")
+                advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
+
                 # FIXME: We used to skip blocking bug check for the latest minor version,
                 # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
                 # from preparing z-stream releases for the latest minor version.
@@ -247,29 +251,35 @@ class PromotePipeline:
                 # next_minor = f"{major}.{minor + 1}"
                 # logger.info("Checking if %s is GA'd...", next_minor)
                 # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
-                no_verify_blocking_bugs = False
                 # if not graph_data.get("nodes"):
                 #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
                 #     no_verify_blocking_bugs = True
                 # else:
                 #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
-                logger.info("Verifying attached bugs...")
-                advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
 
-                verify_flaws = True
-                if "prerelease" in impetus_advisories.keys() or assembly_type == assembly.AssemblyTypes.PREVIEW:
-                    verify_flaws = False
-
-                if assembly_type in [assembly.AssemblyTypes.PREVIEW, assembly.AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
+                no_verify_blocking_bugs = False
+                if assembly_type in [AssemblyTypes.PREVIEW,
+                                     AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
                     no_verify_blocking_bugs = True
 
+                verify_flaws = True
+                if "prerelease" in impetus_advisories.keys() or assembly_type == AssemblyTypes.PREVIEW:
+                    verify_flaws = False
+
                 try:
-                    await self.verify_attached_bugs(advisories, no_verify_blocking_bugs=no_verify_blocking_bugs,
+                    await self.verify_attached_bugs(advisories,
+                                                    no_verify_blocking_bugs=no_verify_blocking_bugs,
                                                     verify_flaws=verify_flaws)
                 except ChildProcessError as err:
                     logger.warn("Error verifying attached bugs: %s", err)
-                    justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
-                    justifications.append(justification)
+
+                    if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                        await self._slack_client.say_in_thread("Attached bugs have some issues. Permitting since "
+                                                               f"assembly is of type {assembly_type}")
+                        await self._slack_client.say_in_thread(str(err))
+                    else:
+                        justification = self._reraise_if_not_permitted(err, "ATTACHED_BUGS", permits)
+                        justifications.append(justification)
 
             # Promote release images
             metadata = {}
@@ -280,7 +290,7 @@ class PromotePipeline:
             if errata_url:
                 metadata["url"] = errata_url
             reference_releases = util.get_assembly_basis(releases_config, self.assembly).get("reference_releases", {})
-            tag_stable = assembly_type in [assembly.AssemblyTypes.STANDARD, assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.PREVIEW]
+            tag_stable = assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]
             release_infos = await self.promote(assembly_type, release_name, arches, previous_list, metadata, reference_releases, tag_stable)
             pullspecs = {arch: release_info["image"] for arch, release_info in release_infos.items()}
             pullspecs_repr = ", ".join(f"{arch}: {pullspecs[arch]}" for arch in sorted(pullspecs.keys()))
@@ -294,12 +304,14 @@ class PromotePipeline:
 
             # Send notification to QE if it hasn't been sent yet
             # Skip ECs and RCs
-            if assembly_type not in [assembly.AssemblyTypes.PREVIEW, assembly.AssemblyTypes.CANDIDATE]:
+            if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                 self.handle_qe_notification(release_jira, release_name, impetus_advisories, reference_releases.values())
 
             if not tag_stable:
                 self._logger.warning("Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr)
-                await self._slack_client.say(f"Release {release_name} is ready. It will not appear on the release controllers. Please tell the user to manually pull the release images: {pullspecs_repr}", slack_thread)
+                await self._slack_client.say_in_thread(f"Release {release_name} is ready. It will not appear on the "
+                                                       "release controllers. Please tell the user to manually pull "
+                                                       f"the release images: {pullspecs_repr}")
             else:
                 # check if release is already accepted (in case we timeout and run the job again)
                 tasks = []
@@ -314,7 +326,8 @@ class PromotePipeline:
                 if not all(accepted):
                     # Wait for release images to be accepted by the release controllers
                     self._logger.info("Waiting for release images for %s to be accepted by the release controller...", release_name)
-                    await self._slack_client.say(f"Release {release_name} has been tagged on release controller, but is not accepted yet. Waiting.", slack_thread)
+                    await self._slack_client.say_in_thread(f"Release {release_name} has been tagged on release "
+                                                           "controller, but is not accepted yet. Waiting.")
                     tasks = []
                     for arch, release_info in release_infos.items():
                         release_stream = self._get_release_stream_name(assembly_type, arch)
@@ -333,12 +346,12 @@ class PromotePipeline:
                 self._logger.info("All release images for %s have been accepted by the release controllers.", release_name)
 
                 message = f"Release `{release_name}` has been accepted by the release controllers."
-                await self._slack_client.say(message, slack_thread)
+                await self._slack_client.say_in_thread(message)
 
                 # Send image list
                 if not image_advisory:
                     self._logger.warning("No need to send an advisory image list because this release doesn't have an image advisory.")
-                elif assembly_type in (assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.PREVIEW):
+                elif assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
                     self._logger.warning("No need to send an advisory image list for a candidate release.")
                 elif self.skip_image_list:
                     self._logger.warning("Skip sending advisory image list")
@@ -367,7 +380,7 @@ class PromotePipeline:
 
                 # extract client binaries
                 client_type = "ocp"
-                if (assembly_type == assembly.AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')) or assembly_type in [assembly.AssemblyTypes.CUSTOM, assembly.AssemblyTypes.PREVIEW]:
+                if (assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')) or assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
                     client_type = "ocp-dev-preview"
                 message_digests = []
                 if not self.skip_mirror_binaries:
@@ -388,9 +401,8 @@ class PromotePipeline:
 
         except Exception as err:
             self._logger.exception(err)
-            error_message = f"Error promoting release {release_name}: {err}\n {traceback.format_exc()}"
-            message = f"Promoting release {release_name} failed with: {error_message}"
-            await self._slack_client.say(message, slack_thread)
+            message = f"Promoting release {release_name} failed"
+            await self._slack_client.say_in_thread(message)
             raise
 
         # Print release infos to console
@@ -446,19 +458,19 @@ class PromotePipeline:
         json.dump(data, sys.stdout)
 
     @staticmethod
-    def _get_release_stream_name(assembly_type: assembly.AssemblyTypes, arch: str):
+    def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):
         go_arch_suffix = go_suffix_for_arch(arch)
-        return f'4-dev-preview{go_arch_suffix}' if assembly_type == assembly.AssemblyTypes.PREVIEW else f'4-stable{go_arch_suffix}'
+        return f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'4-stable{go_arch_suffix}'
 
     @staticmethod
-    def _get_image_stream_name(assembly_type: assembly.AssemblyTypes, arch: str):
+    def _get_image_stream_name(assembly_type: AssemblyTypes, arch: str):
         go_arch_suffix = go_suffix_for_arch(arch)
-        return f'4-dev-preview{go_arch_suffix}' if assembly_type == assembly.AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
+        return f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
 
     async def sync_rhcos_srpms(self, assembly_type, data):
         # Sync potential pre-release source on which RHCOS depends. See ART-6419 for details.
-        major, minor = util.isolate_major_minor_in_group(self.group)
-        if assembly_type in [assembly.AssemblyTypes.CANDIDATE, assembly.AssemblyTypes.PREVIEW]:
+        major, minor = isolate_major_minor_in_group(self.group)
+        if assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
             src_output_dir = self._working_dir / "rhcos_src_staging"
             src_output_dir.mkdir(parents=True, exist_ok=True)
             for arch in data['content']:
@@ -659,25 +671,37 @@ class PromotePipeline:
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
         if (major > 4 or minor >= 14) or (major == 4 and minor >= 10 and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
             if image_stat == 0:  # image exist
                 # extract image to workdir, if failed it will raise error in function
-                extract_release_binary(oc_mirror_pullspec, [f"--path=/usr/bin/oc-mirror:{client_mirror_dir}"])
-                # archive file
-                with tarfile.open(f"{client_mirror_dir}/oc-mirror.tar.gz", "w:gz") as tar:
-                    tar.add(f"{client_mirror_dir}/oc-mirror", arcname="oc-mirror")
-                # calc shasum
-                with open(f"{client_mirror_dir}/oc-mirror.tar.gz", 'rb') as f:
-                    shasum = hashlib.sha256(f.read()).hexdigest()
-                # write shasum to sha256sum.txt
-                with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
-                    f.write(f"{shasum}  oc-mirror.tar.gz\n")
-                # remove oc-mirror
-                os.remove(f"{client_mirror_dir}/oc-mirror")
+                multi_rhel_path = [f"--path=/usr/bin/oc-mirror*:{client_mirror_dir}"]
+                extract_release_binary(oc_mirror_pullspec, multi_rhel_path)  # will exit with 0 even if no files are exacted
+
+                # if oc-mirror.rhel8 exists, rename it to oc-mirror
+                if Path(client_mirror_dir, 'oc-mirror.rhel8').exists():
+                    Path(client_mirror_dir, 'oc-mirror.rhel8').replace(f'{client_mirror_dir}/oc-mirror')
+
+                files_extracted = 0
+                for file in Path(client_mirror_dir).glob('oc-mirror*'):
+                    # archive file
+                    tarball = Path(f'{file}.tar.gz')
+                    with tarfile.open(tarball, "w:gz") as tar:
+                        tar.add(f"{file}", arcname="oc-mirror")
+                    # calc shasum
+                    with open(tarball, 'rb') as f:
+                        shasum = hashlib.sha256(f.read()).hexdigest()
+                    # write shasum to sha256sum.txt
+                    with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:
+                        f.write(f"{shasum}  {tarball.name}\n")
+                    # remove extracted file
+                    file.unlink()
+                    files_extracted += 1
+                if files_extracted == 0:
+                    self._logger.error("No binaries extracted from the oc-mirror image")
             else:
                 self._logger.error("Error get oc-mirror image from release pullspec")
 
@@ -866,7 +890,7 @@ class PromotePipeline:
             self._logger.info("Skipping microshift build because SKIP_BUILD_MICROSHIFT is set.")
             return
 
-        major, minor = util.isolate_major_minor_in_group(self.group)
+        major, minor = isolate_major_minor_in_group(self.group)
         if major == 4 and minor < 14:
             self._logger.info("Skip microshift build for version < 4.14")
             return
@@ -916,7 +940,7 @@ class PromotePipeline:
         async with self._elliott_lock:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, stdout=sys.stderr)
 
-    async def promote(self, assembly_type: assembly.AssemblyTypes, release_name: str, arches: List[str], previous_list: List[str], metadata: Optional[Dict], reference_releases: Dict[str, str], tag_stable: bool):
+    async def promote(self, assembly_type: AssemblyTypes, release_name: str, arches: List[str], previous_list: List[str], metadata: Optional[Dict], reference_releases: Dict[str, str], tag_stable: bool):
         """ Promote all release payloads
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -948,7 +972,7 @@ class PromotePipeline:
             return_value["multi"] = results["heterogeneous"]
         return return_value
 
-    async def _promote_homogeneous_payloads(self, assembly_type: assembly.AssemblyTypes, release_name: str, arches: List[str], previous_list: List[str], metadata: Optional[Dict], reference_releases: Dict[str, str], tag_stable: bool):
+    async def _promote_homogeneous_payloads(self, assembly_type: AssemblyTypes, release_name: str, arches: List[str], previous_list: List[str], metadata: Optional[Dict], reference_releases: Dict[str, str], tag_stable: bool):
         """ Promote homogeneous payloads for specified architectures
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -965,7 +989,7 @@ class PromotePipeline:
         release_infos = await asyncio.gather(*tasks)
         return dict(zip(arches, release_infos))
 
-    async def _promote_arch(self, assembly_type: assembly.AssemblyTypes, release_name: str, arch: str, previous_list: List[str], metadata: Optional[Dict], reference_release: Optional[str], tag_stable: bool):
+    async def _promote_arch(self, assembly_type: AssemblyTypes, release_name: str, arch: str, previous_list: List[str], metadata: Optional[Dict], reference_release: Optional[str], tag_stable: bool):
         """ Promote an arch-specific homogeneous payload
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -989,7 +1013,7 @@ class PromotePipeline:
         if not dest_image_info or self.permit_overwrite:
             if dest_image_info:
                 self._logger.warning("The existing release image %s will be overwritten!", dest_image_pullspec)
-            major, minor = util.isolate_major_minor_in_group(self.group)
+            major, minor = isolate_major_minor_in_group(self.group)
             # Ensure build-sync has been run for this assembly
             is_name = f"{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
             imagestream = await self.get_image_stream(f"ocp{go_arch_suffix}", is_name)
@@ -1030,7 +1054,7 @@ class PromotePipeline:
                 if reference_release:
                     dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-release": reference_release}}
                 else:
-                    major, minor = util.isolate_major_minor_in_group(self.group)
+                    major, minor = isolate_major_minor_in_group(self.group)
                     go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
                     dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
 
@@ -1061,7 +1085,7 @@ class PromotePipeline:
         self._logger.info("Release image %s has been tagged into %s.", dest_image_pullspec, namespace_image_stream_tag)
         return dest_image_info
 
-    async def _promote_heterogeneous_payload(self, assembly_type: assembly.AssemblyTypes, release_name: str, include_arches: List[str], previous_list: List[str], metadata: Optional[Dict], tag_stable: bool):
+    async def _promote_heterogeneous_payload(self, assembly_type: AssemblyTypes, release_name: str, include_arches: List[str], previous_list: List[str], metadata: Optional[Dict], tag_stable: bool):
         """ Promote heterogeneous payload.
         The heterogeneous payload itself is a manifest list, which include references to arch-specific heterogeneous payloads.
         :param assembly_type: Assembly type
@@ -1096,7 +1120,7 @@ class PromotePipeline:
         if not dest_image_digest or self.permit_overwrite:
             if dest_image_digest:
                 self._logger.warning("The existing payload %s will be overwritten!", dest_image_pullspec)
-            major, minor = util.isolate_major_minor_in_group(self.group)
+            major, minor = isolate_major_minor_in_group(self.group)
             # The imagestream for the assembly in ocp-multi contains a single tag.
             # That single istag points to a top-level manifest-list on quay.io.
             # Each entry in the manifest-list is an arch-specific heterogeneous payload.
@@ -1197,9 +1221,18 @@ class PromotePipeline:
         dest_manifest_list_path = self._working_dir / f"{release_name}.manifest-list.yaml"
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
+
+        await manifest_tool(["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run)
+        auth_opt = ""
+        if os.environ.get("XDG_RUNTIME_DIR"):
+            auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+            if Path(auth_file).is_file():
+                auth_opt = f"--docker-cfg={auth_file}"
+
         cmd = [
-            "manifest-tool", "push", "from-spec", "--", f"{dest_manifest_list_path}"
+            "manifest-tool", auth_opt, "push", "from-spec", "--", f"{dest_manifest_list_path}"
         ]
+
         if self.runtime.dry_run:
             self._logger.warning("[DRY RUN] Would have run %s", cmd)
             return
@@ -1415,7 +1448,7 @@ class PromotePipeline:
     async def send_image_list_email(self, release_name: str, advisory: int, archive_dir: Path):
         content = await self.get_advisory_image_list(advisory)
         subject = f"OCP {release_name} Image List"
-        return await exectools.to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
+        return await to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
 
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
                                nightlies: List[str]):
@@ -1483,7 +1516,7 @@ class PromotePipeline:
     def create_cincinnati_prs(self, assembly_type, release_info):
         """ Create Cincinnati PRs for the release.
         """
-        if assembly_type == assembly.AssemblyTypes.CUSTOM:
+        if assembly_type == AssemblyTypes.CUSTOM:
             self._logger.info("Skipping PR creation for custom assembly")
             return
 

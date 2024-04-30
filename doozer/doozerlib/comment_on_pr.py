@@ -1,14 +1,14 @@
-import logging
 import os
 from datetime import datetime, timezone
 
 from dockerfile_parse import DockerfileParser
 from ghapi.all import GhApi
 
+from artcommonlib import logutil
+from artcommonlib.pushd import Dir
 from doozerlib.constants import BREWWEB_URL, GITHUB_TOKEN
-from doozerlib.pushd import Dir
 
-LOGGER = logging.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 class CommentOnPr:
@@ -97,6 +97,11 @@ class CommentOnPr:
 
     def run(self):
         self.set_repo_details()
+
+        if self.repo == "ocp-build-data":
+            LOGGER.warning("Skipping commenting on PRs in ocp-build-data")
+            return
+
         self.set_github_client()
         self.set_pr_from_commit()
 

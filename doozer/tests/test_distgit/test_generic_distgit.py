@@ -6,8 +6,9 @@ import unittest
 from flexmock import flexmock
 from unittest import mock
 
-from doozerlib import distgit, model
-from doozerlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
+from doozerlib import distgit
 
 from .support import MockConfig, MockMetadata, MockRuntime, TestDistgit
 
@@ -16,7 +17,7 @@ class TestGenericDistGit(TestDistgit):
     def setUp(self):
         super(TestGenericDistGit, self).setUp()
         self.dg = distgit.DistGitRepo(self.md, autoclone=False)
-        self.dg.runtime.group_config = model.Model()
+        self.dg.runtime.group_config = Model()
 
     @staticmethod
     def mock_runtime(**kwargs):

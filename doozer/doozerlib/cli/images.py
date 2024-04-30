@@ -11,17 +11,17 @@ import urllib
 import pathlib
 from future import standard_library
 
+from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print, color_print
+from artcommonlib.model import Missing
+from artcommonlib.pushd import Dir
 from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.pushd import Dir
-from doozerlib.model import Missing
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
 
 from doozerlib import coverity
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib import exectools
 from typing import Optional
 from numbers import Number
 from dockerfile_parse import DockerfileParser

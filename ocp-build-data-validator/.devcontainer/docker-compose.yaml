@@ -11,7 +11,7 @@ services:
     - ../:/workspaces/validate-ocp-build-data:cached,z
     - ${HOME:-}${USERPROFILE:-}/.ssh:/home/art/.ssh:ro,cached,z
     - ./settings.yaml:/home/art/.config/validator/settings.yaml:ro,cached,z
-    - ./krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
+    - artcommon/configs/krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
     - ./brewkoji.conf:/etc/koji.conf.d/brewkoji.conf:ro,cached,z
     working_dir: /workspaces/validate-ocp-build-data
     tty: true

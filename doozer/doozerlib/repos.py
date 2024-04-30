@@ -10,10 +10,9 @@ from typing import Dict, List, Optional, cast
 import requests
 import yaml
 
-from doozerlib import exectools, rpm_utils
+from artcommonlib.model import Missing, Model
 from doozerlib.repodata import Repodata, RepodataLoader
 
-from .model import Missing, Model
 
 DEFAULT_REPOTYPES = ['unsigned', 'signed']
 
@@ -118,7 +117,10 @@ class Repo(object):
             return None
         if self._data.content_set[arch] is Missing:
             if self._data.content_set['default'] is Missing:
-                raise ValueError('{} does not contain a content_set for {} and no default was provided.'.format(self.name, arch))
+                if self._data.content_set['optional'] is not Missing and self._data.content_set['optional']:
+                    return ''
+                else:
+                    raise ValueError('{} does not contain a content_set for {} and no default was provided.'.format(self.name, arch))
             return self._data.content_set['default']
         else:
             return self._data.content_set[arch]

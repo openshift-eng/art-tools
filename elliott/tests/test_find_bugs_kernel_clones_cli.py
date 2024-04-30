@@ -5,7 +5,7 @@ from unittest.mock import ANY, MagicMock, Mock, patch
 import koji
 from jira import JIRA, Issue
 
-from elliottlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
 from elliottlib.cli.find_bugs_kernel_clones_cli import FindBugsKernelClonesCli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.bzutil import JIRABugTracker
@@ -47,7 +47,7 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
             "fields.labels": ["art:cloned-kernel-bug"],
             "fields.project.key": "OCPBUGS",
             "fields.components": [component],
-            f"fields.{JIRABugTracker.FIELD_TARGET_VERSION}": [target_release],
+            f"fields.{JIRABugTracker.field_target_version}": [target_release],
         })
         actual = cli._get_jira_bugs(jira_client, ["FOO-1", "FOO-2", "FOO-3"], self._config)
         self.assertEqual([bug.key for bug in actual], ["FOO-1", "FOO-2", "FOO-3"])

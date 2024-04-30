@@ -1,15 +1,15 @@
 import re
 import time
 from builtins import object
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union, List
 
 import yaml
-from koji import ClientSession
+from artcommonlib import build_util
 
-from elliottlib import logutil
-from elliottlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib import logutil
+from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib.model import Model, Missing
 from elliottlib.brew import BuildStates
-from elliottlib.model import Missing, Model
 from elliottlib.util import isolate_el_version_in_brew_tag
 
 CONFIG_MODES = [
@@ -65,6 +65,48 @@ class Metadata(object):
         self.logger = logutil.EntityLoggingAdapter(logger=self.runtime.logger, extra={'entity': self.qualified_key})
 
         self._distgit_repo = None
+
+    def branch_el_target(self) -> int:
+        """
+        :return: Determines what rhel-# version the distgit branch is associated with and returns the RHEL version as an int
+        """
+        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', str(self.branch()))
+        if target_match:
+            return int(target_match.group(1))
+        else:
+            raise IOError(f'Unable to determine rhel version from branch: {self.branch()}')
+
+    def determine_targets(self) -> List[str]:
+        """ Determine Brew targets for building this component
+        """
+        targets = self.config.get("targets")
+        if not targets:
+            # If not specified in meta config, load from group config
+            profile_name = self.runtime.group_config.get(f"default_{self.meta_type}_build_profile")
+            if profile_name:
+                targets = self.runtime.group_config.build_profiles.primitive()[self.meta_type][profile_name].get("targets")
+        if not targets:
+            # If group config doesn't define the targets either, the target name will be derived from the distgit branch name
+            targets = [self._default_brew_target()]
+        return targets
+
+    def determine_rhel_targets(self) -> List[int]:
+        """
+        For each build target for the component, return the rhel version it is for. For example,
+        if an RPM builds for both rhel-7 and rhel-8 targets, return [7,8]
+        """
+        el_targets: List[int] = []
+        for target in self.determine_targets():
+            el_ver = isolate_el_version_in_brew_tag(target)
+            if not el_ver:
+                raise IOError(f'Unable to determine RHEL version from build target {target} in {self.distgit_key}')
+            el_targets.append(el_ver)
+        return el_targets
+
+    def _default_brew_target(self):
+        """ Returns derived brew target name from the distgit branch name
+        """
+        return NotImplementedError()
 
     def save(self):
         with open(self.full_config_path, "w") as f:
@@ -157,6 +199,8 @@ class Metadata(object):
                             '7' for el7, '8' for el8, etc. You can also pass in a brew target that
                             contains '....-rhel-?..' and the number will be extracted. If you want the true
                             latest, leave as None.
+                            For an image, leaving as none will default to the RHEL version in the branch
+                            associated with the metadata.
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param complete_before_event: If a value is specified >= 0, the search will be constrained to builds which completed before
                                       the specified brew_event. If a value is specified < 0, the search will be conducted with no constraint on
@@ -189,7 +233,8 @@ class Metadata(object):
                     if el_ver:
                         rpm_suffix = f'.el{el_ver}'
                     else:
-                        raise IOError(f'Unable to determine rhel version from specified el_target: {el_target}')
+                        raise IOError(f'Unable to determine {self.name} rhel version '
+                                      f'from specified el_target: {el_target}')
 
             pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
 
@@ -207,24 +252,40 @@ class Metadata(object):
                     list_builds_kwargs['completeBefore'] = complete_before_ts
 
             def default_return():
-                msg = f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', assembly: '{assembly}', build_state: '{build_state.name}', el_target: '{el_target}'"
+                msg = f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', assembly: '{assembly}', build_state: '{build_state.name}''"
                 if default != -1:
                     self.logger.info(msg)
                     return default
                 raise IOError(msg)
 
             def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate:
-                # 1. Matching an unspecified RPM suffix (e.g. .el7).
-                # 2. Other release components that might be introduced later.
+                # Include * after pattern_suffix to tolerate other release components that might be introduced later.
+                # Also include a .el<version> suffix to match the new build pattern
+                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*'
+                assert 'None' not in rhel_pattern
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
-                                             pattern=f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}',
+                                             pattern=rhel_pattern,
                                              queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                              **list_builds_kwargs)
 
+                # If no builds were found, the component might still be following the old pattern,
+                # where a .el suffix was not included in the NVR
+                if not builds:
+                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
+
+                    legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    assert 'None' not in legacy_pattern
+                    builds = koji_api.listBuilds(packageID=package_id,
+                                                 state=None if build_state is None else build_state.value,
+                                                 pattern=legacy_pattern,
+                                                 queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                                                 **list_builds_kwargs)
+                    if not builds:
+                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
+
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
-                # This latter check ensures that 'assembly.how' doesn't not match a build from
+                # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
                 refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
 

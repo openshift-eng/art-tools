@@ -5,17 +5,18 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Set
 
+from artcommonlib import logutil
+from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
-from elliottlib.assembly import assembly_issues_config
 from elliottlib.bzutil import BugTracker, Bug, JIRABug
-from elliottlib import (Runtime, bzutil, constants, errata, logutil)
+from elliottlib import (Runtime, bzutil, constants, errata)
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import chunk
 
 
-logger = logutil.getLogger(__name__)
+logger = logutil.get_logger(__name__)
 type_bug_list = List[Bug]
 type_bug_set = Set[Bug]
 
@@ -79,6 +80,9 @@ class FindBugsSweep(FindBugsMode):
 @click.option("--cve-only",
               is_flag=True,
               help="Only find CVE trackers")
+@click.option("--advance-release",
+              is_flag=True,
+              help="If the release contains an advance advisory")
 @click.option("--permissive",
               is_flag=True, default=False,
               required=False,
@@ -90,7 +94,8 @@ class FindBugsSweep(FindBugsMode):
 @click.pass_obj
 @click_coroutine
 async def find_bugs_sweep_cli(runtime: Runtime, advisory_id, default_advisory_type, include_status, exclude_status,
-                              report, output, into_default_advisories, brew_event, cve_only, permissive, noop):
+                              report, output, into_default_advisories, brew_event, cve_only, advance_release,
+                              permissive, noop):
     """Find OCP bugs and (optional) add them to ADVISORY.
 
  The --group automatically determines the correct target-releases to search
@@ -120,6 +125,8 @@ advisory with the --add option.
     $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --use-default-advisory rpm
 
 """
+    operator_bundle_advisory = "advance" if advance_release else "metadata"
+
     count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
     if count_advisory_attach_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory, --add, or --into-default-advisories")
@@ -138,7 +145,7 @@ advisory with the --add option.
                         output, brew_event,
                         noop=noop, permissive=permissive,
                         count_advisory_attach_flags=count_advisory_attach_flags,
-                        bug_tracker=b))
+                        bug_tracker=b, operator_bundle_advisory=operator_bundle_advisory))
         except Exception as e:
             errors.append(e)
             logger.error(traceback.format_exc())
@@ -208,7 +215,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
 
 async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_type, major_version,
                                find_bugs_obj, output, brew_event, noop, permissive, count_advisory_attach_flags,
-                               bug_tracker):
+                               bug_tracker, operator_bundle_advisory):
     if output == 'text':
         statuses = sorted(find_bugs_obj.status)
         tr = bug_tracker.target_release()
@@ -218,9 +225,10 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
-    bugs_by_type = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
-                                           permissive=permissive,
-                                           major_version=major_version)
+    bugs_by_type, _ = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
+                                              permissive=permissive,
+                                              major_version=major_version,
+                                              operator_bundle_advisory=operator_bundle_advisory)
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
 
@@ -240,6 +248,10 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
     for advisory_type in sorted(advisory_types_to_attach):
         kind_bugs = bugs_by_type.get(advisory_type)
         if kind_bugs:
+            if advisory_type not in advisory_ids:
+                logger.warning(f"Bugs were found for {advisory_type} but not attached because {advisory_type} advisory "
+                               "does not exist")
+                continue
             bug_tracker.attach_bugs([b.id for b in kind_bugs], advisory_id=advisory_ids[advisory_type], noop=noop,
                                     verbose=runtime.debug)
     return bugs
@@ -261,7 +273,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, permissive=False, major_version: int = 4):
+                            permitted_bug_ids, operator_bundle_advisory: str = "metadata",
+                            permissive=False, major_version: int = 4):
+    issues = []
+
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
         "image": set(),
@@ -269,15 +284,16 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         # Metadata advisory will not have Bugs for z-stream releases
         # But at GA time it can have operator builds for the early operator release
         # and thus related extras bugs (including trackers and flaws) will need to be attached to it
-        # see: https://art-docs.engineering.redhat.com/release/4.y-ga/#early-silent-operator-release
-        "metadata": set(),
+        # If operator_bundle_advisory is set to 'advance' we consider the advance advisory as the metadata advisory
+        # advance advisory will have bugs while metadata advisory will not, until GA.
+        operator_bundle_advisory: set(),
         "microshift": set(),
     }
 
     # for 3.x, all bugs should go to the rpm advisory
     if int(major_version) < 4:
         bugs_by_type["rpm"] = set(bugs)
-        return bugs_by_type
+        return bugs_by_type, issues
 
     # for 4.x, first sort all non_tracker_bugs
     tracker_bugs: type_bug_set = set()
@@ -302,11 +318,12 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         message = f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not."
         if permissive:
             logger.warning(f"{message} Ignoring them.")
+            issues.append(message)
         else:
             raise ElliottFatalError(f"{message} Please fix.")
 
     if not tracker_bugs:
-        return bugs_by_type
+        return bugs_by_type, issues
 
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
@@ -316,7 +333,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     if not advisory_id_map:
         logger.info("Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
                     "validate trackers.")
-        return bugs_by_type
+        return bugs_by_type, issues
 
     logger.info("Validating tracker bugs with builds in advisories..")
     found = set()
@@ -368,10 +385,11 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                        f'ids in the assembly definition')
             if permissive:
                 logger.warning(f"{message} Ignoring them for now.")
+                issues.append(message)
             else:
                 raise ValueError(message)
 
-    return bugs_by_type
+    return bugs_by_type, issues
 
 
 def extras_bugs(bugs: type_bug_set) -> type_bug_set:

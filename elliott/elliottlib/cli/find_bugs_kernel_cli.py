@@ -9,9 +9,9 @@ from bugzilla.bug import Bug
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_print
 from elliottlib import Runtime, constants, early_kernel
-from elliottlib.assembly import AssemblyTypes
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
@@ -245,7 +245,7 @@ class FindBugsKernelCli:
             "description": bug.description,
             "issuetype": {"name": "Bug"},
             "versions": [{"name": ocp_target_version[:ocp_target_version.rindex(".")]}],
-            f"{JIRABugTracker.FIELD_TARGET_VERSION}": [{
+            f"{JIRABugTracker.field_target_version}": [{
                 "name": ocp_target_version,
             }],
             "labels": ["art:cloned-kernel-bug", f"art:bz#{bug.id}"],

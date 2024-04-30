@@ -2,12 +2,13 @@ import click
 import sys
 import traceback
 
-from elliottlib import (Runtime, logutil)
+from artcommonlib import logutil
+from elliottlib import Runtime
 from elliottlib.cli.common import cli
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
 
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 class FindBugsQE(FindBugsMode):

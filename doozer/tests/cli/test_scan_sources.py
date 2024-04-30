@@ -1,14 +1,14 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
+from artcommonlib.model import Model
 from doozerlib.cli.scan_sources import ConfigScanSources
-from doozerlib.model import Model
 from doozerlib import rhcos
 
 
 class TestScanSourcesCli(TestCase):
 
-    @patch("doozerlib.exectools.cmd_assert")
+    @patch("artcommonlib.exectools.cmd_assert")
     def test_tagged_rhcos_id(self, mock_cmd):
         mock_cmd.return_value = ("id-1", "stderr")
 

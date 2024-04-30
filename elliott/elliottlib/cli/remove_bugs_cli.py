@@ -1,13 +1,14 @@
 import click
 from errata_tool import ErrataException
 
+from artcommonlib import logutil
 from artcommonlib.format_util import green_prefix
-from elliottlib import logutil, errata
+from elliottlib import errata
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import get_jira_bz_bug_ids, JIRABugTracker, BugzillaBugTracker
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("remove-bugs", short_help="Remove provided BUGS from ADVISORY")

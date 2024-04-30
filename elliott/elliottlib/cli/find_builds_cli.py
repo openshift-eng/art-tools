@@ -9,24 +9,23 @@ import koji
 import requests
 from errata_tool import ErrataException
 
+from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import BREW_ARCHES
+from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
-from artcommonlib.rhcos import get_container_configs
-from elliottlib import Runtime, brew, errata, logutil
-from elliottlib import exectools
-from elliottlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.rhcos import get_container_configs, get_build_id_from_rhcos_pullspec
+from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
                                    use_default_advisory_option, click_coroutine)
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.cli.rhcos_cli import get_build_id_from_rhcos_pullspec
 from elliottlib.util import (ensure_erratatool_auth,
                              get_release_version,
                              isolate_el_version_in_brew_tag,
                              parallel_results_with_progress, pbar_header, progress_func)
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -152,28 +151,26 @@ PRESENT advisory. Here are some examples:
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
                                            nvrp[3], session=requests.Session())
     )
-    previous = len(unshipped_builds)
-    unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds)
-    if len(unshipped_builds) != previous:
-        click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
-                   f'these ART advisories: {attached_to_advisories}')
+
+    # if we want to attach found builds to an advisory -> filter out already attached builds
+    # if we want to report on found builds -> do not filter out
+    if advisory_id:
+        previous = len(unshipped_builds)
+        unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds, include_shipped)
+        if len(unshipped_builds) != previous:
+            click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
+                       f'these ART advisories: {attached_to_advisories}')
 
     _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
 
     if not unshipped_builds:
-        green_print('No builds needed to be attached.')
+        green_print('No unshipped builds found. To include shipped builds, use --include-shipped')
         return
 
     if not advisory_id:
-        click.echo('The following {n} builds '.format(n=len(unshipped_builds)), nl=False)
-        click.secho('may be attached', bold=True, nl=False)
-        click.echo(' to an advisory:')
+        click.echo(f'Found {len(unshipped_builds)} builds: ')
         for b in sorted(unshipped_builds):
             click.echo(' ' + b.nvr)
-        return
-
-    if not unshipped_builds:
-        # Do not change advisory state unless strictly necessary
         return
 
     try:
@@ -203,7 +200,7 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
             continue
 
         for arch, pullspec in config['images'].items():
-            build_id = get_build_id_from_rhcos_pullspec(pullspec, runtime.logger)
+            build_id = get_build_id_from_rhcos_pullspec(pullspec)
             if arch not in build_ids_by_arch:
                 build_ids_by_arch[arch] = set()
             build_ids_by_arch[arch].add(build_id)
@@ -329,7 +326,10 @@ async def _fetch_builds_by_kind_image(runtime: Runtime, tag_pv_map: Dict[str, st
         'Generating list of images: ',
         f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...')
 
-    brew_latest_builds: List[Dict] = await asyncio.gather(*[exectools.to_thread(progress_func, image.get_latest_build) for image in image_metas])
+    tasks = [exectools.to_thread(
+        progress_func,
+        functools.partial(image.get_latest_build, el_target=image.branch_el_target())) for image in image_metas]
+    brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
 
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
     shipped = set()
@@ -447,7 +447,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     return nvrps
 
 
-def _filter_out_attached_builds(build_objects):
+def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool = False):
     """
     Filter out builds that are already attached to an ART advisory
     """
@@ -457,7 +457,8 @@ def _filter_out_attached_builds(build_objects):
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
-        for eid in [e['id'] for e in b.all_errata]:
+        for errata_info in b.all_errata:
+            eid = errata_info['id']
             if eid not in errata_version_cache:
                 release = errata.get_art_release_from_erratum(eid)
                 if not release:
@@ -467,6 +468,13 @@ def _filter_out_attached_builds(build_objects):
                     continue
                 errata_version_cache[eid] = release
             if errata_version_cache[eid] == get_release_version(b.product_version):
+                # We ship 2 different versions of operator builds, first in preGA advisory
+                # and second in GA advisory. We use include_shipped to indicate that we still want to include
+                # builds that have shipped before in preGA advisory, in the GA advisory.
+                # Errata does not allow attaching a build to 2 pending advisories at the same time
+                # So filter if advisory is pending otherwise skip if advisory is shipped
+                if include_shipped and errata_info['status'] == "SHIPPED_LIVE":
+                    continue
                 in_same_version = True
                 attached_to_advisories.add(eid)
                 break

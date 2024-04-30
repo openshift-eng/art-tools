@@ -137,9 +137,9 @@ def query(name, runtime, limit=100):
     +--------------+-----------------+---------------+-----------------------------------------------------------------+
     | brew_task_id | brew_task_state | time_unix     | jenkins_build_url                                               |
     +--------------+-----------------+---------------+-----------------------------------------------------------------+
-    | 55423385     | success         | 1694877067322 | https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/... |
-    | 55301551     | success         | 1694608297117 | https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/... |
-    | 55263583     | failure         | 1694516997964 | https://saml.buildvm.hosts.prod.psi.bos.redhat.com:8888/job/... |
+    | 55423385     | success         | 1694877067322 | https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8888/job/... |
+    | 55301551     | success         | 1694608297117 | https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8888/job/... |
+    | 55263583     | failure         | 1694516997964 | https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com:8888/job/... |
     """
 
     domain = "`log_build`"

@@ -1,6 +1,10 @@
 import unittest
 
+import yaml
+
 from artcommonlib import util, build_util, release_util
+from artcommonlib.model import Model, MissingModel
+from artcommonlib.util import deep_merge, isolate_major_minor_in_group
 
 
 class TestUtil(unittest.TestCase):
@@ -40,8 +44,8 @@ class TestUtil(unittest.TestCase):
 
     def test_find_latest_builds(self):
         builds = [
-            {"id": 13, "name": "a-container", "version": "v1.2.3", "release": "3.assembly.stream", "tag_name": "tag1"},
-            {"id": 12, "name": "a-container", "version": "v1.2.3", "release": "2.assembly.hotfix_a", "tag_name": "tag1"},
+            {"id": 13, "name": "a-container", "version": "v1.2.3", "release": "3.assembly.stream.el8", "tag_name": "tag1"},
+            {"id": 12, "name": "a-container", "version": "v1.2.3", "release": "2.assembly.hotfix_a.el9", "tag_name": "tag1"},
             {"id": 11, "name": "a-container", "version": "v1.2.3", "release": "1.assembly.hotfix_a", "tag_name": "tag1"},
             {"id": 23, "name": "b-container", "version": "v1.2.3", "release": "3.assembly.test", "tag_name": "tag1"},
             {"id": 22, "name": "b-container", "version": "v1.2.3", "release": "2.assembly.hotfix_b", "tag_name": "tag1"},
@@ -105,3 +109,70 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(8, util.isolate_rhel_major_from_version('8.6'))
         self.assertEqual(10, util.isolate_rhel_major_from_version('10.1'))
         self.assertEqual(None, util.isolate_rhel_major_from_version('invalid'))
+
+    def test_isolate_rhel_major_from_distgit_branch(self):
+        self.assertEqual(9, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-9'))
+        self.assertEqual(8, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-8'))
+        self.assertEqual(10, util.isolate_rhel_major_from_distgit_branch('rhaos-4.16-rhel-10'))
+        self.assertEqual(None, util.isolate_rhel_major_from_distgit_branch('invalid'))
+
+    def test_merge_objects(self):
+        yaml_data = """
+content:
+  source:
+    git:
+      branch:
+        target: release-4.16
+    ci_alignment:
+      streams_prs:
+        ci_build_root:
+          stream: rhel-9-golang-ci-build-root
+distgit:
+  branch: rhaos-4.16-rhel-9
+from:
+  builder:
+  - stream: golang
+  - stream: rhel-9-golang
+  member: openshift-enterprise-base-rhel9
+name: openshift/ose-machine-config-operator-rhel9
+alternative_upstream:
+- when: el8
+  distgit:
+    branch: rhaos-4.16-rhel-8
+  from:
+    member: openshift-enterprise-base
+  name: openshift/ose-machine-config-operator
+  content:
+    source:
+      ci_alignment:
+        streams_prs:
+          ci_build_root:
+            stream: rhel-8-golang-ci-build-root
+        """
+
+        config = Model(yaml.safe_load(yaml_data))
+        alt_config = config.alternative_upstream[0]
+        merged_config = Model(deep_merge(config.primitive(), alt_config.primitive()))
+
+        self.assertEqual(merged_config.name, 'openshift/ose-machine-config-operator')
+        self.assertEqual(merged_config.distgit.branch, 'rhaos-4.16-rhel-8')
+        self.assertEqual(merged_config.content.source.git.branch.target, 'release-4.16')
+        self.assertEqual(merged_config.get('from').get('builder'), [{'stream': 'golang'}, {'stream': 'rhel-9-golang'}])
+        self.assertEqual(merged_config.get('from').get('member'), 'openshift-enterprise-base')
+
+    def test_isolate_major_minor_in_group(self):
+        major, minor = isolate_major_minor_in_group('openshift-4.16')
+        self.assertEqual(major, 4)
+        self.assertEqual(minor, 16)
+
+        major, minor = isolate_major_minor_in_group('invalid-4.16')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+        major, minor = isolate_major_minor_in_group('openshift-4.invalid')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)
+
+        major, minor = isolate_major_minor_in_group('openshift-invalid.16')
+        self.assertEqual(major, None)
+        self.assertEqual(minor, None)

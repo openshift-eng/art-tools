@@ -1,4 +1,4 @@
 coverage
 flake8
-pytest
+pytest == 8.0.2
 tox

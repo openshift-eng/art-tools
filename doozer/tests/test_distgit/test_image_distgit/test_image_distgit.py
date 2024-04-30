@@ -6,14 +6,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Lock
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import Mock, patch
 
 from flexmock import flexmock
 from unittest.mock import MagicMock
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Missing, Model
-from doozerlib import distgit, model
-from doozerlib.assembly import AssemblyTypes
+from doozerlib import distgit
 from doozerlib.image import ImageMetadata
 
 from ..support import MockScanner, TestDistgit
@@ -25,7 +25,7 @@ class TestImageDistGit(TestDistgit):
     def setUp(self, _):
         super(TestImageDistGit, self).setUp()
         self.img_dg = distgit.ImageDistGitRepo(self.md, autoclone=False)
-        self.img_dg.runtime.group_config = model.Model()
+        self.img_dg.runtime.group_config = Model()
 
     @staticmethod
     def mock_runtime(**kwargs):
@@ -345,14 +345,14 @@ class TestImageDistGit(TestDistgit):
         """
         Check the logic for matching a commit from source repo
         """
-        self.img_dg.config.content = model.Model()
+        self.img_dg.config.content = Model()
 
         # no source, dist-git only; should go on to check if built/stale
         flexmock(self.img_dg).should_receive("_built_or_recent").once().and_return(None)
         self.assertIsNone(self.img_dg.matches_source_commit({}))
 
         # source specified and matches Dockerfile in dist-git
-        self.img_dg.config.content.source = model.Model()
+        self.img_dg.config.content.source = Model()
         self.img_dg.config.content.source.git = dict()
         test_file = u"""
             from foo
@@ -369,7 +369,7 @@ class TestImageDistGit(TestDistgit):
 
     def test_inject_yum_update_commands_without_final_stage_user(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -401,7 +401,7 @@ COPY --from=builder /some/path/a /some/path/b
 
     def test_inject_yum_update_commands_with_final_stage_user(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -438,7 +438,7 @@ COPY --from=builder /some/path/a /some/path/b
 
     def test_remove_yum_update_commands(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -478,7 +478,7 @@ COPY --from=builder /some/path/a /some/path/b
 
     def test_inject_yum_update_commands_without_repos(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -519,7 +519,7 @@ COPY --from=builder /some/path/a /some/path/b
     def test_generate_osbs_image_config_with_addtional_tags(self):
         runtime = MagicMock(uuid="123456")
         runtime.group_config.cachito.enabled = False
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -543,7 +543,7 @@ COPY --from=builder /some/path/a /some/path/b
     def test_detect_package_manangers_without_git_clone(self):
         runtime = MagicMock(uuid="123456")
         runtime.group_config.cachito.enabled = True
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -562,7 +562,7 @@ COPY --from=builder /some/path/a /some/path/b
     def test_detect_package_manangers(self, is_file: Mock, is_dir: Mock):
         runtime = MagicMock(uuid="123456")
         runtime.group_config.cachito.enabled = True
-        meta = ImageMetadata(runtime, model.Model({
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -583,8 +583,8 @@ COPY --from=builder /some/path/a /some/path/b
     @patch("pathlib.Path.is_dir", autospec=True, return_value=True)
     def test_generate_osbs_image_config_with_cachito_enabled(self, is_dir: Mock):
         runtime = MagicMock(uuid="123456", assembly="test", assembly_basis_event=None, profile=None, odcs_mode=False)
-        runtime.group_config = model.Model()
-        meta = ImageMetadata(runtime, model.Model({
+        runtime.group_config = Model()
+        meta = ImageMetadata(runtime, Model({
             "key": "foo",
             'data': {
                 'name': 'openshift/foo',
@@ -610,31 +610,8 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
 
-    @patch("doozerlib.exectools.cmd_assert")
-    @patch("artcommonlib.redis.set_value_sync")
-    @patch("artcommonlib.redis.get_value_sync")
-    def test_determine_upstream_rhel_version(self, get_value, *_):
-        # Already in Redis
-        get_value.return_value = '9'
-        with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.return_value = io.StringIO('FROM bogus')
-            self.assertEqual('9', self.img_dg._determine_upstream_rhel_version('source-path'))
-
-        # Not in Redis yet: parsing os-release
-        get_value.return_value = None
-        with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.side_effect = [io.StringIO('FROM bogus'), io.StringIO('VERSION_ID="9.2"')]
-            self.assertEqual(9, self.img_dg._determine_upstream_rhel_version('source-path'))
-
-        # Not in Redis yet: parsing error
-        get_value.return_value = None
-        with patch('builtins.open', new_callable=mock_open) as mocked_open:
-            mocked_open.side_effect = [io.StringIO('FROM bogus'), io.StringIO('unparsable')]
-            mocked_open.return_value = io.StringIO('unparsable')
-            self.assertEqual(None, self.img_dg._determine_upstream_rhel_version('source-path'))
-
-    @patch('doozerlib.distgit.datetime')
-    @patch('doozerlib.distgit.ReleaseSchedule')
+    @patch('artcommonlib.build_util.datetime')
+    @patch('artcommonlib.build_util.ReleaseSchedule')
     def test_canonical_builders_enabled(self, release_schedule, mock_datetime):
         # canonical_builders_from_upstream not defined
         self.img_dg.config.canonical_builders_from_upstream = Missing
@@ -672,8 +649,9 @@ COPY --from=builder /some/path/a /some/path/b
         # 'when' clause matching upstream rhel version: override
         self.img_dg.should_match_upstream = True
         self.img_dg.config = Model(
-            {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-             'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
+            {'canonical_builders_from_upstream': True,
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
         self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)

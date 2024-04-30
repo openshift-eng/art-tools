@@ -10,17 +10,19 @@ import jinja2
 import semver
 from io import StringIO
 from pathlib import Path
-from subprocess import PIPE, CalledProcessError
+from subprocess import PIPE
 from typing import Dict, List, Optional, Tuple
 from jira.resources import Issue
 from ruamel.yaml import YAML
 from tenacity import retry, stop_after_attempt, wait_fixed
+from datetime import datetime, timedelta
 
-from doozerlib.assembly import AssemblyTypes
-from elliottlib.assembly import assembly_group_config
+from artcommonlib.assembly import AssemblyTypes, assembly_group_config
+from artcommonlib.model import Model
+from artcommonlib.util import get_assembly_release_date
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, is_greenwave_all_pass_on_advisory
 from elliottlib.errata import get_brew_builds
-from elliottlib.model import Model
+from elliottlib.errata import create_batch, change_advisory_batch, lock_batch
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
@@ -84,7 +86,7 @@ class PrepareReleasePipeline:
             if default_advisories:
                 raise ValueError("default_advisories cannot be set for a non-stream assembly.")
 
-        self.release_date = date
+        self.release_date = date if date else get_assembly_release_date(assembly, group)
         self.package_owner = package_owner or self.runtime.config["advisory"]["package_owner"]
         self._slack_client = slack_client
         self.working_dir = self.runtime.working_dir.absolute()
@@ -103,6 +105,9 @@ class PrepareReleasePipeline:
         if self._ocp_build_data_url:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self._ocp_build_data_url
             self._doozer_env_vars["DOOZER_DATA_PATH"] = self._ocp_build_data_url
+
+        # This will be set to True if advance operator advisory is detected
+        self.advance_release = False
 
     async def run(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +140,7 @@ class PrepareReleasePipeline:
             self.check_blockers()
 
         advisories = {}
+        batch_id = None
 
         if self.default_advisories:
             advisories = group_config.get("advisories", {})
@@ -146,8 +152,33 @@ class PrepareReleasePipeline:
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
-                    advisories[ad] = self.create_advisory(advisory_type=advisory_type, art_advisory_key=ad)
-
+                    if not batch_id and assembly_type == AssemblyTypes.STANDARD:
+                        # Create a batch for a release if not created
+                        batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
+                        _LOGGER.info(f"Created errata batch id {batch_id} for release {self.release_name}")
+                    if ad == "advance":
+                        # Set release date to one week before
+                        # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
+                        current_date = datetime.strptime(self.release_date, "%Y-%b-%d")
+                        one_week_before = current_date - timedelta(days=7)
+                        one_week_before_text = one_week_before.strftime("%Y-%b-%d")
+                        advisories[ad] = self.create_advisory(advisory_type=advisory_type,
+                                                              art_advisory_key=ad,
+                                                              release_date=one_week_before_text)
+                        await self._slack_client.say_in_thread(
+                            f"Advance advisory created with release date {one_week_before_text}")
+                        continue
+                    advisories[ad] = self.create_advisory(advisory_type=advisory_type,
+                                                          art_advisory_key=ad,
+                                                          release_date=self.release_date)
+                    if batch_id and assembly_type == AssemblyTypes.STANDARD:
+                        # Connect advisory to the batch_id
+                        change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
+                        _LOGGER.info(f"Advisory {advisories[ad]} connected to the batch id {batch_id}")
+            if batch_id:
+                lock_batch(release_version=self.release_name, batch_id=batch_id)
+                _LOGGER.info(f"Batch id {batch_id} locked for release {self.release_name}")
+            await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
 
         jira_issue_key = group_config.get("release_jira")
@@ -185,10 +216,23 @@ class PrepareReleasePipeline:
                 self._jira_client.close_task(subtask)
                 self._jira_client.start_task(jira_issue)
             else:
-                _LOGGER.warning("[DRY RUN ]Would have updated Jira ticket status")
+                _LOGGER.warning("[DRY RUN] Would have updated Jira ticket status")
 
         _LOGGER.info("Updating ocp-build-data...")
         await self.update_build_data(advisories, jira_issue_key)
+
+        if "advance" in advisories.keys():
+            advisory_info = await self.get_advisory_info(advisories["advance"])
+            # Make sure that the advisory is in editable mode
+            if self.is_advisory_editable(advisory_info):
+                # Set this as an 'advance' release
+                self.advance_release = True
+
+                # Remove all builds from the metadata advisory
+                await self.remove_builds_all(advisories["metadata"])
+            else:
+                _LOGGER.info(f"'advance' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
+                             " to 'metadata'")
 
         _LOGGER.info("Sweep builds into the the advisories...")
         for impetus, advisory in advisories.items():
@@ -199,22 +243,52 @@ class PrepareReleasePipeline:
                 _LOGGER.info("Skipping populating rpm advisory, since prerelease detected")
                 continue
             elif impetus == "metadata":
+                if self.advance_release:
+                    # Do not populate the metadata advisory if advance advisory is present
+                    continue
+
+                # Looks like advance advisory is not present, let's continue as usual
+                await self.build_and_attach_bundles(advisory)
+            elif impetus == "advance":
+                # TODO: Advance advisory can require force=True
+                # or it would attach prerelease bundles, since it is prepared after prerelease
+                # so detect and do force=True if necessary
                 await self.build_and_attach_bundles(advisory)
             elif impetus == "prerelease":
                 await self.build_and_attach_prerelease_bundles(advisory)
             else:
                 await self.sweep_builds_async(impetus, advisory)
 
+        # Verify attached operators - and gather builds if needed
+        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
+            try:
+                if 'advance' in advisories:
+                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
+                elif 'prerelease' in advisories:
+                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
+                elif 'metadata' in advisories:
+                    await self.verify_attached_operators(advisories["image"], advisories["extras"],
+                                                         advisories['metadata'])
+            except Exception as ex:
+                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
+                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
+
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
-        if assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
-            self.sweep_bugs(permissive=True)
-            _LOGGER.info("Skipping flaw processing during pre-releases")
-        else:
-            self.sweep_bugs(permissive=False)
-            _LOGGER.info("Processing attached Security Trackers")
+
+        if self.advance_release:
+            self.sweep_bugs(permissive=False, advance_release=True)
             for _, advisory in advisories.items():
                 self.attach_cve_flaws(advisory)
+        else:
+            if assembly_type in (AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE):
+                self.sweep_bugs(permissive=True)
+                _LOGGER.info("Skipping flaw processing during pre-releases")
+            else:
+                self.sweep_bugs(permissive=False)
+                _LOGGER.info("Processing attached Security Trackers")
+                for _, advisory in advisories.items():
+                    self.attach_cve_flaws(advisory)
 
         # Verify the swept builds match the nightlies
         if self.release_version[0] < 4:
@@ -223,19 +297,6 @@ class PrepareReleasePipeline:
             _LOGGER.info("Verify the swept builds match the nightlies...")
             for _, payload in self.candidate_nightlies.items():
                 self.verify_payload(payload, advisories["image"])
-
-        # Verify attached operators
-        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
-            try:
-                if 'advance' in advisories:
-                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
-                elif 'prerelease' in advisories:
-                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
-                elif 'metadata' in advisories:
-                    await self.verify_attached_operators(advisories["image"], advisories["extras"], advisories['metadata'])
-            except Exception as ex:
-                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
-                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
 
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
@@ -247,6 +308,9 @@ class PrepareReleasePipeline:
 
         # Move advisories to QE
         for impetus, advisory in advisories.items():
+            if impetus == 'metadata' and self.advance_release:
+                # We don't need to move emtpy metadata advisory if it's an advance release
+                continue
             try:
                 self.change_advisory_state(advisory, "QE")
             except Exception as ex:
@@ -304,7 +368,7 @@ class PrepareReleasePipeline:
         if match and int(match[1]) != 0:
             _LOGGER.info(f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release.")
 
-    def create_advisory(self, advisory_type: str, art_advisory_key: str) -> int:
+    def create_advisory(self, advisory_type: str, art_advisory_key: str, release_date: str) -> int:
         _LOGGER.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
         create_cmd = [
             "elliott",
@@ -317,7 +381,7 @@ class PrepareReleasePipeline:
             f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
             f"--manager={self.runtime.config['advisory']['manager']}",
             f"--package-owner={self.package_owner}",
-            f"--date={self.release_date}",
+            f"--date={release_date}",
         ]
         if not self.dry_run:
             create_cmd.append("--yes")
@@ -382,8 +446,15 @@ class PrepareReleasePipeline:
                 old = await f.read()
             releases_config = yaml.load(old)
             group_config = releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {})
-            group_config["advisories"] = advisories
-            group_config["release_jira"] = jira_issue_key
+
+            # Assembly key names are not always exact, they can end in special chars like !,?,-
+            # to indicate special inheritance rules. So respect those
+            # https://art-docs.engineering.redhat.com/assemblies/#inheritance-rules
+            advisory_key = next(k for k in group_config.keys() if k.startswith("advisories"))
+            release_jira_key = next(k for k in group_config.keys() if k.startswith("release_jira"))
+
+            group_config[advisory_key] = advisories
+            group_config[release_jira_key] = jira_issue_key
             out = StringIO()
             yaml.dump(releases_config, out)
             async with aiofiles.open(repo / "releases.yml", "w") as f:
@@ -414,6 +485,7 @@ class PrepareReleasePipeline:
         self,
         advisory: Optional[int] = None,
         permissive: bool = False,
+        advance_release: bool = False
     ):
         cmd = [
             "elliott",
@@ -428,6 +500,8 @@ class PrepareReleasePipeline:
             cmd.append("--into-default-advisories")
         if permissive:
             cmd.append("--permissive")
+        if advance_release:
+            cmd.append("--advance-release")
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
@@ -565,11 +639,11 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
     def _render_jira_template(fields: Dict, template_vars: Dict):
         fields.copy()
         try:
-            fields["summary"] = jinja2.Template(fields["summary"]).render(template_vars)
+            fields["summary"] = jinja2.Template(fields["summary"], autoescape=True).render(template_vars)
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         try:
-            fields["description"] = jinja2.Template(fields["description"]).render(template_vars)
+            fields["description"] = jinja2.Template(fields["description"], autoescape=True).render(template_vars)
         except jinja2.TemplateSyntaxError as ex:
             _LOGGER.warning("Failed to render JIRA template text: %s", ex)
         return fields
@@ -702,6 +776,44 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
+    async def remove_builds_all(self, advisory_id):
+        """
+        Remove all builds from advisory
+        """
+        _LOGGER.info(f"Removing all builds from advisory {advisory_id}")
+        cmd = [
+            "elliott",
+            f"--group={self.group_name}",
+            f"--assembly={self.assembly}",
+            "remove-builds",
+            "--all",
+            f"--advisory={advisory_id}",
+        ]
+        if self.dry_run:
+            cmd.append("--dry-run")
+
+        _LOGGER.info("Running command: %s", cmd)
+        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+
+    @staticmethod
+    def is_advisory_editable(advisory_info: Dict) -> bool:
+        return advisory_info["status"] in {"NEW_FILES", "QE"}
+
+    async def get_advisory_info(self, advisory: int) -> Dict:
+        cmd = [
+            "elliott",
+            f"--group={self.group_name}",
+            "get",
+            "--json", "-",
+            "--", f"{advisory}"
+        ]
+
+        _, stdout, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
+        advisory_info = json.loads(stdout)
+        if not isinstance(advisory_info, dict):
+            raise ValueError(f"Got invalid advisory info for advisory {advisory}: {advisory_info}.")
+        return advisory_info
+
 
 @cli.command("prepare-release")
 @click.option("-g", "--group", metavar='NAME', required=True,
@@ -710,7 +822,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="The name of an assembly to rebase & build for. e.g. 4.9.1")
 @click.option("--name", metavar="RELEASE_NAME",
               help="release name (e.g. 4.6.42)")
-@click.option("--date", metavar="YYYY-MMM-DD", required=True,
+@click.option("--date", metavar="YYYY-MMM-DD",
               help="Expected release date (e.g. 2020-11-25)")
 @click.option("--package-owner", metavar='EMAIL',
               help="Advisory package owner; Must be an individual email address; May be anyone who wants random advisory spam")

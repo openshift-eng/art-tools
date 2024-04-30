@@ -1,6 +1,6 @@
 from pyartcd.cli import cli, pass_runtime
 from pyartcd.runtime import Runtime
-import openshift as oc
+import openshift_client as oc
 import click
 import requests
 import re

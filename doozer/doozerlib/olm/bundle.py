@@ -1,6 +1,5 @@
 import glob
 import io
-import json
 import os
 import re
 import shutil
@@ -13,8 +12,9 @@ import yaml
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 
+from artcommonlib import pushd, exectools
 from artcommonlib.build_util import find_latest_build
-from doozerlib import brew, exectools, pushd
+from doozerlib import brew, util
 from doozerlib.runtime import Runtime
 
 
@@ -434,18 +434,17 @@ class OLMBundle(object):
         image = '{}/{}'.format(ns, image.replace('/', '-')) if ns else image
 
         pull_spec = '{}/{}'.format(registry, image)
-        cmd = 'oc image info --filter-by-os=linux/amd64 -o json {}'.format(pull_spec)
         try:
-            out, err = exectools.cmd_assert(cmd, retries=3)
+            image_info = util.oc_image_info__caching(pull_spec)
         except:
             self.runtime.logger.error(f'Unable to find image from CSV: {pull_spec}. Image may have failed to build after CSV rebase.')
             raise
 
         if self.runtime.group_config.operator_image_ref_mode == 'manifest-list':
-            return json.loads(out)['listDigest']
+            return image_info['listDigest']
 
         # @TODO: decide how to handle 4.2 multi-arch. hardcoding amd64 for now
-        return json.loads(out)['contentDigest']
+        return image_info['contentDigest']
 
     def append_related_images_spec(self, contents, images):
         """Create a new section under contents' "spec" called "relatedImages", listing all given

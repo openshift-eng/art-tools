@@ -7,7 +7,7 @@ import unittest
 import os
 from multiprocessing.dummy import Pool
 
-from doozerlib import pushd
+from artcommonlib import pushd
 
 
 class DirTestCase(unittest.TestCase):
@@ -20,7 +20,7 @@ class DirTestCase(unittest.TestCase):
     time.
     """
 
-    def test_getcwd(self, concurrent=False):
+    def test_getcwd(self):
         """
         Verify that the directory locking for concurrency is working
         """
@@ -39,7 +39,7 @@ class DirTestCase(unittest.TestCase):
         thread_count = 10
         with Pool(thread_count) as pool:
             results = [
-                pool.apply_async(lambda: self.test_getcwd(concurrent=True))
+                pool.apply_async(lambda: self.test_getcwd())
                 for _ in range(thread_count)
             ]
             for result in results:

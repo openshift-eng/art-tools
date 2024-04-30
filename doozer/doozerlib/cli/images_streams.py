@@ -5,7 +5,6 @@ import yaml
 import json
 import hashlib
 import time
-import datetime
 from pathlib import Path
 import random
 import re
@@ -16,11 +15,12 @@ from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 from dockerfile_parse import DockerfileParser
 
+from artcommonlib import exectools
 from artcommonlib.format_util import green_print, yellow_print
-from doozerlib.model import Model, Missing
-from doozerlib.pushd import Dir
+from artcommonlib.model import Missing, Model
+from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
-from doozerlib import exectools, constants
+from doozerlib import constants, util
 from doozerlib.image import ImageMetadata
 from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
@@ -79,22 +79,20 @@ def images_streams():
 @click.option('--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, only these stream names will be mirrored.')
 @click.option('--only-if-missing', default=False, is_flag=True, help='Only mirror the image if there is presently no equivalent image upstream.')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Append "test" to destination images to exercise live-test-mode buildconfigs')
+@click.option('--force', default=False, is_flag=True, help='Force the mirror operation even if not defined in config upstream.')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
-def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, dry_run):
+def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, force, dry_run):
     runtime.initialize(clone_distgits=False, clone_source=False)
     runtime.assert_mutation_is_permitted()
 
-    if streams:
-        user_specified = True
-    else:
-        user_specified = False
+    if not streams:
         streams = runtime.get_stream_names()
 
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
-        if config.mirror is True or user_specified:
+        if config.mirror is True or force:
             upstream_dest = config.upstream_image
             mirror_arm = False
             if upstream_dest is Missing:
@@ -176,13 +174,17 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, dry
 
 
 @images_streams.command('check-upstream', short_help='Dumps information about CI buildconfigs/mirrored images associated with this group.')
+@click.option('--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, '
+                                                                                            'only check these streams')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
 @pass_runtime
-def images_streams_check_upstream(runtime, live_test_mode):
+def images_streams_check_upstream(runtime, streams, live_test_mode):
     runtime.initialize(clone_distgits=False, clone_source=False)
 
     istags_status = []
-    upstreaming_entries = _get_upstreaming_entries(runtime)
+    if not streams:
+        streams = runtime.get_stream_names()
+    upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
 
@@ -286,9 +288,11 @@ def _get_upstreaming_entries(runtime, stream_names=None):
     :return: Returns a map[name] => { transform: '...', upstream_image.... } where name is a stream name or distgit key.
     """
 
+    fetch_image_metas = False
     if not stream_names:
         # If not specified, use all.
         stream_names = runtime.get_stream_names()
+        fetch_image_metas = True
 
     upstreaming_entries = {}
     streams_config = runtime.streams
@@ -299,16 +303,17 @@ def _get_upstreaming_entries(runtime, stream_names=None):
         if config.upstream_image is not Missing:
             upstreaming_entries[stream] = streams_config[stream]
 
-    # Some images also have their own upstream information. This allows them to
-    # be mirrored out into upstream, optionally transformed, and made available as builder images for
-    # other images without being in streams.yml.
-    for image_meta in runtime.ordered_image_metas():
-        if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
-            upstream_entry = Model(dict_to_model=image_meta.config.content.source.ci_alignment.primitive())  # Make a copy
-            upstream_entry['image'] = image_meta.pull_url()  # Make the image metadata entry match what would exist in streams.yml.
-            if upstream_entry.final_user is Missing:
-                upstream_entry.final_user = image_meta.config.final_stage_user
-            upstreaming_entries[image_meta.distgit_key] = upstream_entry
+    if fetch_image_metas:
+        # Some images also have their own upstream information. This allows them to
+        # be mirrored out into upstream, optionally transformed, and made available as builder images for
+        # other images without being in streams.yml.
+        for image_meta in runtime.ordered_image_metas():
+            if image_meta.config.content.source.ci_alignment.upstream_image is not Missing:
+                upstream_entry = Model(dict_to_model=image_meta.config.content.source.ci_alignment.primitive())  # Make a copy
+                upstream_entry['image'] = image_meta.pull_url()  # Make the image metadata entry match what would exist in streams.yml.
+                if upstream_entry.final_user is Missing:
+                    upstream_entry.final_user = image_meta.config.final_stage_user
+                upstreaming_entries[image_meta.distgit_key] = upstream_entry
 
     return upstreaming_entries
 
@@ -714,8 +719,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, PullRequest.PullRequest], d
     for distgit_key, pr in pr_map.items():
         image_meta: ImageMetadata = runtime.image_map[distgit_key]
         potential_project, potential_component = image_meta.get_jira_info()
-        summary = f"Update {release_version} {image_meta.get_component_name()} image to be consistent with ART"
-        old_summary_format = f"Update {release_version} {image_meta.name} image to be consistent with ART"
+        summary = f"ART requests updates to {release_version} image {image_meta.get_component_name()}"
+        old_summary_format = f"Update {release_version} {image_meta.get_component_name()} image to be consistent with ART"
 
         project = potential_project
         if potential_project not in jira_project_names:
@@ -796,6 +801,7 @@ Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.
         fields = {
             'project': {'key': project},
             'issuetype': {'name': 'Bug'},
+            'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
             'customfield_12319940': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12319940 is Target Version in jira
             'components': [{'name': component}],
@@ -868,29 +874,36 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
     errors_raised = False  # If failures are found when opening a PR, won't break the loop but will return an exit code to signal this event
 
     def update_gomod(desired_ci_build_root_image, repo_dir, image_config):
-        # See if go.mod needs a change
-        golang = ''
+        # See if go.mod needs updating to match the new buildroot go version
         try:
-            image_info = json.loads(exectools.cmd_assert(f'oc image info -o json {desired_ci_build_root_image}')[0])
+            image_info = util.oc_image_info__caching(desired_ci_build_root_image)
         except (KeyError, ChildProcessError):
             logger.exception(f'Did not manage to look up {desired_ci_build_root_image}. Continuing')
             return
 
-        for env in image_info.get('config', {}).get('config', {}).get('Env', []):
-            key, val = env.split(sep='=', maxsplit=1)
-            if key == 'VERSION' and re.match(r'^[0-9]+\.[0-9]+$', val):
-                golang = val
-
-        if not golang:
+        # determine precise version of go in use. NOTE: this requires trusting the image's "version"
+        # label, that it is set correctly by ART and not changed when transformed to CI. if either
+        # of those assumptions goes wrong we will be recommending the wrong thing in the PR. but the
+        # alternative is pulling the image and running 'go version' inside it which seems excessive.
+        try:
+            version = image_info['config']['config']['Labels']['version']  # e.g. "v1.20.12"
+        except KeyError:
+            logger.error(f"{desired_ci_build_root_image} lacked a suitable 'version' label. Continuing")
             return
+        if not re.match(r'^v[0-9]+(\.[0-9]+){2}$', version):
+            logger.error(f"{desired_ci_build_root_image} had weird version '{version}'. Continuing")
+            return
+        go_full = version[1:]  # e.g. "1.20.12"
+        go_minor = go_full.rsplit(".", 1)[0]  # e.g. "1.20"
 
         gomods = [Path(repo_dir, f'{p}/go.mod') for p in image_config.cachito.packages.gomod]
         if not gomods:
             gomods = [Path(repo_dir, 'go.mod')]
         for gomod in gomods:
             if gomod.is_file():
-                exectools.cmd_assert(f'go mod edit -go={golang} {gomod}')
-                exectools.cmd_assert(f'git add --force {gomod}')
+                exectools.cmd_assert(f"sed -i -e 's/^go 1.*/go {go_minor}/; "
+                                     f"s/^toolchain go.*/toolchain go{go_full}/' {gomod}")
+                exectools.cmd_assert(f"git add --force {gomod}")
 
     for image_meta in runtime.ordered_image_metas():
         dgk = image_meta.distgit_key
@@ -914,7 +927,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
                 # We don't know yet whether this image exists; perhaps a buildconfig is
                 # failing. Don't open PRs for images that don't yet exist.
                 try:
-                    exectools.cmd_assert(f'oc image info {upstream_image}', retries=3)
+                    util.oc_image_info__caching(upstream_image)
                 except:
                     yellow_print(f'Unable to access upstream image {upstream_image} for {dgk}-- check whether buildconfigs are running successfully.')
                     if not ignore_missing_images:
@@ -1234,31 +1247,38 @@ open_prs: {open_prs}
             # At this point, we have a fork branch in the proper state
             pr_body = f"""{first_commit_line}
 __TLDR__:
-Product builds replace base and builder images as configured. This PR is to ensure
-that CI builds use the same base images as the product builds.
+Product builds by ART can be configured for different base and builder images than corresponding CI
+builds. This automated PR requests a change to CI configuration to align with ART's configuration;
+please take steps to merge it quickly or contact ART to coordinate changes.
 
-Component owners, please ensure that this PR merges as it impacts the fidelity
-of your CI signal. Patch-manager / leads, this PR is a no-op from a product
-perspective -- feel free to manually apply any labels (e.g. jira/valid-bug) to help the
-PR merge as long as tests are passing. If the PR is labeled "needs-ok-to-test", this is
-to limit costs for re-testing these PRs while they wait for review. Issue /ok-to-test
-to remove this tag and help the PR to merge.
+The configuration in the following ART component metadata is driving this alignment request:
+[{os.path.basename(image_meta.config_filename)}]({reconcile_url}).
 
 __Detail__:
-This repository is out of sync with the downstream product builds for this component.
-One or more images differ from those being used by ART to create product builds. This
-should be addressed to ensure that the component's CI testing is accurately
-reflecting what customers will experience.
 
-The information within the following ART component metadata is driving this alignment
-request: [{os.path.basename(image_meta.config_filename)}]({reconcile_url}).
+This repository is out of sync with the downstream product builds for this component. The CI
+configuration for at least one image differs from ART's expected product configuration. This should
+be addressed to ensure that the component's CI testing accurate reflects what customers will
+experience.
 
-The vast majority of these PRs are opened because a different Golang version is being
-used to build the downstream component. ART compiles most components with the version
-of Golang being used by the control plane for a given OpenShift release. Exceptions
-to this convention (i.e. you believe your component must be compiled with a Golang
-version independent from the control plane) must be granted by the OpenShift
-architecture team and communicated to the ART team.
+Most of these PRs are opened as an ART-driven proposal to migrate base image or builder(s) to a
+different version, usually prior to GA. The intent is to effect changes in both configurations
+simultaneously without breaking either CI or ART builds, so usually ART builds are configured to
+consider CI as canonical and attempt to match CI config until the PR merges to align both. ART may
+also configure changes in GA releases with CI remaining canonical for a brief grace period to enable
+CI to succeed and the alignment PR to merge. In either case, ART configuration will be made
+canonical at some point (typically at branch-cut before GA or release dev-cut after GA), so it is
+important to align CI configuration as soon as possible.
+
+PRs are also triggered when CI configuration changes without ART coordination, for instance to
+change the number of builder images or to use a different golang version. These changes should be
+coordinated with ART; whether ART configuration is canonical or not, preferably it would be updated
+first to enable the changes to occur simultaneously in both CI and ART at the same time. This also
+gives ART a chance to validate the intended changes first. For instance, ART compiles most
+components with the Golang version being used by the control plane for a given OpenShift release.
+Exceptions to this convention (i.e. you believe your component must be compiled with a Golang
+version independent from the control plane) must be granted by the OpenShift staff engineers and
+communicated to the ART team.
 
 __Roles & Responsibilities__:
 - Component owners are responsible for ensuring these alignment PRs merge with passing
@@ -1267,9 +1287,11 @@ __Roles & Responsibilities__:
   introduced with a separate PR opened by the component team. Once the repository is aligned,
   this PR will be closed automatically.
 - Patch-manager or those with sufficient privileges within this repository may add
-  any required labels to ensure the PR merges once tests are passing. Downstream builds
-  are *already* being built with these changes. Merging this PR only improves the fidelity
-  of our CI.
+  any required labels to ensure the PR merges once tests are passing. In cases where ART config is
+  canonical, downstream builds are *already* being built with these changes, and merging this PR
+  only improves the fidelity of our CI. In cases where ART config is not canonical, this provides
+  a grace period for the component team to align their CI with ART's configuration before it becomes
+  canonical in product builds.
 """
             if desired_ci_build_root_coordinate:
                 pr_body += """

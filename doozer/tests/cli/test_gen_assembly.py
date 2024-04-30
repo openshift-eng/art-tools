@@ -3,9 +3,9 @@ from unittest.mock import MagicMock, patch
 
 from flexmock import flexmock
 
-from doozerlib.assembly import AssemblyTypes
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.model import Model
 from doozerlib.cli.release_gen_assembly import GenAssemblyCli
-from doozerlib.model import Model
 
 
 class TestGenPayloadCli(TestCase):

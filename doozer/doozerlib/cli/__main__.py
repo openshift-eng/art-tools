@@ -7,9 +7,10 @@ import sys
 import tempfile
 from future import standard_library
 
+from artcommonlib import exectools
 from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
+from artcommonlib.pushd import Dir
 from doozerlib import state, cli as cli_package
-from doozerlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 
 from doozerlib.cli.release_gen_payload import release_gen_payload
@@ -25,6 +26,7 @@ from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.scan_osh import scan_osh
+from doozerlib.cli.scan_fips import scan_fips
 from doozerlib.cli.gen_assembly_helper import gen_assembly_rhcos
 from doozerlib.cli.rpms import rpms_print, rpms_rebase_and_build, rpms_rebase, rpms_build, rpms_clone, rpms_clone_sources
 from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_olm_bundle, build_olm_bundle, rebase_and_build_olm_bundle
@@ -35,7 +37,6 @@ from doozerlib.cli.images import images_clone, images_list, images_push_distgit,
     images_print, distgit_config_template, query_rpm_version
 
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib import exectools
 from doozerlib.util import analyze_debug_timing
 from doozerlib.util import get_release_calc_previous
 
@@ -235,7 +236,6 @@ cachedir={}/$basearch/$releasever
 keepcache=0
 debuglevel=2
 logfile={}/yum.log
-exactarch=1
 obsoletes=1
 gpgcheck=1
 plugins=1
@@ -249,8 +249,9 @@ installonly_limit=3
 
     print("repo config:\n", content)
 
-    if dry_run:
-        return
+    if not os.path.isdir(output):
+        yellow_print('Creating outputdir: {}'.format(output))
+        exectools.cmd_assert('mkdir -p {}'.format(output))
 
     if not os.path.isdir(cachedir):
         yellow_print('Creating cachedir: {}'.format(cachedir))
@@ -279,9 +280,21 @@ installonly_limit=3
                 continue
 
             color_print('Syncing repo {}'.format(repo.name), 'blue')
-            cmd = f'reposync --download-metadata -c {yc_file.name} -p {output} --delete --arch {arch} -r {repo.name} -e {metadata_dir}'
+            cmd = ('dnf '
+                   f'--config {yc_file.name} '
+                   f'--repoid {repo.name} '
+                   'reposync '
+                   f'--arch {arch} '
+                   '--arch noarch '
+                   '--delete '
+                   '--download-metadata '
+                   f'--download-path {output} '
+                   )
             if repo.is_reposync_latest_only():
-                cmd += ' -n'
+                cmd += '--newest-only '
+
+            if dry_run:
+                cmd += '--urls '
 
             rc, out, err = exectools.cmd_gather(cmd, realtime=True)
             if rc != 0:
@@ -290,14 +303,6 @@ installonly_limit=3
                 else:
                     runtime.logger.warning('Failed to sync repo {} but marked as optional: {}'.format(repo.name, err))
                     optional_fails.append(repo.name)
-            else:
-                rc, out, err = exectools.cmd_gather('createrepo_c {}'.format(os.path.join(output, repo.name)))
-                if rc != 0:
-                    if not repo.cs_optional:
-                        raise DoozerFatalError(err)
-                    else:
-                        runtime.logger.warning('Failed to run createrepo_c on {} but marked as optional: {}'.format(repo.name, err))
-                        optional_fails.append(repo.name)
     finally:
         yc_file.close()
         shutil.rmtree(metadata_dir, ignore_errors=True)

@@ -9,11 +9,11 @@ import pipes
 import click
 from typing import Set, Dict
 
-from artcommonlib import format_util
+from artcommonlib import format_util, logutil
 from artcommonlib.format_util import green_print, yellow_print
-from elliottlib import constants, tarball_sources, util, logutil, brew
+from elliottlib import constants, tarball_sources, brew
 
-LOGGER = logutil.getLogger(__name__)
+LOGGER = logutil.get_logger(__name__)
 
 
 @click.group("tarball-sources", short_help="Create or publish tarball sources")
