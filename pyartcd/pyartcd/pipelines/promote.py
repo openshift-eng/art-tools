@@ -1560,7 +1560,8 @@ class PromotePipeline:
         cmd = f"tkn pipeline start {pipeline_name} " \
               f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} " \
               f"--param major={self.group.split('-')[-1]} " \
-              f"--param version={self.assembly}"
+              f"--param version={self.assembly} " \
+              "--pipeline-timeout 4h"
 
         env = os.environ.copy()
         rc, _, _ = await exectools.cmd_gather_async(cmd, env=env)
