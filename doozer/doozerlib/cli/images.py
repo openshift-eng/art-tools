@@ -948,13 +948,15 @@ def images_show_tree(runtime, imagename, yml):
               help='Include images which have been marked as non-release.')
 @click.option('--show-base', default=False, is_flag=True,
               help='Include images which have been marked as base images.')
+@click.option('--only-for-payload', default=False, is_flag=True,
+              help='Filter out images that do not have "for_payload: true".')
 @click.option("--output", "-o", default=None,
               help="Write data to FILE instead of STDOUT")
 @click.option("--label", "-l", default=None,
               help="The label you want to print if it exists. Empty string if n/a")
 @click.argument("pattern", default="{build}", nargs=1)
 @pass_runtime
-def images_print(runtime, short, show_non_release, show_base, output, label, pattern):
+def images_print(runtime, short, show_non_release, only_for_payload, show_base, output, label, pattern):
     """
     Prints data from each distgit. The pattern specified should be a string
     with replacement fields:
@@ -976,6 +978,7 @@ def images_print(runtime, short, show_non_release, show_base, output, label, pat
     {jira_component} - The associated Jira project component, if known
     {upstream} - The upstream repository for the image
     {upstream_public} - The public upstream repository (if different) for the image
+    {owners} - comma delimited list of owners
     {lf} - Line feed
 
     If pattern contains no braces, it will be wrapped with them automatically. For example:
@@ -1019,6 +1022,9 @@ def images_print(runtime, short, show_non_release, show_base, output, label, pat
         if not (image.enabled or runtime.load_disabled):
             continue
 
+        if only_for_payload and image.config.for_payload is not True:
+            continue
+
         dfp = None
 
         # Method to lazily load the remote dockerfile content.
@@ -1056,6 +1062,12 @@ def images_print(runtime, short, show_non_release, show_base, output, label, pat
             s = s.replace('{jira_info}', 'jira[project={jira_project} component={jira_component}]')
             s = s.replace('{jira_project}', jira_project)
             s = s.replace('{jira_component}', jira_component)
+
+        if '{owners}' in s:
+            owners = []
+            if image.config.owners is not Missing:
+                owners = image.config.owners
+            s = s.replace("{owners}", 'owners[' + ' '.join(owners) + ']')
 
         if '{image}' in s:
             s = s.replace("{image}", get_dfp().labels["name"])

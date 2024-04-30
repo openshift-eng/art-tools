@@ -75,7 +75,7 @@ def images_streams():
     pass
 
 
-@images_streams.command('mirror', short_help='Reads streams.yml and mirrors out ART equivalent images to api.ci.')
+@images_streams.command('mirror', short_help='Reads streams.yml and mirrors out ART equivalent images to app.ci.')
 @click.option('--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, only these stream names will be mirrored.')
 @click.option('--only-if-missing', default=False, is_flag=True, help='Only mirror the image if there is presently no equivalent image upstream.')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Append "test" to destination images to exercise live-test-mode buildconfigs')
