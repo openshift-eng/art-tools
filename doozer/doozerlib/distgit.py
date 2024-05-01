@@ -1626,12 +1626,9 @@ class ImageDistGitRepo(DistGitRepo):
     def _canonical_builders_enabled(self) -> bool:
         # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
         if self.config.canonical_builders_from_upstream is not Missing:
-            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
-        else:
-            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
-
-        return build_util.canonical_builders_enabled(
-            canonical_builders_from_upstream, self.runtime)
+            config_val = self.config.canonical_builders_from_upstream
+            return self.runtime.is_canonical_builders_config_enabled(config_val)
+        return self.runtime.is_canonical_builders_config_enabled()
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
