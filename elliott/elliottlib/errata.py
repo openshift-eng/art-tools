@@ -837,8 +837,11 @@ def unset_advisory_batch(advisory_id):
     """Unset the batch for an advisory.
     POST /api/v1/erratum/{id}/change_batch
     """
-    # Make sure the batch is unlocked
     batch_id = get_advisory_batch(advisory_id)
+    if not batch_id:
+        return
+
+    # Make sure the batch is unlocked
     unlock_batch(batch_id)
 
     # Clear batch
