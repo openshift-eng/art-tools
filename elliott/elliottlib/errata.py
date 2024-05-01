@@ -807,10 +807,7 @@ def unlock_batch(batch_id):
 def get_advisory_batch(advisory_id):
     """Get the batch id for an advisory.
     """
-    response = get_raw_erratum(advisory_id)
-    if response.status_code != requests.codes.ok:
-        raise IOError(f'Failed to get advisory {response.status_code} and error: {response.text}')
-    erratum = response['errata']
+    erratum = get_raw_erratum(advisory_id)['errata']
     advisory_type_key = list(erratum.keys())[0]
     return erratum[advisory_type_key]['batch_id']
 
