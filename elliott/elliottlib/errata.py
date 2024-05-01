@@ -791,7 +791,7 @@ def lock_batch(batch_id):
     PUT /api/v1/batches/{id}
     """
     response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', json={"is_locked": True})
-    if response.status_code != requests.codes.created:
+    if response.status_code != requests.codes.ok:
         raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
 
 
@@ -800,7 +800,7 @@ def unlock_batch(batch_id):
     PUT /api/v1/batches/{id}
     """
     response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', json={"is_locked": False})
-    if response.status_code != requests.codes.created:
+    if response.status_code != requests.codes.ok:
         raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
 
 
