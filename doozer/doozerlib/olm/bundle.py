@@ -536,6 +536,9 @@ class OLMBundle(object):
 
     @property
     def branch(self):
+        config = self.runtime.image_map[self.operator_name].config
+        if 'distgit' in config and 'branch' in config['distgit']:
+            return config['distgit']['branch']
         return self.runtime.group_config.branch.format(**self.runtime.group_config.vars)
 
     @property
@@ -607,7 +610,12 @@ class OLMBundle(object):
 
     @property
     def target(self):
-        return self.runtime.get_default_candidate_brew_tag() or '{}-candidate'.format(self.branch)
+        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', self.branch)
+        if target_match:
+            el_target = int(target_match.group(1))
+            return self.runtime.get_default_candidate_brew_tag(el_target=el_target) or '{}-candidate'.format(self.branch)
+        else:
+            raise IOError(f'Unable to determine rhel version from branch: {self.branch}')
 
     @property
     def valid_subscription_label(self):
