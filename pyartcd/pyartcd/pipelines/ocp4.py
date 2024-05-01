@@ -883,37 +883,26 @@ class Ocp4Pipeline:
             version_queue_name=queue
         )
 
-    async def _check_fips(self):
-        cmd = [
-            "doozer",
-            "--group",
-            f"openshift-{self.version.stream}",
-            "images:scan-fips",
-            "--nvrs",
-            f"{','.join(self.success_nvrs)}"
-        ]
+    async def _trigger_fips_pipeline(self):
+        """
+        Check if the successfully built images are FIPS client. This function will trigger a pipeline on ART cluster
 
-        _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
+        :param version: Eg. 4.15
+        :param doozer_path: Eg. https://github.com/openshift-eng/ocp-build-data
+        :param nvrs: Eg. NVRs of successful builds
+        """
+        pipeline_name = "fips-pipeline"
+        cmd = f"tkn pipeline start {pipeline_name} " \
+              f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} " \
+              f"--param version={self.version.stream} " \
+              f"--param nvrs={','.join(self.success_nvrs)} "
 
-        result_json = json.loads(result)
+        rc, _, _ = await exectools.cmd_gather_async(cmd)
 
-        self.runtime.logger.info(f"Result: {json.dumps(result_json, indent=4)}")
-
-        if result_json:
-            # alert release artists
-            if not self.runtime.dry_run:
-                message = ":warning: @ashwin FIPS scan has failed for some builds"
-                slack_response = await self._slack_client.say(message=message)
-                slack_thread = slack_response["message"]["ts"]
-
-                await self._slack_client.say(
-                    message=result,
-                    thread_ts=slack_thread,
-                )
-            else:
-                self.runtime.logger.info("[DRY RUN] Would have messaged slack")
+        if rc == 0:
+            self.runtime.logger.info("Successfully triggered FIPS pipline on cluster")
         else:
-            self.runtime.logger.info("No issues")
+            self.runtime.logger.error("Error while triggering FIPS pipline on cluster")
 
     async def run(self):
         await self._initialize()
@@ -964,8 +953,9 @@ class Ocp4Pipeline:
         self._report_success()
 
         # Run FIPS scan on successfully built images
-        # Deactivating temporarily since images being pruned properly in ocp4 runs
-        # await self._check_fips()
+        if self.assembly != 'test':
+            # Skip scanning test builds
+            await self._trigger_fips_pipeline()
 
 
 @cli.command("ocp4",

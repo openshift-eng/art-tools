@@ -13,9 +13,11 @@ from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gath
 
 
 class ScanFipsCli:
-    def __init__(self, runtime: Runtime, nvrs: Optional[list]):
+    def __init__(self, runtime: Runtime, nvrs: Optional[list], clean: Optional[bool]):
         self.runtime = runtime
         self.nvrs = nvrs
+        self.clean = clean
+        self.could_not_clean = []
 
         # Initialize runtime and brewhub session
         self.runtime.initialize(clone_distgits=False)
@@ -25,35 +27,38 @@ class ScanFipsCli:
     async def run_get_problem_nvrs(self, build: tuple):
         # registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator@sha256:da95750d31cb1b9539f664d2d6255727fa8d648e93150ae92ed84a9e993753be
         nvr, pull_spec = build
+        cmd = f"sudo check-payload -V {self.runtime.group.split('-')[-1]} scan image --spec {pull_spec}"
+        rc_scan, out_scan, _ = await cmd_gather_async(cmd)
 
-        rc_scan, out_scan, _ = await cmd_gather_async(f"sudo check-payload scan image --spec {pull_spec}")
+        # Useful while testing on local machine
+        if self.clean:
+            # Eg: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator
+            # from registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator@sha256:da95750d31cb1b9539f664d2d6255727fa8d648e93150ae92ed84a9e993753be
+            name_without_sha = pull_spec.split("@")[0]
 
-        # Eg: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator
-        # from registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator@sha256:da95750d31cb1b9539f664d2d6255727fa8d648e93150ae92ed84a9e993753be
-        name_without_sha = pull_spec.split("@")[0]
+            # c706f2c4 registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
+            rc, out, err = cmd_gather("sudo podman images --format '{{.ID}} {{.Repository}}'")
+            if rc != 0:
+                # This does not have a FIPS vulnerability, but we need to figure out why this failing to clean
+                # since memory is limited in buildvm
+                self.could_not_clean.append(nvr)
+                return None
 
-        # c706f2c4 registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
-        rc, out, err = cmd_gather("sudo podman images --format '{{.ID}} {{.Repository}}'")
-        if rc != 0:
-            # This does not have a FIPS vulnerability, but we need to figure out why this failing to clean
-            # since memory is limited in buildvm
-            return build
+            # `out` has multiple lines in {{.ID}} {{.Repository}} format
+            for image in out.strip().split("\n"):
+                if not image:
+                    # Skip null values
+                    continue
 
-        # `out` has multiple lines in {{.ID}} {{.Repository}} format
-        for image in out.strip().split("\n"):
-            if not image:
-                # Skip null values
-                continue
+                image_id, image_name = image.split(" ")  # c706f2c4, registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
+                if name_without_sha == image_name:
+                    self.runtime.logger.info(f"Trying to clean image {image}")
+                    rmi_cmd_rc, _, rmi_cmd_err = cmd_gather(f"sudo podman rmi {image_id}")
 
-            image_id, image_name = image.split(" ")  # c706f2c4, registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-aws-pod-identity-webhook
-            if name_without_sha == image_name:
-                self.runtime.logger.info(f"Trying to clean image {image}")
-                rmi_cmd_rc, _, rmi_cmd_err = cmd_gather(f"sudo podman rmi {image_id}")
-
-                if rmi_cmd_rc != 0:
-                    # This does not have a FIPS vulnerability, but we need to figure out why this failing to clean
-                    # since memory is limited in buildvm
-                    return build
+                    if rmi_cmd_rc != 0:
+                        # This does not have a FIPS vulnerability, but we need to figure out why this failing to clean
+                        # since memory is limited in buildvm
+                        self.could_not_clean.append(nvr)
 
         # The command will fail if it's not run on root, so need to make sure of that first during debugging
         # If it says successful run, it means that the command ran correctly
@@ -97,13 +102,18 @@ class ScanFipsCli:
         self.runtime.logger.info(f"Found FIPS issues for these components: {problem_images}")
         click.echo(json.dumps(problem_images))
 
+        if self.clean and self.could_not_clean:
+            raise Exception(f"Could not clean images: {self.could_not_clean}")
+
 
 @cli.command("images:scan-fips", help="Trigger FIPS check for specified NVRs")
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans for")
+@click.option("--clean", is_flag=True, default=False, help="Clean images after scanning")
 @pass_runtime
 @click_coroutine
-async def scan_fips(runtime: Runtime, nvrs: str):
+async def scan_fips(runtime: Runtime, nvrs: str, clean: bool):
     fips_pipeline = ScanFipsCli(runtime=runtime,
-                                nvrs=nvrs.split(",") if nvrs else None
+                                nvrs=nvrs.split(",") if nvrs else None,
+                                clean=clean
                                 )
     await fips_pipeline.run()

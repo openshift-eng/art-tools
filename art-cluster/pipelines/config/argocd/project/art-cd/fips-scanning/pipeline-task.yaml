@@ -10,9 +10,6 @@ spec:
     - description: 'Space separated NVRs'
       name: nvrs
       type: string
-    - description: 'DOOZER_DATA_PATH value'
-      name: doozer_path
-      type: string
   steps:
     - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:base
       name: run-script
@@ -45,8 +42,6 @@ spec:
             secretKeyRef:
               name: art-bot-config
               key: slack-api-token
-        - name: DOOZER_DATA_PATH
-          value: $(params.doozer_path)
   volumes:
     - name: art-bot-docker-config
       secret:
