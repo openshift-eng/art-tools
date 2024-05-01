@@ -55,15 +55,15 @@ class BuildFinder:
         """
         if not assembly:
             # Assemblies are disabled. We need the true latest tagged builds in the brew tag
-            self._logger.info("Finding latest builds in Brew tag %s...", tag)
+            self._logger.debug("Finding latest builds in Brew tag %s...", tag)
             builds = self._koji_api.listTagged(tag, latest=True, inherit=inherit, event=event, type=build_type)
         else:
             # Assemblies are enabled. We need all tagged builds in the brew tag then find the latest ones for the assembly.
-            self._logger.info("Finding builds specific to assembly %s in Brew tag %s...", assembly, tag)
+            self._logger.debug("Finding builds specific to assembly %s in Brew tag %s...", assembly, tag)
             tagged_builds = self._koji_api.listTagged(tag, latest=False, inherit=inherit, event=event, type=build_type)
             builds = find_latest_builds(tagged_builds, assembly)
         component_builds = {build["name"]: build for build in builds}
-        self._logger.info("Found %s builds.", len(component_builds))
+        self._logger.debug("Found %s builds.", len(component_builds))
         for build in component_builds.values():  # Save to cache
             self._cache_build(build)
         return component_builds
