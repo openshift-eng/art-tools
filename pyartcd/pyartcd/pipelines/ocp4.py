@@ -953,8 +953,9 @@ class Ocp4Pipeline:
         self._report_success()
 
         # Run FIPS scan on successfully built images
-        if self.assembly != 'test':
+        if self.assembly != 'test' and self.success_nvrs:
             # Skip scanning test builds
+            # Also skip if there are no successful builds
             await self._trigger_fips_pipeline()
 
 
