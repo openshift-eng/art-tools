@@ -231,21 +231,20 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     """
 
     runtime.initialize(config_only=True)
+
+    operator_metas = []
+    clone_distgits = False
     if not operator_nvrs:
         # If this verb is run without operator NVRs, query Brew for all operator builds
         operator_metas = [meta for meta in runtime.ordered_image_metas() if
                           meta.enabled and meta.config['update-csv'] is not Missing]
         runtime.images = [o.image_name for o in operator_metas]
+        # Check if canonical_builders_from_upstream is set in group_config
+        clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
 
-    if runtime.group_config.canonical_builders_from_upstream:
-        runtime.initialize(clone_distgits=True)
-    else:
-        runtime.initialize(clone_distgits=False)
+    runtime.initialize(clone_distgits=clone_distgits)
 
     if not operator_nvrs:
-        # If this verb is run without operator NVRs, query Brew for all operator builds
-        operator_metas = [meta for meta in runtime.ordered_image_metas() if
-                          meta.enabled and meta.config['update-csv'] is not Missing]
         results = exectools.parallel_exec(lambda meta, _: meta.get_latest_build(), operator_metas)
         operator_builds = results.get()
     else:

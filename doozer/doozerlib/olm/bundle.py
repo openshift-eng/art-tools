@@ -184,7 +184,7 @@ class OLMBundle(object):
 
     def does_bundle_branch_exist(self):
         try:
-            self.clone_bundle()
+            self.clone_bundle(retries=None)
             return True, ''
         except Exception as err:
             if len(err.args) > 1:
@@ -194,7 +194,7 @@ class OLMBundle(object):
                     return False, f'{self.bundle_repo_name}/{self.branch}'
             raise
 
-    def clone_bundle(self):
+    def clone_bundle(self, retries: int = 3):
         """Clone corresponding bundle distgit repository of given operator NVR
         """
         dg_dir = Path(self.bundle_clone_path)
@@ -209,7 +209,7 @@ class OLMBundle(object):
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert('rhpkg {} clone --depth 1 --branch {} {} {}'.format(
             self.rhpkg_opts, self.branch, self.bundle_repo_name, self.bundle_clone_path
-        ))
+        ), retries=retries)
 
     def clean_bundle_contents(self):
         """Delete all files currently present in the bundle repository
