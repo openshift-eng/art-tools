@@ -22,7 +22,7 @@ from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.errata import get_brew_builds
-from elliottlib.errata import create_batch, change_advisory_batch, lock_batch
+from elliottlib.errata import create_batch, set_advisory_batch, unset_advisory_batch, lock_batch
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
@@ -174,10 +174,10 @@ class PrepareReleasePipeline:
                                                           release_date=self.release_date)
                     if batch_id and assembly_type == AssemblyTypes.STANDARD:
                         # Connect advisory to the batch_id
-                        change_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
+                        set_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
                         _LOGGER.info(f"Advisory {advisories[ad]} connected to the batch id {batch_id}")
                     else:
-                        change_advisory_batch(advisory_id=advisories[ad], clear_batch=True)
+                        unset_advisory_batch(advisory_id=advisories[ad])
                         _LOGGER.info(f"Clear batch setting for non release advisory {advisories[ad]}")
             if batch_id:
                 lock_batch(release_version=self.release_name, batch_id=batch_id)
