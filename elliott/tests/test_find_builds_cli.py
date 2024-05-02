@@ -21,7 +21,7 @@ class TestFindBuildsCli(unittest.TestCase):
 
         builds, advisories = _filter_out_attached_builds([builds])
         self.assertEqual([], builds)
-        self.assertEqual({12345}, advisories)
+        self.assertEqual({12345: {'test-1.1.1'}}, advisories)
 
     def test_filter_out_attached_builds_viable(self):
         flexmock(erratalib).should_receive("get_art_release_from_erratum").and_return('4.1')
@@ -31,7 +31,7 @@ class TestFindBuildsCli(unittest.TestCase):
 
         builds, advisories = _filter_out_attached_builds([builds])
         self.assertEqual([Build("test-1.1.1")], builds)
-        self.assertEqual(set(), advisories)
+        self.assertEqual(dict(), advisories)
 
     @mock.patch("elliottlib.brew.get_builds_tags")
     def test_find_shipped_builds(self, get_builds_tags: mock.MagicMock):
