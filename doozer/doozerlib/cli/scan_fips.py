@@ -78,7 +78,7 @@ class ScanFipsCli:
     async def am_i_root(self):
         rc, out, _ = await cmd_gather_async("whoami")
         self.runtime.logger.info(f"Running as user {out}")
-        return rc != 0 and out == "root"
+        return rc == 0 and out == "root"
 
     async def run(self):
         self.is_root = await self.am_i_root()
