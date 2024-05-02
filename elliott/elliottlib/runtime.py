@@ -13,6 +13,7 @@ import click
 import yaml
 
 from artcommonlib import logutil
+from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
@@ -443,6 +444,20 @@ class Runtime(GroupRuntime):
 
     def get_errata_config(self, **kwargs):
         return self.gitdata.load_data(key='erratatool', **kwargs).data
+
+    def get_file_from_gitdata(self, branch, filename):
+        if branch == self.branch:
+            raise ValueError("Do not use this method to access files from the current branch")
+
+        # fetch branch first
+        cmd = f"git -C {self.data_dir} fetch origin {branch}:{branch}"
+        exectools.cmd_assert(cmd)
+
+        cmd = f"git -C {self.data_dir} show {branch}:{filename}"
+        rc, out, err = exectools.cmd_gather(cmd)
+        if rc != 0:
+            raise IOError(f"Failed to get {filename} from {branch} branch")
+        return out
 
     def build_retrying_koji_client(self, caching: bool = False):
         """
