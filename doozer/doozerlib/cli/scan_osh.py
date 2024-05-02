@@ -684,6 +684,9 @@ class ScanOshCli:
         builds = sorted(builds, key=lambda x: x["create_event"])
 
         nvrs = []
+        # Get the list of excluded package names from group.yml
+        excluded_components = self.runtime.group_config.external_scanners.sast_scanning.jira_integration.exclude_components
+        self.runtime.logger.info(f"Retrieved components that have been excluded, from group.yml: {excluded_components}")
 
         for build in builds:
             # Skip rhcos for now
@@ -694,6 +697,15 @@ class ScanOshCli:
             # Exclude all test builds
             if build["nvr"].endswith(".test"):
                 self.runtime.logger.debug(f"Skipping test build: {build['nvr']}")
+                continue
+
+            # Exclude CI builds
+            if build["nvr"].startswith("ci-openshift"):
+                self.runtime.logger.debug(f"Skipping CI build: {build['nvr']}")
+                continue
+
+            if build["package_name"] in excluded_components:
+                self.runtime.logger.debug(f"Skipping excluded component: {build['nvr']}")
                 continue
 
             nvrs.append(build["nvr"])
@@ -770,6 +782,10 @@ class ScanOshCli:
                 self.runtime.logger.debug(f"Skipping rhcos build: {nvr}")
                 continue
 
+            if nvr.startswith("ci-openshift"):
+                self.runtime.logger.debug(f"Skipping CI builds: {nvr}")
+                continue
+
             # Exclude all bundle builds
             if "bundle-container" in nvr or "metadata-container" in nvr:
                 self.runtime.logger.debug(f"Skipping bundle build: {nvr}")
@@ -830,6 +846,9 @@ class ScanOshCli:
         # Trigger scans workflow
         await self.trigger_scans_workflow()
 
+        if not self.create_jira_tickets:
+            return
+
         # JIRA integration workflow
 
         # Create rhel mapping
@@ -844,9 +863,6 @@ class ScanOshCli:
 
             self.tag_rhel_mapping[tag] = rhel_version
         self.runtime.logger.info(f"Created RHEL-brew-tag mapping: {self.tag_rhel_mapping}")
-
-        if not self.create_jira_tickets:
-            return
 
         # Check if the OCP version is enabled for raising Jira tickets
         if not self.is_jira_workflow_group_enabled():
