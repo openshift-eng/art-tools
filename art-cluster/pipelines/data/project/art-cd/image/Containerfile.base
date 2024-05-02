@@ -32,9 +32,8 @@ RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64
 WORKDIR /home/dev
 
 # Clone art-tools into a specific directory and run the install script
-RUN git clone https://github.com/openshift-eng/art-tools.git art-tools \
-    && cd art-tools \
-    && ./install.sh
+COPY . .
+RUN ./install.sh
 
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 RUN git clone https://github.com/openshift/check-payload check-payload &&  \
