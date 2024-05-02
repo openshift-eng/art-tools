@@ -22,6 +22,8 @@ spec:
         touch /root/.config/artcd.toml
 
         kinit -kt /tmp/keytab/keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@IPA.REDHAT.COM
+        
+        python3 -m venv venv && source venv/bin/activate && pip install	--upgrade pip && pip install -e artcommon/ doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/ && cd elliott && pip install '.[tests]' && cd ..
 
         artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs) 
 
