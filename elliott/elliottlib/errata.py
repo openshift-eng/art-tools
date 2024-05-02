@@ -764,6 +764,16 @@ def get_file_meta(advisory_id) -> List[dict]:
     return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
 
 
+def find_batch_for_release(release_version: str):
+    """Find a batch by name of release (e.g. 4.14.12)
+    """
+    name = f"OCP {release_version}"
+    response = ErrataConnector()._get("/api/v1/batches", params={'filter[name]': name})
+    if response and response['data']:
+        return response['data'][0]['id']
+    return None
+
+
 def create_batch(release_version, release_date):
     """Create batch for a release
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
