@@ -1,7 +1,6 @@
 import click
 
 from artcommonlib import logutil
-from artcommonlib.format_util import green_prefix
 from elliottlib.cli.common import cli
 from elliottlib.errata import get_advisory_batch, set_advisory_batch, unset_advisory_batch
 
