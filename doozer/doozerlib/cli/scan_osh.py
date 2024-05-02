@@ -843,6 +843,12 @@ class ScanOshCli:
             self.brew_tags.append(tag.format(MAJOR=major, MINOR=minor))
         self.runtime.logger.info(f"Retrieved candidate tags: {self.brew_tags}")
 
+        # Check if the OCP version is enabled for raising Jira tickets
+        if not self.is_jira_workflow_group_enabled():
+            self.runtime.logger.info(
+                f"Skipping SAST workflow since not enabled in group.yml for {self.version}")
+            return
+
         # Trigger scans workflow
         await self.trigger_scans_workflow()
 
@@ -863,11 +869,6 @@ class ScanOshCli:
 
             self.tag_rhel_mapping[tag] = rhel_version
         self.runtime.logger.info(f"Created RHEL-brew-tag mapping: {self.tag_rhel_mapping}")
-
-        # Check if the OCP version is enabled for raising Jira tickets
-        if not self.is_jira_workflow_group_enabled():
-            self.runtime.logger.info(f"Skipping OCPBUGS creation workflow since not enabled in group.yml for {self.version}")
-            return
 
         await self.process_data_for_ocpbugs_workflow()
 
