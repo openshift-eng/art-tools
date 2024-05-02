@@ -180,7 +180,7 @@ class PrepareReleasePipeline:
                         unset_advisory_batch(advisory_id=advisories[ad])
                         _LOGGER.info(f"Clear batch setting for non release advisory {advisories[ad]}")
             if batch_id:
-                lock_batch(release_version=self.release_name, batch_id=batch_id)
+                lock_batch(batch_id=batch_id)
                 _LOGGER.info(f"Batch id {batch_id} locked for release {self.release_name}")
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
