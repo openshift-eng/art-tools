@@ -686,7 +686,7 @@ class ScanOshCli:
         nvrs = []
         # Get the list of excluded package names from group.yml
         excluded_components = self.runtime.group_config.external_scanners.sast_scanning.jira_integration.exclude_components
-        self.runtime.logger.info(f"Retrieved components that have been excluded, from group.yml: {excluded_components}")
+        self.runtime.logger.debug(f"Retrieved components that have been excluded, from group.yml: {excluded_components}")
 
         for build in builds:
             # Skip rhcos for now
