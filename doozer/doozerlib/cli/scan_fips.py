@@ -71,7 +71,7 @@ class ScanFipsCli:
         return None if rc_scan == 0 and "Successful run" in out_scan else build
 
     def make_command(self, cmd: str):
-        if not self.am_i_root():
+        if not self.is_root:
             return "sudo " + cmd
         return cmd
 
