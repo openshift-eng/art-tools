@@ -864,7 +864,7 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             include_shipped=include_shipped,
         )
         await pipeline.run()
-        await slack_client.say_in_thread(f":white_check_mark: prepare-release for {name if name else assembly} completes.")
+        await slack_client.say_in_thread(f":white_check_mark: @release-artists prepare-release for {name if name else assembly} completes.")
     except Exception as e:
-        await slack_client.say_in_thread(f":warning: prepare-release for {name if name else assembly} has result FAILURE.")
+        await slack_client.say_in_thread(f":warning: @release-artists prepare-release for {name if name else assembly} has result FAILURE.")
         raise e  # return failed status to jenkins
