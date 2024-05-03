@@ -231,11 +231,8 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     """
 
     runtime.initialize(config_only=True)
-
-    if runtime.group_config.canonical_builders_from_upstream:
-        runtime.initialize(clone_distgits=True)
-    else:
-        runtime.initialize(clone_distgits=False)
+    clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
+    runtime.initialize(clone_distgits=clone_distgits)
 
     if not operator_nvrs:
         # If this verb is run without operator NVRs, query Brew for all operator builds
@@ -246,7 +243,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     else:
         operator_builds = list(operator_nvrs)
 
-    def rebase_and_build(operator):
+    def rebase_and_build(olm_bundle: OLMBundle):
         record = {
             'status': -1,
             "task_id": "",
@@ -255,13 +252,12 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             "bundle_nvr": "",
             "message": "Unknown failure",
         }
+        operator_nvr = olm_bundle.operator_nvr
         try:
-            olm_bundle = OLMBundle(runtime, dry_run)
-            operator_nvr = operator if isinstance(operator, str) else operator["nvr"]
             record['operator_nvr'] = operator_nvr
             if not force:
                 runtime.logger.info("%s - Finding most recent bundle build", operator_nvr)
-                bundle_nvr = olm_bundle.find_bundle_for(operator)
+                bundle_nvr = olm_bundle.find_bundle_image()
                 if bundle_nvr:
                     runtime.logger.info("%s - Found bundle build %s", operator_nvr, bundle_nvr)
                     record['status'] = 0
@@ -270,7 +266,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     return record
                 runtime.logger.info("%s - No bundle build found", operator_nvr)
             runtime.logger.info("%s - Rebasing bundle distgit repo", operator_nvr)
-            olm_bundle.rebase(operator)
+            olm_bundle.rebase()
             runtime.logger.info("%s - Building bundle distgit repo", operator_nvr)
             task_id, task_url, bundle_nvr = olm_bundle.build()
             record['status'] = 0
@@ -280,13 +276,21 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             record['bundle_nvr'] = bundle_nvr
         except Exception as err:
             traceback.print_exc()
-            runtime.logger.error('Error during rebase or build for: {}'.format(operator))
+            runtime.logger.error('Error during rebase or build for: {}'.format(operator_nvr))
             record['message'] = str(err)
         finally:
             runtime.add_record("build_olm_bundle", **record)
             return record
 
-    results = exectools.parallel_exec(lambda operator, _: rebase_and_build(operator), operator_builds).get()
+    olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
+    get_branches_results = exectools.parallel_exec(lambda bundle, _: bundle.does_bundle_branch_exist(),
+                                                   olm_bundles).get()
+    if not all([result[0] for result in get_branches_results]):
+        runtime.logger.error('One or more bundle branches do not exist: '
+                             f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.')
+        sys.exit(1)
+
+    results = exectools.parallel_exec(lambda bundle, _: rebase_and_build(bundle), olm_bundles).get()
 
     for record in results:
         if record['status'] == 0:
