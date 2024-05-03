@@ -15,7 +15,7 @@ class TestOLMBundle(unittest.TestCase):
             'source': f'https://pkgs.devel.redhat.com/git/containers/{name}'
                       '#d37b219bb1227aed06e32a995f74595f845bb981'
         }, brew_session=MagicMock()))
-        self.assertEqual(olm.get_bundle_image_name(), 'openshift/ose-foo-operator-bundle')
+        self.assertEqual(olm.bundle_image_name, 'openshift/ose-foo-operator-bundle')
 
     def test_get_bundle_image_name_with_ose_prefix(self):
         name = 'ose-foo-operator'
@@ -24,4 +24,4 @@ class TestOLMBundle(unittest.TestCase):
             'source': f'https://pkgs.devel.redhat.com/git/containers/{name}'
                       '#d37b219bb1227aed06e32a995f74595f845bb981'
         }, brew_session=MagicMock()))
-        self.assertEqual(olm.get_bundle_image_name(), 'openshift/ose-foo-operator-bundle')
+        self.assertEqual(olm.bundle_image_name, 'openshift/ose-foo-operator-bundle')

@@ -2,6 +2,7 @@ import glob
 import io
 import os
 import re
+import json
 import shutil
 import threading
 from pathlib import Path
@@ -13,7 +14,6 @@ from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 
 from artcommonlib import pushd, exectools
-from artcommonlib.build_util import find_latest_build
 from doozerlib import brew, util
 from doozerlib.runtime import Runtime
 
@@ -71,7 +71,16 @@ class OLMBundle(object):
         bundle_package_id = self.brew_session.getPackageID(self.bundle_brew_component, strict=True)
         builds = self.brew_session.listBuilds(packageID=bundle_package_id, pattern=prefix + "*", state=brew.BuildStates.COMPLETE.value,
                                               queryOpts={'limit': 1, 'order': '-creation_event_id'}, completeBefore=None)
-        return builds[0]['nvr'] if builds else None
+        if not builds:
+            return None
+
+        build_info = builds[0]
+        pullspec = build_info['extra']['image']['index']['pull'][0]
+        if not self.delivery_labels_match(pullspec):
+            self.runtime.logger.info(f"Cannot use bundle nvr {build_info['nvr']} since it does not have expected image "
+                                     f"delivery labels for assembly {self.runtime.assembly}")
+            return None
+        return build_info['nvr']
 
     def rebase(self):
         """Update bundle distgit contents with manifests from given operator NVR
@@ -115,9 +124,10 @@ class OLMBundle(object):
         build_info = self.brew_session.getBuild(build_id)
         return task_id, task_url, build_info["nvr"]
 
-    def get_bundle_image_name(self):
+    @property
+    def bundle_image_name(self):
         prefix = '' if self.bundle_name.startswith('ose-') else 'ose-'
-        return 'openshift/{}{}'.format(prefix, self.bundle_name)
+        return f'openshift/{prefix}{self.bundle_name}'
 
     def clone_operator(self):
         """Clone operator distgit repository to doozer working dir
@@ -247,7 +257,7 @@ class OLMBundle(object):
         bundle_df.labels = operator_df.labels
         bundle_df.labels['com.redhat.component'] = self.bundle_brew_component
         bundle_df.labels['com.redhat.delivery.appregistry'] = False
-        bundle_df.labels['name'] = self.get_bundle_image_name()
+        bundle_df.labels['name'] = self.bundle_image_name
         bundle_df.labels['version'] = '{}.{}'.format(
             operator_df.labels['version'],
             operator_df.labels['release']
@@ -581,3 +591,15 @@ class OLMBundle(object):
     @property
     def valid_subscription_label(self):
         return self.operator_csv_config['valid-subscription-label']
+
+    def delivery_labels_match(self, bundle_image_pullspec):
+        cmd = f"oc image info {bundle_image_pullspec} -o json"
+        rc, out, err = exectools.cmd_gather(cmd)
+        if rc != 0:
+            raise ValueError(f"Error running {cmd}: {err}")
+        image_info = json.loads(out)
+        image_labels = image_info['config']['config']['Labels']
+        for label, value in self.redhat_delivery_tags.items():
+            if image_labels.get(label, '') != value:
+                return False
+        return True
