@@ -38,15 +38,13 @@ class OLMBundle(object):
         self.brew_session = brew_session or runtime.build_retrying_koji_client()
         self.operator_dict: Optional[dict] = None
 
-        if operator_nvr_or_dict:
-            if isinstance(operator_nvr_or_dict, dict):
-                self.operator_dict = operator_nvr_or_dict
-            else:
-                print(f"operator_nvr_or_dict: {operator_nvr_or_dict}")
-                build = brew.get_build_objects([operator_nvr_or_dict], self.brew_session)[0]
-                if not build:
-                    raise IOError(f"Build {self.operator_nvr} doesn't exist in Brew.")
-                self.operator_dict = build
+        if isinstance(operator_nvr_or_dict, dict):
+            self.operator_dict = operator_nvr_or_dict
+        else:
+            build = brew.get_build_objects([operator_nvr_or_dict], self.brew_session)[0]
+            if not build:
+                raise IOError(f"Build {self.operator_nvr} doesn't exist in Brew.")
+            self.operator_dict = build
 
     @property
     def operator_nvr(self):
@@ -74,33 +72,6 @@ class OLMBundle(object):
         builds = self.brew_session.listBuilds(packageID=bundle_package_id, pattern=prefix + "*", state=brew.BuildStates.COMPLETE.value,
                                               queryOpts={'limit': 1, 'order': '-creation_event_id'}, completeBefore=None)
         return builds[0]['nvr'] if builds else None
-
-    def get_latest_bundle_build(self):
-        """
-        Return information about the latest build of bundle associated with the current operator.
-        Note that this may not correspond to the latest build of the operator itself IF the operator was:
-        1. Built again after this bundle
-        2. The latest operator build failed to successfully build its bundle
-        :return: A dict containing koji build information; None if no build is found
-        """
-        builds = self.brew_session.listTagged(tag=self.target, package=self.bundle_brew_component, event=None)
-        if not builds:
-            return None
-
-        # FIXME: Currently we assume assembly names are in builds' release field. However unlike regular images, bundles embed their assembly names in the version field.
-        # This is a hack to fool find_latest_build (and other functions).
-        def _apply_hack(build: dict):
-            build["_release"] = build["release"]
-            build["release"] = build["version"]
-            return build
-        builds = list(map(lambda build: _apply_hack(build), builds))
-
-        latest_build = find_latest_build(builds, self.runtime.assembly)
-
-        # revert the hack
-        latest_build["release"] = latest_build["_release"]
-        del latest_build["_release"]
-        return latest_build
 
     def rebase(self):
         """Update bundle distgit contents with manifests from given operator NVR
@@ -143,16 +114,6 @@ class OLMBundle(object):
         build_id = int(taskResult["koji_builds"][0])
         build_info = self.brew_session.getBuild(build_id)
         return task_id, task_url, build_info["nvr"]
-
-    def get_latest_bundle_build_nvr(self):
-        """Get NVR of latest bundle build tagged on given target
-
-        :return string: NVR of latest bundle build, or "" if there is none.
-        """
-        build = self.get_latest_bundle_build()
-        if not build or 'nvr' not in build:
-            return None
-        return build['nvr']
 
     def get_bundle_image_name(self):
         prefix = '' if self.bundle_name.startswith('ose-') else 'ose-'
