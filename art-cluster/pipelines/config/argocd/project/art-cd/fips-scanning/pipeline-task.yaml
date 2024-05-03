@@ -11,7 +11,7 @@ spec:
       name: nvrs
       type: string
   steps:
-    - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:base
+    - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest
       name: run-script
       resources: {}
       script: |
