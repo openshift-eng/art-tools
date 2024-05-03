@@ -247,19 +247,12 @@ class PrepareReleasePipeline:
                 _LOGGER.info("Skipping populating rpm advisory, since prerelease detected")
                 continue
             elif impetus == "metadata":
+                # Do not populate the metadata advisory if advance advisory is present
                 if self.advance_release:
-                    # Do not populate the metadata advisory if advance advisory is present
                     continue
-
-                # Looks like advance advisory is not present, let's continue as usual
                 await self.build_and_attach_bundles(advisory)
-            elif impetus == "advance":
-                # TODO: Advance advisory can require force=True
-                # or it would attach prerelease bundles, since it is prepared after prerelease
-                # so detect and do force=True if necessary
+            elif impetus in ["advance", "prerelease"]:
                 await self.build_and_attach_bundles(advisory)
-            elif impetus == "prerelease":
-                await self.build_and_attach_prerelease_bundles(advisory)
             else:
                 await self.sweep_builds_async(impetus, advisory)
 
@@ -716,7 +709,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         return jira_changed
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def build_and_attach_bundles(self, metadata_advisory: int, force=False):
+    async def build_and_attach_bundles(self, metadata_advisory: int):
         _LOGGER.info("Finding OLM bundles (will rebuild if not present)...")
         cmd = [
             "doozer",
@@ -724,8 +717,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             "--assembly", self.assembly,
             "olm-bundle:rebase-and-build",
         ]
-        if force:
-            cmd.append("--force")
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
@@ -753,16 +744,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             cmd.append(f"{metadata_advisory}")
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
-
-    async def build_and_attach_prerelease_bundles(self, prerelease_advisory: int):
-        _LOGGER.info("Checking if prerelease advisory is populated (will rebuild if not present)...")
-        advisory_builds = get_brew_builds(prerelease_advisory)
-        if advisory_builds:
-            _LOGGER.info("Prerelease advisory %s already has %s builds attached. Skipping rebuild.",
-                         prerelease_advisory, len(advisory_builds))
-            return
-
-        return await self.build_and_attach_bundles(prerelease_advisory, force=True)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def verify_attached_operators(self, *advisories: List[int], gather_dependencies=False):

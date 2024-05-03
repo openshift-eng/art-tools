@@ -83,7 +83,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
             s = s.replace('{nvr}', nvr)
             olm_bundle.get_operator_buildinfo(nvr=nvr)  # Populate the object for the operator we are interested in.
             s = s.replace('{bundle_component}', olm_bundle.bundle_brew_component)
-            bundle_image_name = olm_bundle.get_bundle_image_name()
+            bundle_image_name = olm_bundle.bundle_image_name
 
             if '{paired_' in s:
                 # Paired bundle values must correspond exactly to the latest operator NVR.
