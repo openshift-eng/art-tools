@@ -24,3 +24,7 @@ spec:
   runPolicy: Serial
   triggers:
     - type: ConfigChange
+    - type: Generic
+      generic:
+        secretReference:
+          name: build-config-webhook-secret
