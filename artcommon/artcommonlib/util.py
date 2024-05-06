@@ -130,6 +130,8 @@ def get_inflight(assembly, group):
     Get inflight release name from current assembly release
     """
     inflight_release = None
+    if 'ec' in assembly or 'rc' in assembly:
+        return None
     assembly_release_date = get_assembly_release_date(assembly, group)
     if not assembly_release_date:
         raise ValueError(f'Assembly release date not found for {assembly}')
