@@ -3,17 +3,20 @@ kind: BuildConfig
 metadata:
   labels:
     build: art-cd
-  name: art-cd-base
+  name: art-cd-update
 spec:
   source:
-    dockerfile: art-cluster/pipelines/data/project/art-cd/image/Containerfile.base
+    dockerfile: art-cluster/pipelines/data/project/art-cd/image/Containerfile.latest
     git:
       ref: main
       uri: https://github.com/openshift-eng/art-tools
     type: Git
   strategy:
     dockerStrategy:
-      dockerfilePath: art-cluster/pipelines/data/project/art-cd/image/Containerfile.base
+      dockerfilePath: art-cluster/pipelines/data/project/art-cd/image/Containerfile.latest
+      from:
+        kind: ImageStreamTag
+        name: art-cd:base
     type: Docker
   output:
     to:
@@ -24,6 +27,11 @@ spec:
   runPolicy: Serial
   triggers:
     - type: ConfigChange
+    - imageChange:
+        from:
+          kind: ImageStreamTag
+          name: art-cd:base
+        type: ImageChange
     - type: GitHub
       github:
         secretReference:

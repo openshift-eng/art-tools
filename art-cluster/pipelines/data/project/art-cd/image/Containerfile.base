@@ -31,7 +31,7 @@ RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64
 # Set workspace
 WORKDIR /home/dev
 
-# Clone art-tools into a specific directory and run the install script
+# Copy art-tools and run the install script
 COPY . .
 RUN ./install.sh
 
