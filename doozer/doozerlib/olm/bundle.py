@@ -180,7 +180,7 @@ class OLMBundle(object):
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert('rhpkg {} clone --depth 1 --branch {} {} {}'.format(
             self.rhpkg_opts, self.branch, self.bundle_repo_name, self.bundle_clone_path
-        ), retries=retries)
+        ), retries=3)
 
     def clean_bundle_contents(self):
         """Delete all files currently present in the bundle repository
