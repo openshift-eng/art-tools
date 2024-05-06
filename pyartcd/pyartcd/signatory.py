@@ -248,7 +248,7 @@ class SigstoreSignatory:
         self.verify_release = verify_release  # require a legacy signature on release images
 
     @staticmethod
-    def _redigest_pullspec(pullspec, digest):
+    def redigest_pullspec(pullspec, digest):
         """ form the pullspec for a digest in the same repo as an existing pullspec """
         if len(halves := pullspec.split("@sha256:")) == 2:  # assume that was a digest at the end
             return f"{halves[0]}@{digest}"
@@ -312,7 +312,7 @@ class SigstoreSignatory:
             # the list, only the final image to be downloaded. we do however need to examine each
             # manifest to see if that might be a release image.
             for manifest in img_info:
-                need_examining.add(self._redigest_pullspec(manifest["name"], manifest["digest"]))
+                need_examining.add(self.redigest_pullspec(manifest["name"], manifest["digest"]))
         elif (this_rn := img_info["config"]["config"]["Labels"].get("io.openshift.release")):
             # release image; get references and examine those
             self._logger.info("%s is a release image with name %s", pullspec, this_rn)
