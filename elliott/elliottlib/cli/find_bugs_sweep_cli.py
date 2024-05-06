@@ -368,14 +368,10 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
 
     not_found = set(tracker_bugs) - found
     if not_found:
-        not_found_with_component = [(b.id, b.whiteboard_component) for b in not_found]
-        logger.warning('No attached builds found in advisories for tracker bugs (bug, package):'
-                       f' {not_found_with_component}.')
-
         still_not_found = not_found
         if permitted_bug_ids:
-            logger.warning('The following bugs will be attached because they are '
-                           f'explicitly included in the assembly config: {permitted_bug_ids}')
+            logger.info('The following bugs will be attached because they are '
+                        f'explicitly included in the assembly config: {permitted_bug_ids}')
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
@@ -384,7 +380,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                        f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
                        f'ids in the assembly definition')
             if permissive:
-                logger.warning(f"{message} Ignoring them for now.")
+                logger.warning(f"{message} Ignoring them because --permissive.")
                 issues.append(message)
             else:
                 raise ValueError(message)
