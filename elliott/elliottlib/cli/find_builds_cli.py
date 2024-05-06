@@ -121,33 +121,29 @@ PRESENT advisory. Here are some examples:
 
     ensure_erratatool_auth()  # before we waste time looking up builds we can't process
 
-    unshipped_nvrps = []
+    nvrps = []
 
     # get the builds we want to add
     brew_session = runtime.build_retrying_koji_client(caching=True)
     if builds:
-        green_prefix('Fetching builds...')
-        unshipped_nvrps = _fetch_nvrps_by_nvr_or_id(builds, tag_pv_map, include_shipped=include_shipped,
-                                                    brew_session=brew_session)
+        LOGGER.info("Fetching builds from Brew")
+        nvrps = _fetch_nvrps_by_nvr_or_id(builds, tag_pv_map, include_shipped=include_shipped,
+                                          brew_session=brew_session)
     else:
         if kind == 'image':
-            unshipped_nvrps = await _fetch_builds_by_kind_image(runtime, tag_pv_map, brew_session, payload,
-                                                                non_payload, include_shipped)
+            nvrps = await _fetch_builds_by_kind_image(runtime, tag_pv_map, brew_session, payload,
+                                                      non_payload, include_shipped)
             if payload:
                 rhcos_nvrs = get_rhcos_nvrs_from_assembly(runtime, brew_session)
-                unshipped_rhcos_nvrps = _fetch_nvrps_by_nvr_or_id(rhcos_nvrs, tag_pv_map, include_shipped=include_shipped,
-                                                                  brew_session=brew_session)
-                unshipped_nvrps.extend(unshipped_rhcos_nvrps)
+                rhcos_nvrps = _fetch_nvrps_by_nvr_or_id(rhcos_nvrs, tag_pv_map, include_shipped=include_shipped,
+                                                        brew_session=brew_session)
+                nvrps.extend(rhcos_nvrps)
         elif kind == 'rpm':
-            unshipped_nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
+            nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
 
-    pbar_header(
-        'Fetching builds from Errata: ',
-        'Hold on a moment, fetching buildinfos from Errata Tool...',
-        unshipped_nvrps)
-
-    unshipped_builds = parallel_results_with_progress(
-        unshipped_nvrps,
+    LOGGER.info('Fetching info for builds from Errata')
+    builds = parallel_results_with_progress(
+        nvrps,
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
                                            nvrp[3], session=requests.Session())
     )
@@ -155,28 +151,33 @@ PRESENT advisory. Here are some examples:
     # if we want to attach found builds to an advisory -> filter out already attached builds
     # if we want to report on found builds -> do not filter out
     if advisory_id:
-        previous = len(unshipped_builds)
-        unshipped_builds, attached_to_advisories = _filter_out_attached_builds(unshipped_builds, include_shipped)
-        if len(unshipped_builds) != previous:
-            click.echo(f'Filtered out {previous - len(unshipped_builds)} build(s) since they are already attached to '
-                       f'these ART advisories: {attached_to_advisories}')
+        previous = len(builds)
+        builds, attached_to_advisories = _filter_out_attached_builds(builds, include_shipped)
+        if len(builds) != previous:
+            for attached_ad_id, nvrs in attached_to_advisories.items():
+                if attached_ad_id == advisory_id:
+                    LOGGER.info(f'{len(nvrs)} builds are already attached to given advisory')
+                else:
+                    LOGGER.warning(f'Cannot attach {len(nvrs)} build(s), since they are already attached to '
+                                   f'ART advisory {attached_ad_id} - {sorted(nvrs)}. Remove them from the advisory'
+                                   'and then try again.')
 
-    _json_dump(as_json, unshipped_builds, kind, tag_pv_map)
+    _json_dump(as_json, builds, kind, tag_pv_map)
 
-    if not unshipped_builds:
-        green_print('No unshipped builds found. To include shipped builds, use --include-shipped')
+    if not builds:
+        green_print('No eligible builds found. To include shipped builds, use --include-shipped')
         return
 
     if not advisory_id:
-        click.echo(f'Found {len(unshipped_builds)} builds: ')
-        for b in sorted(unshipped_builds):
+        LOGGER.info(f'Found {len(builds)} builds')
+        for b in sorted(builds):
             click.echo(' ' + b.nvr)
         return
 
     try:
         erratum = errata.Advisory(errata_id=advisory_id)
         erratum.ensure_state('NEW_FILES')
-        erratum.attach_builds(unshipped_builds, kind)
+        erratum.attach_builds(builds, kind)
         cdn_repos = et_data.get('cdn_repos')
         if kind == 'image':
             ensure_rhcos_file_meta(advisory_id)
@@ -252,12 +253,12 @@ def _fetch_nvrps_by_nvr_or_id(ids_or_nvrs, tag_pv_map, include_shipped=False, ig
     _ensure_accepted_tags(builds, brew_session, tag_pv_map)
     shipped = set()
     if include_shipped:
-        click.echo("Do not filter out shipped builds, all builds will be attached")
+        LOGGER.info("Do not filter out shipped builds, all builds will be attached")
     else:
-        click.echo("Filtering out shipped builds...")
+        LOGGER.info("Filtering out shipped builds")
         shipped = _find_shipped_builds([b["id"] for b in builds], brew_session)
     unshipped = [b for b in builds if b["id"] not in shipped]
-    click.echo(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.')
+    LOGGER.info(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.')
 
     nvrps = []
     if ignore_product_version:
@@ -384,8 +385,6 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
         if any(nvr for dep in rhcos_config.dependencies.rpms for _, nvr in dep.items()):
             raise ElliottFatalError(f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release.")
 
-    green_prefix('Generating list of rpms: ')
-    click.echo('Hold on a moment, fetching Brew builds')
     builds: List[Dict] = []
 
     if member_only:  # Sweep only member rpms
@@ -430,18 +429,17 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     not_attachable_nvrs = [b["nvr"] for b in builds if "tag_name" not in b]
 
     if not_attachable_nvrs:
-        yellow_print(f"The following NVRs will not be swept because they don't have allowed tags {list(tag_pv_map.keys())}:")
-        for nvr in not_attachable_nvrs:
-            yellow_print(f"\t{nvr}")
+        LOGGER.info(f"The following NVRs will not be swept because they don't have allowed tags"
+                    f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}")
 
     shipped = set()
     if include_shipped:
-        click.echo("Do not filter out shipped builds, all builds will be attached")
+        LOGGER.debug("Do not filter out shipped builds, all builds will be attached")
     else:
-        click.echo("Filtering out shipped builds...")
+        LOGGER.debug("Filtering out shipped builds...")
         shipped = _find_shipped_builds([b["id"] for b in qualified_builds], brew_session)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
-    click.echo(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
+    LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     nvrps = sorted(set(nvrps))  # remove duplicates
     return nvrps
@@ -453,7 +451,7 @@ def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool
     """
     unattached_builds = []
     errata_version_cache = {}  # avoid reloading the same errata for multiple builds
-    attached_to_advisories = set()
+    attached_to_advisories: Dict[int, Set[str]] = dict()
     for b in build_objects:
         # check if build is attached to any existing advisory for this version
         in_same_version = False
@@ -463,7 +461,7 @@ def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool
                 release = errata.get_art_release_from_erratum(eid)
                 if not release:
                     # Does not contain ART metadata; consider it unversioned
-                    red_print("Errata {} Does not contain ART metadata\n".format(eid))
+                    LOGGER.warning("Errata {} Does not contain ART metadata\n".format(eid))
                     errata_version_cache[eid] = ''
                     continue
                 errata_version_cache[eid] = release
@@ -476,7 +474,9 @@ def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool
                 if include_shipped and errata_info['status'] == "SHIPPED_LIVE":
                     continue
                 in_same_version = True
-                attached_to_advisories.add(eid)
+                if eid not in attached_to_advisories:
+                    attached_to_advisories[eid] = set()
+                attached_to_advisories[eid].add(b.nvr)
                 break
         if not in_same_version:
             unattached_builds.append(b)

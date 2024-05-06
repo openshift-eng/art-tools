@@ -10,11 +10,8 @@ spec:
     - description: 'Space separated NVRs'
       name: nvrs
       type: string
-    - description: 'DOOZER_DATA_PATH value'
-      name: doozer_path
-      type: string
   steps:
-    - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:base
+    - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest
       name: run-script
       resources: {}
       script: |
@@ -26,7 +23,11 @@ spec:
 
         kinit -kt /tmp/keytab/keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@IPA.REDHAT.COM
 
-        artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs) 
+        make default-python-venv
+
+        source venv/bin/activate
+
+        artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs)
 
       securityContext:
         runAsGroup: 0
@@ -45,8 +46,6 @@ spec:
             secretKeyRef:
               name: art-bot-config
               key: slack-api-token
-        - name: DOOZER_DATA_PATH
-          value: $(params.doozer_path)
   volumes:
     - name: art-bot-docker-config
       secret:

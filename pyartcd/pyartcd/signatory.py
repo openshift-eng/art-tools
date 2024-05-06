@@ -2,9 +2,11 @@
 import asyncio
 import base64
 import io
+import itertools
 import json
 import logging
 import os
+import aiohttp
 import uuid
 from datetime import datetime, timedelta
 from typing import Set, Iterable, List, BinaryIO, Dict, cast
@@ -234,12 +236,16 @@ class SigstoreSignatory:
     """
 
     def __init__(self, logger, dry_run: bool, signing_creds: str, signing_key_id: str,
-                 concurrency_limit: int) -> None:
+                 concurrency_limit: int, sign_release: bool, sign_components: bool,
+                 verify_release: bool) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
         self.signing_creds = signing_creds  # filename where KMS credentials are stored
         self.signing_key_id = signing_key_id  # key id for signing
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
+        self.sign_release = sign_release  # whether to sign release images that we examine
+        self.sign_components = sign_components  # whether to sign component images that we examine
+        self.verify_release = verify_release  # require a legacy signature on release images
 
     @staticmethod
     def _redigest_pullspec(pullspec, digest):
@@ -314,24 +320,32 @@ class SigstoreSignatory:
                 errors[pullspec] = RuntimeError(
                     f"release image at {pullspec} has release name {this_rn}, not the expected {release_name}"
                 )
+            elif self.verify_release and not await self.verify_legacy_signature(img_info):
+                errors[pullspec] = RuntimeError(
+                    f"release image at {pullspec} does not have a required legacy signature"
+                )
             else:
-                try:
-                    for child_spec in await self.get_release_image_references(pullspec):
-                        need_examining.add(child_spec)
-                        # [lmeyer] it might seem unnecessary to examine component images. we _could_
-                        # just give them to cosign to sign (recursively, to cover multiarch
-                        # components). however, with multiarch releases, this would lead to signing
-                        # most manifests at least five times (once for the single-arch release
-                        # image, and once for each arch in the multi-arch release), and "pod"
-                        # fillers even more; if we only ever sign at the level of manifests, we can
-                        # ensure we sign only once per release.
-                except RuntimeError as exc:
-                    errors[pullspec] = exc
+                if self.sign_components:
+                    # look up the components referenced by this release image
+                    try:
+                        for child_spec in await self.get_release_image_references(pullspec):
+                            need_examining.add(child_spec)
+                            # [lmeyer] it might seem unnecessary to examine component images. we _could_
+                            # just give them to cosign to sign (recursively, to cover multiarch
+                            # components). however, with multiarch releases, this would lead to signing
+                            # most manifests at least five times (once for the single-arch release
+                            # image, and once for each arch in the multi-arch release), and "pod"
+                            # fillers even more; if we only ever sign at the level of manifests, we can
+                            # ensure we sign only once per release.
+                    except RuntimeError as exc:
+                        errors[pullspec] = exc
                 # also plan to sign the release image itself
-                need_signing.add(pullspec)
+                if self.sign_release:
+                    need_signing.add(pullspec)
         else:  # pullspec is for a normal image manifest
             self._logger.info("%s is a single manifest", pullspec)
-            need_signing.add(pullspec)
+            if self.sign_components:
+                need_signing.add(pullspec)
 
         return need_signing, need_examining, errors
 
@@ -353,13 +367,42 @@ class SigstoreSignatory:
         results = await run_limited_unordered(self._sign_single_manifest, args, self.concurrency_limit)
         return {pullspec: err for result in results for pullspec, err in result.items()}
 
+    async def verify_legacy_signature(self, img_info: Dict) -> bool:
+        """
+        Verify the signature from mirror.openshift.com matches the release image and RH public key
+        :param img_info: the oc image info structure from the image
+        :return: True if valid signature found, False otherwise
+        """
+        sha = img_info["digest"].removeprefix("sha256:")
+        async with aiohttp.ClientSession() as session:
+            for sig in itertools.count(1):
+                # there can be more than one signature, look until we run out
+                url = "https://mirror.openshift.com/pub/openshift-v4/signatures/openshift-release-dev/"
+                url += f"ocp-release/sha256={sha}/signature-{sig}"
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        return False  # no more signatures found, verification failed
+
+                    # [lmeyer] at this point ideally we would verify the signature is signed by the
+                    # right key and matches the image. however this turns out to be unreasonably
+                    # complicated with existing tools. instead, we will take the existence of the
+                    # signature file at the right shasum on our mirror as sufficient evidence that
+                    # we signed the image before. i do not see a plausible risk resulting.
+                    self._logger.info(f"found sig file at {url}")
+                    return True
+
     async def _sign_single_manifest(self, pullspec: str) -> Dict[str, Exception]:
         """ use sigstore to sign a single image manifest and upload the signature
         :param pullspec: Pullspec to be signed
         :return: dict with any signing errors for pullspec
         """
         log = self._logger
-        cmd = ["cosign", "sign", "--yes", "--key", f"awskms:///{self.signing_key_id}", pullspec]
+        cmd = ["cosign", "sign",
+               # initially we are signing and verifying with a static key, so no transaction log is
+               # needed, and we also do not have our own service to upload it to; so it will be
+               # skipped until something about that situation changes to require and enable it.
+               "--tlog-upload=false",
+               "--key", f"awskms:///{self.signing_key_id}", pullspec]
         # easier to set AWS_REGION than create AWS_CONFIG_FILE, unless config gets more complicated
         env = os.environ | dict(AWS_SHARED_CREDENTIALS_FILE=self.signing_creds, AWS_REGION="us-east-1")
         if self.dry_run:

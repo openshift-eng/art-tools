@@ -86,9 +86,6 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
     runtime.initialize(clone_distgits=False, clone_source=False)
     runtime.assert_mutation_is_permitted()
 
-    if not streams:
-        streams = runtime.get_stream_names()
-
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():

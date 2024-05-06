@@ -90,6 +90,15 @@ class Bug:
     def product(self):
         raise NotImplementedError
 
+    @property
+    def cve_id(self):
+        if not (self.is_tracker_bug() or self.is_flaw_bug()):
+            return None
+        cve_id = re.search(r'CVE-\d+-\d+', self.summary)
+        if cve_id:
+            return cve_id.group()
+        return None
+
     @staticmethod
     def get_target_release(bugs: List[Bug]) -> str:
         """
@@ -208,6 +217,11 @@ class BugzillaBug(Bug):
 
 
 class JIRABug(Bug):
+    def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return getattr(self, attr)
+        return getattr(self.bug.fields, attr)
+
     def __init__(self, bug_obj: Issue):
         super().__init__(bug_obj)
 

@@ -109,7 +109,7 @@ def add_jira_issue(advisory_id, jira_issue_id):
     Attach a jira issue to advisory
     Response code will return
     """
-    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", data={'jira_issue': jira_issue_id})
+    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={'jira_issue': jira_issue_id})
 
 
 def remove_jira_issue(advisory_id, jira_issue_id):
@@ -117,7 +117,7 @@ def remove_jira_issue(advisory_id, jira_issue_id):
     Remove a jira issue from advisory
     Response code will return
     """
-    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/remove_jira_issue", data={'jira_issue': jira_issue_id})
+    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/remove_jira_issue", json={'jira_issue': jira_issue_id})
 
 
 def remove_multi_jira_issues(advisory_id, jira_list: List):
@@ -128,7 +128,7 @@ def remove_multi_jira_issues(advisory_id, jira_list: List):
     ec = ErrataConnector()
     res = []
     for jira_id in jira_list:
-        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/remove_jira_issue", data={'jira_issue': jira_id}))
+        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/remove_jira_issue", json={'jira_issue': jira_id}))
     return res
 
 
@@ -137,7 +137,7 @@ def remove_bug(advisory_id, bug_id):
     Remove a bug from advisory
     Response code will return
     """
-    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/remove_bug", data={"bug": f"{bug_id}"})
+    return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/remove_bug", json={"bug": f"{bug_id}"})
 
 
 def remove_multi_bugs(advisory_id, bug_list: List):
@@ -148,7 +148,7 @@ def remove_multi_bugs(advisory_id, bug_list: List):
     ec = ErrataConnector()
     res = []
     for bug_id in bug_list:
-        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/remove_bug", data={"bug": f"{bug_id}"}))
+        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/remove_bug", json={"bug": f"{bug_id}"}))
     return res
 
 
@@ -160,7 +160,7 @@ def add_multi_jira_issues(advisory_id, jira_list: List):
     ec = ErrataConnector()
     res = []
     for jira_id in jira_list:
-        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", data={'jira_issue': jira_id}))
+        res.append(ec._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={'jira_issue': jira_id}))
     return res
 
 
@@ -314,7 +314,7 @@ def add_comment(advisory_id, comment):
     return requests.post(constants.errata_add_comment_url.format(id=advisory_id),
                          verify=ssl.get_default_verify_paths().openssl_cafile,
                          auth=HTTPSPNEGOAuth(),
-                         data=data)
+                         json=data)
 
 
 def get_builds(advisory_id, session=None):
@@ -660,7 +660,7 @@ def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_sta
     :param blocking_state: a valid advisory state like "SHIPPED_LIVE" (default to "SHIPPED_LIVE")
     """
     response = ErrataConnector()._post(f'/api/v1/erratum/{target_advisory_id}/add_blocking_errata',
-                                       data={"blocking_errata": blocking_advisory_id})
+                                       json={"blocking_errata": blocking_advisory_id})
     if response.status_code != requests.codes.created:
         # The endpoint 404s if the advisory is already in the list
         # with the error text "Advisory already listed"
@@ -670,7 +670,7 @@ def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_sta
                            f' with error: {response.text} status code: {response.status_code}')
     data = {"blocking_errata": blocking_advisory_id, "blocker_state": blocking_state}
     response = ErrataConnector()._post(f'/api/v1/erratum/{target_advisory_id}/set_blocker_state_for_blocking_errata',
-                                       data=data)
+                                       json=data)
     if response.status_code != requests.codes.created:
         raise IOError(f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id} '
                       f'with error: {response.text} status code: {response.status_code}')
@@ -727,7 +727,7 @@ def remove_dependent_advisories(advisory_id):
     endpoint = f'/api/v1/erratum/{advisory_id}/remove_dependent_errata'
     for dependent in get_dependent_advisories(advisory_id):
         data = {"dependent_errata": int(dependent)}
-        response = ErrataConnector()._post(endpoint, data=data)
+        response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(f'Failed to remove dependent {dependent} from {advisory_id}'
                           f'with code {response.status_code} and error: {response.text}')
@@ -738,7 +738,7 @@ def remove_blocking_advisories_depends(advisory_id):
     for blocking_advisory in get_blocking_advisories(advisory_id):
         endpoint = f'/api/v1/erratum/{blocking_advisory}/remove_blocking_errata'
         data = {"blocking_errata": int(advisory_id)}
-        response = ErrataConnector()._post(endpoint, data=data)
+        response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(f'Failed to remove blocking {advisory_id} from {blocking_advisory}'
                           f'with code {response.status_code} and error: {response.text}')
@@ -762,6 +762,95 @@ def get_file_meta(advisory_id) -> List[dict]:
     },..]
     """
     return ErrataConnector()._get(f'/api/v1/erratum/{advisory_id}/filemeta')
+
+
+def create_batch(release_version, release_date):
+    """Create batch for a release
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
+    :param release_version: release name, e.g. 4.14.12
+    :param release_date: release date, e.g. 2024-02-08
+    :return: return the batch id which used as parameter when creating advisory
+
+    """
+    data = {
+        "name": f"OCP {release_version}",
+        "release_name": "RHOSE ASYNC - AUTO",
+        "release_date": release_date,
+        "description": f"OCP {release_version}",
+        "is_active": True
+    }
+    response = ErrataConnector()._post("/api/v1/batches", json=data)
+    if response.status_code != requests.codes.created:
+        raise IOError(f'Failed to create batch with code {response.status_code} and error: {response.text}')
+    else:
+        return response.json()['data']['id']
+
+
+def lock_batch(batch_id):
+    """Update lock status of a batch.
+    PUT /api/v1/batches/{id}
+    """
+    response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', json={"is_locked": True})
+    if response.status_code != requests.codes.ok:
+        raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
+
+
+def unlock_batch(batch_id):
+    """Update lock status of a batch.
+    PUT /api/v1/batches/{id}
+    """
+    response = ErrataConnector()._put(f'/api/v1/batches/{batch_id}', json={"is_locked": False})
+    if response.status_code != requests.codes.ok:
+        raise IOError(f'Failed to lock batch with code {response.status_code} and error: {response.text}')
+
+
+def get_advisory_batch(advisory_id):
+    """Get the batch id for an advisory.
+    """
+    erratum = get_raw_erratum(advisory_id)['errata']
+    advisory_type_key = list(erratum.keys())[0]
+    return erratum[advisory_type_key]['batch_id']
+
+
+def set_advisory_batch(advisory_id, batch_id):
+    """Set the batch for an advisory.
+    POST /api/v1/erratum/{id}/change_batch
+    Request body may contain:
+        batch_id - id of the batch (integer)
+        batch_name - name of the batch (string) - alternative to batch_id
+        clear_batch - removes erratum from batch (boolean)
+        is_batch_blocker - indicates if advisory blocks batch (boolean)
+    """
+    # Make sure the batch is unlocked
+    unlock_batch(batch_id)
+
+    # Set the batch
+    response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"batch_id": batch_id})
+    if response.status_code != requests.codes.created:
+        raise IOError(f'Failed to set advisory batch with code {response.status_code} and error: {response.text}')
+
+    # Lock the batch
+    lock_batch(batch_id)
+
+
+def unset_advisory_batch(advisory_id):
+    """Unset the batch for an advisory.
+    POST /api/v1/erratum/{id}/change_batch
+    """
+    batch_id = get_advisory_batch(advisory_id)
+    if not batch_id:
+        return
+
+    # Make sure the batch is unlocked
+    unlock_batch(batch_id)
+
+    # Clear batch
+    response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"clear_batch": True})
+    if response.status_code != requests.codes.created:
+        raise IOError(f'Failed to unset advisory batch with code {response.status_code} and error: {response.text}')
+
+    # Lock the batch
+    lock_batch(batch_id)
 
 
 def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:

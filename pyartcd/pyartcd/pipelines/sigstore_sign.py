@@ -32,13 +32,17 @@ class SigstorePipeline:
         return self
 
     def __init__(self, runtime: Runtime, group: str, assembly: str,
-                 multi: str, pullspecs: Optional[List[str]]
+                 multi: str, sign_release: str, verify_release: bool,
+                 pullspecs: Optional[List[str]]
                  ) -> None:
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
         self.sign_multi = multi != "no"
         self.sign_arches = multi != "only"
+        self.sign_release = sign_release != "no"
+        self.sign_components = sign_release != "only"
+        self.verify_release = verify_release
         self.pullspecs = pullspecs
         self._logger = self.runtime.logger
 
@@ -48,6 +52,9 @@ class SigstorePipeline:
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
             signing_key_id=os.environ.get("KMS_KEY_ID", "dummy-key"),
             concurrency_limit=CONCURRENCY_LIMIT,
+            sign_release=self.sign_release,
+            sign_components=self.sign_components,
+            verify_release=self.verify_release,
         )
 
     def check_environment_variables(self):
@@ -90,6 +97,12 @@ class SigstorePipeline:
 
         if not self.pullspecs:
             # look up release images we expect to exist, since none were specified.
+            if not self.verify_release:
+                raise ValueError("""
+                    For adequate paranoia, either supply pullspecs with shasums (all new releases
+                    should do this), or use --verify-release to ensure release images that we look
+                    up and retro-sign have legacy signatures.
+                """)
             self.pullspecs = self._lookup_release_images(release_name)
 
         # given pullspecs that are most likely trees (either manifest lists or release images),
@@ -131,14 +144,20 @@ class SigstorePipeline:
               help="The name of an assembly to be signed. e.g. 4.15.1")
 @click.option("--multi", type=click.Choice(("yes", "no", "only")), default="yes",
               help="Whether to sign multi-arch or arch-specific payloads.")
+@click.option("--sign-release", type=click.Choice(("yes", "no", "only")), default="no",
+              help="Whether to sign the release image or just component images.")
+@click.option("--verify-release", is_flag=True, default=False,
+              help="Verify that release images have a legacy signature before re-signing.")
 @click.argument('pullspecs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
 async def sigstore_sign_container(
         runtime: Runtime, group: str, assembly: str,
-        multi: str, pullspecs: Optional[List[str]] = None):
+        multi: str, sign_release: str, verify_release: bool,
+        pullspecs: Optional[List[str]] = None):
     pipeline = await SigstorePipeline.create(
         runtime, group, assembly,
-        multi, pullspecs
+        multi, sign_release, verify_release,
+        pullspecs
     )
     await pipeline.run()

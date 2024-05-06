@@ -164,7 +164,7 @@ class Metadata(object):
             # Oh, but what if the customer DOES want a different commit? Well, the artist should
             # update the release.yml for art1999 to include that commit or explicitly specify a branch.
             # How do we determine whether they have done that? Looking for any explicit overrides
-            # in the our assembly's metadata.
+            # in our assembly's metadata.
             # Let's do it!
             assembly_overrides = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, Model({}))
             # Nice! By passing Model({}) instead of the metadata from our image yml file, we should only get fields actually defined in
@@ -176,13 +176,13 @@ class Metadata(object):
                 pass
             else:
                 # Ooof.. it is not defined in the assembly, so we need to find it dynamically.
-                self.logger.info("A commitish is not explicitly specified for %s. Determining from the latest build...", self.name)
                 build_obj = self.get_latest_build(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
-                    self.logger.debug(f'Pinning upstream source to commit of last assembly selected build ({build_obj["id"]}) -> commit {self.commitish} ')
+                    self.logger.info('Pinning upstream source to commit of assembly selected build '
+                                     f'({build_obj["id"]}) -> commit {self.commitish}')
                 else:
-                    # If this is part of a unit test, don't make the caller's life more difficult thatn it already is; skip the exception.
+                    # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.
                     if 'unittest' not in sys.modules.keys():
                         raise IOError(f'Expected to find pre-existing build for {self.distgit_key} in order to pin upstream source commit')
 
@@ -454,11 +454,15 @@ class Metadata(object):
             if assembly is None:
                 assembly = self.runtime.assembly
 
-            list_builds_kwargs = {'completeBefore': None}  # extra kwargs that will be passed to koji_api.listBuilds invocations
-            if complete_before_event is not None and complete_before_event >= 0:
-                # listBuilds accepts timestamps, not brew events, so convert brew event into seconds since the epoch
-                complete_before_ts = koji_api.getEvent(complete_before_event)['ts']
-                list_builds_kwargs['completeBefore'] = complete_before_ts
+            list_builds_kwargs = {}  # extra kwargs that will be passed to koji_api.listBuilds invocations
+            if complete_before_event is not None:
+                if complete_before_event < 0:
+                    # By setting the parameter to None, it tells the koji wrapper to not bound the brew event.
+                    list_builds_kwargs['completeBefore'] = None
+                else:
+                    # listBuilds accepts timestamps, not brew events, so convert brew event into seconds since the epoch
+                    complete_before_ts = koji_api.getEvent(complete_before_event)['ts']
+                    list_builds_kwargs['completeBefore'] = complete_before_ts
 
             def default_return():
                 msg = f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', assembly: '{assembly}', build_state: '{build_state.name}', el_target: '{el_target}'"

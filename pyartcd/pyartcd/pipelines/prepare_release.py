@@ -22,6 +22,7 @@ from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from elliottlib.errata import get_brew_builds
+from elliottlib.errata import create_batch, set_advisory_batch, unset_advisory_batch, lock_batch
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
@@ -140,6 +141,7 @@ class PrepareReleasePipeline:
             self.check_blockers()
 
         advisories = {}
+        batch_id = None
 
         if self.default_advisories:
             advisories = group_config.get("advisories", {})
@@ -151,6 +153,10 @@ class PrepareReleasePipeline:
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
+                    if not batch_id and assembly_type == AssemblyTypes.STANDARD:
+                        # Create a batch for a release if not created
+                        batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
+                        _LOGGER.info(f"Created errata batch id {batch_id} for release {self.release_name}")
                     if ad == "advance":
                         # Set release date to one week before
                         # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
@@ -166,6 +172,16 @@ class PrepareReleasePipeline:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
                                                           release_date=self.release_date)
+                    if batch_id and assembly_type == AssemblyTypes.STANDARD:
+                        # Connect advisory to the batch_id
+                        set_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
+                        _LOGGER.info(f"Advisory {advisories[ad]} connected to the batch id {batch_id}")
+                    else:
+                        unset_advisory_batch(advisory_id=advisories[ad])
+                        _LOGGER.info(f"Clear batch setting for non release advisory {advisories[ad]}")
+            if batch_id:
+                lock_batch(batch_id=batch_id)
+                _LOGGER.info(f"Batch id {batch_id} locked for release {self.release_name}")
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
         await self.set_advisory_dependencies(advisories)
 
@@ -231,19 +247,12 @@ class PrepareReleasePipeline:
                 _LOGGER.info("Skipping populating rpm advisory, since prerelease detected")
                 continue
             elif impetus == "metadata":
+                # Do not populate the metadata advisory if advance advisory is present
                 if self.advance_release:
-                    # Do not populate the metadata advisory if advance advisory is present
                     continue
-
-                # Looks like advance advisory is not present, let's continue as usual
                 await self.build_and_attach_bundles(advisory)
-            elif impetus == "advance":
-                # TODO: Advance advisory can require force=True
-                # or it would attach prerelease bundles, since it is prepared after prerelease
-                # so detect and do force=True if necessary
+            elif impetus in ["advance", "prerelease"]:
                 await self.build_and_attach_bundles(advisory)
-            elif impetus == "prerelease":
-                await self.build_and_attach_prerelease_bundles(advisory)
             else:
                 await self.sweep_builds_async(impetus, advisory)
 
@@ -700,7 +709,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         return jira_changed
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    async def build_and_attach_bundles(self, metadata_advisory: int, force=False):
+    async def build_and_attach_bundles(self, metadata_advisory: int):
         _LOGGER.info("Finding OLM bundles (will rebuild if not present)...")
         cmd = [
             "doozer",
@@ -708,8 +717,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             "--assembly", self.assembly,
             "olm-bundle:rebase-and-build",
         ]
-        if force:
-            cmd.append("--force")
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
@@ -737,16 +744,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             cmd.append(f"{metadata_advisory}")
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
-
-    async def build_and_attach_prerelease_bundles(self, prerelease_advisory: int):
-        _LOGGER.info("Checking if prerelease advisory is populated (will rebuild if not present)...")
-        advisory_builds = get_brew_builds(prerelease_advisory)
-        if advisory_builds:
-            _LOGGER.info("Prerelease advisory %s already has %s builds attached. Skipping rebuild.",
-                         prerelease_advisory, len(advisory_builds))
-            return
-
-        return await self.build_and_attach_bundles(prerelease_advisory, force=True)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def verify_attached_operators(self, *advisories: List[int], gather_dependencies=False):
@@ -848,7 +845,7 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             include_shipped=include_shipped,
         )
         await pipeline.run()
-        await slack_client.say_in_thread(f":white_check_mark: prepare-release for {name if name else assembly} completes.")
+        await slack_client.say_in_thread(f":white_check_mark: @release-artists prepare-release for {name if name else assembly} completes.")
     except Exception as e:
-        await slack_client.say_in_thread(f":warning: prepare-release for {name if name else assembly} has result FAILURE.")
+        await slack_client.say_in_thread(f":warning: @release-artists prepare-release for {name if name else assembly} has result FAILURE.")
         raise e  # return failed status to jenkins

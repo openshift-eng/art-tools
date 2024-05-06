@@ -18,9 +18,13 @@ spec:
   output:
     to:
       kind: ImageStreamTag
-      name: art-cd:base
+      name: art-cd:latest
   successfulBuildsHistoryLimit: 10
   failedBuildsHistoryLimit: 5
   runPolicy: Serial
   triggers:
     - type: ConfigChange
+    - type: GitHub
+      github:
+        secretReference:
+          name: build-config-webhook-secret
