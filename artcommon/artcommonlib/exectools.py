@@ -183,7 +183,7 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
     # Make sure output of launched commands is utf-8
     env['LC_ALL'] = 'en_US.UTF-8'
 
-    with timer(logger.info, f'{cmd_info}: Executed:cmd_gather'):
+    with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
         logger.info(f'{cmd_info}: Executing:cmd_gather')
         try:
             proc = subprocess.Popen(
