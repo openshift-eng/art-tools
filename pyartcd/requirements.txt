@@ -24,3 +24,4 @@ stomp.py ~= 8.1.0
 tenacity
 tomli ~= 2.0.1
 specfile
+aiohttp>=3.9.4 # not directly required, pinned by Snyk to avoid a vulnerability
