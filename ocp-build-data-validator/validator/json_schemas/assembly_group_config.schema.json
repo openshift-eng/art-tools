@@ -180,6 +180,9 @@
       "description": "RHCOS needs special config as it is a special build",
       "type": "object",
       "properties": {
+        "allow_missing_brew_rpms": {
+          "type": "boolean"
+        },
         "payload_tags": {
           "type": "array",
           "items": {
