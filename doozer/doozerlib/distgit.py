@@ -304,6 +304,9 @@ class DistGitRepo(object):
     def _get_diff(self):
         return None  # to actually record a diff, child classes must override this function
 
+    def add_distgits_diff(self, diff):
+        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=False)
+
     def commit(self, cmdline_commit_msg: str, commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None, log_diff=False):
         if self.runtime.local:
             return ''  # no commits if local
@@ -337,7 +340,7 @@ class DistGitRepo(object):
             if log_diff:
                 diff = self._get_diff()
                 if diff and diff.strip():
-                    self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
+                    self.add_distgits_diff(diff)
             # commit changes; if these flake there is probably not much we can do about it
             exectools.cmd_assert(["git", "add", "-A", "."])
             exectools.cmd_assert(["git", "commit", "--allow-empty", "-m", commit_msg])
