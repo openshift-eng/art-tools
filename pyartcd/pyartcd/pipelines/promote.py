@@ -732,7 +732,11 @@ class PromotePipeline:
 
         # Check rhel version (used for archive naming)
         # With future releases (probably 4.15) this will eventually need to switch to rhel9
-        rhel_version = 'rhel8'
+        major, minor = isolate_major_minor_in_group(self.group)
+        if major == 4 and minor < 16:
+            rhel_version = 'rhel8'
+        else:
+            rhel_version = 'rhel9'
 
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
         self._logger.info('Extracting baremetal-install')
