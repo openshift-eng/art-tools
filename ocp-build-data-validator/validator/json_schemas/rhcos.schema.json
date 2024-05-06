@@ -90,22 +90,5 @@
     },
     "dependencies-": {}
   },
-  "anyOf": [
-    {
-      "required": [
-        "machine-os-content"
-      ]
-    },
-    {
-      "required": [
-        "machine-os-content!"
-      ]
-    },
-    {
-      "required": [
-        "machine-os-content?"
-      ]
-    }
-  ],
   "additionalProperties": false
 }
