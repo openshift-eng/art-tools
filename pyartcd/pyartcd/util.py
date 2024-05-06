@@ -597,9 +597,9 @@ The following logs are just the container build portion of the OSBS build:
 
         # Send email to owners of failed image builds
         # If art is the only owner of image (example for our ci golang builder images) send instead to our default automation email
-        owner = failure['owners']
+        owner = (failure['owners']
                 if (failure['owners'] and failure['owners'] != ["aos-team-art@redhat.com"])
-                else default_owner
+                else default_owner)
         mail_client.send_mail(
             to=['aos-art-automation+failed-ocp-build@redhat.com', owner],
             subject=f'Failed OCP build of {failure["image"]}:{failure["version"]}',
