@@ -131,7 +131,7 @@ def get_inflight(assembly, group):
     """
     inflight_release = None
     if 'ec' in assembly or 'rc' in assembly:
-        return None
+        raise ValueError(f'You are preparing {assembly} and get no input from in-flight, currently auto get inflight for non GA release is not supported, please input an in-flight value.')
     assembly_release_date = get_assembly_release_date(assembly, group)
     if not assembly_release_date:
         raise ValueError(f'Assembly release date not found for {assembly}')
