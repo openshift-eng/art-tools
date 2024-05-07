@@ -18,7 +18,7 @@ class ScanFips:
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()
-        self.slack_client.bind_channel(f"openshift-{self.version}")
+        self.slack_client.bind_channel(f"#art-cluster-monitoring")
 
     async def run(self):
         cmd = [

@@ -27,7 +27,7 @@ spec:
 
         source venv/bin/activate
 
-        artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs)
+        artcd -vv scan-fips --version $(params.version) --nvrs $(params.nvrs)
 
       securityContext:
         runAsGroup: 0
