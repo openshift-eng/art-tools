@@ -772,8 +772,22 @@ def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
                                   json=file_meta)
 
 
-def push_cdn_stage(advisory_id) -> List[dict]:
+def push_cdn_stage(advisory_id):
     """Trigger stage push for an advisory
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#pushing-advisories
     """
-    return ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/push', data=[{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}])
+    connector = ErrataConnector()
+    push_log = connector._get(f'/api/v1/erratum/{advisory_id}/push')
+    if not push_log:
+        response = connector._post(f'/api/v1/erratum/{advisory_id}/push', json=[{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}])
+        if response.status_code == 400 and "dependencies" in response.text:
+            return None
+    else:
+        targets = [{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}]
+        completed_targets = [
+            log['target']['name'] for log in push_log
+            if log["status"] == "COMPLETE" and log['target']['name'] in (target['target'] for target in targets)
+        ]
+        targets = [target for target in targets if target['target'] not in completed_targets]
+        if targets:
+            connector._post(f'/api/v1/erratum/{advisory_id}/push', json=targets)
