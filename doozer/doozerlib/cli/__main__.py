@@ -29,7 +29,7 @@ from doozerlib.cli.scan_osh import scan_osh
 from doozerlib.cli.scan_fips import scan_fips
 from doozerlib.cli.gen_assembly_helper import gen_assembly_rhcos
 from doozerlib.cli.rpms import rpms_print, rpms_rebase_and_build, rpms_rebase, rpms_build, rpms_clone, rpms_clone_sources
-from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_olm_bundle, build_olm_bundle, rebase_and_build_olm_bundle
+from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
 from doozerlib.cli.config import config_commit, config_push, config_get, config_read_group, config_read_releases, \
     config_read_assemblies, config_mode, config_print, config_gencsv, config_rhcos_src, config_update_required
 from doozerlib.cli.images import images_clone, images_list, images_push_distgit, images_covscan, images_rebase, \
