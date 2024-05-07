@@ -61,8 +61,6 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
     for image in runtime.ordered_image_metas():
         if not image.enabled or image.config['update-csv'] is Missing:
             continue
-        olm_bundle = OLMBundle(runtime, dry_run=False)
-
         s = pattern
         s = s.replace("{lf}", "\n")
         s = s.replace("{distgit_key}", image.distgit_key)
@@ -80,14 +78,14 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
                         f"Fields remaining in pattern, but no build was found for {image.distgit_key} with which to populate those fields: {s}")
         else:
             nvr = build_info['nvr']
+            olm_bundle = OLMBundle(runtime, build_info, dry_run=False)
             s = s.replace('{nvr}', nvr)
-            olm_bundle.get_operator_buildinfo(nvr=nvr)  # Populate the object for the operator we are interested in.
             s = s.replace('{bundle_component}', olm_bundle.bundle_brew_component)
             bundle_image_name = olm_bundle.bundle_image_name
 
             if '{paired_' in s:
                 # Paired bundle values must correspond exactly to the latest operator NVR.
-                paired_bundle_nvr = olm_bundle.find_bundle_for(nvr)
+                paired_bundle_nvr = olm_bundle.find_bundle_image()
                 if not paired_bundle_nvr:
                     paired_bundle_nvr = 'None'  # Doesn't exist
                     paired_pullspec = 'None'
@@ -118,95 +116,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
         click.echo(s)
 
 
-@cli.command('olm-bundle:rebase', short_help='Update bundle distgit repo with manifests from given operators')
-@click.argument('operator_nvrs', nargs=-1, required=False)
-@click.option('--dry-run', default=False, is_flag=True, help='Do not push to distgit.')
-@pass_runtime
-def rebase_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...], dry_run: bool):
-    """
-    Examples:
-    $ doozer --group openshift-4.9 --assembly art3171 olm-bundle:rebase
-    $ doozer --group openshift-4.9 --assembly art3171 -i cluster-nfd-operator,ptp-operator olm-bundle:rebase
-    $ doozer --group openshift-4.2 olm-bundle:rebase \
-        sriov-network-operator-container-v4.2.30-202004200449 \
-        elasticsearch-operator-container-v4.2.30-202004240858 \
-        cluster-logging-operator-container-v4.2.30-202004240858
-    """
-    runtime.initialize(clone_distgits=False)
-    if not operator_nvrs:
-        # If this verb is run without operator NVRs, query Brew for all operator builds selected by the assembly
-        operator_metas = [meta for meta in runtime.ordered_image_metas() if
-                          meta.enabled and meta.config['update-csv'] is not Missing]
-        results = exectools.parallel_exec(lambda meta, _: meta.get_latest_build(), operator_metas)
-        operator_builds = results.get()
-    else:
-        operator_builds = list(operator_nvrs)
-    exectools.parallel_exec(lambda operator, _: OLMBundle(runtime, dry_run).rebase(operator), operator_builds).get()
-
-
-@cli.command('olm-bundle:build', short_help='Build bundle containers of given operators')
-@click.argument('operator_names', nargs=-1, required=False)
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but print what would be done.')
-@pass_runtime
-def build_olm_bundle(runtime: Runtime, operator_names: Tuple[str, ...], dry_run: bool):
-    """
-    Example:
-    $ doozer --group openshift-4.9 --assembly art3171 olm-bundle:build
-    $ doozer --group openshift-4.9 --assembly art3171 -i cluster-nfd-operator,ptp-operator olm-bundle:build
-    $ doozer --group openshift-4.2 olm-bundle:build \
-        sriov-network-operator \
-        elasticsearch-operator \
-        cluster-logging-operator
-    """
-    runtime.initialize(clone_distgits=False)
-    if not operator_names:
-        operator_names = [meta.name for meta in runtime.ordered_image_metas() if
-                          meta.enabled and meta.config['update-csv'] is not Missing]
-
-    def _build_bundle(operator):
-        record = {
-            'status': -1,
-            "task_id": "",
-            "task_url": "",
-            "operator_distgit": operator,
-            "bundle_nvr": "",
-            "message": "Unknown failure",
-        }
-        try:
-            olm_bundle = OLMBundle(runtime, dry_run)
-            runtime.logger.info("%s - Building bundle distgit repo", operator)
-            task_id, task_url, bundle_nvr = olm_bundle.build(operator)
-            record['status'] = 0
-            record['message'] = 'Success'
-            record['task_id'] = task_id
-            record['task_url'] = task_url
-            record['bundle_nvr'] = bundle_nvr
-        except Exception as err:
-            traceback.print_exc()
-            runtime.logger.error('Error during build for: {}'.format(operator))
-            record['message'] = str(err)
-        finally:
-            runtime.add_record("build_olm_bundle", **record)
-            return record
-
-    results = exectools.parallel_exec(lambda operator, _: _build_bundle(operator), operator_names).get()
-
-    for record in results:
-        if record['status'] == 0:
-            runtime.logger.info('Successfully built %s', record['bundle_nvr'])
-            click.echo(record['bundle_nvr'])
-        else:
-            runtime.logger.error('Error building bundle for %s: %s', record['operator_nvr'], record['message'])
-
-    rc = 0 if all(map(lambda i: i['status'] == 0, results)) else 1
-
-    if rc:
-        runtime.logger.error('One or more bundles failed')
-
-    sys.exit(rc)
-
-
-@cli.command('olm-bundle:rebase-and-build', short_help='Shortcut for olm-bundle:rebase and olm-bundle:build')
+@cli.command('olm-bundle:rebase-and-build', short_help='Rebase and build the bundle image for a given operator image')
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @click.option("-f", "--force", required=False, is_flag=True,
               help="Perform a build even if previous bundles for given NVRs already exist")
