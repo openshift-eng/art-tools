@@ -112,7 +112,9 @@ def get_assembly_release_date(assembly, group):
     """
     assembly_release_date = None
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
-
+    if release_schedules.status_code == 404:
+        # current group is not GA, return current date
+        return datetime.now().strftime("%Y-%b-%d")
     try:
         for release in release_schedules.json()['all_ga_tasks']:
             if assembly in release['name']:
@@ -122,7 +124,7 @@ def get_assembly_release_date(assembly, group):
         return assembly_release_date
 
     except KeyError:
-        return None
+        raise ValueError(f'Assembly release date not found for {assembly}')
 
 
 def get_inflight(assembly, group):
@@ -130,13 +132,11 @@ def get_inflight(assembly, group):
     Get inflight release name from current assembly release
     """
     inflight_release = None
-    if 'ec' in assembly or 'rc' in assembly:
-        raise ValueError(f'You are preparing {assembly} and get no input from in-flight, currently auto get inflight for non GA release is not supported, please input an in-flight value.')
     assembly_release_date = get_assembly_release_date(assembly, group)
-    if not assembly_release_date:
-        raise ValueError(f'Assembly release date not found for {assembly}')
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    if release_schedules.status_code != 200:
+        return inflight_release
     for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:

@@ -45,7 +45,7 @@ class GenAssemblyPipeline:
         self.arches = arches
         if in_flight:
             self.in_flight = in_flight
-        elif not custom and not pre_ga_mode:
+        elif not custom:
             self.in_flight = get_inflight(assembly, group)
         else:
             self.in_flight = None
