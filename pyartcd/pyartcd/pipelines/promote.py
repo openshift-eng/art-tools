@@ -1498,13 +1498,14 @@ class PromotePipeline:
         return await to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
 
     async def send_success_building_email(self, release_name: str, pullspecs: List):
+        build_url = os.environ.get("BUILD_URL")
+        pullspec_str = ",".join(pullspecs)
         return await to_thread(self._mail.send_mail,
                                self.runtime.config["email"]["promote_success_recipients"],
                                f"Success building release payload: {release_name}",
-                               f"Jenkins Job: {os.environ.get("BUILD_URL")} \
-PullSpecs: {",".join(pullspecs)}",
-                                archive_dir=self._working_dir / "email",
-                                dry_run=self.runtime.dry_run)
+                               f"Jenkins Job: {build_url} \nPullSpecs: {pullspec_str}",
+                               archive_dir=self._working_dir / "email",
+                               dry_run=self.runtime.dry_run)
 
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
                                nightlies: List[str]):
