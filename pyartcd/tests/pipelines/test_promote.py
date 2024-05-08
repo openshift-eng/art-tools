@@ -282,9 +282,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 },
                 "jira": {
                     "url": "https://issues.redhat.com/"
-                },
-                "email": {
-                    "promote_success_recipients": ['aos-team-art@redhat.com']
                 }
             },
             working_dir=Path("/path/to/working"),
@@ -453,7 +450,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
     }))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
-    async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    @patch("pyartcd.pipelines.promote.PromotePipeline.send_success_building_email")
+    async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock, send_success_building_email: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                               build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
         runtime = MagicMock(
@@ -463,6 +461,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 },
                 "jira": {
                     "url": "https://issues.redhat.com/"
+                },
+                "email": {
+                    "promote_success_recipients": ['aos-team-art@redhat.com']
                 }
             },
             working_dir=Path("/path/to/working"),
