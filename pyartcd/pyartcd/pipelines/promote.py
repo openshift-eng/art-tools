@@ -422,6 +422,7 @@ class PromotePipeline:
             "content": {},
             "justifications": justifications,
         }
+        pullspecs_list = []
         if image_advisory > 0:
             data["advisory"] = image_advisory
         if errata_url:
@@ -432,6 +433,7 @@ class PromotePipeline:
                 "digest": release_info["digest"],
                 "metadata": {k: release_info["metadata"][k] for k in release_info["metadata"].keys() & {'version', 'previous'}},
             }
+            pullspecs_list.append(release_info["image"])
             # if this payload is a manifest list, iterate through each manifest
             manifests = release_info.get("manifests", [])
             if manifests:
@@ -462,6 +464,9 @@ class PromotePipeline:
             self._logger.info("Skipping AWS backup for this payload")
         else:
             await self.ocp_doomsday_backup()
+
+        # Send success building email
+        await self.send_success_building_email(release_name, pullspecs_list)
 
         json.dump(data, sys.stdout)
 
@@ -1491,6 +1496,15 @@ class PromotePipeline:
         content = await self.get_advisory_image_list(advisory)
         subject = f"OCP {release_name} Image List"
         return await to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
+
+    async def send_success_building_email(self, release_name: str, pullspecs: List):
+        return await to_thread(self._mail.send_mail,
+                               self.runtime.config["email"]["promote_success_recipients"],
+                               f"Success building release payload: {release_name}",
+                               f"Jenkins Job: {os.environ.get("BUILD_URL")} \
+PullSpecs: {",".join(pullspecs)}",
+                                archive_dir=self._working_dir / "email",
+                                dry_run=self.runtime.dry_run)
 
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
                                nightlies: List[str]):
