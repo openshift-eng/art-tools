@@ -98,3 +98,16 @@ class SlackClient:
             initial_comment=message,
             channels=self.channel)
         return response.data
+
+    async def upload_content(self, content, intro=None, filename=None, filetype=None, thread_ts: Optional[str] = None):
+        """
+        Similar to upload_file but can upload from a variable instead of a file
+        """
+        response = await self._client.files_upload(
+            initial_comment=intro,
+            channels=self.channel,
+            content=content,
+            filename=filename,
+            filetype=filetype,
+            thread_ts=thread_ts)
+        return response.data
