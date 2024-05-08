@@ -218,8 +218,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     })
     @patch("pyartcd.pipelines.promote.util.load_group_config",
            return_value=Model(dict(arches=["x86_64", "s390x"])))
+    @patch("pyartcd.pipelines.promote.PromotePipeline.send_success_building_email")
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
-    async def test_run_with_custom_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    async def test_run_with_custom_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock, send_success_building_email: AsyncMock,
                                             load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                             build_release_image: AsyncMock, _):
 
@@ -267,7 +268,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     })
     @patch("pyartcd.pipelines.promote.util.load_group_config",
            return_value=Model(dict(arches=["x86_64", "s390x"])))
+    @patch("pyartcd.pipelines.promote.PromotePipeline.send_success_building_email")
     async def test_run_with_standard_assembly_without_upgrade_edges(self, load_group_config: AsyncMock,
+                                                                    send_success_building_email: AsyncMock,
                                                                     load_releases_config: AsyncMock, _):
         runtime = MagicMock(
             config={
