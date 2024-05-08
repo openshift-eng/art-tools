@@ -141,8 +141,6 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     """
 
     runtime.initialize(config_only=True)
-    clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
-    runtime.initialize(clone_distgits=clone_distgits)
 
     if not operator_nvrs:
         # If this verb is run without operator NVRs, query Brew for all operator builds
