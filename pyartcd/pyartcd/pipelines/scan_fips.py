@@ -18,7 +18,7 @@ class ScanFips:
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()
-        self.slack_client.bind_channel("#art-cluster-monitoring")
+        self.slack_client.bind_channel("#art-release")
 
     async def run(self):
         cmd = [
@@ -41,7 +41,7 @@ class ScanFips:
         if result_json:
             # alert release artists
             if not self.runtime.dry_run:
-                message = ":warning: FIPS scan has failed for some builds. Please verify."
+                message = ":warning: @ashwin FIPS scan has failed for some builds. Please verify."
                 slack_response = await self.slack_client.say(message=message)
                 slack_thread = slack_response["message"]["ts"]
 
