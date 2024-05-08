@@ -231,6 +231,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 },
                 "jira": {
                     "url": "https://issues.redhat.com/"
+                },
+                "email": {
+                    "promote_success_recipients": ['aos-team-art@redhat.com']
                 }
             },
             working_dir=Path("/path/to/working"),
@@ -279,6 +282,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 },
                 "jira": {
                     "url": "https://issues.redhat.com/"
+                },
+                "email": {
+                    "promote_success_recipients": ['aos-team-art@redhat.com']
                 }
             },
             working_dir=Path("/path/to/working"),
