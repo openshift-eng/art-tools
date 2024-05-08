@@ -97,7 +97,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
 
             if '{bundle_' in s:
                 # Unpaired is just whatever bundle build was most recent
-                build = olm_bundle.get_latest_bundle_build()
+                build = olm_bundle.find_bundle_image()
                 if not build:
                     bundle_nvr = 'None'
                     bundle_pullspec = 'None'
