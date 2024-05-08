@@ -526,6 +526,8 @@ class PromotePipeline:
             else:
                 message_digest = await self.publish_client(base_to_mirror_dir, pullspec, release_name, arch, client_type)
             message_digests.append(message_digest)
+        # clear mirror cache
+        shutil.rmtree(base_to_mirror_dir, ignore_errors=True)
         return message_digests
 
     async def sign_artifacts(self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]):
