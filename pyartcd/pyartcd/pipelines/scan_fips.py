@@ -45,9 +45,10 @@ class ScanFips:
                 slack_response = await self.slack_client.say(message=message)
                 slack_thread = slack_response["message"]["ts"]
 
-                await self.slack_client.say(
-                    message=result,
-                    thread_ts=slack_thread,
+                await self.slack_client.upload_content(
+                    content=result,
+                    filename="report.json",
+                    thread_ts=slack_thread
                 )
             else:
                 self.runtime.logger.info("[DRY RUN] Would have messaged slack")
