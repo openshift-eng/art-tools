@@ -282,6 +282,9 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 },
                 "jira": {
                     "url": "https://issues.redhat.com/"
+                },
+                "email": {
+                    "promote_success_recipients": ['aos-team-art@redhat.com']
                 }
             },
             working_dir=Path("/path/to/working"),
@@ -488,6 +491,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.tag_release = AsyncMock(return_value=None)
         pipeline.wait_for_stable = AsyncMock(return_value=None)
         pipeline.send_image_list_email = AsyncMock()
+        pipeline.send_success_building_email = AsyncMock()
         pipeline.is_accepted = AsyncMock(return_value=False)
         pipeline.ocp_doomsday_backup = AsyncMock(return_value=None)
         await pipeline.run()
