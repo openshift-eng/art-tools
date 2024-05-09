@@ -268,7 +268,7 @@ class PrepareReleasePipeline:
                                                          advisories['metadata'])
             except Exception as ex:
                 _LOGGER.warning(f"Unable to verify attached operators: {ex}")
-                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.")
+                await self._slack_client.say_in_thread("Unable to verify attached operators. Details in log.", reaction=":art-attention:")
 
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
@@ -759,10 +759,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         for advisory in advisories:
             cmd.append(f"{advisory}")
         _LOGGER.info("Running command: %s", cmd)
-        rc = await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
-        if rc != 0:
-            # If we let problem bundle builds through, IIB will fail during PUSH.
-            raise Exception("verify-attached-operators has failed. Please check")
+        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
     async def remove_builds_all(self, advisory_id):
         """
