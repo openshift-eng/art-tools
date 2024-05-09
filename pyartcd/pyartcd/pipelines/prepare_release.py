@@ -759,7 +759,9 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         for advisory in advisories:
             cmd.append(f"{advisory}")
         _LOGGER.info("Running command: %s", cmd)
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        rc = await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        if rc != 0:
+            raise Exception("verify-attached-operators has failed. Please check")
 
     async def remove_builds_all(self, advisory_id):
         """
