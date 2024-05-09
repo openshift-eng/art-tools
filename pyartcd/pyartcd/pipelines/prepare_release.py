@@ -761,6 +761,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         _LOGGER.info("Running command: %s", cmd)
         rc = await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
         if rc != 0:
+            # If we let problem bundle builds through, IIB will fail during PUSH.
             raise Exception("verify-attached-operators has failed. Please check")
 
     async def remove_builds_all(self, advisory_id):
