@@ -182,6 +182,12 @@ PRESENT advisory. Here are some examples:
         if kind == 'image':
             ensure_rhcos_file_meta(advisory_id)
             if cdn_repos and not no_cdn_repos:
+                cdn_repos = set(cdn_repos)
+                available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
+                not_available_repos = cdn_repos - available_repos
+                if not_available_repos:
+                    raise ValueError("These cdn repos defined in erratatool.yml are not available for the advisory "
+                                     f"{advisory_id}: {not_available_repos}")
                 erratum.set_cdn_repos(cdn_repos)
     except ErrataException as e:
         red_print(f'Cannot change advisory {advisory_id}: {e}')
