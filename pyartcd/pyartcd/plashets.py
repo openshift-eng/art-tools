@@ -26,7 +26,7 @@ previous_packages = [
     "nmstate",
     "openshift",
     "openvswitch",
-    "ovn",
+    "ovn23.06",
     "podman",
     "python3-openvswitch",
     "spdlog"
