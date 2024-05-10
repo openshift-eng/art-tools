@@ -190,7 +190,8 @@ PRESENT advisory. Here are some examples:
                     erratum.set_cdn_repos(repos_to_enable)
                 if not_available_repos:
                     raise ValueError("These cdn repos defined in erratatool.yml are not available for the advisory "
-                                     f"{advisory_id}: {not_available_repos}")
+                                     f"{advisory_id}: {not_available_repos}. Please remove these or request them to "
+                                     "be created.")
                 erratum.set_cdn_repos(cdn_repos)
     except ErrataException as e:
         red_print(f'Cannot change advisory {advisory_id}: {e}')
