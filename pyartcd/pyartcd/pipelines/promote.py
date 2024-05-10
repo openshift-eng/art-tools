@@ -252,7 +252,7 @@ class PromotePipeline:
                 if assembly_type in [AssemblyTypes.PREVIEW,
                                      AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
                     no_verify_blocking_bugs = True
-                ga_check = requests.get("https://art-dash-server-art-dashboard-server.apps.artc2023.pc3z.p1.openshiftapps.com/api/v1/ga-version")
+                ga_check = requests.get(f"{constants.ART_DASH_SERVER}/api/v1/ga-version")
                 if f'openshift-{ga_check.json()["payload"]}' == self.group:
                     no_verify_blocking_bugs = True
                 verify_flaws = True

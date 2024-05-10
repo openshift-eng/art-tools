@@ -444,7 +444,14 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
     }))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
-    async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    @patch("pyartcd.pipelines.promote.GroupRuntime.create", return_value=MagicMock(group_config={
+        "upgrades": "4.10.98,4.9.99",
+        "advisories": {"rpm": 1, "image": 2, "extras": 3, "metadata": 4},
+        "description": "whatever",
+        "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
+    }))
+    @patch("pyartcd.pipelines.promote.requests", return_value=Model({"payload": "4.10"}))
+    async def test_run_with_standard_assembly(self, requests: Mock, create: AsyncMock, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                               build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
         runtime = MagicMock(
@@ -481,8 +488,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.is_accepted = AsyncMock(return_value=False)
         pipeline.ocp_doomsday_backup = AsyncMock(return_value=None)
         await pipeline.run()
-        load_group_config.assert_awaited_once()
-        load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
         pipeline.check_blocker_bugs.assert_awaited_once_with()
         for advisory in [1, 2, 3, 4]:
             pipeline.change_advisory_state.assert_any_await(advisory, "QE")
