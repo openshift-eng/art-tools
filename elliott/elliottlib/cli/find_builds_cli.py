@@ -185,6 +185,9 @@ PRESENT advisory. Here are some examples:
                 cdn_repos = set(cdn_repos)
                 available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
                 not_available_repos = cdn_repos - available_repos
+                repos_to_enable = cdn_repos & available_repos
+                if repos_to_enable:
+                    erratum.set_cdn_repos(repos_to_enable)
                 if not_available_repos:
                     raise ValueError("These cdn repos defined in erratatool.yml are not available for the advisory "
                                      f"{advisory_id}: {not_available_repos}")
