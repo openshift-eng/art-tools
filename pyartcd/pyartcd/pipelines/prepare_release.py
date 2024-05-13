@@ -268,7 +268,7 @@ class PrepareReleasePipeline:
                                                          advisories['metadata'])
             except Exception as ex:
                 _LOGGER.warning(f"Unable to verify attached operators: {ex}")
-                await self._slack_client.say_in_thread("`elliott verify-attached-operators` failed, details in log. Please retry", reaction=":art-attention:")
+                await self._slack_client.say_in_thread("`elliott verify-attached-operators` failed, details in log. Please retry", reaction="art-attention")
 
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")

@@ -3,6 +3,8 @@ For this command to work, https://github.com/openshift/check-payload binary has 
 This job is deployed on ART cluster
 """
 import json
+import sys
+
 import click
 from typing import Optional
 from pyartcd.runtime import Runtime
@@ -42,7 +44,7 @@ class ScanFips:
             # alert release artists
             if not self.runtime.dry_run:
                 message = ":warning: @ashwin FIPS scan has failed for some builds. Please verify. (Triage <https://art-docs.engineering.redhat.com/sop/triage-fips/|docs>)"
-                slack_response = await self.slack_client.say(message=message, reaction=":art-attention:")
+                slack_response = await self.slack_client.say(message=message, reaction="art-attention")
                 slack_thread = slack_response["message"]["ts"]
 
                 await self.slack_client.upload_content(
@@ -50,6 +52,9 @@ class ScanFips:
                     filename="report.json",
                     thread_ts=slack_thread
                 )
+
+                # Exit as error so that we see in the PipelineRun
+                self.runtime.logger.error("FIPS issues were found")
             else:
                 self.runtime.logger.info("[DRY RUN] Would have messaged slack")
         else:
