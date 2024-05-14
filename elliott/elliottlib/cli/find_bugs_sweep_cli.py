@@ -273,7 +273,7 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, operator_bundle_advisory: str = "metadata",
+                            permitted_bug_ids=None, operator_bundle_advisory: str = "metadata",
                             permissive=False, major_version: int = 4):
     issues = []
 
