@@ -15,7 +15,9 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login").and_return(None)
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
 
         bz_bug = flexmock(
             id=1, created_days_ago=lambda: 33,

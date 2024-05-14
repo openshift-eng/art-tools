@@ -2,6 +2,7 @@ import glob
 import io
 import os
 import re
+import json
 import shutil
 import threading
 from pathlib import Path
@@ -13,7 +14,6 @@ from dockerfile_parse import DockerfileParser
 from koji import ClientSession
 
 from artcommonlib import pushd, exectools
-from artcommonlib.build_util import find_latest_build
 from doozerlib import brew, util
 from doozerlib.runtime import Runtime
 
@@ -29,77 +29,66 @@ class OLMBundle(object):
     independently built, due to their tight coupling to corresponding operators
     """
 
-    def __init__(self, runtime: Runtime, dry_run: bool, brew_session: Optional[ClientSession] = None):
+    def __init__(self, runtime: Runtime,
+                 operator_nvr_or_dict: Union[str, dict],
+                 dry_run: Optional[bool] = False,
+                 brew_session: Optional[ClientSession] = None):
         self.runtime = runtime
         self.dry_run = dry_run
         self.brew_session = brew_session or runtime.build_retrying_koji_client()
-        self.operator_nvr: Optional[str] = None
         self.operator_dict: Optional[dict] = None
-        self.operator_repo_name: Optional[str] = None
-        self.operator_build_commit: Optional[str] = None
 
-    def find_bundle_for(self, operator_build: Union[str, dict]) -> str:
-        """Check if a bundle already exists for a given `operator_build`.
-
-        :param operator_build: Operator build dict or NVR (format: my-operator-container-v4.2.30-202004200449)
-        :return: NVR of latest found bundle build, or None if there is no bundle build nvr
-                        corresponding to the last operator build's nvr.
-        """
-        if isinstance(operator_build, str):
-            self.operator_nvr = operator_build
+        if isinstance(operator_nvr_or_dict, dict):
+            self.operator_dict = operator_nvr_or_dict
         else:
-            self.operator_nvr = operator_build["nvr"]
-            self.operator_dict = operator_build
+            build = brew.get_build_objects([operator_nvr_or_dict], self.brew_session)[0]
+            if not build:
+                raise IOError(f"Build {self.operator_nvr} doesn't exist in Brew.")
+            self.operator_dict = build
 
-        self.get_operator_buildinfo()
+    @property
+    def operator_nvr(self):
+        return self.operator_dict['nvr']
 
+    @property
+    def operator_repo_name(self):
+        source_url = urlparse(self.operator_dict['source'])
+        # /git/containers/ose-cluster-kube-descheduler-operator => containers/ose-cluster-kube-descheduler-operator
+        return f"containers/{source_url.path.rstrip('/').rsplit('/')[-1]}"
+
+    @property
+    def operator_build_commit(self):
+        source_url = urlparse(self.operator_dict['source'])
+        return source_url.fragment
+
+    def find_bundle_image(self) -> str:
+        """Check if a bundle already exists for the nvr that was used to init the OLMBundle object
+
+        :return: NVR of latest found bundle build, or None if there is no bundle build nvr
+                        corresponding to the nvr used to init the OLMBundle object
+        """
         prefix = f"{self.bundle_brew_component}-{self.operator_dict['version']}.{self.operator_dict['release']}-"
         bundle_package_id = self.brew_session.getPackageID(self.bundle_brew_component, strict=True)
         builds = self.brew_session.listBuilds(packageID=bundle_package_id, pattern=prefix + "*", state=brew.BuildStates.COMPLETE.value,
                                               queryOpts={'limit': 1, 'order': '-creation_event_id'}, completeBefore=None)
-        return builds[0]['nvr'] if builds else None
-
-    def get_latest_bundle_build(self):
-        """
-        Return information about the latest build of bundle associated with the current operator.
-        Note that this may not correspond to the latest build of the operator itself IF the operator was:
-        1. Built again after this bundle
-        2. The latest operator build failed to successfully build its bundle
-        :return: A dict containing koji build information; None if no build is found
-        """
-        builds = self.brew_session.listTagged(tag=self.target, package=self.bundle_brew_component, event=None)
         if not builds:
             return None
 
-        # FIXME: Currently we assume assembly names are in builds' release field. However unlike regular images, bundles embed their assembly names in the version field.
-        # This is a hack to fool find_latest_build (and other functions).
-        def _apply_hack(build: dict):
-            build["_release"] = build["release"]
-            build["release"] = build["version"]
-            return build
-        builds = list(map(lambda build: _apply_hack(build), builds))
+        build_info = builds[0]
+        pullspec = build_info['extra']['image']['index']['pull'][0]
+        if not self.delivery_labels_match(pullspec):
+            self.runtime.logger.info(f"Cannot use bundle nvr {build_info['nvr']} since it does not have expected image "
+                                     f"delivery labels for assembly {self.runtime.assembly}")
+            return None
+        return build_info['nvr']
 
-        latest_build = find_latest_build(builds, self.runtime.assembly)
-
-        # revert the hack
-        latest_build["release"] = latest_build["_release"]
-        del latest_build["_release"]
-        return latest_build
-
-    def rebase(self, operator_build: Union[str, dict]):
+    def rebase(self):
         """Update bundle distgit contents with manifests from given operator NVR
         Perform image SHA replacement on manifests before commit & push
         Annotations and Dockerfile labels are re-generated with info from operator's package YAML
 
-        :param operator_build: Operator build dict or NVR (format: my-operator-container-v4.2.30-202004200449)
         :return bool True if rebase succeeds, False if there was nothing new to commit
         """
-        if isinstance(operator_build, str):
-            self.operator_nvr = operator_build
-        else:
-            self.operator_nvr = operator_build["nvr"]
-            self.operator_dict = operator_build
-        self.get_operator_buildinfo()
         self.clone_operator()
         self.checkout_operator_to_build_commit()
         self.clone_bundle()
@@ -112,16 +101,12 @@ class OLMBundle(object):
         self.create_container_yaml()
         return self.commit_and_push_bundle(commit_msg="Update bundle manifests")
 
-    def build(self, operator_name=None) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    def build(self) -> Tuple[Optional[int], Optional[int], Optional[str]]:
         """Trigger a brew build of operator's bundle
 
-        :param operator_name: Operator name (as in ocp-build-data file name, not brew component)
         :return: (task_id, task_url, nvr) if build succeeds, (task_id, task_url, None) if container-build task is created but build fails,
                  or (None, None, None) if unable to create a container-build task.
         """
-        if operator_name:
-            self.operator_repo_name = 'containers/{}'.format(operator_name)
-
         self.clone_bundle()
         task_id, task_url = self.trigger_bundle_container_build()
         if task_id:
@@ -139,36 +124,10 @@ class OLMBundle(object):
         build_info = self.brew_session.getBuild(build_id)
         return task_id, task_url, build_info["nvr"]
 
-    def get_latest_bundle_build_nvr(self):
-        """Get NVR of latest bundle build tagged on given target
-
-        :return string: NVR of latest bundle build, or "" if there is none.
-        """
-        build = self.get_latest_bundle_build()
-        if not build or 'nvr' not in build:
-            return None
-        return build['nvr']
-
-    def get_bundle_image_name(self):
+    @property
+    def bundle_image_name(self):
         prefix = '' if self.bundle_name.startswith('ose-') else 'ose-'
-        return 'openshift/{}{}'.format(prefix, self.bundle_name)
-
-    def get_operator_buildinfo(self, nvr=None):
-        """Get operator distgit repository name and commit hash used to build given operator NVR
-        :param nvr: If specified, used to set self.operator_nvr.
-        """
-        if nvr:
-            self.operator_nvr = nvr
-
-        if not self.operator_dict or self.operator_dict["nvr"] != self.operator_nvr:
-            self.operator_dict = brew.get_build_objects([self.operator_nvr], self.brew_session)[0]
-            if not self.operator_dict:
-                raise IOError(f"Build {self.operator_nvr} doesn't exist in Brew.")
-
-        # source_url looks like "https://pkgs.devel.redhat.com/git/containers/foo#deadbeef"
-        source_url = urlparse(self.operator_dict['source'])
-        self.operator_repo_name = f"containers/{source_url.path.rstrip('/').rsplit('/')[-1]}"  # /git/containers/ose-cluster-kube-descheduler-operator => containers/ose-cluster-kube-descheduler-operator
-        self.operator_build_commit = source_url.fragment
+        return f'openshift/{prefix}{self.bundle_name}'
 
     def clone_operator(self):
         """Clone operator distgit repository to doozer working dir
@@ -194,7 +153,19 @@ class OLMBundle(object):
         with pushd.Dir(self.operator_clone_path):
             exectools.cmd_assert('git checkout {}'.format(self.operator_build_commit))
 
-    def clone_bundle(self):
+    def does_bundle_branch_exist(self):
+        try:
+            self.clone_bundle(retries=1)
+            return True, ''
+        except Exception as err:
+            if len(err.args) > 1:
+                _, _, clone_error = err.args[1]
+                if f"Could not find remote branch {self.branch} to clone" in clone_error:
+                    self.runtime.logger.warning("Could not find remote branch %s to clone, skipping bundle clone", self.branch)
+                    return False, f'{self.bundle_repo_name}/{self.branch}'
+            raise
+
+    def clone_bundle(self, retries: int = 3):
         """Clone corresponding bundle distgit repository of given operator NVR
         """
         dg_dir = Path(self.bundle_clone_path)
@@ -209,7 +180,7 @@ class OLMBundle(object):
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert('rhpkg {} clone --depth 1 --branch {} {} {}'.format(
             self.rhpkg_opts, self.branch, self.bundle_repo_name, self.bundle_clone_path
-        ), retries=3)
+        ), retries=retries)
 
     def clean_bundle_contents(self):
         """Delete all files currently present in the bundle repository
@@ -286,7 +257,7 @@ class OLMBundle(object):
         bundle_df.labels = operator_df.labels
         bundle_df.labels['com.redhat.component'] = self.bundle_brew_component
         bundle_df.labels['com.redhat.delivery.appregistry'] = False
-        bundle_df.labels['name'] = self.get_bundle_image_name()
+        bundle_df.labels['name'] = self.bundle_image_name
         bundle_df.labels['version'] = '{}.{}'.format(
             operator_df.labels['version'],
             operator_df.labels['release']
@@ -536,6 +507,9 @@ class OLMBundle(object):
 
     @property
     def branch(self):
+        config = self.runtime.image_map[self.operator_name].config
+        if 'distgit' in config and 'branch' in config['distgit']:
+            return config['distgit']['branch']
         return self.runtime.group_config.branch.format(**self.runtime.group_config.vars)
 
     @property
@@ -607,8 +581,25 @@ class OLMBundle(object):
 
     @property
     def target(self):
-        return self.runtime.get_default_candidate_brew_tag() or '{}-candidate'.format(self.branch)
+        target_match = re.match(r'.*-rhel-(\d+)(?:-|$)', self.branch)
+        if target_match:
+            el_target = int(target_match.group(1))
+            return self.runtime.get_default_candidate_brew_tag(el_target=el_target) or '{}-candidate'.format(self.branch)
+        else:
+            raise IOError(f'Unable to determine rhel version from branch: {self.branch}')
 
     @property
     def valid_subscription_label(self):
         return self.operator_csv_config['valid-subscription-label']
+
+    def delivery_labels_match(self, bundle_image_pullspec):
+        cmd = f"oc image info {bundle_image_pullspec} -o json"
+        rc, out, err = exectools.cmd_gather(cmd)
+        if rc != 0:
+            raise ValueError(f"Error running {cmd}: {err}")
+        image_info = json.loads(out)
+        image_labels = image_info['config']['config']['Labels']
+        for label, value in self.redhat_delivery_tags.items():
+            if image_labels.get(label, '') != value:
+                return False
+        return True

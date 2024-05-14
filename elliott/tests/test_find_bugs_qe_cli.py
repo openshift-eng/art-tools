@@ -17,7 +17,9 @@ class FindBugsQETestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("get_config").and_return({
             'target_release': ['4.6.z'], 'server': "server"
         })
-        flexmock(JIRABugTracker).should_receive("login").and_return(None)
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return([jira_bug])
         expected_comment = (
             "An ART build cycle completed after this fix was made, which usually means it can be"

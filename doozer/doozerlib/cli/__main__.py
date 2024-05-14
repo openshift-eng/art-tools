@@ -26,9 +26,10 @@ from doozerlib.cli.release_calc_upgrade_tests import release_calc_upgrade_tests
 from doozerlib.cli.inspect_stream import inspect_stream
 from doozerlib.cli.config_tag_rpms import config_tag_rpms
 from doozerlib.cli.scan_osh import scan_osh
+from doozerlib.cli.scan_fips import scan_fips
 from doozerlib.cli.gen_assembly_helper import gen_assembly_rhcos
 from doozerlib.cli.rpms import rpms_print, rpms_rebase_and_build, rpms_rebase, rpms_build, rpms_clone, rpms_clone_sources
-from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_olm_bundle, build_olm_bundle, rebase_and_build_olm_bundle
+from doozerlib.cli.olm_bundle import list_olm_operators, olm_bundles_print, rebase_and_build_olm_bundle
 from doozerlib.cli.config import config_commit, config_push, config_get, config_read_group, config_read_releases, \
     config_read_assemblies, config_mode, config_print, config_gencsv, config_rhcos_src, config_update_required
 from doozerlib.cli.images import images_clone, images_list, images_push_distgit, images_covscan, images_rebase, \
@@ -235,7 +236,6 @@ cachedir={}/$basearch/$releasever
 keepcache=0
 debuglevel=2
 logfile={}/yum.log
-exactarch=1
 obsoletes=1
 gpgcheck=1
 plugins=1
@@ -248,9 +248,6 @@ installonly_limit=3
     content = "{}\n\n{}".format(yum_conf, repos_content)
 
     print("repo config:\n", content)
-
-    if dry_run:
-        return
 
     if not os.path.isdir(output):
         yellow_print('Creating outputdir: {}'.format(output))
@@ -283,9 +280,21 @@ installonly_limit=3
                 continue
 
             color_print('Syncing repo {}'.format(repo.name), 'blue')
-            cmd = f'reposync --download-metadata -c {yc_file.name} -p {output} --delete --arch {arch} --repoid {repo.name}'
+            cmd = ('dnf '
+                   f'--config {yc_file.name} '
+                   f'--repoid {repo.name} '
+                   'reposync '
+                   f'--arch {arch} '
+                   '--arch noarch '
+                   '--delete '
+                   '--download-metadata '
+                   f'--download-path {output} '
+                   )
             if repo.is_reposync_latest_only():
-                cmd += ' -n'
+                cmd += '--newest-only '
+
+            if dry_run:
+                cmd += '--urls '
 
             rc, out, err = exectools.cmd_gather(cmd, realtime=True)
             if rc != 0:

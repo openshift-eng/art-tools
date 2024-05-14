@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -6,17 +7,18 @@ from collections import namedtuple
 from io import StringIO
 from typing import Iterable, Optional, OrderedDict, Tuple
 
+import aiohttp
 import click
 from ghapi.all import GhApi
+from ruamel.yaml import YAML
 
-from artcommonlib.util import split_git_url, merge_objects, get_inflight
+from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group
+from doozerlib.cli.get_nightlies import rc_api_url
 from pyartcd import exectools, constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
-from pyartcd.runtime import Runtime
-from ruamel.yaml import YAML
-
 from pyartcd.jenkins import start_build_sync
+from pyartcd.runtime import Runtime
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -43,7 +45,13 @@ class GenAssemblyPipeline:
         self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
-        self.in_flight = in_flight if in_flight else get_inflight(assembly, group)
+        if in_flight:
+            self.in_flight = in_flight
+        elif not custom and not pre_ga_mode:
+            self.in_flight = get_inflight(assembly, group)
+        else:
+            self.in_flight = None
+
         self.previous_list = previous_list
         self.auto_previous = auto_previous
         self.pre_ga_mode = pre_ga_mode
@@ -79,8 +87,9 @@ class GenAssemblyPipeline:
             if self.custom and (self.auto_previous or self.previous_list or self.in_flight):
                 raise ValueError("Specifying previous list for a custom release is not allowed.")
 
-            self._logger.info("Getting nightlies from Release Controllers...")
-            candidate_nightlies = await self._get_nightlies()
+            candidate_nightlies, latest_nightly = await asyncio.gather(
+                *[self._get_nightlies(), self._get_latest_accepted_nightly()])
+
             self._logger.info("Generating assembly definition...")
             assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
             out = StringIO()
@@ -91,20 +100,48 @@ class GenAssemblyPipeline:
             pr = await self._create_or_update_pull_request(assembly_definition)
 
             # Sends a slack message
-            message = f"Hi @release-artists , please review assembly definition for {self.assembly}: {pr.html_url}\n\nthe inflight release is {self.in_flight}"
+            message = (f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
+                       f"The inflight release is {self.in_flight}")
+            if latest_nightly not in candidate_nightlies:
+                message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
+
             await self._slack_client.say(message, slack_thread)
 
         except Exception as err:
             error_message = f"Error generating assembly definition: {err}\n {traceback.format_exc()}"
             self._logger.error(error_message)
-            await self._slack_client.say(error_message, slack_thread)
+            await self._slack_client.say(f"Error generating assembly definition for {self.assembly}", slack_thread)
             raise
+
+    async def _get_latest_accepted_nightly(self):
+        self._logger.info('Retrieving most recent accepted amd64 nightly...')
+
+        major, minor = isolate_major_minor_in_group(self.group)
+        tag_base = f'{major}.{minor}.0-0.nightly'
+        rc_endpoint = f"{rc_api_url(tag_base, 'amd64')}/tags"
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rc_endpoint) as response:
+                if response.status != 200:
+                    self._logger.warning('Failed retrieving latest accepted nighly from %s', rc_endpoint)
+                    return None
+
+                tags = (await response.json()).get('tags', [])
+                accepted_nightlies = list(filter(lambda tag: tag['phase'] == 'Accepted', tags))
+
+                if accepted_nightlies:
+                    return accepted_nightlies[0]['name']
+                else:
+                    self._logger.warning('No accepted nightly found')
+                    return None
 
     async def _get_nightlies(self):
         """
         Get nightlies from Release Controllers
         :return: NVRs
         """
+
+        self._logger.info("Getting nightlies from Release Controllers...")
 
         cmd = [
             "doozer",
@@ -225,10 +262,10 @@ class GenAssemblyPipeline:
         if self.auto_trigger_build_sync:
             self._logger.info("Triggering build-sync")
             build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
-            # we're not passing doozer_data_path to build-sync because we always create branch on the base repo
             start_build_sync(build_version=build_version,
                              assembly=self.assembly,
-                             doozer_data_path=self.data_path,
+                             doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
+                             # to build-sync because we always create branch on the base repo
                              doozer_data_gitref=branch)
 
         return result

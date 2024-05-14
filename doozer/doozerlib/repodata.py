@@ -252,7 +252,7 @@ class OutdatedRPMFinder:
         return candidate_modular_rpms
 
     @staticmethod
-    def _find_candidate_non_modular_rpms(all_non_modular_rpms, candidate_modular_rpms, logger):
+    def _find_candidate_non_modular_rpms(all_non_modular_rpms):
         """ Finds all candidate non-modular rpms.
         For each non-modular rpm, if there is another candidate modular rpm with the same package name,
         the non-modular rpm will be exempt.
@@ -262,10 +262,6 @@ class OutdatedRPMFinder:
             rpm = Rpm.from_nevra(nevra)
             _, candidate = candidate_non_modular_rpms.get(rpm.name, (None, None))
             if not candidate or rpm.compare(candidate) > 0:
-                if rpm.name in candidate_modular_rpms:
-                    modular_repo, modular_rpm = candidate_modular_rpms[rpm.name]
-                    logger.debug("Non-modular RPM %s from %s is shadowed by modular RPM %s from %s", nevra, repo, modular_rpm.nevra, modular_repo)
-                    continue  # This non-modular rpm is shadowed by a modular rpm
                 candidate_non_modular_rpms[rpm.name] = (repo, rpm)
         return candidate_non_modular_rpms
 
@@ -325,8 +321,8 @@ class OutdatedRPMFinder:
                     continue  # It is a modular rpm
                 all_non_modular_rpms[rpm.nevra] = repodata.name
 
-        # Populate candidate_non_modulear_rpms, which will hold all visible non-modular rpms that are latest among all configured repos
-        candidate_non_modulear_rpms = self._find_candidate_non_modular_rpms(all_non_modular_rpms, candidate_modular_rpms, logger)
+        # fetch all visible non-modular rpms that are latest among all configured repos
+        candidate_non_modular_rpms = self._find_candidate_non_modular_rpms(all_non_modular_rpms)
 
         # Compare archive rpms to all candidate rpms
         results: List[Tuple[str, str, str]] = []
@@ -336,9 +332,9 @@ class OutdatedRPMFinder:
             if archive_rpm.nevra in all_modular_rpms:  # Archive rpm is a modular rpm
                 repo, candidate_rpm = candidate_modular_rpms.get(name, (None, None))
             else:  # Archive rpm is a non-modular rpm
-                repo, candidate_rpm = candidate_non_modulear_rpms.get(name, (None, None))
+                repo, candidate_rpm = candidate_non_modular_rpms.get(name, (None, None))
             if not repo or not candidate_rpm:
-                continue  # Archive rpm rpm is not available in any configured repos
+                continue  # Archive rpm is not available in any configured repos
             if archive_rpm.compare(candidate_rpm) < 0:  # Archive rpm is older than candidate rpm
                 results.append((archive_rpm.nevra, candidate_rpm.nevra, repo))
         return results

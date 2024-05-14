@@ -33,7 +33,8 @@ class BuildSyncPipeline:
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
-            self.group, self.assembly
+            self.group, self.assembly,
+            self.data_path, self.doozer_data_gitref
         )
         return self
 
@@ -234,14 +235,15 @@ class BuildSyncPipeline:
 
         # Create tar archive
         self.logger.info('Creating backup archives')
-        cmd = ['tar', 'zcvf', 'app.ci-backup.tgz']
-        cmd.extend(glob.glob('*.backup.yaml'))
+        await exectools.cmd_assert_async("lzma -9 " + " ".join(glob.glob('*.backup.yaml')))
+        cmd = ['tar', 'cvf', 'app.ci-backup.tgz', '--lzma']
+        cmd.extend(glob.glob('*.backup.yaml.lzma'))
         await exectools.cmd_assert_async(cmd)
 
         # Remove *.yaml
         self.logger.debug('Removing yaml files')
         cmd = ['rm']
-        cmd.extend(glob.glob('*.backup.yaml'))
+        cmd.extend(glob.glob('*.backup.yaml.lzma'))
         await exectools.cmd_assert_async(cmd)
 
     @limit_concurrency(500)

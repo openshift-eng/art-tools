@@ -304,6 +304,9 @@ class DistGitRepo(object):
     def _get_diff(self):
         return None  # to actually record a diff, child classes must override this function
 
+    def add_distgits_diff(self, diff):
+        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=False)
+
     def commit(self, cmdline_commit_msg: str, commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None, log_diff=False):
         if self.runtime.local:
             return ''  # no commits if local
@@ -337,7 +340,7 @@ class DistGitRepo(object):
             if log_diff:
                 diff = self._get_diff()
                 if diff and diff.strip():
-                    self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
+                    self.add_distgits_diff(diff)
             # commit changes; if these flake there is probably not much we can do about it
             exectools.cmd_assert(["git", "add", "-A", "."])
             exectools.cmd_assert(["git", "commit", "--allow-empty", "-m", commit_msg])
@@ -1362,6 +1365,16 @@ class ImageDistGitRepo(DistGitRepo):
             elif node.kind in ["operator", "command"]:
                 cmd_nodes.append(node)
 
+        # remove dockerfile directive options that bashlex doesn't parse (e.g "RUN --mount=foobar")
+        # https://docs.docker.com/reference/dockerfile/#run
+        docker_cmd_options = []
+        for word in cmd.split():
+            if word.startswith("--"):
+                docker_cmd_options.append(word)
+                cmd = cmd.replace(word, "")
+            else:
+                break
+
         try:
             append_nodes_from(bashlex.parse(cmd)[0])
         except bashlex.errors.ParsingError as e:
@@ -1409,6 +1422,8 @@ class ImageDistGitRepo(DistGitRepo):
             # wrapping commands/args in quotes, or with commands that aren't valid
             # to begin with. let's not worry about that; it need not be invulnerable.
 
+        if docker_cmd_options:
+            cmd = " ".join(docker_cmd_options) + " " + cmd
         return changed, cmd
 
     def _clean_repos(self, dfp):

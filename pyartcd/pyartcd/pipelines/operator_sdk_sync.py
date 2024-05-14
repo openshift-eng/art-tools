@@ -57,7 +57,7 @@ class OperatorSDKPipeline:
                 return
             build = koji.ClientSession(BREW_HUB).getBuild(sdk_build[0])
         elif self.nvr:
-            build = koji.ClientSession(constants.BREW_HUB).getBuild(self.nvr)
+            build = koji.ClientSession(BREW_HUB).getBuild(self.nvr)
         else:
             raise ValueError("no assembly or nvr provided")
 

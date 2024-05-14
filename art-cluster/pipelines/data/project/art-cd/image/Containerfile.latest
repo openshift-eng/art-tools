@@ -1,0 +1,26 @@
+FROM art-cd:base
+
+# This build is meant to be based on an existing build, and update art-tools
+
+USER 0
+
+RUN pip3 install --upgrade pip
+
+# Set workspace
+WORKDIR /home/dev
+
+# Copy art-tools and run the install script
+COPY . .
+RUN ./install.sh
+
+# Install check-payload tool for FIPS scanning, and copy to a location in PATH
+# They update the tool often, so lets keep in update for now
+RUN git clone https://github.com/openshift/check-payload check-payload &&  \
+    cd check-payload  \
+    && make  \
+    && cp check-payload /usr/local/bin \
+    && cd .. \
+    && rm -rf check-payload # We only need the binary
+
+# Set non-root user and set as current
+USER 1000

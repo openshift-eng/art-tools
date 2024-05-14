@@ -15,6 +15,7 @@ from datetime import datetime
 from fcntl import fcntl, F_GETFL, F_SETFL
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
+from pathlib import Path
 from typing import Optional, Tuple, Union, List, Dict
 from urllib.request import urlopen
 
@@ -88,7 +89,8 @@ def urlopen_assert(url_or_req, httpcode=200, retries=3):
 
 
 def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_env=None, strip=False,
-               log_stdout: bool = False, log_stderr: bool = True, timeout: Optional[int] = None) -> Tuple[str, str]:
+               log_stdout: bool = False, log_stderr: bool = True, timeout: Optional[int] = None,
+               cwd: Optional[str] = None) -> Tuple[str, str]:
     """
     Run a command, logging (using exec_cmd) and raise an exception if the
     return code of the command indicates failure.
@@ -104,6 +106,7 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_e
     :param log_stdout: Whether stdout should be logged into the DEBUG log.
     :param log_stderr: Whether stderr should be logged into the DEBUG log
     :param timeout: Kill the process if it does not terminate after timeout seconds.
+    :param cwd: Set current working directory
     :return: (stdout,stderr) if exit code is zero
     """
 
@@ -121,7 +124,7 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_e
                 cmd_gather(on_retry, set_env)
 
         result, stdout, stderr = cmd_gather(cmd, set_env=set_env, realtime=realtime, strip=strip,
-                                            log_stdout=log_stdout, log_stderr=log_stderr, timeout=timeout)
+                                            log_stdout=log_stdout, log_stderr=log_stderr, timeout=timeout, cwd=cwd)
         if result == SUCCESS:
             break
 
@@ -135,7 +138,8 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_e
 
 
 def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, realtime=False, strip=False,
-               log_stdout=False, log_stderr=True, timeout: Optional[int] = None) -> Tuple[int, str, str]:
+               log_stdout=False, log_stderr=True, timeout: Optional[int] = None,
+               cwd: Optional[str] = None) -> Tuple[int, str, str]:
     """
     Runs a command and returns rc,stdout,stderr as a tuple.
 
@@ -150,6 +154,7 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
     :param log_stdout: Whether stdout should be logged into the DEBUG log.
     :param log_stderr: Whether stderr should be logged into the DEBUG log
     :param timeout: Kill the process if it does not terminate after timeout seconds.
+    :param cwd: Set current working directory
     :return: (rc,stdout,stderr)
     """
 
@@ -165,7 +170,8 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
         # convert any non-str into str
         cmd_list = [str(c) for c in cmd]
 
-    cwd = Dir.getcwd()
+    if not cwd:
+        cwd = Dir.getcwd()
     cmd_info_base = f'${my_id}: {cmd_list} - [cwd={cwd}]'
     cmd_info = cmd_info_base
 
@@ -177,7 +183,7 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
     # Make sure output of launched commands is utf-8
     env['LC_ALL'] = 'en_US.UTF-8'
 
-    with timer(logger.info, f'{cmd_info}: Executed:cmd_gather'):
+    with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
         logger.info(f'{cmd_info}: Executing:cmd_gather')
         try:
             proc = subprocess.Popen(
@@ -511,3 +517,27 @@ def unpack_tuple_args(func):
     def wrapper(args):
         return func(*args)
     return wrapper
+
+
+async def manifest_tool(options, dry_run=False, retries=3):
+    auth_opt = ""
+    if os.environ.get("XDG_RUNTIME_DIR"):
+        auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
+        if Path(auth_file).is_file():
+            auth_opt = f"--docker-cfg={auth_file}"
+
+    if isinstance(options, str):
+        cmd = f'manifest-tool {auth_opt} {options}'
+
+    elif isinstance(options, list):
+        cmd = ['manifest-tool', auth_opt]
+        cmd.extend(options)
+
+    else:
+        raise ValueError('Invalid type for manifest-tool options provided')
+
+    if dry_run:
+        logger.warning("[DRY RUN] Would have run %s", cmd)
+        return
+
+    await cmd_assert_async(cmd, retries=retries)

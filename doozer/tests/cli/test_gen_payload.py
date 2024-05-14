@@ -555,6 +555,7 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_manifest_list(self, open_mock, exec_mock, fmlsha_mock):
+        os.environ['XDG_RUNTIME_DIR'] = 'fake'
         runtime = MagicMock(uuid="uuid")
         gpcli = rgp_cli.GenPayloadCli(runtime, output_dir="/tmp", organization="org", repository="repo")
 
@@ -609,6 +610,7 @@ spec:
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
     async def test_create_multi_release_manifest_list(self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock):
+        os.environ['XDG_RUNTIME_DIR'] = 'fake'
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
         exec_mock.return_value = None  # do not actually execute command

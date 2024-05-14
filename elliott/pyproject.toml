@@ -58,6 +58,7 @@ dependencies = [
     "ruamel.yaml",
     "tenacity",
     "jira >= 3.4.1",  # https://github.com/pycontribs/jira/issues/1486
+    "prettytable"
 ]
 
 [project.scripts]

@@ -132,7 +132,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False
         )
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
+                                                signing_env="prod", skip_sigstore=True)
         with self.assertRaisesRegex(ValueError, "must be explicitly defined"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -157,7 +158,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             working_dir=Path("/path/to/working"),
             dry_run=False
         )
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="stream", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="stream",
+                                                signing_env="prod", skip_sigstore=True)
         with self.assertRaisesRegex(ValueError, "not supported"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -184,7 +186,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False,
             new_slack_client=MagicMock(return_value=AsyncMock())
         )
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="art0001", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="art0001",
+                                                signing_env="prod", skip_sigstore=True)
         with self.assertRaisesRegex(ValueError, "patch_version is not set"):
             await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -238,7 +241,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
 
         pipeline = await PromotePipeline.create(
             runtime, group="openshift-4.10", assembly="art0001",
-            skip_attached_bug_check=True, skip_mirror_binaries=True, signing_env="prod")
+            skip_attached_bug_check=True, skip_mirror_binaries=True, signing_env="prod", skip_sigstore=True)
 
         await pipeline.run()
         load_group_config.assert_awaited_once()
@@ -281,7 +284,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value = AsyncMock()
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
+                                                signing_env="prod", skip_sigstore=True)
 
         with self.assertRaisesRegex(ValueError, "missing the required `upgrades` field"):
             await pipeline.run()
@@ -312,7 +316,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
+                                                signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
 
         with self.assertRaisesRegex(VerificationError, "No associated image advisory"):
@@ -345,7 +350,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
+                                                signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline.change_advisory_state = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={
@@ -384,7 +390,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
+        pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
+                                                signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline.change_advisory_state = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={
@@ -457,7 +464,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
         pipeline = await PromotePipeline.create(
             runtime, group="openshift-4.10", assembly="4.10.99",
-            skip_mirror_binaries=True, signing_env="prod")
+            skip_mirror_binaries=True, signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
         pipeline.change_advisory_state = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={

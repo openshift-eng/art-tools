@@ -55,7 +55,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             created_days_ago=lambda: 7,
         )
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         search_mock.return_value = [jira_bug]
         jira_filter_mock.return_value = []
 
@@ -86,7 +88,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         jira_filter_mock.return_value = []
 
         # bz mocks
@@ -122,7 +126,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
         flexmock(JIRABugTracker).should_receive("filter_bugs_by_cutoff_event").and_return([])
 
@@ -162,7 +168,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
         flexmock(JIRABugTracker).should_receive("attach_bugs").with_args([b.id for b in bugs], advisory_id=advisory_id,
                                                                          noop=False, verbose=False)
@@ -197,7 +205,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return([])
         flexmock(JIRABugTracker).should_receive("advisory_bug_ids").and_return([])
         flexmock(JIRABugTracker).should_receive("attach_bugs").and_return()
@@ -246,7 +256,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
         # jira mocks
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return([])
         flexmock(JIRABugTracker).should_receive("attach_bugs").times(3).and_return()
         jira_filter_mock.return_value = []

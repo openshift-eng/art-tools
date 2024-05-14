@@ -20,6 +20,7 @@ from errata_tool.jira_issue import JiraIssue as ErrataJira
 from errata_tool.bug import Bug as ErrataBug
 from bugzilla.bug import Bug
 from koji import ClientSession
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import logutil, exectools
 from elliottlib import constants, exceptions, errata, util
@@ -88,6 +89,15 @@ class Bug:
     @property
     def product(self):
         raise NotImplementedError
+
+    @property
+    def cve_id(self):
+        if not (self.is_tracker_bug() or self.is_flaw_bug()):
+            return None
+        cve_id = re.search(r'CVE-\d+-\d+', self.summary)
+        if cve_id:
+            return cve_id.group()
+        return None
 
     @staticmethod
     def get_target_release(bugs: List[Bug]) -> str:
@@ -207,6 +217,11 @@ class BugzillaBug(Bug):
 
 
 class JIRABug(Bug):
+    def __getattr__(self, attr):
+        if attr in self.__dict__:
+            return getattr(self, attr)
+        return getattr(self.bug.fields, attr)
+
     def __init__(self, bug_obj: Issue):
         super().__init__(bug_obj)
 
@@ -289,7 +304,7 @@ class JIRABug(Bug):
 
     @property
     def blocked_by_bz(self):
-        url = getattr(self.bug.fields, JIRABugTracker.FIELD_BLOCKED_BY_BZ)
+        url = getattr(self.bug.fields, JIRABugTracker.field_blocked_by_bz)
         if not url:
             return None
         bug_id = re.search(r"id=(\d+)", url)
@@ -299,7 +314,7 @@ class JIRABug(Bug):
 
     @property
     def target_release(self):
-        tr_field = getattr(self.bug.fields, JIRABugTracker.FIELD_TARGET_VERSION)
+        tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
         if not tr_field:
             raise ValueError(f'bug {self.id} does not have `Target Version` field set')
         return [x.name for x in tr_field]
@@ -364,19 +379,19 @@ class JIRABug(Bug):
 
     def _get_release_blocker(self):
         # release blocker can be ['None','Approved'=='+','Proposed'=='?','Rejected'=='-']
-        field = getattr(self.bug.fields, JIRABugTracker.FIELD_RELEASE_BLOCKER)
+        field = getattr(self.bug.fields, JIRABugTracker.field_release_blocker)
         if field:
             return field.value == 'Approved'
         return False
 
     def _get_blocked_reason(self):
-        field = getattr(self.bug.fields, JIRABugTracker.FIELD_BLOCKED_REASON)
+        field = getattr(self.bug.fields, JIRABugTracker.field_blocked_reason)
         if field:
             return field.value
         return None
 
     def _get_severity(self):
-        field = getattr(self.bug.fields, JIRABugTracker.FIELD_SEVERITY)
+        field = getattr(self.bug.fields, JIRABugTracker.field_severity)
         if field:
             if "Urgent" in field.value:
                 return "Urgent"
@@ -401,19 +416,25 @@ class JIRABug(Bug):
         return ('Placeholder' in self.summary) and (self.component == 'Release') and ('Automation' in self.keywords)
 
     def _get_blocks(self):
-        # link "blocks"
         blocks = []
         for link in self.bug.fields.issuelinks:
+            # link "blocks"
             if link.type.name == "Blocks" and hasattr(link, "outwardIssue"):
                 blocks.append(link.outwardIssue.key)
+            # link "is depended on by"
+            if link.type.name == "Depend" and hasattr(link, "inwardIssue"):
+                blocks.append(link.inwardIssue.key)
         return blocks
 
     def _get_depends(self):
-        # link "is blocked by"
         depends = []
         for link in self.bug.fields.issuelinks:
+            # link "is blocked by"
             if link.type.name == "Blocks" and hasattr(link, "inwardIssue"):
                 depends.append(link.inwardIssue.key)
+            # link "depends on"
+            if link.type.name == "Depend" and hasattr(link, "outwardIssue"):
+                depends.append(link.outwardIssue.key)
         return depends
 
     @staticmethod
@@ -587,12 +608,13 @@ class BugTracker:
 class JIRABugTracker(BugTracker):
     JIRA_BUG_BATCH_SIZE = 50
 
-    # Prefer to query by user visible Field Name. Context: https://issues.redhat.com/browse/ART-7053
-    FIELD_BLOCKED_BY_BZ = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
-    FIELD_TARGET_VERSION = 'customfield_12319940'  # "Target Version"
-    FIELD_RELEASE_BLOCKER = 'customfield_12319743'  # "Release Blocker"
-    FIELD_BLOCKED_REASON = 'customfield_12316544'  # "Blocked Reason"
-    FIELD_SEVERITY = 'customfield_12316142'  # "Severity"
+    # There are several @property function defined, which requires the values to be available at compile time
+    # We later override them at runtime, so that if the field name changes, we'll still get the updated one
+    field_blocked_by_bz = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
+    field_target_version = 'customfield_12319940'  # "Target Version"
+    field_release_blocker = 'customfield_12319743'  # "Release Blocker"
+    field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
+    field_severity = 'customfield_12316142'  # "Severity"
 
     @staticmethod
     def get_config(runtime) -> Dict:
@@ -620,6 +642,17 @@ class JIRABugTracker(BugTracker):
         super().__init__(config, 'jira')
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
+        for f in self._client.fields():
+            if f['name'] == 'Blocked by Bugzilla Bug':
+                self.field_blocked_by_bz = f['id']
+            if f['name'] == 'Target Version':
+                self.field_target_version = f['id']
+            if f['name'] == 'Release Blocker':
+                self.field_release_blocker = f['id']
+            if f['name'] == 'Blocked Reason':
+                self.field_blocked_reason = f['id']
+            if f['name'] == 'Severity':
+                self.field_severity = f['id']
 
     @property
     def product(self):
@@ -674,7 +707,7 @@ class JIRABugTracker(BugTracker):
             'issuetype': {'name': 'Bug'},
             'components': [{'name': 'Release'}],
             'versions': [{'name': self.config.get('version')[0]}],  # Affects Version/s
-            self.FIELD_TARGET_VERSION: [{'name': self.config.get('target_release')[0]}],  # Target Version
+            self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
             'description': bug_description
@@ -691,7 +724,7 @@ class JIRABugTracker(BugTracker):
 
     def add_comment(self, bugid: str, comment: str, private: bool, noop=False):
         if noop:
-            logger.info(f"Would have added a private={private} comment to {bugid}")
+            logger.info(f"Would have added a private={private} comment to {bugid}: {comment}")
             return
         if private:
             self._client.add_comment(bugid, comment, visibility={'type': 'group', 'value': 'Red Hat Employee'})

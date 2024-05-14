@@ -23,6 +23,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
+from doozerlib.k_distgit import KonfluxImageDistGitRepo
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
 
@@ -40,6 +41,11 @@ class CgitAtomFeedEntry(NamedTuple):
 DISTGIT_TYPES = {
     'image': ImageDistGitRepo,
     'rpm': RPMDistGitRepo
+}
+
+K_DISTGIT_TYPES = {
+    'image': KonfluxImageDistGitRepo,
+    'rpm': None  # For now
 }
 
 CONFIG_MODES = [
@@ -94,6 +100,7 @@ class Metadata(object):
         self.config_filename = data_obj.filename
         self.full_config_path = data_obj.path
         self.commitish = commitish
+        self.is_konflux = False
 
         # For efficiency, we want to prevent some verbs from introducing changes that
         # trigger distgit or upstream cloning. Setting this flag to True will cause
@@ -157,7 +164,7 @@ class Metadata(object):
             # Oh, but what if the customer DOES want a different commit? Well, the artist should
             # update the release.yml for art1999 to include that commit or explicitly specify a branch.
             # How do we determine whether they have done that? Looking for any explicit overrides
-            # in the our assembly's metadata.
+            # in our assembly's metadata.
             # Let's do it!
             assembly_overrides = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, Model({}))
             # Nice! By passing Model({}) instead of the metadata from our image yml file, we should only get fields actually defined in
@@ -169,13 +176,13 @@ class Metadata(object):
                 pass
             else:
                 # Ooof.. it is not defined in the assembly, so we need to find it dynamically.
-                self.logger.info("A commitish is not explicitly specified for %s. Determining from the latest build...", self.name)
                 build_obj = self.get_latest_build(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
-                    self.logger.debug(f'Pinning upstream source to commit of last assembly selected build ({build_obj["id"]}) -> commit {self.commitish} ')
+                    self.logger.info('Pinning upstream source to commit of assembly selected build '
+                                     f'({build_obj["id"]}) -> commit {self.commitish}')
                 else:
-                    # If this is part of a unit test, don't make the caller's life more difficult thatn it already is; skip the exception.
+                    # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.
                     if 'unittest' not in sys.modules.keys():
                         raise IOError(f'Expected to find pre-existing build for {self.distgit_key} in order to pin upstream source commit')
 
@@ -226,6 +233,11 @@ class Metadata(object):
     def distgit_repo(self, autoclone=True) -> DistGitRepo:
         if self._distgit_repo is None:
             self._distgit_repo = DISTGIT_TYPES[self.meta_type](self, autoclone=autoclone)
+        return self._distgit_repo
+
+    def k_distgit_repo(self, autoclone=True) -> DistGitRepo:
+        if self._distgit_repo is None:
+            self._distgit_repo = K_DISTGIT_TYPES[self.meta_type](self, autoclone=autoclone)
         return self._distgit_repo
 
     def branch(self) -> str:
@@ -463,6 +475,7 @@ class Metadata(object):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
                 rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
+                assert 'None' not in rhel_pattern
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=rhel_pattern,
@@ -472,12 +485,17 @@ class Metadata(object):
                 # If no builds were found, the component might still be following the old pattern,
                 # where a .el suffix was not included in the NVR
                 if not builds:
+                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
+
                     legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
+                    assert 'None' not in legacy_pattern
                     builds = koji_api.listBuilds(packageID=package_id,
                                                  state=None if build_state is None else build_state.value,
                                                  pattern=legacy_pattern,
                                                  queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                                  **list_builds_kwargs)
+                    if not builds:
+                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from

@@ -59,7 +59,7 @@ class SlackClient:
             })
         if self.dry_run:
             _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)
-            return {"message": {"ts": "fake"}}
+            return {"ts": "fake"}
         response = await self._client.chat_postMessage(channel=self.channel, text=message, thread_ts=thread_ts,
                                                        username=self.as_user, link_names=True, attachments=attachments,
                                                        icon_emoji=self.icon_emoji, reply_broadcast=False)
@@ -73,12 +73,11 @@ class SlackClient:
 
         return response.data
 
-    async def upload_file(self, file=None, content=None, filename=None, initial_comment=None, filetype=None, thread_ts: Optional[str] = None):
+    async def upload_file(self, file=None, content=None, filename=None, initial_comment=None, thread_ts: Optional[str] = None):
         response = await self._client.files_upload(
             file=file,
-            filename=filename,
-            content=content,
-            filetype=filetype,
+            filename=content,
+            filetype=filename,
             initial_comment=initial_comment,
             channels=self.channel,
             thread_ts=thread_ts)
@@ -98,4 +97,17 @@ class SlackClient:
             file=file,
             initial_comment=message,
             channels=self.channel)
+        return response.data
+
+    async def upload_content(self, content, intro=None, filename=None, filetype=None, thread_ts: Optional[str] = None):
+        """
+        Similar to upload_file but can upload from a variable instead of a file
+        """
+        response = await self._client.files_upload(
+            initial_comment=intro,
+            channels=self.channel,
+            content=content,
+            filename=filename,
+            filetype=filetype,
+            thread_ts=thread_ts)
         return response.data

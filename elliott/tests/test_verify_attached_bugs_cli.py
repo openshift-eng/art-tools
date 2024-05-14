@@ -17,7 +17,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.9.z']})
 
         flexmock(AsyncErrataAPI).should_receive("__init__").and_return(None)
-        flexmock(JIRABugTracker).should_receive("login").and_return(None)
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         validator = BugValidator(runtime, True)
         self.assertEqual(validator.target_releases, ['4.9.z'])
 
@@ -26,7 +28,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login")
 
@@ -65,7 +69,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login")
@@ -111,7 +117,9 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login")
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login")
@@ -164,7 +172,9 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         }
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.9.z']})
-        flexmock(JIRABugTracker).should_receive("login").and_return(None)
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.9.z']})
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(AsyncErrataAPI).should_receive("__init__").and_return(None)
@@ -193,7 +203,9 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         runtime = Runtime()
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
-        flexmock(JIRABugTracker).should_receive("login").and_return(None)
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
 

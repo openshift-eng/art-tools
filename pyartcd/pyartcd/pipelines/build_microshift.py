@@ -15,6 +15,7 @@ import click
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
+from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
@@ -330,7 +331,13 @@ class BuildMicroShiftPipeline:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
             with open(path) as f:
                 result = json.load(f)
-        return cast(List[str], result["builds"])
+
+        nvrs = cast(List[str], result["builds"])
+
+        # microshift builds are special in that they build for each assembly after payload is promoted
+        # and they include the assembly name in its build name
+        # so make sure found nvrs are related to assembly
+        return [n for n in nvrs if isolate_assembly_in_release(n) == self.assembly]
 
     async def _rebase_and_build_rpm(self, version, release: str, custom_payloads: Optional[Dict[str, str]]) -> List[str]:
         """ Rebase and build RPM
@@ -450,7 +457,7 @@ class BuildMicroShiftPipeline:
         if doozer_log_file.exists():
             with doozer_log_file.open() as f:
                 await slack_client.upload_file(
-                    content=f,
+                    file=f,
                     filename="microshift-build.log",
                     initial_comment="Build logs",
                     thread_ts=slack_thread)

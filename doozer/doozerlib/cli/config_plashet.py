@@ -16,6 +16,7 @@ import yaml
 from artcommonlib.build_util import find_latest_builds
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib import exectools
 from doozerlib.rpm_utils import compare_nvr, parse_nvr
 from requests_kerberos import HTTPKerberosAuth
 
@@ -175,10 +176,8 @@ def _assemble_repo(config, nvres: List[str]):
                     logger.warning("Unable to find any {arch} rpms for {nvre} in {p} ; this may be ok if the package doesn't support the arch and it is not required for that arch".format(
                         arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed)))
 
-        if os.system('cd {repo_dir} && createrepo_c -i rpm_list .'.format(repo_dir=dest_arch_path)) != 0:
-            raise IOError('Error creating repo at: {repo_dir}'.format(repo_dir=dest_arch_path))
-
-        print('Successfully created repo at: {repo_dir}'.format(repo_dir=dest_arch_path))
+        exectools.cmd_assert('createrepo_c -i rpm_list .', cwd=dest_arch_path)
+        logger.info(f'Successfully created repo at {dest_arch_path}')
 
 
 def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):

@@ -14,7 +14,7 @@ COPY art-cluster/pipelines/data/project/art-cd/image/files/etc/yum.repos.d /etc/
 
 # Install necessary packages and Python libraries
 RUN dnf -y install python3 python3-pip python3-wheel python3-devel gcc krb5-devel wget tar gzip git krb5-workstation \
-    brewkoji rhpkg \
+    brewkoji rhpkg go podman \
     && python3 -m pip install --upgrade setuptools pip \
     && dnf clean all
 
@@ -31,10 +31,20 @@ RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64
 # Set workspace
 WORKDIR /home/dev
 
-# Clone art-tools into a specific directory and run the install script
-RUN git clone https://github.com/openshift-eng/art-tools.git art-tools \
-    && cd art-tools \
-    && ./install.sh
+# Copy art-tools and run the install script
+COPY . .
+RUN ./install.sh
+
+# Install check-payload tool for FIPS scanning, and copy to a location in PATH
+RUN git clone https://github.com/openshift/check-payload check-payload &&  \
+    cd check-payload  \
+    && make  \
+    && cp check-payload /usr/local/bin \
+    && cd .. \
+    && rm -rf check-payload # We only need the binary
+
+# Copy kerberos config for brew auth
+COPY artcommon/configs/krb5-redhat.conf /etc/krb5.conf
 
 # Create a non-root user and set as current
 RUN useradd -m -d /home/dev -u 1000 dev

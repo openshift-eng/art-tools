@@ -1,0 +1,38 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  labels:
+    build: art-cd
+  name: art-cd-update
+spec:
+  source:
+    dockerfile: art-cluster/pipelines/data/project/art-cd/image/Containerfile.latest
+    git:
+      ref: main
+      uri: https://github.com/openshift-eng/art-tools
+    type: Git
+  strategy:
+    dockerStrategy:
+      dockerfilePath: art-cluster/pipelines/data/project/art-cd/image/Containerfile.latest
+      from:
+        kind: ImageStreamTag
+        name: art-cd:base
+    type: Docker
+  output:
+    to:
+      kind: ImageStreamTag
+      name: art-cd:latest
+  successfulBuildsHistoryLimit: 10
+  failedBuildsHistoryLimit: 5
+  runPolicy: Serial
+  triggers:
+    - type: ConfigChange
+    - imageChange:
+        from:
+          kind: ImageStreamTag
+          name: art-cd:base
+      type: ImageChange
+    - type: GitHub
+      github:
+        secretReference:
+          name: build-config-webhook-secret

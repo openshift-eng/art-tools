@@ -8,6 +8,7 @@ import json
 import threading
 import time
 import traceback
+from datetime import datetime
 from enum import Enum
 from multiprocessing import Lock
 from typing import BinaryIO, Callable, Dict, Iterable, List, Optional, Tuple
@@ -643,7 +644,13 @@ class KojiWrapper(koji.ClientSession):
             elif method_name == 'listBuilds':
                 if 'completeBefore' not in kwargs and 'createdBefore' not in kwargs:
                     kwargs = kwargs or {}
-                    kwargs['completeBefore'] = self.___before_timestamp
+                    # Recently brew started returning outdated results for filtering via float timestamps.
+                    # Using a date string works around this issue.
+                    # See https://issues.redhat.com/browse/RHELBLD-15024
+                    dt = None
+                    if self.___before_timestamp:
+                        dt = str(datetime.utcfromtimestamp(self.___before_timestamp))
+                    kwargs['completeBefore'] = dt
             elif method_name in KojiWrapper.methods_with_event:
                 if 'event' not in kwargs:
                     # Only set the kwarg if the caller didn't

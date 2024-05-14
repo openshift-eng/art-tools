@@ -13,10 +13,8 @@ import hashlib
 import shutil
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional, Union, Set
 from urllib.parse import quote
-
-from openshift_client import OpenShiftPythonException
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import (RetryCallState, RetryError, retry,
@@ -26,11 +24,11 @@ from tenacity import (RetryCallState, RetryError, retry,
 from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, \
     go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.exectools import to_thread
+from artcommonlib.exectools import to_thread, manifest_tool
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd.locks import Lock
-from pyartcd.signatory import AsyncSignatory
+from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 from pyartcd.util import nightlies_with_pullspecs
 from pyartcd import constants, exectools, locks, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -65,6 +63,7 @@ class PromotePipeline:
                  skip_image_list: bool = False,
                  skip_build_microshift: bool = False,
                  skip_signing: bool = False,
+                 skip_sigstore: bool = False,
                  skip_cincinnati_prs: bool = False,
                  skip_ota_notification: bool = False,
                  permit_overwrite: bool = False,
@@ -82,6 +81,7 @@ class PromotePipeline:
         self.skip_build_microshift = skip_build_microshift
         self.skip_mirror_binaries = skip_mirror_binaries
         self.skip_signing = skip_signing
+        self.skip_sigstore = skip_sigstore
         self.skip_cincinnati_prs = skip_cincinnati_prs
         self.skip_ota_notification = skip_ota_notification
         self.permit_overwrite = permit_overwrite
@@ -94,6 +94,8 @@ class PromotePipeline:
         self._multi_enabled = False
         if not self.skip_signing and not signing_env:
             raise ValueError("--signing-env is required unless --skip-signing is set")
+        if not self.skip_sigstore and not signing_env:
+            raise ValueError("--signing-env is required unless --skip-sigstore is set")
         self.signing_env = signing_env
 
         self._logger = self.runtime.logger
@@ -123,6 +125,8 @@ class PromotePipeline:
             required_vars += ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
         if not self.skip_signing:
             required_vars += ["SIGNING_CERT", "SIGNING_KEY", "REDIS_SERVER_PASSWORD", "REDIS_HOST", "REDIS_PORT"]
+        if not self.skip_sigstore:
+            required_vars += ["KMS_CRED_FILE", "KMS_KEY_ID"]
         if not self.skip_build_microshift:
             required_vars += ["JENKINS_SERVICE_ACCOUNT", "JENKINS_SERVICE_ACCOUNT_TOKEN"]
 
@@ -400,11 +404,12 @@ class PromotePipeline:
                         lock_name=lock.value.format(signing_env=self.signing_env),
                         lock_id=lock_identifier
                     )
+                if not self.skip_sigstore:
+                    await self.sigstore_sign(release_name, release_infos)
 
         except Exception as err:
             self._logger.exception(err)
-            error_message = f"Error promoting release {release_name}: {err}\n {traceback.format_exc()}"
-            message = f"Promoting release {release_name} failed with: {error_message}"
+            message = f"Promoting release {release_name} failed"
             await self._slack_client.say_in_thread(message)
             raise
 
@@ -751,13 +756,47 @@ class PromotePipeline:
         await util.mirror_to_s3(f"{base_to_mirror_dir}/{build_arch}", f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}", dry_run=self.runtime.dry_run)
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
+    async def sigstore_sign(self, release_name: str, release_infos: Dict):
+        """ Signs release and component images with sigstore/cosign which publishes to quay
+        """
+        CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
+        signatory = SigstoreSignatory(
+            logger=self._logger,
+            dry_run=self.runtime.dry_run,
+            signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
+            signing_key_id=os.environ.get("KMS_KEY_ID", "dummy-key"),
+            concurrency_limit=CONCURRENCY_LIMIT,
+            sign_release=False,  # until OTA-1267 is complete
+            sign_components=True,
+            verify_release=False,  # not needed when we're supplying the shasum pullspecs
+        )
+        # recursively discover all the pullspecs that need to be signed.
+        images: List[str] = [
+            # for paranoia, refer to release image pullspecs with shasums
+            signatory.redigest_pullspec(info["image"], info["digest"])
+            for info in release_infos.values()
+        ]
+        need_signing: Set[str] = set()
+        errors: Dict[str, str] = {}  # pullspec -> exception
+        need_signing, errors = await signatory.discover_pullspecs(images, release_name)
+
+        if errors:
+            # this should be impossible given we just created the pullspecs
+            raise IOError(f"Not all pullspecs examined were viable: {errors}")
+        if errors := await signatory.sign_pullspecs(need_signing):
+            raise IOError(f"Not all signings succeeded, check errors: {errors}")
+
     def publish_baremetal_installer_binary(self, release_pullspec: str, client_mirror_dir: str, build_arch: str):
         _, baremetal_installer_pullspec = get_release_image_pullspec(release_pullspec, 'baremetal-installer')
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
         # With future releases (probably 4.15) this will eventually need to switch to rhel9
-        rhel_version = 'rhel8'
+        major, minor = isolate_major_minor_in_group(self.group)
+        if major == 4 and minor < 16:
+            rhel_version = 'rhel8'
+        else:
+            rhel_version = 'rhel9'
 
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
         self._logger.info('Extracting baremetal-install')
@@ -1247,6 +1286,7 @@ class PromotePipeline:
         with dest_manifest_list_path.open("w") as ml:
             yaml.dump(dest_manifest_list, ml)
 
+        await manifest_tool(["push", "from-spec", "--", f"{dest_manifest_list_path}"], self.runtime.dry_run)
         auth_opt = ""
         if os.environ.get("XDG_RUNTIME_DIR"):
             auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
@@ -1584,7 +1624,8 @@ class PromotePipeline:
         cmd = f"tkn pipeline start {pipeline_name} " \
               f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} " \
               f"--param major={self.group.split('-')[-1]} " \
-              f"--param version={self.assembly}"
+              f"--param version={self.assembly} " \
+              "--pipeline-timeout 4h"
 
         env = os.environ.copy()
         rc, _, _ = await exectools.cmd_gather_async(cmd, env=env)
@@ -1609,7 +1650,9 @@ class PromotePipeline:
 @click.option("--skip-build-microshift", is_flag=True,
               help="Do not build microshift rpm")
 @click.option("--skip-signing", is_flag=True,
-              help="Do not sign artifacts")
+              help="Do not sign artifacts (legacy signing)")
+@click.option("--skip-sigstore", is_flag=True,
+              help="Do not sign using the newer sigstore method.")
 @click.option("--skip-cincinnati-prs", is_flag=True,
               help="Do not create Cincinnati PRs")
 @click.option("--skip-ota-notification", is_flag=True,
@@ -1629,6 +1672,7 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                   skip_image_list: bool,
                   skip_build_microshift: bool,
                   skip_signing: bool,
+                  skip_sigstore: bool,
                   skip_cincinnati_prs: bool,
                   skip_ota_notification: bool,
                   permit_overwrite: bool, no_multi: bool, multi_only: bool,
@@ -1637,7 +1681,7 @@ async def promote(runtime: Runtime, group: str, assembly: str,
                   signing_env: Optional[str]):
     pipeline = await PromotePipeline.create(
         runtime, group, assembly, skip_blocker_bug_check, skip_attached_bug_check, skip_image_list,
-        skip_build_microshift, skip_signing, skip_cincinnati_prs, skip_ota_notification,
+        skip_build_microshift, skip_signing, skip_sigstore, skip_cincinnati_prs, skip_ota_notification,
         permit_overwrite, no_multi, multi_only, skip_mirror_binaries, use_multi_hack, signing_env
     )
     await pipeline.run()
