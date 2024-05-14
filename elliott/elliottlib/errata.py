@@ -592,7 +592,7 @@ def get_advisory_builds(advisory, session=None):
     return advisory_builds
 
 
-def get_all_advisory_nvrs(advisory):
+def get_all_advisory_nvrs(advisory) -> List[tuple]:
     """
     :return: list of tuples (name, version, release)
     """

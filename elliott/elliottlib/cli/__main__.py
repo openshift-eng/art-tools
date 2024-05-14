@@ -204,19 +204,17 @@ written out to summary_results.json.
     runtime.initialize()
     rhcos_images = {c['name'] for c in rhcos.get_container_configs(runtime)}
 
+    runtime.logger.info("Fetching nvrs from advisory..")
+    all_advisory_nvrs: List[tuple] = elliottlib.errata.get_all_advisory_nvrs(advisory)
+    # filter out rhcos nvrs since they are special and not auto-stitched and fetched by util.get_nvrs_from_payload
+    all_advisory_nvrs = [n for n in all_advisory_nvrs if "rhcos-" not in n[0]]
+    all_advisory_nvrs = set(all_advisory_nvrs)
+    runtime.logger.info(f"Found {len(all_advisory_nvrs)} nvrs in advisory")
+
     runtime.logger.info("Fetching nvrs from payload..")
     all_payload_nvrs = await util.get_nvrs_from_payload(payload, rhcos_images, runtime.logger)
     all_payload_nvrs = set(all_payload_nvrs)
     runtime.logger.info(f"Found {len(all_payload_nvrs)} nvrs in payload")
-
-    runtime.logger.info("Fetching nvrs from advisory..")
-    all_advisory_nvrs = elliottlib.errata.get_all_advisory_nvrs(advisory)
-
-    # filter out rhcos nvrs since they are special and not auto-stitched and fetched by util.get_nvrs_from_payload
-    all_advisory_nvrs = [n for n in all_advisory_nvrs if "rhcos-" not in n[0]]
-
-    all_advisory_nvrs = set(all_advisory_nvrs)
-    runtime.logger.info(f"Found {len(all_advisory_nvrs)} nvrs in advisory")
 
     missing_in_advisory = all_payload_nvrs - all_advisory_nvrs
     extra_in_advisory = all_advisory_nvrs - all_payload_nvrs
