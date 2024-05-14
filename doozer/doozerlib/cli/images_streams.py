@@ -1283,6 +1283,8 @@ __Roles & Responsibilities__:
   in `#forum-ocp-art` on Slack. If necessary, the changes required by this pull request can be
   introduced with a separate PR opened by the component team. Once the repository is aligned,
   this PR will be closed automatically.
+- In particular, it could be that a job like `verify-deps` is complaining. In that case, please open
+  a new PR with the dependency issues addressed (and base images bumped). ART-9595 for reference.
 - Patch-manager or those with sufficient privileges within this repository may add
   any required labels to ensure the PR merges once tests are passing. In cases where ART config is
   canonical, downstream builds are *already* being built with these changes, and merging this PR
