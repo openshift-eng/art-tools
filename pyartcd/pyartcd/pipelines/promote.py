@@ -456,8 +456,6 @@ class PromotePipeline:
 
         self.create_cincinnati_prs(assembly_type, data)
 
-        # alert @qe-release-bot release is ready
-        await self.alert_qe_release_bot(self.assembly)
         # send promote complete email
         self.send_promote_complete_email(data["name"], release_infos)
 
@@ -503,17 +501,11 @@ class PromotePipeline:
         else:
             self._logger.info("Skipping sync srpms of rhcos")
 
-    async def alert_qe_release_bot(self, assembly):
-        art_channel = self._slack_client.channel
-        self._slack_client.bind_channel("#forum-ocp-release")
-        await self._slack_client.say(f"Hi @qe-release-bot Release {assembly} is ready for test")
-        self._slack_client.bind_channel(art_channel)
-
     def send_promote_complete_email(self, name, release_infos):
         content = "PullSpecs: \n"
         for arch, release_info in release_infos.items():
-            content += f"{arch}: {release_info["image"]}\n"
-        content += f"\nJenkins Job: {os.environ.get("BUILD_URL")}\n"
+            content += f"{arch}: {release_info['image']}\n"
+        content += f"\nJenkins Job: {os.environ.get('BUILD_URL')}\n"
         content += "NOTE: These job links are only available to ART. Please contact us if you need to see something specific from the logs.\n"
         mail = MailService.from_config(self.runtime.config)
         mail.send_mail(
