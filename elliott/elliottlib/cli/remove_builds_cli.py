@@ -1,4 +1,5 @@
 import click
+import sys
 from errata_tool import ErrataException
 
 from artcommonlib import logutil
@@ -25,8 +26,14 @@ LOGGER = logutil.get_logger(__name__)
               is_flag=True,
               default=False,
               help="Don't change anything")
+@click.option(
+    "--builds-file", "-f", "builds_file",
+    help="File to read builds from, omit to read from STDIN.",
+    type=click.File("rt"),
+    default=sys.stdin,
+)
 @click.pass_obj
-def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_type, clean, noop):
+def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_type, clean, noop, builds_file):
     """Remove builds (image or rpm) from ADVISORY.
 
     Remove builds that are attached to an advisory:
@@ -47,6 +54,12 @@ def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_ty
     $ elliott --group openshift-4.14 --assembly 4.14.9 remove-builds --all --use-default-advisory image
 
 """
+    if bool(builds) and bool(builds_file):
+        raise click.BadParameter("Use only one of --build or --builds-file")
+
+    if builds_file:
+        builds = [line.strip() for line in builds_file.readlines()]
+
     if bool(clean) == bool(builds):
         raise click.BadParameter("Specify either <NVRs> or --all param")
     if bool(advisory_id) == bool(default_advisory_type):
