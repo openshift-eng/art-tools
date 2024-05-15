@@ -55,6 +55,7 @@ class ScanFips:
 
                 # Exit as error so that we see in the PipelineRun
                 self.runtime.logger.error("FIPS issues were found")
+                sys.exit(1)
             else:
                 self.runtime.logger.info("[DRY RUN] Would have messaged slack")
         else:
