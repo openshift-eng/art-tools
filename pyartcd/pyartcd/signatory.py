@@ -7,8 +7,10 @@ import json
 import logging
 import os
 import aiohttp
+from random import uniform
 import uuid
 from datetime import datetime, timedelta
+from tenacity import retry, wait_random_exponential, stop_after_attempt
 from typing import Set, Iterable, List, BinaryIO, Dict, cast
 
 import aiofiles
@@ -235,6 +237,11 @@ class SigstoreSignatory:
     from a release and signing them.
     """
 
+    # there are a number of ways in which we might run into rate limits when examining and signing
+    # as fast as possible. to prevent this, we will introduce a small amount of jitter to each
+    # concurrent attempt. if we find we are still hitting rate limits, we can increase this delay.
+    THROTTLE_DELAY = 1.0  # jittered delay for each examining or signing attempt
+
     def __init__(self, logger, dry_run: bool, signing_creds: str, signing_key_id: str,
                  concurrency_limit: int, sign_release: bool, sign_components: bool,
                  verify_release: bool) -> None:
@@ -303,6 +310,7 @@ class SigstoreSignatory:
         need_examining: Set[str] = set()
         errors: Dict[str, Exception] = {}
 
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
         img_info = await get_image_info(pullspec, True)
 
         if isinstance(img_info, list):  # pullspec is for a manifest list
@@ -411,13 +419,17 @@ class SigstoreSignatory:
 
         log.info("Signing %s...", pullspec)
         try:
-            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
-            if rc:
-                log.error("Failure signing %s:\n%s", pullspec, stderr)
-                return {pullspec: RuntimeError(stderr)}
+            stdout = await self._retrying_sign_single_manifest(cmd, env)
+            log.debug("Successfully signed %s:\n%s", pullspec, stdout)
+            return {}
         except Exception as exc:
             log.error("Failure signing %s:\n%s", pullspec, exc)
             return {pullspec: exc}
 
-        log.debug("Successfully signed %s:\n%s", pullspec, stdout)
-        return {}
+    @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
+    async def _retrying_sign_single_manifest(self, cmd: List[str], env: Dict[str, str]) -> str:
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
+        if rc:
+            raise RuntimeError(stderr)
+        return stdout
