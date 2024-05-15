@@ -102,7 +102,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
                     bundle_nvr = 'None'
                     bundle_pullspec = 'None'
                 else:
-                    bundle_nvr = build['nvr']
+                    bundle_nvr = build
                     version_release = bundle_nvr[len(olm_bundle.bundle_brew_component) + 1:]
                     # Build pullspec like: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-clusterresourceoverride-operator-bundle:v4.7.0.202012082225.p0-1
                     bundle_pullspec = runtime.resolve_brew_image_url(f'{bundle_image_name}:{version_release}')
