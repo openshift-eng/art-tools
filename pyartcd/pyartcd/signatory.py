@@ -7,8 +7,10 @@ import json
 import logging
 import os
 import aiohttp
+from random import uniform
 import uuid
 from datetime import datetime, timedelta
+from tenacity import retry, wait_random_exponential, stop_after_attempt
 from typing import Set, Iterable, List, BinaryIO, Dict, cast
 
 import aiofiles
@@ -235,13 +237,23 @@ class SigstoreSignatory:
     from a release and signing them.
     """
 
+    # there are a number of ways in which we might run into rate limits when examining and signing
+    # as fast as possible. to prevent this, we will introduce a small amount of jitter to each
+    # concurrent attempt. if we find we are still hitting rate limits, we can increase this delay.
+    THROTTLE_DELAY = 1.0  # jittered delay for each examining or signing attempt
+
+    # strip out any AWS_ environment variables that might interfere with KMS
+    ENV = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
+    # it's easier to set AWS_REGION for now than to create a whole AWS_CONFIG_FILE
+    ENV["AWS_REGION"] = "us-east-1"
+
     def __init__(self, logger, dry_run: bool, signing_creds: str, signing_key_id: str,
                  concurrency_limit: int, sign_release: bool, sign_components: bool,
                  verify_release: bool) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
-        self.signing_creds = signing_creds  # filename where KMS credentials are stored
         self.signing_key_id = signing_key_id  # key id for signing
+        self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.sign_release = sign_release  # whether to sign release images that we examine
         self.sign_components = sign_components  # whether to sign component images that we examine
@@ -303,6 +315,7 @@ class SigstoreSignatory:
         need_examining: Set[str] = set()
         errors: Dict[str, Exception] = {}
 
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
         img_info = await get_image_info(pullspec, True)
 
         if isinstance(img_info, list):  # pullspec is for a manifest list
@@ -403,21 +416,24 @@ class SigstoreSignatory:
                # skipped until something about that situation changes to require and enable it.
                "--tlog-upload=false",
                "--key", f"awskms:///{self.signing_key_id}", pullspec]
-        # easier to set AWS_REGION than create AWS_CONFIG_FILE, unless config gets more complicated
-        env = os.environ | dict(AWS_SHARED_CREDENTIALS_FILE=self.signing_creds, AWS_REGION="us-east-1")
+
         if self.dry_run:
             log.info("[DRY RUN] Would have signed image: %s", cmd)
             return {}
 
         log.info("Signing %s...", pullspec)
         try:
-            rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=env)
-            if rc:
-                log.error("Failure signing %s:\n%s", pullspec, stderr)
-                return {pullspec: RuntimeError(stderr)}
+            stdout = await self._retrying_sign_single_manifest(cmd)
+            log.debug("Successfully signed %s:\n%s", pullspec, stdout)
+            return {}
         except Exception as exc:
             log.error("Failure signing %s:\n%s", pullspec, exc)
             return {pullspec: exc}
 
-        log.debug("Successfully signed %s:\n%s", pullspec, stdout)
-        return {}
+    @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
+    async def _retrying_sign_single_manifest(self, cmd: List[str]) -> str:
+        await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
+        rc, stdout, stderr = await exectools.cmd_gather_async(cmd, check=False, env=self.ENV)
+        if rc:
+            raise RuntimeError(stderr)
+        return stdout
