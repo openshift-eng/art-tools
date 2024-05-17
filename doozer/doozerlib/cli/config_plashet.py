@@ -248,13 +248,18 @@ def get_brewroot_arch_base_path(config, nvre, signed):
     An exception will be raised if the nvr cannot be found unsigned in the brewroot as this
     indicates the nvr has not been built.
     """
+
     parsed_nvr = parse_nvr(nvre)
     package_name = parsed_nvr["name"]
     package_version = parsed_nvr["version"]
     package_release = parsed_nvr["release"]
 
+    el_version = isolate_el_version_in_release(package_release)
+    el_version = el_version if el_version else '7'
+    brew_packages = config.packages_path.format(el_version=el_version)
+
     unsigned_arch_base_path = '{brew_packages}/{package_name}/{package_version}/{package_release}'.format(
-        brew_packages=config.packages_path.format(el_version=isolate_el_version_in_release(package_release)),
+        brew_packages=brew_packages,
         package_name=package_name,
         package_version=package_version,
         package_release=package_release,
