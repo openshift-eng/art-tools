@@ -345,7 +345,7 @@ class ScanOshCli:
         """
         cmds = []
 
-        cmd_template = "osh-cli mock-build --config={config} --brew-build {nvr} --nowait"
+        cmd_template = "osh-cli mock-build --config={config} --profile custom-ocp --brew-build {nvr} --nowait"
         for nvr in nvrs:
             if "-container" in nvr:
                 cmds.append(cmd_template.format(config="cspodman", nvr=nvr))
