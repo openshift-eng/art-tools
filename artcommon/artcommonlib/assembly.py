@@ -234,7 +234,6 @@ def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> 
     """
     defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
 
-    non_embargo_permits = []
     # Do some basic validation here to fail fast
     if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
         if any(permit.code != AssemblyIssueCode.EMBARGOED_CONTENT.name for permit in defined_permits):
