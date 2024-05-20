@@ -237,11 +237,7 @@ def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> 
     non_embargo_permits = []
     # Do some basic validation here to fail fast
     if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
-        for permit in defined_permits:
-            if permit.code != AssemblyIssueCode.EMBARGOED_CONTENT.name:
-                non_embargo_permits.append(permit)
-
-        if non_embargo_permits:
+        if any(permit.code != AssemblyIssueCode.EMBARGOED_CONTENT.name for permit in defined_permits):
             raise ValueError(f'STANDARD assemblies like {assembly} only allow {AssemblyIssueCode.EMBARGOED_CONTENT.name} in "permits"')
 
     for permit in defined_permits:
