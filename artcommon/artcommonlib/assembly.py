@@ -72,6 +72,10 @@ class AssemblyIssueCode(Enum):
     # For GA releases, IMPERMISSIBLE code will be reported.
     MISSING_SHIP_OK_TAG = 10
 
+    # If build sync for named assemblies contain embargoed builds, this code will be reported. If payload is being
+    # promoted after embargoed lift, then permit can be added
+    EMBARGOED_CONTENT = 11
+
 
 class AssemblyIssue:
     """
@@ -230,10 +234,15 @@ def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> 
     """
     defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
 
+    non_embargo_permits = []
     # Do some basic validation here to fail fast
     if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
-        if defined_permits:
-            raise ValueError(f'STANDARD assemblies like {assembly} do not allow "permits"')
+        for permit in defined_permits:
+            if permit.code != AssemblyIssueCode.EMBARGOED_CONTENT.name:
+                non_embargo_permits.append(permit)
+
+        if non_embargo_permits:
+            raise ValueError(f'STANDARD assemblies like {assembly} only allow {AssemblyIssueCode.EMBARGOED_CONTENT.name} in "permits"')
 
     for permit in defined_permits:
         if permit.code == AssemblyIssueCode.IMPERMISSIBLE.name:
