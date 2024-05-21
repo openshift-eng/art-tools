@@ -109,6 +109,8 @@ class PrepareReleasePipeline:
 
         # This will be set to True if advance operator advisory is detected
         self.advance_release = False
+        # This will be set to True if operator pre-release advisory is detected
+        self.pre_release = False
 
     async def run(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
@@ -238,6 +240,19 @@ class PrepareReleasePipeline:
                 _LOGGER.info(f"'advance' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
                              " to 'metadata'")
 
+        if "prerelease" in advisories.keys():
+            advisory_info = await self.get_advisory_info(advisories["prerelease"])
+            # Make sure that the advisory is in editable mode
+            if self.is_advisory_editable(advisory_info):
+                # Set this as an 'pre-release' release
+                self.pre_release = True
+
+                # Remove all builds from the metadata advisory
+                await self.remove_builds_all(advisories["metadata"])
+            else:
+                _LOGGER.info(f"'pre-release' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
+                             " to 'metadata'")
+
         _LOGGER.info("Sweep builds into the the advisories...")
         for impetus, advisory in advisories.items():
             if not advisory:
@@ -248,7 +263,8 @@ class PrepareReleasePipeline:
                 continue
             elif impetus == "metadata":
                 # Do not populate the metadata advisory if advance advisory is present
-                if self.advance_release:
+                if self.advance_release or self.pre_release:
+                    _LOGGER.info("Skipping populating metadata advisory since advance/pre-release detected")
                     continue
                 await self.build_and_attach_bundles(advisory)
             elif impetus in ["advance", "prerelease"]:
