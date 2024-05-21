@@ -2,6 +2,7 @@ import asyncio
 import functools
 import json
 import re
+import sys
 from typing import Dict, List, Set, Union
 
 import click
@@ -37,6 +38,12 @@ pass_runtime = click.make_pass_decorator(Runtime)
     help='Attach the builds to ADVISORY (by default only a list of builds are displayed)')
 @use_default_advisory_option
 @click.option(
+    "--builds-file", "-f", "builds_file",
+    help="File to read builds from, omit to read from STDIN.",
+    type=click.File("rt"),
+    default=sys.stdin,
+)
+@click.option(
     '--build', '-b', 'builds',
     multiple=True, metavar='NVR_OR_ID',
     help='Add build NVR_OR_ID to ADVISORY [MULTIPLE]')
@@ -66,7 +73,7 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @pass_runtime
 # # # NOTE: if you change the method signature, be aware that verify_attached_operators_cli.py # # #
 # # # invokes find_builds_cli so please avoid breaking it.                                     # # #
-async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds, kind, as_json,
+async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds_file, builds, kind, as_json,
                           no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
     """Automatically or manually find or attach viable rpm or image builds
 to ADVISORY. Default behavior searches Brew for viable builds in the
@@ -110,6 +117,11 @@ PRESENT advisory. Here are some examples:
         raise click.BadParameter('Use only one of --use-default-advisory or --attach')
     if payload and non_payload:
         raise click.BadParameter('Use only one of --payload or --non-payload.')
+    if builds and builds_file:
+        raise click.BadParameter('Use only one of --build or --builds-file.')
+
+    if builds_file:
+        builds = [line.strip() for line in builds_file.readlines()]
 
     runtime.initialize(mode='images' if kind == 'image' else 'rpms')
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
