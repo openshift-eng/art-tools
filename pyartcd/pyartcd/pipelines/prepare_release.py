@@ -241,6 +241,9 @@ class PrepareReleasePipeline:
                              " to 'metadata'")
 
         if "prerelease" in advisories.keys():
+            if self.advance_release:
+                raise IOError("prerelease and advance release cannot be set at the same time")
+
             advisory_info = await self.get_advisory_info(advisories["prerelease"])
             # Make sure that the advisory is in editable mode
             if self.is_advisory_editable(advisory_info):
@@ -250,7 +253,7 @@ class PrepareReleasePipeline:
                 # Remove all builds from the metadata advisory
                 await self.remove_builds_all(advisories["metadata"])
             else:
-                _LOGGER.info(f"'pre-release' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
+                _LOGGER.info(f"'prerelease' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
                              " to 'metadata'")
 
         _LOGGER.info("Sweep builds into the the advisories...")
@@ -321,8 +324,9 @@ class PrepareReleasePipeline:
 
         # Move advisories to QE
         for impetus, advisory in advisories.items():
-            if impetus == 'metadata' and self.advance_release:
+            if impetus == 'metadata' and (self.advance_release or self.pre_release):
                 # We don't need to move emtpy metadata advisory if it's an advance release
+                _LOGGER.info("Not moving metadata advisory to QE since prerelease/advance release detected")
                 continue
             try:
                 self.change_advisory_state(advisory, "QE")
