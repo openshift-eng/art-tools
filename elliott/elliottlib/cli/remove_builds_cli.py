@@ -28,9 +28,8 @@ LOGGER = logutil.get_logger(__name__)
               help="Don't change anything")
 @click.option(
     "--builds-file", "-f", "builds_file",
-    help="File to read builds from, omit to read from STDIN.",
+    help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
-    default=sys.stdin,
 )
 @click.pass_obj
 def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_type, clean, noop, builds_file):
@@ -58,6 +57,8 @@ def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_ty
         raise click.BadParameter("Use only one of --build or --builds-file")
 
     if builds_file:
+        if builds_file == "-":
+            builds_file = sys.stdin
         builds = [line.strip() for line in builds_file.readlines()]
 
     if bool(clean) == bool(builds):

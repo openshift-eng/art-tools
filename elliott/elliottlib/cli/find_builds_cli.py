@@ -39,9 +39,8 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @use_default_advisory_option
 @click.option(
     "--builds-file", "-f", "builds_file",
-    help="File to read builds from, omit to read from STDIN.",
+    help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
-    default=sys.stdin,
 )
 @click.option(
     '--build', '-b', 'builds',
@@ -121,6 +120,8 @@ PRESENT advisory. Here are some examples:
         raise click.BadParameter('Use only one of --build or --builds-file.')
 
     if builds_file:
+        if builds_file == "-":
+            builds_file = sys.stdin
         builds = [line.strip() for line in builds_file.readlines()]
 
     runtime.initialize(mode='images' if kind == 'image' else 'rpms')
