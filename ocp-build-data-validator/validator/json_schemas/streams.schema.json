@@ -30,6 +30,21 @@
                 },
                 "aliases": {
                     "type": "array"
+                },
+                "okd": {
+                    "type": "object",
+                    "properties": {
+                        "resolve_as": {
+                            "type": "object",
+                            "properties": {
+                                "image": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "This literal pullspec will be used when resolving this image for OKD alignment. This image is not built or mirrored through this request. It must be pushed via a separate pipeline."
+                                }
+                            }
+                        }
+                    }
                 }
             },
             "required": [
