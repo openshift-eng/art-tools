@@ -145,18 +145,42 @@ class UpdateGolangPipeline:
                                  '--create-tagging-ticket')
         _LOGGER.info('All builds are tagged and available!')
 
-        # Make a sanity check if a builder nvr exists for this version and if it's already pinned
+        # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
+        builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+        if len(builder_nvrs) != len(el_nvr_map):  # builders not found for all rhel versions
+            missing_in = el_nvr_map.keys() - builder_nvrs.keys()
+            _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
+                         "Verifying builder branches are updated for building")
+            for el_v in missing_in:
+                self.verify_golang_builder_repo(el_v, go_version)
+                await self._rebase(el_v, go_version)
+                await self._build(el_v, go_version)
+
+            # Now all builders should be available in brew, try to fetch again
+            builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+            if len(builder_nvrs) != len(el_nvr_map):
+                missing_in = el_nvr_map.keys() - builder_nvrs.keys()
+                raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
+
+        _LOGGER.info("Checking if existing builder images are pinned in streams.yml")
+        need_update = self.are_golang_streams_updated(go_version, builder_nvrs)
+        if not need_update:
+            green_print("Builders don't need update since nvr are built and pinned in streams.yml")
+        else:
+            red_print("Please update streams.yml")
+
+    def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
         _LOGGER.info(f"Checking if {component} builds exist for given golang builds")
         package_info = self.koji_session.getPackage(component)
         if not package_info:
-            raise IOError(f'No brew package is defined for {component}')
+            raise IOError(f'Cannot find brew package info for {component}')
         package_id = package_info['id']
         builder_nvrs = {}
         for el_v, go_nvr in el_nvr_map.items():
             pattern = f"{component}-v{go_version}-*el{el_v}*"
             builds = self.koji_session.listBuilds(packageID=package_id,
-                                                  state=BuildStates.COMPLETE.value,  # complete
+                                                  state=BuildStates.COMPLETE.value,
                                                   pattern=pattern,
                                                   queryOpts={'limit': 1, 'order': '-creation_event_id'})
             if builds:
@@ -170,51 +194,39 @@ class UpdateGolangPipeline:
                 if builder_go_vr in go_nvr:
                     _LOGGER.info(f"Found existing builder image: {build['nvr']} built with {go_nvr}")
                     builder_nvrs[el_v] = build['nvr']
+        return builder_nvrs
 
+    def are_golang_streams_updated(self, go_version, builder_nvrs):
         need_update = False
-        if len(builder_nvrs) == len(el_nvr_map):  # existing builders found for all rhel versions
-            _LOGGER.info("Checking if existing builder images are being used in streams.yml")
+        owner, repo = 'openshift-eng', 'ocp-build-data'
+        branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
 
-            owner, repo = 'openshift-eng', 'ocp-build-data'
-            branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
+        api = GhApi(owner=owner, repo=repo, token=self.github_token)
+        blob = api.repos.get_content(filename, ref=branch)
+        group_config = yaml.safe_load(base64.b64decode(blob['content']))
+        major_go, minor_go, _ = go_version.split('.')
+        for stream_name, info in group_config.items():
+            if 'golang' not in stream_name:
+                continue
+            image_nvr_like = info['image']
+            if 'golang-builder' not in image_nvr_like:
+                continue
+            name, vr = image_nvr_like.split(':')
+            nvr = f"{name.replace('/', '-')}-container-{vr}"
+            pattern = f"{GOLANG_BUILDER_CVE_COMPONENT}-v{major_go}.{minor_go}"
+            if not nvr.startswith(pattern):
+                continue
 
-            api = GhApi(owner=owner, repo=repo, token=self.github_token)
-            blob = api.repos.get_content(filename, ref=branch)
-            group_config = yaml.safe_load(base64.b64decode(blob['content']))
-            major_go, minor_go, _ = go_version.split('.')
-            for stream_name, info in group_config.items():
-                if 'golang' not in stream_name:
-                    continue
-                image_nvr_like = info['image']
-                if 'golang-builder' not in image_nvr_like:
-                    continue
-                name, vr = image_nvr_like.split(':')
-                nvr = f"{name.replace('/', '-')}-container-{vr}"
-                pattern = f"{component}-v{major_go}.{minor_go}"
-                if not nvr.startswith(pattern):
-                    continue
-
-                _, el_version = split_el_suffix_in_release(vr)
-                el_version = int(el_version[2:])
-                if nvr == builder_nvrs[el_version]:
-                    _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{nvr}')
-                else:
-                    yellow_print(f'update stream:{stream_name}:image to {builder_nvrs[el_version]}')
-                    need_update = True
-
-            if not need_update:
-                green_print("Builders don't need update since nvr are built and pinned in streams.yml")
+            _, el_version = split_el_suffix_in_release(vr)  # 'el8'
+            el_version = int(el_version[2:])  # 8
+            if el_version not in builder_nvrs:
+                continue
+            if nvr == builder_nvrs[el_version]:
+                _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{nvr}')
             else:
-                red_print("Please update streams.yml")
-        else:
-            missing_in = el_nvr_map.keys() - builder_nvrs.keys()
-            # Make sure builder branches are updated for building
-            _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
-                         "Verifying builder branches are updated for building")
-            for el_v in missing_in:
-                self.verify_golang_builder_repo(el_v, go_version)
-                await self._rebase(el_v, go_version)
-                await self._build(el_v, go_version)
+                yellow_print(f'update stream:{stream_name}:image to {builder_nvrs[el_version]}')
+                need_update = True
+        return need_update
 
     async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
@@ -353,4 +365,4 @@ async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, creat
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
-    await UpdateGolangPipeline(runtime, ocp_version, scratch, create_ticket, art_jira, go_nvrs).run()
+    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira, scratch).run()
