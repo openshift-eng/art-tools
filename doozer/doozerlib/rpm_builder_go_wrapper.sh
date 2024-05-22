@@ -34,8 +34,8 @@ if [[ "${GOOS}" == darwin || "${GOOS}" == windows ]]; then
     echoerr "permitting CGO_ENABLED=${CGO_ENABLED} because of GOOS=${GOOS}"
 else
     export CGO_ENABLED="1"
-    echoerr "forcing CGO_ENABLED=${CGO_ENABLED}"
 fi
+echoerr "GOOS is $GOOS, CGO_ENABLED is ${CGO_ENABLED}"
 
 HAS_TAGS=0
 if cat <<< "$@" | grep "\-tags" > /dev/null; then
@@ -147,4 +147,12 @@ echo 1>&2
 
 echoerr "Invoking actual go binary"
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd ) # Get the directory in which this script is executing
+
+echo -n "$LOG_PREFIX} go environment variable" 1>&2
+{ "${SCRIPT_DIR}/go.real" env | grep -e CGO_ENABLED -e GOEXPERIMENT -e GOOS -e GOARCH -e GOAMD64; } 1>&2
+
+echoerr "FORCE_FOD_MODE=$FORCE_FOD_MODE"
+echoerr "FORCE_OPENSSL=$FORCE_OPENSSL"
+echoerr "FORCE_DYNAMIC=$FORCE_DYNAMIC"
+
 ${SCRIPT_DIR}/go.real "${ARGS[@]}"
