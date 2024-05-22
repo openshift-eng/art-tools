@@ -228,7 +228,7 @@ class UpdateGolangPipeline:
             "--message", f"bumping to {version}-{release}"
         ]
         if not self.dry_run:
-            cmd += " --push"
+            cmd.append("--push")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
     async def _build(self, el_v, go_version):
