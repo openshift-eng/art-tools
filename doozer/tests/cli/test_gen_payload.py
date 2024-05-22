@@ -315,8 +315,8 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.sync_heterogeneous_payloads = AsyncMock()
 
         await gpcli.sync_payloads()
-        self.assertEqual(gpcli.mirror_payload_content.await_count, 0)
-        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 0)
+        self.assertEqual(gpcli.mirror_payload_content.await_count, 1)
+        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 1)
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
 
     @patch("aiofiles.open")
