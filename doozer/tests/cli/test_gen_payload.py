@@ -211,15 +211,17 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues, ["stuff"])
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
-    def test_generate_payload_entries(self, pg_fpe_mock):
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.embargo_issues_for_payload")
+    def test_generate_payload_entries(self, pg_eissuesfp_mock, pg_findpe_mock):
         gpcli = rgp_cli.GenPayloadCli(
             exclude_arch=["s390x"],
             runtime=MagicMock(arches=["ppc64le", "s390x"]),
         )
-        pg_fpe_mock.return_value = ("entries", ["issues"])
+        pg_eissuesfp_mock.return_value = ["embargo_issues"]
+        pg_findpe_mock.return_value = ("entries", ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
-        self.assertEqual(gpcli.assembly_issues, ["issues"])
+        self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
 
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())
