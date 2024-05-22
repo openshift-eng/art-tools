@@ -328,26 +328,30 @@ class UpdateGolangPipeline:
         el_instructions = ''
         for el_v, nvr in el_nvr_map.items():
             nvr_list_string += f'- RHEL{el_v}: {nvr}\n'
-            el_instructions += f'\nFor rhel{el_v}:\n'
+            el_instructions += f'For rhel{el_v}:\n'
             if el_v == 8:
                 module_tag = self.get_module_tag(nvr, el_v)
                 if not module_tag:
                     raise click.BadParameter(f'Cannot find module tag for {nvr}')
+                commit_link = "https://gitlab.cee.redhat.com/rcm/rcm-ansible/-/commit/e838f59751cebe86347e6a82252dec0a1593c735"
                 el_instructions += (f'- Update inheritance for each `rhaos-{self.ocp_version}-rhel-{el_v}-override` '
-                                    f'tag to include the module tag `{module_tag}`\n')
+                                    f'tag to include the module tag `{module_tag}`. This is usually done via a '
+                                    f'commit in rcm-ansible repo ({commit_link}). Please do not '
+                                    'directly tag the module build in the override tag.\n')
             elif el_v in (7, 9):
                 el_instructions += f'- `brew tag rhaos-{self.ocp_version}-rhel-{el_v}-override {nvr}`\n'
             el_instructions += f'- Run `brew regen-repo` for `rhaos-{self.ocp_version}-rhel-{el_v}-build`\n'
 
-        template = f'''OpenShift requests that buildroots for version {self.ocp_version} provide a new
+        template = f'''OpenShift requests that buildroots for version {self.ocp_version} provide a new \
 golang compiler version {go_version} , reference: {self.art_jira}
 
 The new NVRs are:
 {nvr_list_string}
 {el_instructions}
 '''
-
-        _LOGGER.info(f'Please create https://issues.redhat.com/browse/CWFCONF Jira ticket with the following content:\n{template}')
+        title = f'Request Golang {go_version} for OCP {self.ocp_version}'
+        _LOGGER.info('Please create https://issues.redhat.com/browse/CWFCONF Jira ticket with \n'
+                     f'title: {title}\ncontent:\n{template}')
 
 
 @cli.command('update-golang')
