@@ -117,13 +117,15 @@ class UpdateGolangPipeline:
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
 
-        title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
-        if self.create_ticket:
-            title_update += ' [create-ticket]'
-        if self.dry_run:
-            title_update += ' [dry-run]'
-        jenkins.init_jenkins()
-        jenkins.update_title(title_update)
+        running_in_jenkins = os.environ.get('BUILD_ID', False)
+        if running_in_jenkins:
+            title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
+            if self.create_ticket:
+                title_update += ' [create-ticket]'
+            if self.dry_run:
+                title_update += ' [dry-run]'
+            jenkins.init_jenkins()
+            jenkins.update_title(title_update)
 
         # if requested, create ticket for tagging request
         if self.create_ticket:
@@ -342,9 +344,13 @@ The new NVRs are:
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
+@click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str,
-                        scratch: bool = False):
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira, scratch).run()
+async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
+                        confirm: bool, go_nvrs: List[str]):
+    if not runtime.dry_run and not confirm:
+        _LOGGER.info('--confirm is not set, running in dry-run mode')
+        runtime.dry_run = True
+    await UpdateGolangPipeline(runtime, ocp_version, scratch, create_ticket, art_jira, go_nvrs).run()
