@@ -797,7 +797,6 @@ class GenPayloadCli:
             False: dict()
         }
 
-        # filtered_payload_entries_for_arch includes embargoed content when self.embargo_permit_ack is set
         tasks = []
         for arch, payload_entries in self.private_payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries, True))
