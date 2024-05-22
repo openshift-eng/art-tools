@@ -36,6 +36,13 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
     return False
 
 
+def get_latest_nvr_in_tag(tag: str, package: str, koji_session) -> str:
+    latest_build = koji_session.listTagged(tag, latest=True, package=package, inherit=False)
+    if not latest_build:
+        return None
+    return latest_build[0]['nvr']
+
+
 async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     if not is_latest_build(ocp_version, el_v, nvr, koji_session):
         return False
@@ -126,6 +133,19 @@ class UpdateGolangPipeline:
                 title_update += ' [dry-run]'
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
+
+        # Do a sanity check for rhel8 module build
+        # a module build should never be tagged directly in override tag
+        # if it is, we should make sure it is available via module inheritance
+        # and then untag it from override tag
+        if 8 in el_nvr_map and 'module' in el_nvr_map[8]:
+            tag = f'rhaos-{self.ocp_version}-rhel-8-override'
+            package = parse_nvr(el_nvr_map[8])['name']
+            nvr = get_latest_nvr_in_tag(tag, package, self.koji_session)
+            if nvr:
+                raise ValueError(f'{nvr} is tagged in {tag}, please make sure it is available via module inheritance '
+                                 f'(brew list-tagged {tag} {package} --inherit). If not, use --create-tagging-ticket. '
+                                 f'Once it is available, untag it from the override tag (brew untag-build {tag} {nvr})')
 
         # if requested, create ticket for tagging request
         if self.create_ticket:
