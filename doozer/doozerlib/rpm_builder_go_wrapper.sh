@@ -30,7 +30,7 @@ if [[ "${CGO_ENABLED}" == "0" ]]; then
     echoerr "non-compliant RPM attempted to use CGO_ENABLED=${CGO_ENABLED}"
 fi
 
-if [[ "${GOOS}" == "darwin" ]]; then
+if [[ "${GOOS}" == darwin || "${GOOS}" == windows ]]; then
     echoerr "permitting CGO_ENABLED=${CGO_ENABLED} because of GOOS=${GOOS}"
 else
     export CGO_ENABLED="1"
