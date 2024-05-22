@@ -22,10 +22,9 @@ spec:
         touch /root/.config/artcd.toml
 
         kinit -kt /tmp/keytab/keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@IPA.REDHAT.COM
-
-        make default-python-venv
-
-        source venv/bin/activate
+        
+        pip install stomp.py==8.1.0
+        pip install setuptools==65.5.1
 
         artcd -vv scan-fips --version $(params.version) --nvrs $(params.nvrs)
 
