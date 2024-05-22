@@ -129,20 +129,26 @@ class UpdateGolangPipeline:
 
         # if requested, create ticket for tagging request
         if self.create_ticket:
-            _LOGGER.info('Making sure that builds are not already tagged & have necessary qe tags')
+            _LOGGER.info('Making sure that builds are not already tagged')
             for el_v, nvr in el_nvr_map.items():
                 if is_latest_build(self.ocp_version, el_v, nvr, self.koji_session):
                     raise ValueError(f'{nvr} is already the latest build, run '
                                      'only with nvrs that are not latest or run without --create-tagging-ticket')
 
             _LOGGER.info('Creating Jira ticket to tag golang builds in buildroots')
-            self.create_jira_ticket(el_nvr_map, go_version)
+            self.create_jira_ticket_for_el8(el_nvr_map, go_version)
             return
 
         for el_v, nvr in el_nvr_map.items():
             if not await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
-                raise ValueError(f'{nvr} is not the latest build in buildroot, tag yourself or get them tagged via'
-                                 '--create-tagging-ticket')
+                if el_v == 8 and 'module' in nvr:
+                    raise ValueError(f'{nvr} is not the latest build in buildroot, get it tagged via '
+                                     '--create-tagging-ticket')
+                else:
+                    tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-override'
+                    _LOGGER.error(f'{nvr} is not the latest build in buildroot. To tag build run `brew tag-build {nvr}'
+                                  f' {tag}`. To regen repo run `brew regen-repo {tag}`')
+                    raise ValueError(f'{nvr} is not the latest build in buildroot')
         _LOGGER.info('All builds are tagged and available!')
 
         # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
@@ -318,7 +324,7 @@ class UpdateGolangPipeline:
         prefix = f'module-go-toolset-rhel{el_v}-'
         return next((t for t in tags if t.startswith(prefix) and not t.endswith('-build')), None)
 
-    def create_jira_ticket(self, el_nvr_map, go_version):
+    def create_jira_ticket_for_el8(self, el_nvr_map, go_version):
         # project = 'CWFCONF'
         # labels = ['releng']
         # components = ['BLD', 'cat-brew', 'prod-RHOSE']
@@ -338,9 +344,6 @@ class UpdateGolangPipeline:
                                     f'tag to include the module tag `{module_tag}`. This is usually done via a '
                                     f'commit in rcm-ansible repo ({commit_link}). Please do not '
                                     'directly tag the module build in the override tag.\n')
-            elif el_v in (7, 9):
-                el_instructions += f'- `brew tag rhaos-{self.ocp_version}-rhel-{el_v}-override {nvr}`\n'
-            el_instructions += f'- Run `brew regen-repo` for `rhaos-{self.ocp_version}-rhel-{el_v}-build`\n'
 
         template = f'''OpenShift requests that buildroots for version {self.ocp_version} provide a new \
 golang compiler version {go_version} , reference: {self.art_jira}
