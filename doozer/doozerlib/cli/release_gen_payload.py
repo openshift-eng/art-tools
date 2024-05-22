@@ -610,7 +610,20 @@ class GenPayloadCli:
             # entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             # issues: List[AssemblyIssue]
             public_entries, public_payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
-            entries_for_arch[arch] = public_entries
+
+            for k, v in public_entries.items():
+                if not v.build_inspector:
+                    # Its RHCOS, since it doesn't have a build inspector. Put it in for now, but change once RHCOS
+                    # supports private nightlies
+                    entries_for_arch[k] = v
+                    continue
+
+                if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
+                    # It's an embargoed build. Filter it out if its stream
+                    continue
+
+                entries_for_arch[k] = v
+
             self.assembly_issues.extend(public_payload_issues)
 
             # Always make sure that embargoed builds do not flow to public image stream
@@ -738,8 +751,8 @@ class GenPayloadCli:
             ))
 
         if permitted_non_acknowledged_embargoed_issues:
-            raise IOError(f"WARNING: Embargoed components found: {set(permitted_non_acknowledged_embargoed_issues)} "
-                          "--embargo-permit-ack must be specified if is intended")
+            raise IOError(f"Embargoed components found: {set(permitted_non_acknowledged_embargoed_issues)}; "
+                          "must specify --embargo-permit-ack flag to publish private content")
 
         return payload_permitted, assembly_issues_report
 
@@ -784,42 +797,21 @@ class GenPayloadCli:
             False: dict()
         }
 
-        # Check to see if there is an embargoed build and whether --embargo-permit-ack is specified
-        filtered_payload_entries_for_arch = {}
-        for arch, payload_entries in self.payload_entries_for_arch.items():
-            filtered_payload_entries = {}
-            for payload_tag_name, payload_entry in payload_entries.items():
-                if payload_entry.rhcos_build is not None:
-                    # RHCOS builds can't be embargoes for now
-                    # Filter them out
-                    continue
-
-                if payload_entry.build_inspector.is_under_embargo() and self.runtime.assembly_type is AssemblyTypes.STREAM:
-                    # We filter out the embargoed builds from syncing to public quay.
-                    # Once its lifted, we let it through, by adding a permit
-                    continue
-
-                filtered_payload_entries[payload_tag_name] = payload_entry
-
-            if filtered_payload_entries:
-                # Sync if there are any builds for this arch, otherwise omit the arch entirely
-                filtered_payload_entries_for_arch[arch] = filtered_payload_entries
-
         # filtered_payload_entries_for_arch includes embargoed content when self.embargo_permit_ack is set
         tasks = []
         for arch, payload_entries in self.private_payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries, True))
-        for arch, payload_entries in filtered_payload_entries_for_arch.items():
+        for arch, payload_entries in self.payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries))
         await asyncio.gather(*tasks)
 
         await asyncio.sleep(120)
 
         # Updating public and private image streams
-        for private_mode, payload_entries_for_each_arch in [(False, filtered_payload_entries_for_arch),
+        for private_mode, payload_entries_for_each_arch_iter in [(False, self.payload_entries_for_arch),
                                                             (True, self.private_payload_entries_for_arch)]:
             tasks = []
-            for arch, payload_entries in payload_entries_for_each_arch.items():
+            for arch, payload_entries in payload_entries_for_each_arch_iter.items():
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
                 tasks.append(self.generate_specific_payload_imagestreams(
                     arch, private_mode, payload_entries, multi_specs))
