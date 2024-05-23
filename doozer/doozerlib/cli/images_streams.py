@@ -125,8 +125,13 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
                 if "aarch64" in runtime.arches:
                     mirror_arm = True
 
-            brew_image = config.image
-            brew_pullspec = runtime.resolve_brew_image_url(brew_image)
+            src_image = config.image
+            if len(src_image.split('/')) > 2:
+                # appears to be a pullspec already; like: quay.io/centos/centos:stream8
+                src_image_pullspec = src_image
+            else:
+                # appears to be short image name like: openshift/golang-builder:v1.19.13-202404160932.g3172d57.el9
+                src_image_pullspec = runtime.resolve_brew_image_url(src_image)
 
             if only_if_missing:
                 check_cmd = f'oc image info {upstream_dest}'
@@ -149,7 +154,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             if config.mirror_manifest_list is True:
                 as_manifest_list = '--keep-manifest-list'
 
-            cmd = f'oc image mirror {as_manifest_list} {brew_pullspec} {upstream_dest}'
+            cmd = f'oc image mirror {as_manifest_list} {src_image_pullspec} {upstream_dest}'
 
             if runtime.registry_config_dir is not None:
                 cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
@@ -161,7 +166,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
             # mirror arm64 builder and base images for CI
             if mirror_arm:
                 # oc image mirror will filter out missing arches (as long as the manifest is there) regardless of specifying --skip-missing
-                arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {brew_pullspec} {upstream_dest}-arm64'
+                arm_cmd = f'oc image mirror --filter-by-os linux/arm64 {src_image_pullspec} {upstream_dest}-arm64'
                 if runtime.registry_config_dir is not None:
                     arm_cmd += f" --registry-config={get_docker_config_json(runtime.registry_config_dir)}"
                 if dry_run:
