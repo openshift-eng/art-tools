@@ -32,7 +32,7 @@ class ScanFipsCli:
 
         self.runtime.logger.info(f"Running check-payload command: {cmd}")
         rc_scan, out_scan, _ = await cmd_gather_async(cmd)
-
+        self.runtime.logger.info(f"Check-payload output: {out_scan}")
         # Useful while testing on local machine
         if self.clean:
             # Eg: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator
