@@ -29,7 +29,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model, ListModel
 from artcommonlib.pushd import Dir
-from artcommonlib.release_util import isolate_assembly_in_release
+from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from doozerlib import constants, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
@@ -40,6 +40,7 @@ from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
+from doozerlib.util import extract_version_fields
 
 # doozer used to be part of OIT
 OIT_COMMENT_PREFIX = '#oit##'
@@ -1437,58 +1438,60 @@ class ImageDistGitRepo(DistGitRepo):
                 if changed:
                     dfp.add_lines_at(entry, "RUN " + new_value, replace=True)
 
-    def _resolve_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
+    def _resolve_image_from_upstream_parent(self, original_parent: str, dfp: DockerfileParser) -> Optional[str]:
         """
-        Resolve the upstream image (CI) to its equivalent image downstream (brew).
+        Given an upstream image (CI) pullspec, find a matching entry in streams.yml by comparing the rhel version,
+        and the builder X.Y fields. If no match is found, return None
         :param original_parent: The upstream image e.g.
         registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.20-openshift-4.15
         :param dfp: DockerfileParser object for the image
+
+        Example: as of 3/5/2024, registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.21-openshift-4.16 should match
+        openshift/golang-builder:v1.21.3-202401221732.el9.g00c615b as defined for the rhel-9-golang stream
         """
+
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
             labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
 
-            # Get the exact build NVR
-            build_nvr = f'{labels["com.redhat.component"]}-{labels["version"]}-{labels["release"]}'
+            # Get builder X.Y
+            major, minor, _ = extract_version_fields(labels['version'])
 
-            # Query Brew for build info
-            self.logger.debug('Retrieving info for Brew build %s', build_nvr)
-            with self.runtime.shared_koji_client_session() as koji_api:
-                if not koji_api.logged_in:
-                    koji_api.gssapi_login()
-                build = koji_api.getBuild(build_nvr, strict=True)
+            # Get builder EL version
+            el_version = isolate_el_version_in_release(labels['release'])
 
-            # Get the pullspec for the upstream equivalent
-            # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.20.10-202310161945.el8.gdc4b478
-            upstream_equivalent_pullspec = build['extra']['image']['index']['pull'][1]
+            # Get expected stream name
+            for stream in self.runtime.streams.values():
+                image = stream['image']
+                image_tag = image.split(':')[-1]
 
-            # Verify whether the image exists
-            self.logger.debug('Checking for upstream equivalent existence, pullspec: %s', upstream_equivalent_pullspec)
-            util.oc_image_info__caching(upstream_equivalent_pullspec)
+                # Compare builder X.Y
+                stream_major, stream_minor, _ = extract_version_fields(image_tag)
+                if stream_major != major or stream_minor != minor:
+                    continue
 
-            # It does. Use this to rebase FROM directive
-            mapped_image = f'{labels["name"]}:{labels["version"]}-{labels["release"]}'
+                # Compare el version
+                if isolate_el_version_in_release(image_tag) == el_version:
+                    # We found a match
+                    return image
 
-            dfp.add_lines_at(0,
-                             f"# Rebased {original_parent} with {mapped_image} to follow upstream config")
-            return mapped_image
-
-        except (KeyError, ChildProcessError) as e:
+        except (ValueError, ChildProcessError) as e:
             # We could get:
             #   - a ChildProcessError when the upstream equivalent is not found
-            #   - a ChildProcessError when trying to rebase our base images
-            #   - a KeyError when 'com.redhat.component' label is undefined
+            #   - a ValueError when 'version' or 'release' labels are undefined
             # In all of the above, we'll just do typical stream resolution
 
             self.logger.warning(f'Could not match upstream parent {original_parent}: {e}')
-            dfp.add_lines_at(
-                0,
-                "",
-                "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
-                ""
-            )
 
-            return None
+        # If we got here, we couldn't match upstream so add a warning in the Dockerfile, and return None
+        dfp.add_lines_at(
+            0,
+            "",
+            "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
+            ""
+        )
+
+        return None
 
     def _mapped_image_from_member(self, image, original_parent, dfp):
         base = image.member
@@ -1632,11 +1635,12 @@ class ImageDistGitRepo(DistGitRepo):
             return stream.image
 
         # canonical_builders_from_upstream flag is either True, or 'auto' and we are before feature freeze
-        parent = self._resolve_parent(original_parent, dfp)
-        if not parent:
-            return stream.image
-        else:
-            return parent
+        image = self._resolve_image_from_upstream_parent(original_parent, dfp)
+        if image:
+            return image
+
+        # Didn't find a match in streams.yml: do typical stream resolution
+        return stream.image
 
     def _determine_art_rhel_version(self):
         """
