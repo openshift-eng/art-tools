@@ -73,10 +73,15 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     async def test_run_non_kernel_packages(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                            tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
+            "vars": {
+                "RHCOS_EL_MAJOR": "9",
+                "RHCOS_EL_MINOR": "4"
+            },
             "rpm_deliveries": [
                 {
                     "packages": ["foo", "bar"],
-                    "integration_tag": "test-integration-tag",
+                    "rhel_tag": "test-rhel-tag",
+                    "candidate_tag": "test-candidate-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
@@ -95,22 +100,24 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             results = {
                 ("test-stop-ship-tag", "foo"): [{"nvr": "foo-1.0.0-1", "version": "1.0.0", "name": "foo"}],
                 ("test-stop-ship-tag", "bar"): [{"nvr": "bar-1.0.0-1", "version": "1.0.0", "name": "bar"}],
-                ("test-integration-tag", "foo"): [
+                ("test-candidate-tag", "foo"): [
                     {"nvr": "foo-1.0.0-1", "version": "1.0.0", "name": "foo"},
                     {"nvr": "foo-1.0.1-1", "version": "1.0.1", "name": "foo"},
                 ],
-                ("test-integration-tag", "bar"): [
+                ("test-candidate-tag", "bar"): [
                     {"nvr": "bar-1.0.0-1", "version": "1.0.0", "name": "bar"},
                     {"nvr": "bar-1.0.1-1", "version": "1.0.1", "name": "bar"},
                     {"nvr": "bar-1.0.2-1", "version": "1.0.2", "name": "bar"},
                 ],
+                ("test-rhel-tag", "foo"): [{"nvr": "foo-1.0.0-1", "version": "1.0.0", "name": "foo"}],
+                ("test-rhel-tag", "bar"): [{"nvr": "bar-1.0.0-1", "version": "1.0.0", "name": "bar"}],
             }
             return [results[tc] for tc in tag_component_tuples]
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
-                "foo-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"}],
-                "bar-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"},
+                "foo-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-candidate-tag"}],
+                "bar-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-candidate-tag"},
                                 {"name": "test-target-tag"}],
             }[nvr] for nvr in nvr_list
         ]
@@ -132,10 +139,15 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     async def test_run_kernel_version_match(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                             tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
+            "vars": {
+                "RHCOS_EL_MAJOR": "9",
+                "RHCOS_EL_MINOR": "4"
+            },
             "rpm_deliveries": [
                 {
                     "packages": ["kernel", "kernel-rt"],
-                    "integration_tag": "test-integration-tag",
+                    "rhel_tag": "test-rhel-tag",
+                    "candidate_tag": "test-candidate-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
@@ -167,15 +179,17 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             results = {
                 ("test-stop-ship-tag", "kernel"): [],
                 ("test-stop-ship-tag", "kernel-rt"): [],
-                ("test-integration-tag", "kernel"): [kernel_build],
-                ("test-integration-tag", "kernel-rt"): [kernel_rt_build],
+                ("test-rhel-tag", "kernel"): [],
+                ("test-rhel-tag", "kernel-rt"): [],
+                ("test-candidate-tag", "kernel"): [kernel_build],
+                ("test-candidate-tag", "kernel-rt"): [kernel_rt_build],
             }
             return [results[tc] for tc in tag_component_tuples]
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
-                kernel_build['nvr']: [{"name": "test-integration-tag"}],
-                kernel_rt_build['nvr']: [{"name": "test-integration-tag"}],
+                kernel_build['nvr']: [{"name": "test-candidate-tag"}],
+                kernel_rt_build['nvr']: [{"name": "test-candidate-tag"}],
             }[nvr] for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
@@ -196,10 +210,15 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     async def test_run_kernel_version_mismatch(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                                tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
+            "vars": {
+                "RHCOS_EL_MAJOR": "9",
+                "RHCOS_EL_MINOR": "4"
+            },
             "rpm_deliveries": [
                 {
                     "packages": ["kernel", "kernel-rt"],
-                    "integration_tag": "test-integration-tag",
+                    "rhel_tag": "test-rhel-tag",
+                    "candidate_tag": "test-candidate-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
@@ -231,16 +250,18 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             results = {
                 ("test-stop-ship-tag", "kernel"): [],
                 ("test-stop-ship-tag", "kernel-rt"): [],
-                ("test-integration-tag", "kernel"): [kernel_build],
-                ("test-integration-tag", "kernel-rt"): [kernel_rt_build],
+                ("test-rhel-tag", "kernel"): [],
+                ("test-rhel-tag", "kernel-rt"): [],
+                ("test-candidate-tag", "kernel"): [kernel_build],
+                ("test-candidate-tag", "kernel-rt"): [kernel_rt_build],
             }
             return [results[tc] for tc in tag_component_tuples]
 
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
-                kernel_build['nvr']: [{"name": "test-integration-tag"}],
-                kernel_rt_build['nvr']: [{"name": "test-integration-tag"}],
+                kernel_build['nvr']: [{"name": "test-candidate-tag"}],
+                kernel_rt_build['nvr']: [{"name": "test-candidate-tag"}],
             }[nvr] for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {

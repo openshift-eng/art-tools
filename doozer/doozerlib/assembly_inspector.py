@@ -107,8 +107,8 @@ class AssemblyInspector:
                     continue
                 # Check if the rpm has an explicit "ship-ok" tag
                 if rpm_delivery_config.ship_ok_tag and rpm_delivery_config.ship_ok_tag not in tag_names:
-                    # If the rpm is not tagged into the integration tag, it might be obtained from a released repo
-                    if rpm_delivery_config.integration_tag and rpm_delivery_config.integration_tag not in tag_names:
+                    # If the rpm is not tagged into the candidate tag, it might be obtained from a released repo
+                    if rpm_delivery_config.candidate_tag and rpm_delivery_config.candidate_tag not in tag_names:
                         release_tag = next(filter(lambda tag: tag.endswith("-released"), tag_names), None)
                         if release_tag:
                             self.runtime.logger.warning(f"Permit {rpm_build['nvr']} because it was already released through {release_tag}.")
