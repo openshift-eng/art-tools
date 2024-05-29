@@ -28,4 +28,10 @@ default_db_params = {
 # TODO: once brew outage is resolved, change to 6 hours again (currently set to 100)
 BREW_BUILD_TIMEOUT = 100 * 60 * 60  # how long we wait before canceling a task
 
-KONFLUX_REPO_CERT_PATH = "/tmp/Current-IT-Root-CAs.pem"
+# In Brew, 'ADD tls-ca-bundle.pem /tmp/tls-ca-bundle.pem' is injected during build and 'sslcacert=/tmp/tls-ca-bundle.pem'
+# is specified for CA cert, so that 'sslverify=true' can be used in yum repos.
+# To achieve the same in Konflux, we need to 'ADD tls-ca-bundle.pem /tmp/tls-ca-bundle.pem' in every Dockerfile stage
+# and set 'sslcacert=/tmp/Current-IT-Root-CAs.pem'
+KONFLUX_REPO_CA_BUNDLE_TMP_PATH = "/tmp"
+KONFLUX_REPO_CA_BUNDLE_FILENAME = "Current-IT-Root-CAs.pem"
+KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"

@@ -1,10 +1,12 @@
 import os
 import pathlib
+
 from dockerfile_parse import DockerfileParser
 from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.pushd import Dir
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib import util
+from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
@@ -75,7 +77,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "\n# Start Konflux-specific steps",
             "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/",
             "COPY .oit/signed.repo /etc/yum.repos.d/",
-            "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem /tmp",
+            f"ADD {KONFLUX_REPO_CA_BUNDLE_HOST}/{KONFLUX_REPO_CA_BUNDLE_FILENAME} {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             "# End Konflux-specific steps\n\n",
             at_start=True,
             all_stages=True,
