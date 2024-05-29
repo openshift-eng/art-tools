@@ -75,7 +75,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         dfp.add_lines(
             "\n# Start Konflux-specific steps",
-            "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/",
+            "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
             "COPY .oit/signed.repo /etc/yum.repos.d/",
             f"ADD {KONFLUX_REPO_CA_BUNDLE_HOST}/{KONFLUX_REPO_CA_BUNDLE_FILENAME} {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             "# End Konflux-specific steps\n\n",
@@ -86,7 +86,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         # Put back original yum config
         dfp.add_lines(
             "\n# Start Konflux-specific steps",
-            "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/",
+            "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
             "# End Konflux-specific steps\n\n"
         )
         return version, release
