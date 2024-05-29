@@ -12,6 +12,7 @@ import yaml
 
 from artcommonlib.model import Missing, Model
 from doozerlib.repodata import Repodata, RepodataLoader
+from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_TMP_PATH, KONFLUX_REPO_CA_BUNDLE_FILENAME
 
 
 DEFAULT_REPOTYPES = ['unsigned', 'signed']
@@ -125,7 +126,7 @@ class Repo(object):
         else:
             return self._data.content_set[arch]
 
-    def conf_section(self, repotype, arch=ARCH_X86_64, enabled=None, section_name=None):
+    def conf_section(self, repotype, arch=ARCH_X86_64, enabled=None, section_name=None, konflux=False):
         """
         Returns a str that represents a yum repo configuration section corresponding
         to this repo in group.yml.
@@ -134,6 +135,7 @@ class Repo(object):
         :param arch: The architecture this section if being generated for (e.g. ppc64le or x86_64).
         :param enabled: If True|False, explicitly set 'enabled = 1|0' in section. If None, inherit group.yml setting.
         :param section_name: The section name to use if not the repo name in group.yml.
+        :param konflux: If True, set custom cert path for Konflux
         :return: Returns a string representing a repo section in a yum configuration file. e.g.
             [rhel-7-server-ansible-2.4-rpms]
             gpgcheck = 0
@@ -189,6 +191,9 @@ class Repo(object):
         if self._data.conf.get('gpgkey', None) is None and self._data.conf.get('extra_options', {}).get('gpgkey', None) is None:
             # This key will bed used only if gpgcheck=1
             result += 'gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n'
+
+        if konflux:
+            result += f'sslcacert = {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}/{KONFLUX_REPO_CA_BUNDLE_FILENAME}\n'
 
         result += '\n'
 
@@ -280,7 +285,7 @@ class Repos(object):
         """Mainly for debugging to dump a dict representation of the collection"""
         return str(self._repos)
 
-    def repo_file(self, repo_type, enabled_repos=[], empty_repos=[], arch=None):
+    def repo_file(self, repo_type, enabled_repos=[], empty_repos=[], arch=None, konflux=False):
         """
         Returns a str defining a list of repo configuration secions for a yum configuration file.
         :param repo_type: Whether to prefer signed or unsigned repos.
@@ -305,12 +310,12 @@ class Repos(object):
             if arch:  # Generating a single arch?
                 # Just use the configured name for the set. This behavior needs to be preserved to
                 # prevent changing mirrored repos by reposync.
-                result += r.conf_section(repo_type, enabled=enabled, arch=arch, section_name=r.name)
+                result += r.conf_section(repo_type, enabled=enabled, arch=arch, section_name=r.name, konflux=konflux)
             else:
                 # When generating a repo file for multi-arch builds, we need all arches in the same repo file.
                 for iarch in r.arches:
                     section_name = '{}-{}'.format(r.name, iarch)
-                    result += r.conf_section(repo_type, enabled=enabled, arch=iarch, section_name=section_name)
+                    result += r.conf_section(repo_type, enabled=enabled, arch=iarch, section_name=section_name, konflux=konflux)
 
         for er in empty_repos:
             result += EMPTY_REPO.format(er)

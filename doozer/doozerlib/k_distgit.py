@@ -1,9 +1,12 @@
 import os
 import pathlib
+
 from dockerfile_parse import DockerfileParser
 from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.pushd import Dir
 from doozerlib.distgit import ImageDistGitRepo
+from doozerlib import util
+from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
@@ -74,7 +77,8 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "\n# Start Konflux-specific steps",
             "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/",
             "COPY .oit/signed.repo /etc/yum.repos.d/",
-            "# End Konflux-specific steps\n",
+            f"ADD {KONFLUX_REPO_CA_BUNDLE_HOST}/{KONFLUX_REPO_CA_BUNDLE_FILENAME} {KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
+            "# End Konflux-specific steps\n\n",
             at_start=True,
             all_stages=True,
         )
@@ -83,7 +87,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         dfp.add_lines(
             "\n# Start Konflux-specific steps",
             "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/",
-            "# End Konflux-specific steps\n"
+            "# End Konflux-specific steps\n\n"
         )
         return version, release
 
@@ -101,3 +105,25 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
         if terminate_event.is_set():
             raise KeyboardInterrupt()
+
+    def _generate_repo_conf(self):
+        """
+        Generates a repo file in .oit/repo.conf
+        """
+
+        self.logger.debug("Generating repo file for Dockerfile {}".format(self.metadata.distgit_key))
+
+        # Make our metadata directory if it does not exist
+        util.mkdirs(self.dg_path.joinpath('.oit'))
+
+        repos = self.runtime.repos
+        enabled_repos = self.config.get('enabled_repos', [])
+        non_shipping_repos = self.config.get('non_shipping_repos', [])
+
+        for t in repos.repotypes:
+            with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
+                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=True)
+                rc.write(content)
+
+        with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
+            rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
