@@ -28,4 +28,4 @@ default_db_params = {
 # TODO: once brew outage is resolved, change to 6 hours again (currently set to 100)
 BREW_BUILD_TIMEOUT = 100 * 60 * 60  # how long we wait before canceling a task
 
-KONFLUX_CUSTOM_CERT = "/tmp/Current-IT-Root-CAs.pem"
+KONFLUX_REPO_CERT_PATH = "/tmp/Current-IT-Root-CAs.pem"

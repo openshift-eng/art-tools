@@ -12,7 +12,7 @@ import yaml
 
 from artcommonlib.model import Missing, Model
 from doozerlib.repodata import Repodata, RepodataLoader
-from doozerlib.constants import KONFLUX_CUSTOM_CERT
+from doozerlib.constants import KONFLUX_REPO_CERT_PATH
 
 
 DEFAULT_REPOTYPES = ['unsigned', 'signed']
@@ -193,7 +193,7 @@ class Repo(object):
             result += 'gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n'
 
         if konflux:
-            result += f'sslcacert = {KONFLUX_CUSTOM_CERT}\n'
+            result += f'sslcacert = {KONFLUX_REPO_CERT_PATH}\n'
 
         result += '\n'
 
