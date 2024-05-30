@@ -218,9 +218,11 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             runtime=MagicMock(arches=["ppc64le", "s390x"]),
         )
         pg_eissuesfp_mock.return_value = ["embargo_issues"]
-        pg_findpe_mock.return_value = ("entries", ["issues"])
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="spam"), issues=[], dest_pullspec="dummy")
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
+        self.assertEqual(e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
         self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
 
     async def test_detect_extend_payload_entry_issues(self):

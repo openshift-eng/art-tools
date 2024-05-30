@@ -810,8 +810,7 @@ class GenPayloadCli:
         await asyncio.sleep(120)
 
         # Updating public and private image streams
-        for private_mode, payload_entries_for_each_arch_iter in [(False, self.payload_entries_for_arch),
-                                                            (True, self.private_payload_entries_for_arch)]:
+        for private_mode, payload_entries_for_each_arch_iter in [(False, self.payload_entries_for_arch), (True, self.private_payload_entries_for_arch)]:
             tasks = []
             for arch, payload_entries in payload_entries_for_each_arch_iter.items():
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
