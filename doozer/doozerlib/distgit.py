@@ -570,15 +570,18 @@ class ImageDistGitRepo(DistGitRepo):
         if self.config.container_yaml is not Missing:
             config_overrides = copy.deepcopy(self.config.container_yaml.primitive())
 
-        # Cachito will be configured if `cachito.enabled` is True in image meta, `content.source.pkg_managers` is set in image meta,
+        # Cachito will be configured if `cachito.enabled` is True in image meta
         # or `cachito.enabled` is True in group config.
         # https://osbs.readthedocs.io/en/latest/users.html#remote-sources
         cachito_enabled = False
         if self.config.cachito.enabled:
             cachito_enabled = True
         elif self.config.cachito.enabled is Missing:
-            if isinstance(self.config.content.source.pkg_managers, ListModel) or self.runtime.group_config.cachito.enabled:
+            if self.runtime.group_config.cachito.enabled:
                 cachito_enabled = True
+            elif isinstance(self.config.content.source.pkg_managers, ListModel):
+                self.logger.warning(f"Cachito config for {self.name} has no effect since cachito is not enabled in "
+                                    "image meta or group config.")
         if cachito_enabled and not self.has_source():
             self.logger.warning("Cachito integration for distgit-only image %s is not supported.", self.name)
             cachito_enabled = False
