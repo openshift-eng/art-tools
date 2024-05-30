@@ -5,7 +5,6 @@ from dockerfile_parse import DockerfileParser
 from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.pushd import Dir
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib import util
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
 
 
@@ -106,24 +105,8 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         if terminate_event.is_set():
             raise KeyboardInterrupt()
 
-    def _generate_repo_conf(self):
-        """
-        Generates a repo file in .oit/repo.conf
-        """
+    def generate_repo_conf(self):
+        super().generate_repo_conf(konflux=True)
 
-        self.logger.debug("Generating repo file for Dockerfile {}".format(self.metadata.distgit_key))
-
-        # Make our metadata directory if it does not exist
-        util.mkdirs(self.dg_path.joinpath('.oit'))
-
-        repos = self.runtime.repos
-        enabled_repos = self.config.get('enabled_repos', [])
-        non_shipping_repos = self.config.get('non_shipping_repos', [])
-
-        for t in repos.repotypes:
-            with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
-                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=True)
-                rc.write(content)
-
-        with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
-            rc.write(repos.content_sets(enabled_repos=enabled_repos, non_shipping_repos=non_shipping_repos))
+    def rebase_from_directives(self, dfp):
+        super().rebase_from_directives(dfp, konflux=True)
