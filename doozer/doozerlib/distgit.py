@@ -732,7 +732,7 @@ class ImageDistGitRepo(DistGitRepo):
                 owners = {owner: "FAILURE" for owner in self.config.owners}
                 yaml.safe_dump(owners, co, default_flow_style=False)
 
-    def _generate_repo_conf(self):
+    def generate_repo_conf(self, konflux=False):
         """
         Generates a repo file in .oit/repo.conf
         """
@@ -748,7 +748,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         for t in repos.repotypes:
             with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
-                content = repos.repo_file(t, enabled_repos=enabled_repos)
+                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=konflux)
                 rc.write(content)
 
         with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
@@ -1743,7 +1743,7 @@ class ImageDistGitRepo(DistGitRepo):
             self.metadata.config = self.config
             self.metadata.targets = self.metadata.determine_targets()
 
-    def _rebase_from_directives(self, dfp):
+    def rebase_from_directives(self, dfp, konflux=False):
         image_from = Model(self.config.get('from', None))
 
         # Collect all the parent images we're supposed to use
@@ -1783,6 +1783,9 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
 
+        if konflux:
+            mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
+
         # Write rebased from directives
         dfp.parent_images = mapped_images
 
@@ -1797,7 +1800,7 @@ class ImageDistGitRepo(DistGitRepo):
             if containerfile.is_file():
                 containerfile.unlink()
 
-            self._generate_repo_conf()
+            self.generate_repo_conf()
 
             self._generate_config_digest()
 
@@ -1857,7 +1860,7 @@ class ImageDistGitRepo(DistGitRepo):
             dfp.labels['io.openshift.maintainer.component'] = jira_component
 
             if 'from' in self.config:
-                self._rebase_from_directives(dfp)
+                self.rebase_from_directives(dfp)
 
             # Set image name in case it has changed
             dfp.labels["name"] = self.config.name
