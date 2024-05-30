@@ -607,22 +607,25 @@ class GenPayloadCli:
                 continue
             # No adjustment for private or public; the assembly's canonical payload content is the same.
 
-            # entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
-            # issues: List[AssemblyIssue]
+            # public_entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
+            # public_payload_issues: List[AssemblyIssue]
             public_entries, public_payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
 
+            entries: Dict[str, PayloadEntry] = dict()
             for k, v in public_entries.items():
                 if not v.build_inspector:
                     # Its RHCOS, since it doesn't have a build inspector. Put it in for now, but change once RHCOS
                     # supports private nightlies
-                    entries_for_arch[k] = v
+                    entries[k] = v
                     continue
 
                 if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
                     # It's an embargoed build. Filter it out if its stream
                     continue
 
-                entries_for_arch[k] = v
+                entries[k] = v
+
+            entries_for_arch[arch] = entries
 
             self.assembly_issues.extend(public_payload_issues)
 
