@@ -387,11 +387,12 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
               help="Repo group type to use for version autodetection scan (e.g. signed, unsigned).")
 @click.option("--force-yum-updates", is_flag=True, default=False,
               help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.")
+@click.option("--skip-config-check", default=False, is_flag=True, help="Skip checking ocp-build-data if konflux rebase is enabled")
 @click.option("--dry-run", default=False, is_flag=True, help="Do not push anything, but only print push operations.")
 @option_commit_message
 @option_push
 @pass_runtime
-def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, dry_run: bool):
+def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool):
     """
     Reusing most of the code from 'images_rebase' for now, since we might need to change once we discuss with the Konflux team
     """
@@ -424,7 +425,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
     lstate['total'] = len(metas)
 
     def dgr_rebase(image_meta, terminate_event):
-        if image_meta.config.konflux.enabled not in [True, "True", "true", "yes"]:
+        if not skip_config_check and image_meta.config.konflux.enabled not in [True, "True", "true", "yes"]:
             runtime.logger.info(f"Skipping konflux rebase for component {image_meta.config.name} since its not enabled "
                                 f"in config")
             return
