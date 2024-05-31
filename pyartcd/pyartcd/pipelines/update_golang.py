@@ -36,6 +36,13 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
     return False
 
 
+def get_latest_nvr_in_tag(tag: str, package: str, koji_session) -> str:
+    latest_build = koji_session.listTagged(tag, latest=True, package=package, inherit=False)
+    if not latest_build:
+        return None
+    return latest_build[0]['nvr']
+
+
 async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     if not is_latest_build(ocp_version, el_v, nvr, koji_session):
         return False
@@ -117,44 +124,89 @@ class UpdateGolangPipeline:
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
 
-        title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
-        if self.create_ticket:
-            title_update += ' [create-ticket]'
-        if self.dry_run:
-            title_update += ' [dry-run]'
-        jenkins.init_jenkins()
-        jenkins.update_title(title_update)
+        running_in_jenkins = os.environ.get('BUILD_ID', False)
+        if running_in_jenkins:
+            title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
+            if self.create_ticket:
+                title_update += ' [create-ticket]'
+            if self.dry_run:
+                title_update += ' [dry-run]'
+            jenkins.init_jenkins()
+            jenkins.update_title(title_update)
+
+        # Do a sanity check for rhel8 module build
+        # a module build should never be tagged directly in override tag
+        # if it is, we should make sure it is available via module inheritance
+        # and then untag it from override tag
+        if 8 in el_nvr_map and 'module' in el_nvr_map[8]:
+            tag = f'rhaos-{self.ocp_version}-rhel-8-override'
+            package = parse_nvr(el_nvr_map[8])['name']
+            nvr = get_latest_nvr_in_tag(tag, package, self.koji_session)
+            if nvr:
+                raise ValueError(f'{nvr} is tagged in {tag}, please make sure it is available via module inheritance '
+                                 f'(brew list-tagged {tag} {package} --inherit). If not, use --create-tagging-ticket. '
+                                 f'Once it is available, untag it from the override tag (brew untag-build {tag} {nvr})')
 
         # if requested, create ticket for tagging request
         if self.create_ticket:
-            _LOGGER.info('Making sure that builds are not already tagged & have necessary qe tags')
+            _LOGGER.info('Making sure that builds are not already tagged')
             for el_v, nvr in el_nvr_map.items():
                 if is_latest_build(self.ocp_version, el_v, nvr, self.koji_session):
                     raise ValueError(f'{nvr} is already the latest build, run '
                                      'only with nvrs that are not latest or run without --create-tagging-ticket')
 
             _LOGGER.info('Creating Jira ticket to tag golang builds in buildroots')
-            self.create_jira_ticket(el_nvr_map, go_version)
+            self.create_jira_ticket_for_el8(el_nvr_map, go_version)
             return
 
         for el_v, nvr in el_nvr_map.items():
             if not await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
-                raise ValueError(f'{nvr} is not the latest build in buildroot, tag yourself or get them tagged via'
-                                 '--create-tagging-ticket')
+                if el_v == 8 and 'module' in nvr:
+                    raise ValueError(f'{nvr} is not the latest build in buildroot, get it tagged via '
+                                     '--create-tagging-ticket')
+                else:
+                    tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-override'
+                    _LOGGER.error(f'{nvr} is not the latest build in buildroot. To tag build run `brew tag-build {nvr}'
+                                  f' {tag}`. To regen repo run `brew regen-repo {tag}`')
+                    raise ValueError(f'{nvr} is not the latest build in buildroot')
         _LOGGER.info('All builds are tagged and available!')
 
-        # Make a sanity check if a builder nvr exists for this version and if it's already pinned
+        # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
+        builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+        if len(builder_nvrs) != len(el_nvr_map):  # builders not found for all rhel versions
+            missing_in = el_nvr_map.keys() - builder_nvrs.keys()
+            _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
+                         "Verifying builder branches are updated for building")
+            for el_v in missing_in:
+                self.verify_golang_builder_repo(el_v, go_version)
+                await self._rebase(el_v, go_version)
+                await self._build(el_v, go_version)
+
+            # Now all builders should be available in brew, try to fetch again
+            builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+            if len(builder_nvrs) != len(el_nvr_map):
+                missing_in = el_nvr_map.keys() - builder_nvrs.keys()
+                raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
+
+        _LOGGER.info("Checking if existing builder images are pinned in streams.yml")
+        need_update = self.are_golang_streams_updated(go_version, builder_nvrs)
+        if not need_update:
+            green_print("Builders don't need update since nvr are built and pinned in streams.yml")
+        else:
+            red_print("Please update streams.yml")
+
+    def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
         _LOGGER.info(f"Checking if {component} builds exist for given golang builds")
         package_info = self.koji_session.getPackage(component)
         if not package_info:
-            raise IOError(f'No brew package is defined for {component}')
+            raise IOError(f'Cannot find brew package info for {component}')
         package_id = package_info['id']
         builder_nvrs = {}
         for el_v, go_nvr in el_nvr_map.items():
             pattern = f"{component}-v{go_version}-*el{el_v}*"
             builds = self.koji_session.listBuilds(packageID=package_id,
-                                                  state=BuildStates.COMPLETE.value,  # complete
+                                                  state=BuildStates.COMPLETE.value,
                                                   pattern=pattern,
                                                   queryOpts={'limit': 1, 'order': '-creation_event_id'})
             if builds:
@@ -168,51 +220,39 @@ class UpdateGolangPipeline:
                 if builder_go_vr in go_nvr:
                     _LOGGER.info(f"Found existing builder image: {build['nvr']} built with {go_nvr}")
                     builder_nvrs[el_v] = build['nvr']
+        return builder_nvrs
 
+    def are_golang_streams_updated(self, go_version, builder_nvrs):
         need_update = False
-        if len(builder_nvrs) == len(el_nvr_map):  # existing builders found for all rhel versions
-            _LOGGER.info("Checking if existing builder images are being used in streams.yml")
+        owner, repo = 'openshift-eng', 'ocp-build-data'
+        branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
 
-            owner, repo = 'openshift-eng', 'ocp-build-data'
-            branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
+        api = GhApi(owner=owner, repo=repo, token=self.github_token)
+        blob = api.repos.get_content(filename, ref=branch)
+        group_config = yaml.safe_load(base64.b64decode(blob['content']))
+        major_go, minor_go, _ = go_version.split('.')
+        for stream_name, info in group_config.items():
+            if 'golang' not in stream_name:
+                continue
+            image_nvr_like = info['image']
+            if 'golang-builder' not in image_nvr_like:
+                continue
+            name, vr = image_nvr_like.split(':')
+            nvr = f"{name.replace('/', '-')}-container-{vr}"
+            pattern = f"{GOLANG_BUILDER_CVE_COMPONENT}-v{major_go}.{minor_go}"
+            if not nvr.startswith(pattern):
+                continue
 
-            api = GhApi(owner=owner, repo=repo, token=self.github_token)
-            blob = api.repos.get_content(filename, ref=branch)
-            group_config = yaml.safe_load(base64.b64decode(blob['content']))
-            major_go, minor_go, _ = go_version.split('.')
-            for stream_name, info in group_config.items():
-                if 'golang' not in stream_name:
-                    continue
-                image_nvr_like = info['image']
-                if 'golang-builder' not in image_nvr_like:
-                    continue
-                name, vr = image_nvr_like.split(':')
-                nvr = f"{name.replace('/', '-')}-container-{vr}"
-                pattern = f"{component}-v{major_go}.{minor_go}"
-                if not nvr.startswith(pattern):
-                    continue
-
-                _, el_version = split_el_suffix_in_release(vr)
-                el_version = int(el_version[2:])
-                if nvr == builder_nvrs[el_version]:
-                    _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{nvr}')
-                else:
-                    yellow_print(f'update stream:{stream_name}:image to {builder_nvrs[el_version]}')
-                    need_update = True
-
-            if not need_update:
-                green_print("Builders don't need update since nvr are built and pinned in streams.yml")
+            _, el_version = split_el_suffix_in_release(vr)  # 'el8'
+            el_version = int(el_version[2:])  # 8
+            if el_version not in builder_nvrs:
+                continue
+            if nvr == builder_nvrs[el_version]:
+                _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{nvr}')
             else:
-                red_print("Please update streams.yml")
-        else:
-            missing_in = el_nvr_map.keys() - builder_nvrs.keys()
-            # Make sure builder branches are updated for building
-            _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
-                         "Verifying builder branches are updated for building")
-            for el_v in missing_in:
-                self.verify_golang_builder_repo(el_v, go_version)
-                await self._rebase(el_v, go_version)
-                await self._build(el_v, go_version)
+                yellow_print(f'update stream:{stream_name}:image to {builder_nvrs[el_version]}')
+                need_update = True
+        return need_update
 
     async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
@@ -304,7 +344,7 @@ class UpdateGolangPipeline:
         prefix = f'module-go-toolset-rhel{el_v}-'
         return next((t for t in tags if t.startswith(prefix) and not t.endswith('-build')), None)
 
-    def create_jira_ticket(self, el_nvr_map, go_version):
+    def create_jira_ticket_for_el8(self, el_nvr_map, go_version):
         # project = 'CWFCONF'
         # labels = ['releng']
         # components = ['BLD', 'cat-brew', 'prod-RHOSE']
@@ -314,26 +354,27 @@ class UpdateGolangPipeline:
         el_instructions = ''
         for el_v, nvr in el_nvr_map.items():
             nvr_list_string += f'- RHEL{el_v}: {nvr}\n'
-            el_instructions += f'\nFor rhel{el_v}:\n'
+            el_instructions += f'For rhel{el_v}:\n'
             if el_v == 8:
                 module_tag = self.get_module_tag(nvr, el_v)
                 if not module_tag:
                     raise click.BadParameter(f'Cannot find module tag for {nvr}')
+                commit_link = "https://gitlab.cee.redhat.com/rcm/rcm-ansible/-/commit/e838f59751cebe86347e6a82252dec0a1593c735"
                 el_instructions += (f'- Update inheritance for each `rhaos-{self.ocp_version}-rhel-{el_v}-override` '
-                                    f'tag to include the module tag `{module_tag}`\n')
-            elif el_v in (7, 9):
-                el_instructions += f'- `brew tag rhaos-{self.ocp_version}-rhel-{el_v}-override {nvr}`\n'
-            el_instructions += f'- Run `brew regen-repo` for `rhaos-{self.ocp_version}-rhel-{el_v}-build`\n'
+                                    f'tag to include the module tag `{module_tag}`. This is usually done via a '
+                                    f'commit in rcm-ansible repo ({commit_link}). Please do not '
+                                    'directly tag the module build in the override tag.\n')
 
-        template = f'''OpenShift requests that buildroots for version {self.ocp_version} provide a new
+        template = f'''OpenShift requests that buildroots for version {self.ocp_version} provide a new \
 golang compiler version {go_version} , reference: {self.art_jira}
 
 The new NVRs are:
 {nvr_list_string}
 {el_instructions}
 '''
-
-        _LOGGER.info(f'Please create https://issues.redhat.com/browse/CWFCONF Jira ticket with the following content:\n{template}')
+        title = f'Request Golang {go_version} for OCP {self.ocp_version}'
+        _LOGGER.info('Please create https://issues.redhat.com/browse/CWFCONF Jira ticket with \n'
+                     f'title: {title}\ncontent:\n{template}')
 
 
 @cli.command('update-golang')
@@ -342,9 +383,13 @@ The new NVRs are:
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
+@click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str,
-                        scratch: bool = False):
+async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
+                        confirm: bool, go_nvrs: List[str]):
+    if not runtime.dry_run and not confirm:
+        _LOGGER.info('--confirm is not set, running in dry-run mode')
+        runtime.dry_run = True
     await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira, scratch).run()
