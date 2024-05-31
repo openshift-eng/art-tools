@@ -430,7 +430,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
                                 f"in config")
             return
         try:
-            k_dgr = KonfluxImageDistGitRepo(image_meta, dry_run=dry_run)
+            k_dgr = image_meta.k_distgit_repo()
             if embargoed:
                 k_dgr.private_fix = True
             (real_version, real_release) = k_dgr.rebase_dir(version, release, terminate_event, force_yum_updates)
@@ -455,7 +455,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
             owners = image_meta.config.owners
             owners = ",".join(list(owners) if owners is not Missing else [])
             runtime.add_record(
-                "distgit_commit_failure",
+                "k_distgit_commit_failure",
                 distgit=image_meta.qualified_name,
                 image=image_meta.config.name,
                 owners=owners,
