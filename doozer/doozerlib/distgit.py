@@ -580,7 +580,7 @@ class ImageDistGitRepo(DistGitRepo):
             if self.runtime.group_config.cachito.enabled:
                 cachito_enabled = True
             elif isinstance(self.config.content.source.pkg_managers, ListModel):
-                self.logger.warning(f"Cachito config for {self.name} has no effect since cachito is not enabled in "
+                self.logger.warning(f"pkg_managers directive for {self.name} has no effect since cachito is not enabled in "
                                     "image meta or group config.")
         if cachito_enabled and not self.has_source():
             self.logger.warning("Cachito integration for distgit-only image %s is not supported.", self.name)
