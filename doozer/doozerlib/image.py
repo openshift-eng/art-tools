@@ -40,6 +40,10 @@ class ImageMetadata(Metadata):
     def image_name_short(self):
         return self.config.name.split('/')[-1]
 
+    @property
+    def package_name(self):
+        return self.config.distgit.component
+
     def get_assembly_rpm_package_dependencies(self, el_ver: int) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
         An assembly can define RPMs which should be installed into a given member

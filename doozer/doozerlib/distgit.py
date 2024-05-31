@@ -1499,6 +1499,17 @@ class ImageDistGitRepo(DistGitRepo):
 
         return None
 
+    def get_latest_image(self, base):
+        # If there is a basis event, we must look for latest; we can't just persist
+        # what is in the Dockerfile. It has to be constrained to the brew event.
+        self.logger.info(
+            '[{}] parent image {} not included. Looking up FROM tag.'.format(self.config.name, base))
+        base_meta = self.runtime.late_resolve_image(base)
+        _, v, r = base_meta.get_latest_build_info()
+        if util.isolate_pflag_in_release(r) == 'p1':  # latest parent is embargoed
+            self.private_fix = True  # this image should also be embargoed
+        return "{}:{}-{}".format(base_meta.config.name, v, r)
+
     def _mapped_image_from_member(self, image, original_parent, dfp):
         base = image.member
         from_image_metadata = self.runtime.resolve_image(base, False)
@@ -1526,6 +1537,9 @@ class ImageDistGitRepo(DistGitRepo):
         #     if parent:
         #         return parent
 
+        if self.is_konflux:
+            return self.get_latest_image(base)
+
         if from_image_metadata is None:
             if not self.runtime.ignore_missing_base:
                 raise IOError(
@@ -1533,15 +1547,7 @@ class ImageDistGitRepo(DistGitRepo):
                     "Use --ignore-missing-base to ignore." % base
                 )
             elif self.runtime.latest_parent_version or self.runtime.assembly_basis_event:
-                # If there is a basis event, we must look for latest; we can't just persist
-                # what is in the Dockerfile. It has to be constrained to the brew event.
-                self.logger.info(
-                    '[{}] parent image {} not included. Looking up FROM tag.'.format(self.config.name, base))
-                base_meta = self.runtime.late_resolve_image(base)
-                _, v, r = base_meta.get_latest_build_info()
-                if util.isolate_pflag_in_release(r) == 'p1':  # latest parent is embargoed
-                    self.private_fix = True  # this image should also be embargoed
-                return "{}:{}-{}".format(base_meta.config.name, v, r)
+                return self.get_latest_image(base)
             # Otherwise, the user is not expecting the FROM field to be updated in this Dockerfile.
             else:
                 return original_parent
@@ -1790,7 +1796,43 @@ class ImageDistGitRepo(DistGitRepo):
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
 
         if self.is_konflux:
-            mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
+            processed_images = []
+            for image in mapped_images:
+                # If FROM is already a registry-proxy pull spec, change that to brew for konflux
+                if constants.REGISTRY_PROXY_BASE_URL in image:
+                    processed_images.append(image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL))
+                    continue
+
+                # For components like openshift/base-rhel9:v4.17.0-202405281343.p0.gb45ea65.assembly.stream.el9
+                # Get the brew package name from ocp-build-data, craft the NVR and get the pull spec from Brew
+                if "openshift" in image:
+                    name, version_release = image.split(":")
+
+                    # Find package name
+                    package_name = ""
+                    for distgit_image in self.runtime.image_map.values():
+                        if distgit_image.image_name_short == name.split("/")[-1]:
+                            package_name = distgit_image.package_name
+                            break
+
+                    if not package_name:
+                        DoozerFatalError(f"Package name not found for {image}")
+
+                    nvr = f"{package_name}-{version_release}"
+
+                    # Find pull spec from koji
+                    with self.runtime.pooled_koji_client_session() as koji_api:
+                        build = koji_api.getBuild(nvr)
+
+                        pull_spec = build["extra"]["image"]["index"]["pull"][0]
+
+                        processed_images.append(
+                            pull_spec.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL))
+                        continue
+
+                DoozerFatalError(f"Unknown konflux pull detected for {image}")
+
+            mapped_images = processed_images
 
         # Write rebased from directives
         dfp.parent_images = mapped_images
