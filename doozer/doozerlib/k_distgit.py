@@ -89,24 +89,3 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "# End Konflux-specific steps\n\n"
         )
         return version, release
-
-    def wait_for_rebase(self, image_name, terminate_event):
-        """ Wait for image_name to be rebased. """
-        image = self.runtime.resolve_image(image_name, False)
-        if image is None:
-            self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
-            return
-        dgr = image.k_distgit_repo()
-        self.logger.info("Waiting for image rebase: %s" % image_name)
-        dgr.rebase_event.wait()
-        if not dgr.rebase_status:  # failed to rebase
-            raise IOError(f"Error rebasing image: {self.metadata.qualified_name} ({image_name} was waiting)")
-        self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
-        if terminate_event.is_set():
-            raise KeyboardInterrupt()
-
-    def generate_repo_conf(self):
-        super().generate_repo_conf(konflux=True)
-
-    def rebase_from_directives(self, dfp):
-        super().rebase_from_directives(dfp, konflux=True)

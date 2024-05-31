@@ -461,6 +461,7 @@ class ImageDistGitRepo(DistGitRepo):
         self.rebase_status = False
         self.logger: logging.Logger = metadata.logger
         self.source_modifier_factory = source_modifier_factory
+        self.is_konflux = False
 
         # If there's an upstream source, there can be a mismatch between
         # how upstream wants to build their sources and ART's configuration
@@ -735,7 +736,7 @@ class ImageDistGitRepo(DistGitRepo):
                 owners = {owner: "FAILURE" for owner in self.config.owners}
                 yaml.safe_dump(owners, co, default_flow_style=False)
 
-    def generate_repo_conf(self, konflux=False):
+    def generate_repo_conf(self):
         """
         Generates a repo file in .oit/repo.conf
         """
@@ -751,7 +752,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         for t in repos.repotypes:
             with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
-                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=konflux)
+                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=self.is_konflux)
                 rc.write(content)
 
         with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
@@ -976,7 +977,7 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image build since it is not included: %s" % image_name)
             return
-        parent_dgr = image.distgit_repo()
+        parent_dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
         parent_dgr.wait_for_build(self.metadata.qualified_name)
         if terminate_event.is_set():
             raise KeyboardInterrupt()
@@ -987,7 +988,9 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
             return
-        dgr = image.distgit_repo()
+
+        dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
+
         self.logger.info("Waiting for image rebase: %s" % image_name)
         dgr.rebase_event.wait()
         if not dgr.rebase_status:  # failed to rebase
@@ -1546,7 +1549,7 @@ class ImageDistGitRepo(DistGitRepo):
             if self.runtime.local:
                 return '{}:latest'.format(from_image_metadata.config.name)
             else:
-                from_image_distgit = from_image_metadata.distgit_repo()
+                from_image_distgit = from_image_metadata.k_distgit_repo() if self.is_konflux else from_image_metadata.distgit_repo()
                 if from_image_distgit.private_fix is None:  # This shouldn't happen.
                     raise ValueError(
                         f"Parent image {base} doesn't have .p0/.p1 flag determined. "
@@ -1746,7 +1749,7 @@ class ImageDistGitRepo(DistGitRepo):
             self.metadata.config = self.config
             self.metadata.targets = self.metadata.determine_targets()
 
-    def rebase_from_directives(self, dfp, konflux=False):
+    def rebase_from_directives(self, dfp):
         image_from = Model(self.config.get('from', None))
 
         # Collect all the parent images we're supposed to use
@@ -1786,7 +1789,7 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
 
-        if konflux:
+        if self.is_konflux:
             mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
 
         # Write rebased from directives
