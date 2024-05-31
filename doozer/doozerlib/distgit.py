@@ -1811,7 +1811,11 @@ class ImageDistGitRepo(DistGitRepo):
                     # Find package name
                     package_name = ""
                     for distgit_image in self.runtime.image_map.values():
-                        if distgit_image.image_name_short == name.split("/")[-1]:
+                        name_short = name.split("/")[-1]
+                        if "golang-builder" in name_short:
+                            package_name = "openshift-golang-builder-container"
+                            break
+                        elif distgit_image.image_name_short == name_short:
                             package_name = distgit_image.package_name
                             break
 
