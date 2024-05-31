@@ -25,6 +25,8 @@ class CheckBugsPipeline:
         # Load group config
         self.group_config = await util.load_group_config(
             group=f'openshift-{self.version}', assembly='stream', doozer_data_path=self.data_path)
+
+        # Check bugs only for GA releases
         if self.group_config['software_lifecycle']['phase'] != 'release':
             return None
 
@@ -85,10 +87,6 @@ class CheckBugsPipeline:
         return '.'.join([major, str(int(minor) + 1)])
 
     async def _find_regressions(self):
-        # Do nothing for EOL releases
-        if self.group_config['software_lifecycle']['phase'] == 'eol':
-            return
-
         # Check pre-release
         next_minor = self.get_next_minor(self.version)
         if not await self._is_version_in_release_state(next_minor):

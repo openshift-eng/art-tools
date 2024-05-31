@@ -14,6 +14,7 @@ import artcommonlib
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
 from artcommonlib.model import Model
+from artcommonlib.release_util import SoftwareLifecyclePhase
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 
@@ -646,7 +647,8 @@ async def get_signing_mode(group: str = None, assembly: str = None, group_config
         assert assembly, 'Assembly must be specified in order to load group config'
         group_config = await load_group_config(group=group, assembly=assembly)
 
-    return 'unsigned' if group_config['software_lifecycle']['phase'] == 'pre-release' else 'signed'
+    phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
+    return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'
 
 
 def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
