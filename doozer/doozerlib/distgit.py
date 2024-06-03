@@ -1789,9 +1789,6 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
 
-        if self.is_konflux:
-            mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
-
         # Write rebased from directives
         dfp.parent_images = mapped_images
 
