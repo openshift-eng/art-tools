@@ -13,7 +13,7 @@ jira >= 3.4.1  # https://github.com/pycontribs/jira/issues/1486
 openshift-client ~= 2.0.1
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-grpc
-pygit2 == 1.10.1 # https://github.com/libgit2/pygit2/issues/1176
+pygit2 >= 1.11.1 # https://github.com/libgit2/pygit2/issues/1176
 redis >= 5.0.1
 rh-doozer
 rh-elliott
