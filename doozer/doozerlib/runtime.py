@@ -9,7 +9,7 @@ from artcommonlib.pushd import Dir
 
 standard_library.install_aliases()
 from contextlib import contextmanager
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
 import os
 import tempfile
@@ -828,6 +828,12 @@ class Runtime(GroupRuntime):
 
     def ordered_image_metas(self) -> List[ImageMetadata]:
         return [self.image_map[dg] for dg in self.image_order]
+
+    def ordered_image_matas_with_dg(self) -> OrderedDict[str, ImageMetadata]:
+        result = OrderedDict()
+        for dg in self.image_order:
+            result[dg] = self.image_map[dg]
+        return result
 
     def get_global_arches(self):
         """

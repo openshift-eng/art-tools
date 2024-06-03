@@ -1,0 +1,59 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: {{ component.name }}-
+  namespace: {{ namespace }}
+  labels:
+    appstudio.openshift.io/application: {{ application.name }}
+    appstudio.openshift.io/component: {{ component.name }}
+    pipelines.appstudio.openshift.io/type: build
+    pipelines.openshift.io/runtime: generic
+    pipelines.openshift.io/strategy: docker
+    pipelines.openshift.io/used-by: build-cloud
+  ownerReferences:
+    - apiVersion: appstudio.redhat.com/v1alpha1
+      kind: Component
+      name: {{ component.name }}
+      uid: {{ component.uid }}
+spec:
+  params:
+    - name: dockerfile
+      value: Dockerfile
+    - name: git-url
+      value: {{ git.url }}
+    - name: output-image
+      value: {{ output_registry_url }}
+    - name: path-context
+      value: {{ git.context }}
+    - name: revision
+      value: {{ git.branch }}
+    - name: skip-checks
+      value: {{ skip_checks }}
+  pipelineRef:
+    params:
+      - name: name
+        value: docker-build
+      - name: bundle
+        value: {{ konflux.bundle_sha }}
+      - name: kind
+        value: pipeline
+    resolver: bundles
+  taskRunTemplate:
+    serviceAccountName: appstudio-pipeline
+  timeouts:
+    pipeline: 1h0m0s
+  workspaces:
+    - name: workspace
+      volumeClaimTemplate:
+        metadata:
+          creationTimestamp: null
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+        status: {}
+    - name: git-auth
+      secret:
+        secretName: {{ git.token_name }}
