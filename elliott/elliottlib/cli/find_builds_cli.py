@@ -271,7 +271,8 @@ def _fetch_nvrps_by_nvr_or_id(ids_or_nvrs, tag_pv_map, include_shipped=False, ig
     builds = brew.get_build_objects(ids_or_nvrs, brew_session)
     nonexistent_builds = list(filter(lambda b: b[1] is None, zip(ids_or_nvrs, builds)))
     if nonexistent_builds:
-        raise ValueError(f"The following builds are not found in Brew: {' '.join(map(lambda b: b[0],nonexistent_builds))}")
+        raise ValueError("The following builds are not found in Brew: "
+                         f"{' '.join(map(lambda b: b[0], nonexistent_builds))}")
 
     _ensure_accepted_tags(builds, brew_session, tag_pv_map)
     shipped = set()
