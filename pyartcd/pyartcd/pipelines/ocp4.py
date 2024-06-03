@@ -615,9 +615,30 @@ class Ocp4Pipeline:
             self.runtime.logger.info('Would have run: %s', ' '.join(cmd))
             return
 
-        await exectools.cmd_assert_async(cmd)
+        try:
+            await exectools.cmd_assert_async(cmd)
 
-        # TODO: if rebase fails for required images, notify image owners, and still notify on other reconciliations
+        except ChildProcessError:
+            # Get a list of images that failed to rebase
+            with open(f'{self._doozer_working}/state.yaml') as state_yaml:
+                state = yaml.safe_load(state_yaml)
+            failed_images = list(
+                dict(
+                    filter(lambda item: item[1] is not True, state['images:rebase']['images'].items())
+                ).keys()
+            )
+
+            # Notify about rebase failures
+            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
+            await self._slack_client.say(
+                f":alert: Following images failed to rebase: {','.join(failed_images)}"
+            )
+
+            # Remove failed images from build plan
+            self.build_plan.images_included = [i for i in self.build_plan.images_included if i not in failed_images]
+            if not self.build_plan.images_included and not self.build_plan.images_excluded:
+                self.build_plan.build_images = False
+
         util.notify_dockerfile_reconciliations(
             version=self.version.stream,
             doozer_working=self._doozer_working,
@@ -669,6 +690,12 @@ class Ocp4Pipeline:
             )
 
     async def _build_images(self):
+        # Even if the computed build plan included images, some may have been removed because they failed to rebase.
+        # Check once again if the current build plan includes any image, return otherwise
+        if not self.build_plan.build_images:
+            self.runtime.logger.warning('No images to build according to current build plan')
+            return
+
         self.runtime.logger.info('Building images')
 
         signing_mode = await util.get_signing_mode(
