@@ -378,6 +378,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
 
 
 @cli.command("k:images:rebase", short_help="Refresh a group's distgit content from source content.")
+@click.option("--images", required=True, help="Comma-separated list of images to rebase")
 @click.option("--version", metavar='VERSION', default=None, callback=validate_semver_major_minor_patch,
               help="Version string to populate in Dockerfiles. \"auto\" gets version from atomic-openshift RPM")
 @click.option("--release", metavar='RELEASE', default=None, help="Release string to populate in Dockerfiles.")
@@ -392,7 +393,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
 @option_commit_message
 @option_push
 @pass_runtime
-def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool):
+def k_images_rebase(runtime: Runtime, images: str, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool):
     """
     Reusing most of the code from 'images_rebase' for now, since we might need to change once we discuss with the Konflux team
     """
@@ -421,14 +422,23 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
             "invalid version string: {}, expecting like v3.4 or v1.2.3".format(version)
         )
 
-    metas = runtime.ordered_image_metas()
+    images_to_rebase = images.split(",")
+
+    assert images_to_rebase
+
+    metas = []
+
+    for dg, meta in runtime.ordered_image_matas_with_dg().items():
+        if dg in images_to_rebase:
+            metas.append(meta)
+
     lstate['total'] = len(metas)
 
     def dgr_rebase(image_meta, terminate_event):
-        # if not skip_config_check and image_meta.config.konflux.enabled not in [True, "True", "true", "yes"]:
-        #     runtime.logger.info(f"Skipping konflux rebase for component {image_meta.config.name} since its not enabled "
-        #                         f"in config")
-        #     return
+        if not skip_config_check and image_meta.config.konflux.enabled not in [True, "True", "true", "yes"]:
+            runtime.logger.info(f"Skipping konflux rebase for component {image_meta.config.name} since its not enabled "
+                                f"in config")
+            return
         try:
             k_dgr = image_meta.k_distgit_repo()
             if embargoed:

@@ -2745,7 +2745,7 @@ class ImageDistGitRepo(DistGitRepo):
             # If this image is FROM another group member, we need to wait on that group
             # member to determine if there are embargoes in that group member.
             image_from = Model(self.config.get('from', None))
-            if image_from.member is not Missing:
+            if not self.is_konflux and image_from.member is not Missing:
                 self.wait_for_rebase(image_from.member, terminate_event)
             for builder in image_from.get("builder", []):
                 if "member" in builder:
