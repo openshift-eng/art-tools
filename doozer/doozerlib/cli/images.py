@@ -393,7 +393,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
 @option_commit_message
 @option_push
 @pass_runtime
-def k_images_rebase(runtime: Runtime, images: str, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool):
+def k_images_rebase(runtime: Runtime, images: str, embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool, version: Optional[str], release: Optional[str]):
     """
     Reusing most of the code from 'images_rebase' for now, since we might need to change once we discuss with the Konflux team
     """
@@ -424,13 +424,13 @@ def k_images_rebase(runtime: Runtime, images: str, version: Optional[str], relea
 
     images_to_rebase = images.split(",")
 
-    assert images_to_rebase
-
     metas = []
-
     for dg, meta in runtime.ordered_image_matas_with_dg().items():
         if dg in images_to_rebase:
             metas.append(meta)
+
+    if not metas:
+        raise ValueError("No valid components found for rebase")
 
     lstate['total'] = len(metas)
 
