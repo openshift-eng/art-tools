@@ -629,10 +629,11 @@ class Ocp4Pipeline:
             )
 
             # Notify about rebase failures
-            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(
-                f":alert: Following images failed to rebase: {','.join(failed_images)}"
-            )
+            if self.assembly == 'stream':
+                self._slack_client.bind_channel(f'openshift-{self.version.stream}')
+                await self._slack_client.say(
+                    f":alert: Following images failed to rebase in {self.version.stream}: {','.join(failed_images)}"
+                )
 
             # Remove failed images from build plan
             self.build_plan.images_included = [i for i in self.build_plan.images_included if i not in failed_images]
