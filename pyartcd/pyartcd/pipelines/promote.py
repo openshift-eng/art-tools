@@ -1539,10 +1539,10 @@ class PromotePipeline:
         file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
         self._logger.info("Updating QE release repo")
         # create branch
-        fork_branch=fork_repo.create_git_ref(f"refs/heads/{release_name}", upstream_repo.get_branch("z-stream").commit.sha)
+        fork_branch = fork_repo.create_git_ref(f"refs/heads/{release_name}", upstream_repo.get_branch("z-stream").commit.sha)
         self._logger.info("Created fork branch ref %s", fork_branch.ref)
         # get release file
-        file = yaml.load(upstream_repo.get_contents(file_path,ref=release_name).decoded_content, Loader=yaml.FullLoader)
+        file = yaml.load(upstream_repo.get_contents(file_path, ref=release_name).decoded_content, Loader=yaml.FullLoader)
         if release_name in file['releases']:
             self._logger.info(f"Release {release_name} already exists in openshift/release-tests repo")
             return
@@ -1561,7 +1561,7 @@ class PromotePipeline:
         while time.time() - start_time < 15 * 60:
             if not pr.is_merged():
                 self._logger.info(f"PR {pr.html_url} not merged, wait for 3 mins")
-                time.sleep(3*60)
+                time.sleep(3 * 60)
             else:
                 self._logger.info(f"PR {pr.html_url} merged for {release_name}")
                 break
