@@ -1,3 +1,4 @@
+from collections import deque
 from typing import OrderedDict, Optional, Tuple, Iterable, List
 from datetime import datetime
 import re
@@ -274,3 +275,71 @@ async def _limit_concurrency(tasks: List, limit: int):
         )
         while done:
             yield done.pop()
+
+
+class TreeAnalyzer:
+    def __init__(self, tree):
+        self.tree = tree
+
+    def get_elements_by_row(self):
+        if not self.tree:
+            return []
+
+        result = []
+        queue = deque([self.tree])
+
+        while queue:
+            level_size = len(queue)
+            current_level = []
+
+            for _ in range(level_size):
+                node = queue.popleft()
+                for key, value in node.items():
+                    current_level.append(key)
+                    if isinstance(value, dict) and value:
+                        queue.append(value)
+
+            result.append(current_level)
+
+        return result
+
+    def find_element(self, tree, target, path=[]):
+        if not isinstance(tree, dict):
+            return None
+
+        for key, value in tree.items():
+            if key == target:
+                return path + [key]
+            result = self.find_element(value, target, path + [key])
+            if result is not None:
+                return result
+        return None
+
+    def get_parents_and_children(self, element):
+        # Find the path to the element
+        path = self.find_element(self.tree, element)
+
+        if path is None:
+            return None, None  # Element not found
+
+        # Parents are all elements in the path except the last one
+        parents = path[:-1]
+
+        # Traverse to the element node to find children
+        node = self.tree
+        for key in path:
+            node = node[key]
+
+        # Collect all children
+        def collect_children(subtree):
+            if not isinstance(subtree, dict):
+                return []
+            children = []
+            for key, value in subtree.items():
+                children.append(key)
+                children.extend(collect_children(value))
+            return children
+
+        children = collect_children(node)
+
+        return parents, children

@@ -1,8 +1,10 @@
 import json
 import click
 import os
+import yaml
+from artcommonlib import exectools
+from artcommonlib.util import TreeAnalyzer
 from pyartcd import constants
-from pyartcd import exectools
 from pyartcd import util
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.runtime import Runtime
@@ -23,7 +25,7 @@ class Version:
 class KonfluxPipeline:
     def __init__(self, runtime, assembly, data_path, image_list, version, data_gitref):
         self.runtime = runtime
-        self.image_list = image_list
+        self.image_list = image_list.split(",")
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.version = Version()
         self.version.stream = version
@@ -41,10 +43,13 @@ class KonfluxPipeline:
             group_param
         ]
 
-    async def rebase(self):
+        # Get the parent-tree graph from ocp-build-data
+        self.tree_analyzer = TreeAnalyzer(self.get_tree())
+
+    async def rebase(self, images):
         cmd = self._doozer_base_command.copy()
         cmd.extend([
-            '--latest-parent-version', f'--images={self.image_list}', 'k:images:rebase',
+            '--latest-parent-version', f'--images={images}', 'k:images:rebase',
             f'--version=v{self.version.stream}', f'--release={self.version.release}', '--push',
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
         ])
@@ -54,8 +59,39 @@ class KonfluxPipeline:
 
         await exectools.cmd_assert_async(cmd)
 
+    def get_tree(self):
+        # Need to build row by row
+        cmd = self._doozer_base_command.copy()
+        cmd.extend([
+            "images:show-tree",
+            "--yml"
+        ])
+        out, _ = exectools.cmd_assert(cmd)
+        self.runtime.logger.info('images:show-tree output:\n%s', out)
+        return yaml.safe_load(out)
+
+    def get_parents_children(self, images):
+        """
+        Get the list of parents and children of a node, including the node as well.
+        """
+        # Unique images
+        unique_images = set()
+
+        for image in images:
+            unique_images.add(image)
+            parents, children = self.tree_analyzer.get_parents_and_children(image)
+            for node in parents + children:
+                unique_images.add(node)
+
+        return unique_images
+
     async def run(self):
-        await self.rebase()
+        # Get all the parents and children that we need. Combine them so that there are no duplicates.
+        # This will be the new set of images to rebase
+        parents_children = self.get_parents_children(self.image_list)
+        print()
+
+        await self.rebase(images=parents_children)
 
 
 @cli.command("k_ocp4", help=" Konflux pipeline")

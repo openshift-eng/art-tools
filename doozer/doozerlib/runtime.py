@@ -829,7 +829,7 @@ class Runtime(GroupRuntime):
     def ordered_image_metas(self) -> List[ImageMetadata]:
         return [self.image_map[dg] for dg in self.image_order]
 
-    def ordered_image_matas_with_dg(self) -> OrderedDict[str, ImageMetadata]:
+    def ordered_image_matas_with_dg(self):
         result = OrderedDict()
         for dg in self.image_order:
             result[dg] = self.image_map[dg]
