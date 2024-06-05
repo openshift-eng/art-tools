@@ -39,6 +39,8 @@ from pyartcd.s3 import sync_dir_to_s3_mirror
 from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
     extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
 from pyartcd.runtime import Runtime, GroupRuntime
+from github import Github
+import time
 
 
 yaml = YAML(typ="safe")
@@ -1519,12 +1521,52 @@ class PromotePipeline:
         nightlies_w_pullspecs = nightlies_with_pullspecs(nightlies)
         self._send_release_email(release_name, impetus_advisories, jira_issue_link,
                                  nightlies_w_pullspecs)
+        self._logger.info("Update QE's release tests repo...")
+        self._update_qe_repo(release_name, release_jira, impetus_advisories)
         if not self.runtime.dry_run:
             self._jira_client.assign_to_me(subtask)
             self._jira_client.close_task(subtask)
             self._logger.info("Closed subtask %s", subtask.key)
         else:
             self._logger.info("Would've closed subtask %s", subtask.key)
+
+    def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
+        github_client = Github(os.environ.get("GITHUB_TOKEN"))
+        upstream_repo = github_client.get_repo("openshift/release-tests")
+        fork_repo = github_client.get_repo("openshift-bot/release-tests")
+        update_message = f"Add release {release_name}"
+        major, minor = isolate_major_minor_in_group(self.group)
+        file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
+        self._logger.info("Updating QE release repo")
+        # create branch
+        fork_branch=fork_repo.create_git_ref(f"refs/heads/{release_name}", upstream_repo.get_branch("z-stream").commit.sha)
+        self._logger.info("Created fork branch ref %s", fork_branch.ref)
+        # get release file
+        file = yaml.load(upstream_repo.get_contents(file_path,ref=release_name).decoded_content, Loader=yaml.FullLoader)
+        if release_name in file['releases']:
+            self._logger.info(f"Release {release_name} already exists in openshift/release-tests repo")
+            return
+        else:
+            file['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+        # update release file
+        file_content_bytes = yaml.dump(file).encode()
+        fork_file = fork_repo.get_contents(file_path, ref=release_name)
+        fork_repo.update_file(file_path, update_message, file_content_bytes, fork_file.sha, branch=release_name)
+        # create pr
+        pr = upstream_repo.create_pull(title=update_message, body=update_message, base="z-stream", head=f"openshift-bot:{release_name}")
+        pr.add_to_labels("lgtm", "approved")
+        self._logger.info(f"PR {pr.title} created for {release_name} {pr.html_url}")
+        # watch pr merged in 15 mins
+        start_time = time.time()
+        while time.time() - start_time < 15 * 60:
+            if not pr.is_merged():
+                self._logger.info(f"PR {pr.html_url} not merged, wait for 3 mins")
+                time.sleep(3*60)
+            else:
+                self._logger.info(f"PR {pr.html_url} merged for {release_name}")
+                break
+        # delete branch
+        fork_branch.delete()
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
