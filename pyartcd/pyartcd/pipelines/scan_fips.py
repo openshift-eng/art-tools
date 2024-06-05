@@ -44,7 +44,7 @@ class ScanFips:
             # alert release artists
             if not self.runtime.dry_run:
                 message = ":warning: @ashwin FIPS scan has failed for some builds. Please verify. (Triage <https://art-docs.engineering.redhat.com/sop/triage-fips/|docs>)"
-                slack_response = await self.slack_client.say(message=message, reaction="art-attention")
+                slack_response = await self.slack_client.say(message=message)
                 slack_thread = slack_response["message"]["ts"]
 
                 await self.slack_client.upload_content(
