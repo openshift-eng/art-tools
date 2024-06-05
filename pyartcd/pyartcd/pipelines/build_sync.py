@@ -10,6 +10,7 @@ from opentelemetry import trace
 from artcommonlib import rhcos, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.exectools import limit_concurrency
+from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import split_git_url
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
@@ -440,7 +441,8 @@ class BuildSyncPipeline:
 
         if fail_count % forum_release_notify_frequency == 0:
             # For GA releases, let forum-ocp-release know why no new builds
-            if self.group_runtime.group_config['software_lifecycle']['phase'] == 'release':
+            phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config['software_lifecycle']['phase'])
+            if phase == SoftwareLifecyclePhase.RELEASE:
                 slack_client.bind('#forum-ocp-release').say(msg)
 
 

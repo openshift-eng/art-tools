@@ -4,6 +4,7 @@ import yaml
 
 from artcommonlib import util, build_util, release_util
 from artcommonlib.model import Model, MissingModel
+from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import deep_merge, isolate_major_minor_in_group
 
 
@@ -176,3 +177,52 @@ alternative_upstream:
         major, minor = isolate_major_minor_in_group('openshift-invalid.16')
         self.assertEqual(major, None)
         self.assertEqual(minor, None)
+
+
+class TestSoftwareLifecyclePhase(unittest.TestCase):
+    def test_from_name_valid(self):
+        self.assertEqual(SoftwareLifecyclePhase.from_name('eol'), SoftwareLifecyclePhase.EOL)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('pre-release'), SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('signing'), SoftwareLifecyclePhase.SIGNING)
+        self.assertEqual(SoftwareLifecyclePhase.from_name('release'), SoftwareLifecyclePhase.RELEASE)
+
+    def test_from_name_invalid(self):
+        with self.assertRaises(ValueError):
+            SoftwareLifecyclePhase.from_name('invalid')
+
+    def test_lt(self):
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < SoftwareLifecyclePhase.SIGNING)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING < SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE < SoftwareLifecyclePhase.EOL)
+        self.assertTrue(SoftwareLifecyclePhase.EOL < 101)
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE < 1)
+
+    def test_gt(self):
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE > SoftwareLifecyclePhase.SIGNING)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING > SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL > SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE > 1)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING > 0)
+
+    def test_le(self):
+        self.assertTrue(SoftwareLifecyclePhase.EOL <= SoftwareLifecyclePhase.EOL)
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE <= SoftwareLifecyclePhase.SIGNING)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING <= SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL <= 100)
+        self.assertTrue(SoftwareLifecyclePhase.PRE_RELEASE <= 0)
+
+    def test_ge(self):
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE >= SoftwareLifecyclePhase.RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING >= SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.EOL >= SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertTrue(SoftwareLifecyclePhase.RELEASE >= 2)
+        self.assertTrue(SoftwareLifecyclePhase.SIGNING >= 1)
+
+    def test_eq(self):
+        self.assertEqual(SoftwareLifecyclePhase.RELEASE, 2)
+        self.assertEqual(SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.RELEASE)
+        self.assertNotEqual(SoftwareLifecyclePhase.RELEASE, SoftwareLifecyclePhase.PRE_RELEASE)
+        self.assertEqual(SoftwareLifecyclePhase.SIGNING, 1)
+        self.assertEqual(SoftwareLifecyclePhase.PRE_RELEASE, 0)
+        self.assertEqual(SoftwareLifecyclePhase.EOL.value, 100)
+        self.assertNotEqual(SoftwareLifecyclePhase.EOL.value, 101)

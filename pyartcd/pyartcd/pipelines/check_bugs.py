@@ -4,15 +4,17 @@ import click
 
 from pyartcd import exectools, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.constants import OCP_BUILD_DATA_URL
 from pyartcd.runtime import Runtime
 
 BASE_URL = 'https://api.openshift.com/api/upgrades_info/v1/graph?arch=amd64&channel=fast'
 
 
 class CheckBugsPipeline:
-    def __init__(self, runtime: Runtime, version: str) -> None:
+    def __init__(self, runtime: Runtime, version: str, data_path: str) -> None:
         self.runtime = runtime
         self.version = version
+        self.data_path = data_path
         self.group_config = None
         self.logger = runtime.logger
         self.issues = []
@@ -21,7 +23,10 @@ class CheckBugsPipeline:
 
     async def run(self):
         # Load group config
-        self.group_config = await util.load_group_config(group=f'openshift-{self.version}', assembly='stream')
+        self.group_config = await util.load_group_config(
+            group=f'openshift-{self.version}', assembly='stream', doozer_data_path=self.data_path)
+
+        # Check bugs only for GA releases
         if self.group_config['software_lifecycle']['phase'] != 'release':
             return None
 
@@ -62,16 +67,16 @@ class CheckBugsPipeline:
         self.logger.info('Command returned: %s', out)
         self.issues.extend(out)
 
-    async def _is_build_permitted(self, version: str) -> bool:
+    async def _is_version_in_release_state(self, version: str) -> bool:
         """
-        Only include 'release' state group, exclude 'eol' and 'pre-release'
+        Returns True if the provided version is in "release" state
         """
 
         group_config = await util.load_group_config(group=f'openshift-{version}', assembly='stream')
         phase = group_config['software_lifecycle']['phase']
 
         if phase != 'release':
-            self.logger.info('Release %s is in state "%s"', version, phase)
+            self.logger.info('%s is in state "%s"', version, phase)
             return False
 
         return True
@@ -82,13 +87,9 @@ class CheckBugsPipeline:
         return '.'.join([major, str(int(minor) + 1)])
 
     async def _find_regressions(self):
-        # Do nothing for EOL releases
-        if self.group_config['software_lifecycle']['phase'] == 'eol':
-            return
-
         # Check pre-release
         next_minor = self.get_next_minor(self.version)
-        if not await self._is_build_permitted(next_minor):
+        if not await self._is_version_in_release_state(next_minor):
             self.logger.info('Skipping regression checks for %s as %s is not in "release" state',
                              self.version, next_minor)
             return
@@ -135,10 +136,12 @@ async def slack_report(results, slack_client):
               help='Slack channel to be notified for failures')
 @click.option('--version', 'versions', required=True, multiple=True,
               help='OCP version to check for blockers e.g. 4.7')
+@click.option("--data-path", required=False, default=OCP_BUILD_DATA_URL,
+              help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
 @pass_runtime
 @click_coroutine
-async def check_bugs(runtime: Runtime, slack_channel: str, versions: list):
-    tasks = [CheckBugsPipeline(runtime, version=version).run() for version in versions]
+async def check_bugs(runtime: Runtime, slack_channel: str, versions: list, data_path: str):
+    tasks = [CheckBugsPipeline(runtime, version=version, data_path=data_path).run() for version in versions]
     results = await asyncio.gather(*tasks)
 
     if any(results):
