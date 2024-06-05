@@ -3,12 +3,14 @@ import requests
 import click
 import re
 
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Set
 from prettytable import PrettyTable
+from semver.version import Version
 
-from elliottlib import Runtime, constants, early_kernel
+from elliottlib import Runtime, constants
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.find_builds_cli import _fetch_builds_by_kind_rpm
+from elliottlib.cli.get_golang_report_cli import golang_report_for_version
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug
 from artcommonlib.rhcos import get_container_configs
@@ -54,7 +56,7 @@ class FindBugsGolangCli:
         self.flaw_bugs[flaw_id] = flaw_bug
         return flaw_bug
 
-    def flaw_fixed_in(self, flaw_id: Union[str, BugzillaBug]):
+    def flaw_fixed_in(self, flaw_id: Union[str, BugzillaBug]) -> Union[None, Set[Version]]:
         if isinstance(flaw_id, BugzillaBug):
             flaw_bug = flaw_id
         else:
@@ -86,9 +88,9 @@ class FindBugsGolangCli:
             else:
                 self._logger.warning(f"{flaw_bug.id} doesn't have valid fixed_in value: {fixed_in}")
                 return None
-        return set(fixed_in_versions)
+        return {Version.parse(v) for v in set(fixed_in_versions)}
 
-    def tracker_fixed_in(self, bug):
+    def tracker_fixed_in(self, bug: JIRABug) -> Union[None, Set[Version]]:
         f_ids: List[int] = bug.corresponding_flaw_bug_ids
         if not f_ids:
             self._logger.warning(f"{bug.id} doesn't have any flaw bugs, please investigate")
@@ -102,9 +104,9 @@ class FindBugsGolangCli:
                     f"Could not determine fixed in version for {f_id}. Ignoring it for now")
                 continue
             tracker_fixed_in.update(flaw_fixed_in)
-        return sorted(tracker_fixed_in)
+        return tracker_fixed_in
 
-    def _is_fixed(self, bug, tracker_fixed_in, go_nvr_map):
+    def _is_fixed(self, bug: JIRABug, tracker_fixed_in: Set[Version], go_nvr_map) -> (bool, str):
         versions_to_build_map = {}
         total_builds = 0
         for go_build in go_nvr_map.keys():
@@ -114,7 +116,7 @@ class FindBugsGolangCli:
                 v = parse_nvr(go_build)['version']
 
             match = re.search(r'(\d+\.\d+\.\d+)', v)
-            version = match.group(1)
+            version = Version.parse(match.group(1))
             if version not in versions_to_build_map:
                 versions_to_build_map[version] = 0
             versions_to_build_map[version] += len(go_nvr_map[go_build])
@@ -124,13 +126,11 @@ class FindBugsGolangCli:
 
         fixed_in_versions = set()
         for existing_version in versions_to_build_map.keys():
-            e_major, e_minor, e_patch = (int(x) for x in existing_version.split('.'))
             for fixed_version in tracker_fixed_in:
-                f_major, f_minor, f_patch = (int(x) for x in fixed_version.split('.'))
-                if e_major == f_major and e_minor == f_minor:
-                    if e_patch >= f_patch:
-                        self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {existing_version}")
-                        fixed_in_versions.add(existing_version)
+                if (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor and
+                   existing_version.patch >= fixed_version.patch):
+                    self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {existing_version}")
+                    fixed_in_versions.add(existing_version)
 
         fixed = False
         if fixed_in_versions:
@@ -199,7 +199,7 @@ class FindBugsGolangCli:
 
         return fixed, comment
 
-    async def is_fixed_rpm(self, bug, rpm_name, tracker_fixed_in=None, fixed_in_nvr=None):
+    async def is_fixed_rpm(self, bug, rpm_name: str, tracker_fixed_in=None, fixed_in_nvr=None) -> (bool, str):
         if not self.rpm_nvrps:
             # fetch assembly selected nvrs
             replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
@@ -250,7 +250,7 @@ class FindBugsGolangCli:
         else:
             return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
 
-    async def is_fixed_golang_builder(self, bug, tracker_fixed_in=None, fixed_in_nvr=None):
+    async def is_fixed_golang_builder(self, bug, tracker_fixed_in=None, fixed_in_nvr=None) -> (bool, str):
         if not self.pullspec:
             self._logger.info('Fetching latest accepted nightly...')
             nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=False,
@@ -278,6 +278,16 @@ class FindBugsGolangCli:
 
     async def run(self):
         logger = self._logger
+
+        # fetch golang report for the version, fetched and compiled from streams.yml
+        # e.g. [{'go_version': '1.21.9', 'building_image_count': 239, 'building_rpm_count': 2}, {'go_version':
+        # '1.19.13', 'building_image_count': 1}]
+        # this will be used later to compare to flaw fixed in versions
+        major, minor = self._runtime.get_major_minor()
+        ocp_version = f"{major}.{minor}"
+        golang_report: List[Dict] = golang_report_for_version(self._runtime, ocp_version, ignore_rhel=True)
+        logger.info(f"Current golang versions being used in {ocp_version}: {golang_report}")
+
         target_release = self.jira_tracker.target_release()
         tr = ','.join(target_release)
         logger.info(f"Searching for open golang security trackers with target version {tr}")
@@ -313,7 +323,7 @@ class FindBugsGolangCli:
         cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
         cve_table = PrettyTable()
         cve_table.align = "l"
-        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions"]
+        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Found"]
         for cve_id in cves:
             response = requests.get(cve_url.format(cve_id=cve_id))
             try:
@@ -324,7 +334,7 @@ class FindBugsGolangCli:
 
             flaw_id = data['bugzilla']['id']
             title = data['bugzilla']['description']
-            # something like `golang: html/template: errors returned from MarshalJSON methods may break template escaping`
+            # example `golang: html/template: errors returned from MarshalJSON methods may break template escaping`
             # extract `golang: html/template` which is the most important bit
             flaw_bug = self.get_flaw_bug(flaw_id)
             try:
@@ -332,7 +342,21 @@ class FindBugsGolangCli:
             except Exception as e:
                 logger.warning(f"Could not extract component from title {title}: {e}")
                 comp_in_title = 'Unknown'
-            cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in])
+
+            if not self.fixed_in_nvr:
+                compatible = False
+                for fixed_in_version in self.flaw_fixed_in(flaw_bug):
+                    for go_version in [entry['go_version'] for entry in golang_report]:
+                        go_v = Version.parse(go_version)
+                        if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
+                            compatible = True
+                            break
+                    if compatible:
+                        break
+            else:
+                compatible = True
+
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in, compatible])
         click.echo(f"Found trackers for {len(cves)} CVEs")
         click.echo(cve_table)
 
@@ -478,7 +502,7 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_id, analyze:
     $ elliott -g openshift-4.14 find-bugs:golang --analyze --update-tracker --art-jira ART-1234 --dry-run
 
     """
-    runtime.initialize(mode="rpms")  # disabled=True for microshift
+    runtime.initialize(mode="both")
     if runtime.assembly != 'stream':
         if pullspec:
             raise click.BadParameter('Cannot use --pullspec and --assembly at the same time')
