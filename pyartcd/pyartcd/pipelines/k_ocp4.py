@@ -43,7 +43,6 @@ class KonfluxPipeline:
             group_param
         ]
 
-        # Get the parent-tree graph from ocp-build-data
         self.tree_analyzer = TreeAnalyzer(self.get_tree())
 
     async def rebase(self, images):
@@ -60,7 +59,9 @@ class KonfluxPipeline:
         await exectools.cmd_assert_async(cmd)
 
     def get_tree(self):
-        # Need to build row by row
+        """
+        Get the parent-tree graph from ocp-build-data, of all images
+        """
         cmd = self._doozer_base_command.copy()
         cmd.extend([
             "images:show-tree",
