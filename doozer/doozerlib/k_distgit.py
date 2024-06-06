@@ -17,6 +17,8 @@ from doozerlib.constants import (KONFLUX_REPO_CA_BUNDLE_FILENAME,
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.konflux_builder import KonfluxBuilder
 
+KONFLUX_QUAY_REGISTRY = "quay.io/rh_ee_asdas/konflux-test"
+
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
     """
@@ -77,7 +79,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=True)
 
     def update_distgit_dir(self, version, release, prev_release=None, force_yum_updates=False):
-        version, release = super().update_distgit_dir(version="v0.0.0", release=release, prev_release=prev_release, force_yum_updates=force_yum_updates)
+        version, release = super().update_distgit_dir(version=version, release=release, prev_release=prev_release, force_yum_updates=force_yum_updates)
 
         # DNF repo injection steps for Konflux
         dfp = DockerfileParser(path=str(self.dg_path.joinpath('Dockerfile')))
@@ -99,6 +101,28 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "# End Konflux-specific steps\n\n"
         )
         return version, release
+
+    def _mapped_image_from_member(self, image, original_parent, dfp):
+        base = image.member
+
+        # Parent images need to be rebased for konflux as well
+        from_image_metadata = self.runtime.resolve_image(base)
+
+        if from_image_metadata is None:
+            raise Exception("For konflux, parent images needs to be rebased as well, for now")
+
+        from_image_distgit = from_image_metadata.k_distgit_repo()
+        if from_image_distgit.private_fix is None:  # This shouldn't happen.
+            raise ValueError(
+                f"Parent image {base} doesn't have .p0/.p1 flag determined. "
+                f"This indicates a bug in Doozer."
+            )
+        # If the parent we are going to build is embargoed, this image should also be embargoed
+        self.private_fix = from_image_distgit.private_fix
+
+        # Tag format <distgit_name>_<distgit_branch>_<uuid_tag>
+        # Eg: quay.io/rh_ee_asdas/konflux-test:openshift-base-rhel9_rhaos-4.17-rhel-9_v4.17.0.20240606.094143
+        return f"{KONFLUX_QUAY_REGISTRY}:{from_image_metadata.distgit_key}_{self.config.distgit.branch}_{self.uuid_tag}"
 
     def k_build_container(self, terminate_event):
         if self.org_image_name is None or self.org_version is None:
