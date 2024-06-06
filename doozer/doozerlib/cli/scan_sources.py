@@ -581,7 +581,7 @@ class ConfigScanSources:
 
         labels = json.loads(stdout)
         if not (build_id := labels.get('org.opencontainers.image.version', None)):
-            build_id = labels.version
+            build_id = labels.get('version', None)
 
         return build_id if build_id else None
 
