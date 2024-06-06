@@ -2,8 +2,9 @@ import os
 import yaml
 import jinja2
 import string
+import traceback
 
-from artcommonlib.exectools import cmd_assert, cmd_gather
+from artcommonlib import exectools
 from doozerlib.runtime import Runtime
 
 GITHUB_TOKEN_SECRET_NAME = "github-access-token-ash"  # Secret name for GH token for openshift-priv
@@ -34,14 +35,16 @@ class KonfluxBuilder:
         # https://github.com/openshift/coredns -> https://github.com/openshift-priv/coredns
         self.github_url = self.image_meta.config["content"]["source"]["git"]["web"].replace("openshift", "openshift-priv")
 
+        self.initialize()
+
     @staticmethod
     def verify_secret(secret_name: str):
         command = f"oc get secret {secret_name}"
-        cmd_assert(command)
+        exectools.cmd_assert(command)
 
     def initialize(self):
         command = f"oc project {self.namespace}"
-        cmd_assert(command)
+        exectools.cmd_assert(command)
 
         # All secret names should be unique in the namespace
         # Check if secret for openshift-priv access is present
@@ -76,7 +79,7 @@ class KonfluxBuilder:
     def get_resource_uid(self, resource_name, name):
         command = f"oc get {resource_name} {name} -o yaml"
         self.runtime.logger.info(f"Running command: {command}")
-        out, _ = cmd_assert(command)
+        out, _ = exectools.cmd_assert(command)
         return yaml.safe_load(out)["metadata"]["uid"]
 
     def apply_generated_file(self, data, file_path, output_path, mode="apply"):
@@ -86,9 +89,9 @@ class KonfluxBuilder:
         self.generate_file(file_path=file_path, data=data, output_path=output_path)
         command = f"oc {mode} -f {output_path}"
         self.runtime.logger.info(f"Running command: {command}")
-        cmd_assert(command)
+        exectools.cmd_assert(command)
 
-    def generate_files(self):
+    def _start_build(self):
         data = {
             "application": {
                 "name": self.application_name
@@ -146,11 +149,19 @@ class KonfluxBuilder:
         self.apply_generated_file(data, "doozer/static/konflux/pipeline_run.yaml", f"{self.konflux_working_dir}/pipeline_run.yaml", mode="create")
         self.runtime.logger.info(f"Will push to registry {self.output_registry} on success")
 
-    def build(self):
-        pass
+        return ""  # Return pipeline run id
 
-    def _start_build(self):
-        self.initialize()
-        self.generate_files()
+    async def build(self, image, retries: int = 3):
+        dg = image.distgit_repo()
+        logger = dg.logger
+        for attempt in range(retries):
+            logger.info("Build attempt %s/%s", attempt + 1, retries)
+            try:
+                await exectools.to_thread(self._start_build())
+            except Exception as err:
+                raise Exception(f"Error building image {image.name}: {str(err)}: {traceback.format_exc()}")
+
+        return True
+
 
 

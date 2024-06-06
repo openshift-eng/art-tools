@@ -55,8 +55,21 @@ class KonfluxPipeline:
 
         await exectools.cmd_assert_async(cmd)
 
+    async def _build(self):
+        cmd = self._doozer_base_command.copy()
+        cmd.extend([
+            f"--images={','.join(self.image_list)}", "k:images:build",
+        ])
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+
+        except ChildProcessError:
+            raise
+
     async def run(self):
         await self._rebase()
+        await self._build()
 
 
 @cli.command("k:ocp4", help=" Konflux pipeline")

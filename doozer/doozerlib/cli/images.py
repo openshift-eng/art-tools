@@ -810,6 +810,7 @@ def k_images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, sc
 
     print(results)
 
+
 @cli.command("images:build", short_help="Build images for the group.")
 @click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
               default='',

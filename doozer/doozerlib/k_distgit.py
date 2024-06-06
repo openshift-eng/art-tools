@@ -123,15 +123,16 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
                 if 'member' in builder:
                     self._set_wait_for(builder['member'], terminate_event)
 
-
-
             if self.runtime.assembly and isolate_assembly_in_release(release) != self.runtime.assembly:
                 # Assemblies should follow its naming convention
                 raise ValueError(f"Image {self.name} is not rebased with assembly '{self.runtime.assembly}'.")
 
             konflux_builder = KonfluxBuilder(runtime=self.runtime, distgit_name=self.name, namespace="asdas-tenant")
             try:
-                task_id, task_url, build_info = asyncio.run(konflux_builder.build())
+                status = asyncio.run(konflux_builder.build())
+
+                if not status:
+                    raise Exception("Error in konflux builder")
 
             except Exception:
                 raise
@@ -139,7 +140,6 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             self.build_status = True
         except (Exception, KeyboardInterrupt):
             tb = traceback.format_exc()
-            record["message"] = "Exception occurred:\n{}".format(tb)
             self.logger.info("Exception occurred during build:\n{}".format(tb))
             # This is designed to fall through to finally. Since this method is designed to be
             # threaded, we should not throw an exception; instead return False.
