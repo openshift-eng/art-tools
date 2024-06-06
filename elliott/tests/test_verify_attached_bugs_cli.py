@@ -1,3 +1,5 @@
+import yaml
+
 from click.testing import CliRunner
 from errata_tool import Erratum
 from unittest.mock import patch
@@ -23,10 +25,40 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         validator = BugValidator(runtime, True)
         self.assertEqual(validator.target_releases, ['4.9.z'])
 
+    def test_verify_bugs_skip_blocking_bugs_for_prerelease(self):
+        runner = CliRunner()
+        flexmock(Runtime).should_receive("initialize")
+        flexmock(Runtime).should_receive("get_errata_config").and_return({})
+        flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
+        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(False)
+        flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        client = flexmock()
+        flexmock(client).should_receive("fields").and_return([])
+        flexmock(JIRABugTracker).should_receive("login").and_return(client)
+        flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
+        flexmock(BugzillaBugTracker).should_receive("login")
+
+        bugs = [
+            flexmock(id="OCPBUGS-1", target_release=['4.6.z'], depends_on=['OCPBUGS-4'],
+                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False,
+                     is_invalid_tracker_bug=lambda: False),
+            flexmock(id="OCPBUGS-2", target_release=['4.6.z'], depends_on=['OCPBUGS-3'],
+                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False,
+                     is_invalid_tracker_bug=lambda: False)
+        ]
+
+        flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
+        flexmock(BugzillaBugTracker).should_receive("search").and_return([])
+
+        result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
+        self.assertEqual(result.exit_code, 0)
+
     def test_verify_bugs_with_sweep_cli(self):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
+        flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
+        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -67,6 +99,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
+        flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
+        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
         client = flexmock()

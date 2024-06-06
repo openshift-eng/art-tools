@@ -1,5 +1,6 @@
 import asyncio
 import re
+import yaml
 from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 from errata_tool import Erratum
@@ -180,6 +181,15 @@ class BugValidator:
                  is_attached: bool = False):
         non_flaw_bugs = self.filter_bugs_by_release(non_flaw_bugs, complain=True)
         self._find_invalid_trackers(non_flaw_bugs)
+
+        # Make sure the next version is GA before regression check
+        major, minor = self.runtime.get_major_minor()
+        version = f"{major}.{minor + 1}"
+        next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+        if not next_is_ga:
+            no_verify_blocking_bugs = True
+            logger.info(f"Skipping regression check because {version} is not GA")
+
         if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
             self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)

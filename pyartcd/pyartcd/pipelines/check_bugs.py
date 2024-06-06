@@ -67,34 +67,7 @@ class CheckBugsPipeline:
         self.logger.info('Command returned: %s', out)
         self.issues.extend(out)
 
-    async def _is_version_in_release_state(self, version: str) -> bool:
-        """
-        Returns True if the provided version is in "release" state
-        """
-
-        group_config = await util.load_group_config(group=f'openshift-{version}', assembly='stream')
-        phase = group_config['software_lifecycle']['phase']
-
-        if phase != 'release':
-            self.logger.info('%s is in state "%s"', version, phase)
-            return False
-
-        return True
-
-    @staticmethod
-    def get_next_minor(version: str) -> str:
-        major, minor = version.split('.')[:2]
-        return '.'.join([major, str(int(minor) + 1)])
-
     async def _find_regressions(self):
-        # Check pre-release
-        next_minor = self.get_next_minor(self.version)
-        if not await self._is_version_in_release_state(next_minor):
-            self.logger.info('Skipping regression checks for %s as %s is not in "release" state',
-                             self.version, next_minor)
-            return
-
-        # Next minor is GA: going to check for regressions
         self.logger.info(f'Checking possible regressions for Openshift {self.version}')
 
         # Verify bugs

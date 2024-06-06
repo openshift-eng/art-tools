@@ -13,6 +13,7 @@ import click
 import yaml
 
 from artcommonlib import logutil
+from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
@@ -443,6 +444,36 @@ class Runtime(GroupRuntime):
 
     def get_errata_config(self, **kwargs):
         return self.gitdata.load_data(key='erratatool', **kwargs).data
+
+    def is_version_in_lifecycle_phase(self, phase: str, version: str = None) -> bool:
+        """
+        Determine if the version is in the specified lifecycle phase.
+        :param phase: The lifecycle phase to check.
+        :param version: The version to check. If ommitted the runtime's group version is used. e.g. "4.16"
+        :return: True if the version is in the specified phase, False otherwise.
+        """
+        major, minor = self.get_major_minor()
+        if version and version != f"{major}.{minor}":
+            out = self.get_file_from_branch(f"openshift-{version}", 'group.yml')
+            next_group_config = yaml.safe_load(out)
+            actual_phase = next_group_config.get('software_lifecycle', {}).get('phase', None)
+        else:
+            actual_phase = self.group_config.software_lifecycle.phase
+        return actual_phase == phase
+
+    def get_file_from_branch(self, branch, filename):
+        if branch == self.branch:
+            raise ValueError("Do not use this method to access files from the current branch")
+
+        # fetch branch first
+        cmd = f"git -C {self.data_dir} fetch origin {branch}:{branch}"
+        exectools.cmd_assert(cmd)
+
+        cmd = f"git -C {self.data_dir} show {branch}:{filename}"
+        rc, out, err = exectools.cmd_gather(cmd)
+        if rc != 0:
+            raise IOError(f"Failed to get {filename} from {branch} branch")
+        return out
 
     def build_retrying_koji_client(self, caching: bool = False):
         """
