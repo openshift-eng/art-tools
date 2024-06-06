@@ -39,9 +39,8 @@ from pyartcd.s3 import sync_dir_to_s3_mirror
 from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
     extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
 from pyartcd.runtime import Runtime, GroupRuntime
-from github import Github
-from github import GithubException
-from yaml.parser import ParserError
+from github import Github, GithubException
+from ruamel.yaml.parser import ParserError
 
 
 yaml = YAML(typ="safe")
@@ -1547,27 +1546,30 @@ class PromotePipeline:
                 fork_repo.get_git_ref(f"heads/{release_name}").delete()
         fork_branch = fork_repo.create_git_ref(f"refs/heads/{release_name}", upstream_repo.get_branch("z-stream").commit.sha)
         self._logger.info("Created fork branch ref %s", fork_branch.ref)
-        # get release file
+        # get release file content
         try:
             release_content = upstream_repo.get_contents(file_path, ref="z-stream")
-            file = yaml.load(release_content.decoded_content, Loader=yaml.FullLoader)
-            file['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+            file_content = yaml.load(release_content.decoded_content, Loader=yaml.FullLoader)
+            file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
         except ParserError:
             self._logger.warning("release file not in valid yaml format, overwrite with new value")
-            file = {'releases': {}}
-            file['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+            file_content = {'releases': {}}
+            file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
         except GithubException:
             self._logger.warning("release file not found in upstream repo, skip update qe repo")
             return
         # update release file
-        file_content_bytes = yaml.dump(file).encode()
+        file_content_bytes = yaml.dump(file_content).encode()
         fork_file = fork_repo.get_contents(file_path, ref=release_name)
         fork_repo.update_file(file_path, update_message, file_content_bytes, fork_file.sha, branch=release_name)
         # create pr
-        pr = upstream_repo.create_pull(title=update_message, body=update_message, base="z-stream", head=f"openshift-bot:{release_name}")
-        pr.add_to_labels("lgtm", "approved")
-        pr.merge()
-        self._logger.info(f"PR {pr.html_url} merged info qe repo")
+        try:
+            pr = upstream_repo.create_pull(title=update_message, body=update_message, base="z-stream", head=f"openshift-bot:{release_name}")
+            pr.add_to_labels("lgtm", "approved")
+            pr.merge()
+            self._logger.info(f"PR {pr.html_url} merged info qe repo")
+        except GithubException as e:
+            self._logger.warning(f"Failed to update upstream repo: {e}")
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
