@@ -110,6 +110,6 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         # If the parent we are going to build is embargoed, this image should also be embargoed
         self.private_fix = from_image_distgit.private_fix
 
-        # Tag format <distgit_name>_<distgit_branch>_<version>
+        # Tag format <distgit_name>_<distgit_branch>_<uuid_tag>
         # Eg: quay.io/rh_ee_asdas/konflux-test:openshift-base-rhel9_rhaos-4.17-rhel-9_v4.17.0.20240606.094143
         return f"{KONFLUX_QUAY_REGISTRY}:{from_image_metadata.distgit_key}_{self.config.distgit.branch}_{self.uuid_tag}"
