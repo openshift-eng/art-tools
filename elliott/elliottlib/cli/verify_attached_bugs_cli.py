@@ -184,12 +184,13 @@ class BugValidator:
 
         # Make sure the next version is GA before regression check
         major, minor = self.runtime.get_major_minor()
-        next_version_branch = f"openshift-{major}.{minor + 1}"
-        out = self.runtime.get_file_from_gitdata(next_version_branch, 'group.yml')
-        next_group_config = yaml.safe_load(out)
-        next_is_ga = next_group_config['software_lifecycle']['phase'] == 'release'
+        version = f"{major}.{minor + 1}"
+        next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+        if not next_is_ga:
+            no_verify_blocking_bugs = True
+            logger.info(f"Skipping regression check because {version} is not GA")
 
-        if not no_verify_blocking_bugs and next_is_ga:
+        if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
             self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
 

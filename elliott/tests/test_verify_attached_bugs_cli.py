@@ -30,8 +30,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        next_version_config = {'software_lifecycle': {'phase': 'pre-release'}}
-        flexmock(Runtime).should_receive("get_file_from_gitdata").and_return(yaml.dump(next_version_config))
+        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(False)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -59,8 +58,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        next_version_config = {'software_lifecycle': {'phase': 'release'}}
-        flexmock(Runtime).should_receive("get_file_from_gitdata").and_return(yaml.dump(next_version_config))
+        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -102,8 +100,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        next_version_config = {'software_lifecycle': {'phase': 'release'}}
-        flexmock(Runtime).should_receive("get_file_from_gitdata").and_return(yaml.dump(next_version_config))
+        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
         client = flexmock()
