@@ -1,11 +1,21 @@
+import asyncio
 import os
 import pathlib
+import traceback
 
-from dockerfile_parse import DockerfileParser
-from artcommonlib import assertion, logutil, build_util, exectools
+from artcommonlib import assertion, build_util, exectools, logutil
+from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.release_util import (isolate_assembly_in_release,
+                                       isolate_el_version_in_release)
+from dockerfile_parse import DockerfileParser
+
+from doozerlib import state
+from doozerlib.constants import (KONFLUX_REPO_CA_BUNDLE_FILENAME,
+                                 KONFLUX_REPO_CA_BUNDLE_HOST,
+                                 KONFLUX_REPO_CA_BUNDLE_TMP_PATH)
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
+from doozerlib.konflux_builder import KonfluxBuilder
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
@@ -89,3 +99,53 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "# End Konflux-specific steps\n\n"
         )
         return version, release
+
+    def k_build_container(self, terminate_event):
+        if self.org_image_name is None or self.org_version is None:
+            if not os.path.isfile(os.path.join(self.distgit_dir, 'Dockerfile')):
+                msg = ('No Dockerfile found in {}'.format(self.distgit_dir))
+            else:
+                msg = ('Unknown error loading Dockerfile information')
+
+            self.logger.info(msg)
+            state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
+            return (self.metadata.distgit_key, False)
+
+        release = self.org_release if self.org_release is not None else '?'
+
+        try:
+            # If this image is FROM another group member, we need to wait on that group member
+            # Use .get('from',None) since from is a reserved word.
+            image_from = Model(self.config.get('from', None))
+            if image_from.member is not Missing:
+                self._set_wait_for(image_from.member, terminate_event)
+            for builder in image_from.get('builder', []):
+                if 'member' in builder:
+                    self._set_wait_for(builder['member'], terminate_event)
+
+
+
+            if self.runtime.assembly and isolate_assembly_in_release(release) != self.runtime.assembly:
+                # Assemblies should follow its naming convention
+                raise ValueError(f"Image {self.name} is not rebased with assembly '{self.runtime.assembly}'.")
+
+            konflux_builder = KonfluxBuilder(runtime=self.runtime, distgit_name=self.name, namespace="asdas-tenant")
+            try:
+                task_id, task_url, build_info = asyncio.run(konflux_builder.build())
+
+            except Exception:
+                raise
+
+            self.build_status = True
+        except (Exception, KeyboardInterrupt):
+            tb = traceback.format_exc()
+            record["message"] = "Exception occurred:\n{}".format(tb)
+            self.logger.info("Exception occurred during build:\n{}".format(tb))
+            # This is designed to fall through to finally. Since this method is designed to be
+            # threaded, we should not throw an exception; instead return False.
+        finally:
+            # Regardless of success, allow other images depending on this one to progress or fail.
+            self.build_lock.release()
+
+    def _konflux_watch_build(self):
+        pass

@@ -17,7 +17,6 @@ from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.k_distgit import KonfluxImageDistGitRepo
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
 
@@ -732,6 +731,84 @@ def print_build_metrics(runtime):
     else:
         runtime.logger.info('Unable to determine timestamps from collected info: {}'.format(watch_task_info))
 
+
+@cli.command("k:images:build", short_help="Build images for the group.")
+@click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
+              default='',
+              help="Repo type (e.g. signed, unsigned).")
+@click.option("--repo", default=[], metavar="REPO_URL",
+              multiple=True, help="Custom repo URL to supply to brew build. If specified, defaults from --repo-type will be ignored.")
+@click.option('--push-to-defaults', default=False, is_flag=True,
+              help='Push to default registries when build completes.')
+@click.option("--push-to", default=[], metavar="REGISTRY", multiple=True,
+              help="Specific registries to push to when image build completes.  [multiple]")
+@click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
+@click.option("--threads", default=1, metavar="NUM_THREADS",
+              help="Number of concurrent builds to execute. Only valid for --local builds.")
+@click.option("--filter-by-os", default=None, metavar="ARCH",
+              help="Specify an exact arch to push (golang name e.g. 'amd64').")
+@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option('--build-retries', type=int, default=1, help='Number of build attempts for an osbs build')
+@click.option("--namespace", required=True, help="OCP namespace where konflux is deployed to")
+@pass_runtime
+def k_images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, scratch, threads, filter_by_os, dry_run, build_retries, namespace):
+    runtime.initialize(clone_distgits=False)
+
+    runtime.assert_mutation_is_permitted()
+
+    cmd = runtime.command
+
+    runtime.state[cmd] = dict(state.TEMPLATE_IMAGE)
+    lstate = runtime.state[cmd]  # get local convenience copy
+
+    pre_step = None
+    if 'k:images:rebase' in runtime.state:
+        pre_step = runtime.state['images:rebase']
+
+    required = []
+    failed = []
+
+    if pre_step:
+        for img, status in pre_step['images'].items():
+            if status is not True:  # anything other than true is fail
+                img_obj = runtime.image_map[img]
+                failed.append(img)
+                if img_obj.required:
+                    required.append(img)
+
+    items = [m.k_distgit_repo() for m in runtime.ordered_image_metas()]
+
+    lstate['total'] = len(items)
+
+    if not items:
+        runtime.logger.info("No images found. Check the arguments.")
+        exit(1)
+
+    if required:
+        msg = 'The following images failed during the previous step and are required:\n{}'.format('\n'.join(required))
+        lstate['status'] = state.STATE_FAIL
+        lstate['msg'] = msg
+        raise DoozerFatalError(msg)
+    elif failed:
+        # filter out failed images and their children
+        failed = runtime.filter_failed_image_trees(failed)
+        yellow_print(
+            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format(
+                '\n'.join(failed)))
+        # reload after fail filtered
+        items = [m.k_distgit_repo() for m in runtime.ordered_image_metas()]
+
+        if not items:
+            runtime.logger.info("No images left to build after failures and children filtered out.")
+            exit(1)
+
+    results = exectools.parallel_exec(
+        lambda dgr, terminate_event: dgr.k_build_container(),
+        items, n_threads=threads)
+
+    results = results.get()
+
+    print(results)
 
 @cli.command("images:build", short_help="Build images for the group.")
 @click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",

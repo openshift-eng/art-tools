@@ -1,11 +1,9 @@
-import click
 import os
 import yaml
 import jinja2
 import string
 
 from artcommonlib.exectools import cmd_assert, cmd_gather
-from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.runtime import Runtime
 
 GITHUB_TOKEN_SECRET_NAME = "github-access-token-ash"  # Secret name for GH token for openshift-priv
@@ -14,7 +12,7 @@ QUAY_REGISTRY_SECRET_NAME = "component-1"
 KONFLUX_ROOT_WORKING_DIR = "/tmp/crap/konflux"
 
 
-class Konflux:
+class KonfluxBuilder:
     def __init__(self, runtime: Runtime, distgit_name: str, namespace: str):
         self.runtime = runtime
 
@@ -148,14 +146,11 @@ class Konflux:
         self.apply_generated_file(data, "doozer/static/konflux/pipeline_run.yaml", f"{self.konflux_working_dir}/pipeline_run.yaml", mode="create")
         self.runtime.logger.info(f"Will push to registry {self.output_registry} on success")
 
-    def run(self):
+    def build(self):
+        pass
+
+    def _start_build(self):
         self.initialize()
         self.generate_files()
 
 
-@cli.command("k:ocp4", help="Konflux pipeline")
-@click.option("--namespace", required=True, help="OCP namespace where konflux is deployed to")
-@pass_runtime
-def konflux(runtime: Runtime, namespace: str):
-    pipeline = Konflux(runtime=runtime, distgit_name="coredns", namespace=namespace)
-    pipeline.run()

@@ -93,7 +93,7 @@ class KonfluxPipeline:
         await self._rebase(images=parents_children)
 
 
-@cli.command("k_ocp4", help=" Konflux pipeline")
+@cli.command("k:ocp4", help=" Konflux pipeline")
 @click.option("--image-list", required=True, default="",
               help="Comma/space-separated list to include/exclude per BUILD_IMAGES "
                    "(e.g. logging-kibana5,openshift-jenkins-2)")
