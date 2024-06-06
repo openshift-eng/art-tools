@@ -566,24 +566,29 @@ class ConfigScanSources:
 
         return statuses
 
-    def _tagged_rhcos_id(self, container_name, version, arch, private) -> str:
+    def _tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:
         """determine the most recently tagged RHCOS in given imagestream"""
         base_namespace = rgp.default_imagestream_namespace_base_name()
         base_name = rgp.default_imagestream_base_name(version)
         namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
         stdout, _ = exectools.cmd_assert(
-            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}'"
-            " --template '{{.image.dockerImageMetadata.Config.Labels}}' -o json",
+            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
             retries=3,
             pollrate=5,
             strip=True,
         )
 
-        labels = json.loads(stdout)
-        if not (build_id := labels.get('org.opencontainers.image.version', None)):
-            build_id = labels.get('version', None)
+        build_id = None
+        try:
+            istagdata = json.loads(stdout)
+            labels = istagdata['image']['dockerImageMetadata']['Config']['Labels']
+            if not (build_id := labels.get('org.opencontainers.image.version', None)):
+                build_id = labels.get('version', None)
+        except KeyError:
+            self.runtime.logger.error('Could not find .image.dockerImageMetadata.Config.Labels in RHCOS imageMetadata')
+            self.runtime.logger.error(stdout)
 
-        return build_id if build_id else None
+        return build_id
 
 
 @cli.command("config:scan-sources", short_help="Determine if any rpms / images need to be rebuilt.")

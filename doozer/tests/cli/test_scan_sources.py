@@ -11,7 +11,7 @@ class TestScanSourcesCli(TestCase):
     @patch("artcommonlib.exectools.cmd_assert")
     def test_tagged_rhcos_id(self, mock_cmd):
         mock_cmd.return_value = (
-            '{"org.opencontainers.image.version": "id-1"}',
+            '{"image": {"dockerImageMetadata": {"Config": {"Labels": {"org.opencontainers.image.version": "id-1"}}}}}',
             "stderr")
 
         runtime = MagicMock(rpm_map=[])
