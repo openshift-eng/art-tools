@@ -1,9 +1,7 @@
 import json
 import click
 import os
-import yaml
 from artcommonlib import exectools
-from artcommonlib.util import TreeAnalyzer
 from pyartcd import constants
 from pyartcd import util
 from pyartcd.cli import cli, pass_runtime, click_coroutine
@@ -43,13 +41,11 @@ class KonfluxPipeline:
             group_param
         ]
 
-        self.tree_analyzer = TreeAnalyzer(self._get_tree())
-
-    async def _rebase(self, images):
+    async def _rebase(self):
         cmd = self._doozer_base_command.copy()
         cmd.extend([
-            "--latest-parent-version", "k:images:rebase", f"--images={','.join(images)}",
-            f"--version=v{self.version.stream}", f"--release='{self.version.release}'",
+            f"--images={','.join(self.image_list)}", "k:images:rebase", f"--version=v{self.version.stream}",
+            f"--release='{self.version.release}'",
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
         ])
 
@@ -58,39 +54,8 @@ class KonfluxPipeline:
 
         await exectools.cmd_assert_async(cmd)
 
-    def _get_tree(self):
-        """
-        Get the parent-tree graph from ocp-build-data, of all images
-        """
-        cmd = self._doozer_base_command.copy()
-        cmd.extend([
-            "images:show-tree",
-            "--yml"
-        ])
-        out, _ = exectools.cmd_assert(cmd)
-        self.runtime.logger.info("images:show-tree output:\n%s", out)
-        return yaml.safe_load(out)
-
-    def _get_parents_children(self, images):
-        """
-        Get the list of parents and children of a node, including the node as well.
-        """
-        unique_images = set()
-
-        for image in images:
-            unique_images.add(image)
-            parents, children = self.tree_analyzer.get_parents_and_children(image)
-            for node in parents + children:
-                unique_images.add(node)
-
-        return unique_images
-
     async def run(self):
-        # Get all the parents and children that we need. Combine them so that there are no duplicates.
-        # This will be the new set of images to rebase
-        parents_children = self._get_parents_children(self.image_list)
-
-        await self._rebase(images=parents_children)
+        await self._rebase()
 
 
 @cli.command("k:ocp4", help=" Konflux pipeline")
