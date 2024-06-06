@@ -40,7 +40,8 @@ from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extra
     extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
 from pyartcd.runtime import Runtime, GroupRuntime
 from github import Github
-import time
+from github import GithubException
+from yaml.parser import ParserError
 
 
 yaml = YAML(typ="safe")
@@ -1497,8 +1498,9 @@ class PromotePipeline:
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
                                nightlies: List[str]):
         """
+        Check release jira subtask for task status
         Send a notification email to QEs if it hasn't been done yet
-        check release jira subtask for task status
+        Update QE release repo with release info if hasn't been done yet
         """
 
         if not release_jira:
@@ -1530,6 +1532,7 @@ class PromotePipeline:
         else:
             self._logger.info("Would've closed subtask %s", subtask.key)
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _update_qe_repo(self, release_name: str, release_jira: str, advisories: Dict[str, int]):
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
         upstream_repo = github_client.get_repo("openshift/release-tests")
@@ -1539,34 +1542,31 @@ class PromotePipeline:
         file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
         self._logger.info("Updating QE release repo")
         # create branch
+        for branch in fork_repo.get_branches():
+            if branch.name == release_name:
+                fork_repo.get_git_ref(f"heads/{release_name}").delete()
         fork_branch = fork_repo.create_git_ref(f"refs/heads/{release_name}", upstream_repo.get_branch("z-stream").commit.sha)
         self._logger.info("Created fork branch ref %s", fork_branch.ref)
         # get release file
-        file = yaml.load(upstream_repo.get_contents(file_path, ref=release_name).decoded_content, Loader=yaml.FullLoader)
-        if release_name in file['releases']:
-            self._logger.info(f"Release {release_name} already exists in openshift/release-tests repo")
-            return
-        else:
+        try:
+            release_content = upstream_repo.get_contents(file_path, ref="z-stream")
+            file = yaml.load(release_content.decoded_content, Loader=yaml.FullLoader)
             file['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+        except ParserError:
+            self._logger.warning("release file not in valid yaml format, overwrite with new value")
+            file = {'releases': {}}
+            file['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
+        except GithubException:
+            self._logger.warning("release file not found in upstream repo, skip update qe repo")
+            return
         # update release file
         file_content_bytes = yaml.dump(file).encode()
         fork_file = fork_repo.get_contents(file_path, ref=release_name)
         fork_repo.update_file(file_path, update_message, file_content_bytes, fork_file.sha, branch=release_name)
         # create pr
         pr = upstream_repo.create_pull(title=update_message, body=update_message, base="z-stream", head=f"openshift-bot:{release_name}")
-        pr.add_to_labels("lgtm", "approved")
-        self._logger.info(f"PR {pr.title} created for {release_name} {pr.html_url}")
-        # watch pr merged in 15 mins
-        start_time = time.time()
-        while time.time() - start_time < 15 * 60:
-            if not pr.is_merged():
-                self._logger.info(f"PR {pr.html_url} not merged, wait for 3 mins")
-                time.sleep(3 * 60)
-            else:
-                self._logger.info(f"PR {pr.html_url} merged for {release_name}")
-                break
-        # delete branch
-        fork_branch.delete()
+        pr.merge()
+        self._logger.info(f"PR {pr.html_url} merged info qe repo")
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
