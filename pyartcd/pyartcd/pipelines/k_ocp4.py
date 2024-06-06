@@ -45,7 +45,7 @@ class KonfluxPipeline:
         cmd = self._doozer_base_command.copy()
         cmd.extend([
             f"--images={','.join(self.image_list)}", "k:images:rebase", f"--version=v{self.version.stream}",
-            f"--release='{self.version.release}'",
+            f"--release={self.version.release}",
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
             "--skip-config-check"
         ])
@@ -53,16 +53,20 @@ class KonfluxPipeline:
         if self.runtime.dry_run:
             cmd.append("--dry-run")
 
-        await exectools.cmd_assert_async(cmd)
+        rc, _, _ = await exectools.cmd_gather_async(cmd)
+
+        assert rc == 0
 
     async def _build(self):
         cmd = self._doozer_base_command.copy()
         cmd.extend([
-            f"--images={','.join(self.image_list)}", "k:images:build",
+            f"--images={','.join(self.image_list)}", "k:images:build", "--namespace=asdas-tenant"
         ])
 
         try:
-            await exectools.cmd_assert_async(cmd)
+            rc, _, _ = await exectools.cmd_gather_async(cmd)
+
+            assert rc == 0
 
         except ChildProcessError:
             raise

@@ -734,25 +734,11 @@ def print_build_metrics(runtime):
 
 
 @cli.command("k:images:build", short_help="Build images for the group.")
-@click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
-              default='',
-              help="Repo type (e.g. signed, unsigned).")
-@click.option("--repo", default=[], metavar="REPO_URL",
-              multiple=True, help="Custom repo URL to supply to brew build. If specified, defaults from --repo-type will be ignored.")
-@click.option('--push-to-defaults', default=False, is_flag=True,
-              help='Push to default registries when build completes.')
-@click.option("--push-to", default=[], metavar="REGISTRY", multiple=True,
-              help="Specific registries to push to when image build completes.  [multiple]")
-@click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
 @click.option("--threads", default=1, metavar="NUM_THREADS",
               help="Number of concurrent builds to execute. Only valid for --local builds.")
-@click.option("--filter-by-os", default=None, metavar="ARCH",
-              help="Specify an exact arch to push (golang name e.g. 'amd64').")
-@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--build-retries', type=int, default=1, help='Number of build attempts for an osbs build')
 @click.option("--namespace", required=True, help="OCP namespace where konflux is deployed to")
 @pass_runtime
-def k_images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, scratch, threads, filter_by_os, dry_run, build_retries, namespace):
+def k_images_build_image(runtime, threads, namespace):
     runtime.initialize(clone_distgits=False)
 
     runtime.assert_mutation_is_permitted()
@@ -764,7 +750,7 @@ def k_images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, sc
 
     pre_step = None
     if 'k:images:rebase' in runtime.state:
-        pre_step = runtime.state['images:rebase']
+        pre_step = runtime.state['k:images:rebase']
 
     required = []
     failed = []
@@ -804,7 +790,7 @@ def k_images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, sc
             exit(1)
 
     results = exectools.parallel_exec(
-        lambda dgr, terminate_event: dgr.k_build_container(),
+        lambda dgr, terminate_event: dgr.k_build_container(terminate_event, namespace),
         items, n_threads=threads)
 
     results = results.get()

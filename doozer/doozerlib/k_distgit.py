@@ -124,16 +124,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         # Eg: quay.io/rh_ee_asdas/konflux-test:openshift-base-rhel9_rhaos-4.17-rhel-9_v4.17.0.20240606.094143
         return f"{KONFLUX_QUAY_REGISTRY}:{from_image_metadata.distgit_key}_{self.config.distgit.branch}_{self.uuid_tag}"
 
-    def k_build_container(self, terminate_event):
-        if self.org_image_name is None or self.org_version is None:
-            if not os.path.isfile(os.path.join(self.distgit_dir, 'Dockerfile')):
-                msg = ('No Dockerfile found in {}'.format(self.distgit_dir))
-            else:
-                msg = ('Unknown error loading Dockerfile information')
-
-            self.logger.info(msg)
-            state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
-            return (self.metadata.distgit_key, False)
+    def k_build_container(self, terminate_event, namespace):
 
         release = self.org_release if self.org_release is not None else '?'
 
@@ -147,13 +138,9 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
                 if 'member' in builder:
                     self._set_wait_for(builder['member'], terminate_event)
 
-            if self.runtime.assembly and isolate_assembly_in_release(release) != self.runtime.assembly:
-                # Assemblies should follow its naming convention
-                raise ValueError(f"Image {self.name} is not rebased with assembly '{self.runtime.assembly}'.")
-
-            konflux_builder = KonfluxBuilder(runtime=self.runtime, distgit_name=self.name, namespace="asdas-tenant")
+            konflux_builder = KonfluxBuilder(runtime=self.runtime, distgit_name=self.name, namespace=namespace, dry_run=self.dry_run)
             try:
-                status = asyncio.run(konflux_builder.build())
+                status = asyncio.run(konflux_builder.build(self.metadata))
 
                 if not status:
                     raise Exception("Error in konflux builder")

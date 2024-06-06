@@ -5,7 +5,6 @@ import string
 import traceback
 
 from artcommonlib import exectools
-from doozerlib.runtime import Runtime
 
 GITHUB_TOKEN_SECRET_NAME = "github-access-token-ash"  # Secret name for GH token for openshift-priv
 QUAY_REGISTRY_REPO_URL = "quay.io/rh_ee_asdas/konflux-test"
@@ -14,9 +13,9 @@ KONFLUX_ROOT_WORKING_DIR = "/tmp/crap/konflux"
 
 
 class KonfluxBuilder:
-    def __init__(self, runtime: Runtime, distgit_name: str, namespace: str):
+    def __init__(self, runtime, distgit_name: str, namespace: str, dry_run):
         self.runtime = runtime
-
+        self.dry_run = dry_run
         self.runtime.initialize(clone_distgits=False)
         self.namespace = namespace
 
@@ -99,7 +98,7 @@ class KonfluxBuilder:
             "namespace": self.namespace,
 
         }
-        self.apply_generated_file(data, "doozer/static/konflux/application.yaml",
+        self.apply_generated_file(data, "/home/asdas/PycharmProjects/art-tools/doozer/static/konflux/application.yaml",
                                   f"{self.konflux_working_dir}/application.yaml")
 
         application_uid = self.get_resource_uid(resource_name="Application", name=self.application_name)
@@ -121,7 +120,7 @@ class KonfluxBuilder:
                 "dockerfile_path": "Dockerfile"
             }
         }
-        self.apply_generated_file(data, "doozer/static/konflux/component.yaml", f"{self.konflux_working_dir}/component.yaml")
+        self.apply_generated_file(data, "/home/asdas/PycharmProjects/art-tools/doozer/static/konflux/component.yaml", f"{self.konflux_working_dir}/component.yaml")
 
         component_uid = self.get_resource_uid(resource_name="Component", name=self.component_name)
         data = {
@@ -146,12 +145,12 @@ class KonfluxBuilder:
             "output_registry_url": self.output_registry
         }
 
-        self.apply_generated_file(data, "doozer/static/konflux/pipeline_run.yaml", f"{self.konflux_working_dir}/pipeline_run.yaml", mode="create")
+        self.apply_generated_file(data, "/home/asdas/PycharmProjects/art-tools/doozer/static/konflux/pipeline_run.yaml", f"{self.konflux_working_dir}/pipeline_run.yaml", mode="create")
         self.runtime.logger.info(f"Will push to registry {self.output_registry} on success")
 
         return ""  # Return pipeline run id
 
-    async def build(self, image, retries: int = 3):
+    async def build(self, image, retries: int = 1):
         dg = image.distgit_repo()
         logger = dg.logger
         for attempt in range(retries):
