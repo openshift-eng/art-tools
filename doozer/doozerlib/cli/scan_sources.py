@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timezone
 
 import click
@@ -572,12 +573,17 @@ class ConfigScanSources:
         namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
         stdout, _ = exectools.cmd_assert(
             f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}'"
-            " --template '{{.image.dockerImageMetadata.Config.Labels.version}}'",
+            " --template '{{.image.dockerImageMetadata.Config.Labels}}' -o json",
             retries=3,
             pollrate=5,
             strip=True,
         )
-        return stdout if stdout else None
+
+        labels = json.loads(stdout)
+        if not (build_id := labels.get('org.opencontainers.image.version', None)):
+            build_id = labels.version
+
+        return build_id if build_id else None
 
 
 @cli.command("config:scan-sources", short_help="Determine if any rpms / images need to be rebuilt.")
