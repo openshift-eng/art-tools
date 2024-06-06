@@ -1565,6 +1565,7 @@ class PromotePipeline:
         fork_repo.update_file(file_path, update_message, file_content_bytes, fork_file.sha, branch=release_name)
         # create pr
         pr = upstream_repo.create_pull(title=update_message, body=update_message, base="z-stream", head=f"openshift-bot:{release_name}")
+        pr.add_to_labels("lgtm", "approved")
         pr.merge()
         self._logger.info(f"PR {pr.html_url} merged info qe repo")
 
