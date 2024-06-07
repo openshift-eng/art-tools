@@ -32,7 +32,8 @@ class KonfluxBuilder:
         self.output_registry = f"{QUAY_REGISTRY_REPO_URL}:{self.component_name}"
 
         # https://github.com/openshift/coredns -> https://github.com/openshift-priv/coredns
-        self.github_url = self.image_meta.config["content"]["source"]["git"]["web"].replace("openshift", "openshift-priv")
+        repo = self.image_meta.config["content"]["source"]["git"]["web"]
+        self.github_url = repo.replace("openshift", "openshift-priv") if "/openshift/" in repo else repo
 
         self.initialize()
 
