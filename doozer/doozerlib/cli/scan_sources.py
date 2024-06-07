@@ -578,15 +578,16 @@ class ConfigScanSources:
             strip=True,
         )
 
-        build_id = None
         try:
             istagdata = json.loads(stdout)
             labels = istagdata['image']['dockerImageMetadata']['Config']['Labels']
-            if not (build_id := labels.get('org.opencontainers.image.version', None)):
-                build_id = labels.get('version', None)
         except KeyError:
-            self.runtime.logger.error('Could not find .image.dockerImageMetadata.Config.Labels in RHCOS imageMetadata')
-            self.runtime.logger.error(stdout)
+            self.runtime.logger.error('Could not find .image.dockerImageMetadata.Config.Labels in RHCOS imageMetadata:\n%s', stdout)
+            raise
+
+        build_id = None
+        if not (build_id := labels.get('org.opencontainers.image.version', None)):
+            build_id = labels.get('version', None)
 
         return build_id
 
