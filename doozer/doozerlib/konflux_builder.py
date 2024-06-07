@@ -88,7 +88,8 @@ class KonfluxBuilder:
         self.generate_file(file_path=file_path, data=data, output_path=output_path)
         command = f"oc {mode} -f {output_path}"
         self.runtime.logger.info(f"Running command: {command}")
-        exectools.cmd_assert(command)
+        out, _ = exectools.cmd_assert(command)
+        return out
 
     def _start_build(self):
         data = {
@@ -142,10 +143,12 @@ class KonfluxBuilder:
             "konflux": {
                 "bundle_sha": "quay.io/redhat-appstudio-tekton-catalog/pipeline-docker-build:13ecd03ec9f7de811f837a5460c41105231c911a"
             },
-            "output_registry_url": self.output_registry
+            "output_registry_url": self.output_registry,
+            "skip_checks": True
         }
 
-        self.apply_generated_file(data, "/home/asdas/PycharmProjects/art-tools/doozer/static/konflux/pipeline_run.yaml", f"{self.konflux_working_dir}/pipeline_run.yaml", mode="create")
+        result = self.apply_generated_file(data, "/home/asdas/PycharmProjects/art-tools/doozer/static/konflux/pipeline_run.yaml", f"{self.konflux_working_dir}/pipeline_run.yaml", mode="create")
+        pipeline_run_id = result.replace(" created", "").split("/")[-1]  # from something like 'pipelinerun.tekton.dev/ocp-4-16-openshift-base-rhel9-czf4n created'
         self.runtime.logger.info(f"Will push to registry {self.output_registry} on success")
 
         return ""  # Return pipeline run id
@@ -156,7 +159,7 @@ class KonfluxBuilder:
         for attempt in range(retries):
             logger.info("Build attempt %s/%s", attempt + 1, retries)
             try:
-                await exectools.to_thread(self._start_build())
+                await exectools.to_thread(self._start_build)
             except Exception as err:
                 raise Exception(f"Error building image {image.name}: {str(err)}: {traceback.format_exc()}")
 
@@ -164,3 +167,5 @@ class KonfluxBuilder:
 
 
 
+    def watch_task(self, task_id):
+        pass

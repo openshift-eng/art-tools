@@ -158,5 +158,13 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             # Regardless of success, allow other images depending on this one to progress or fail.
             self.build_lock.release()
 
-    def _konflux_watch_build(self):
-        pass
+    # def _konflux_watch_build(self):
+    #     terminate_event = threading.Event()
+    #     try:
+    #         error = await exectools.to_thread(
+    #             watch_task, session, log_f, task_id, terminate_event
+    #         )
+    #     except (asyncio.CancelledError, KeyboardInterrupt):
+    #         terminate_event.set()
+    #         raise
+    #     return error
