@@ -14,6 +14,7 @@ from tenacity import (before_sleep_log, retry, retry_if_exception_type,
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.exectools import limit_concurrency
+from artcommonlib.constants import BREW_DOWNLOAD_URL
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.resultsdb import ResultsDBAPI
 from elliottlib.util import all_same, parse_nvr
@@ -357,7 +358,7 @@ class CVPInspector:
     @limit_concurrency(limit=32)
     async def _fetch_build_log(self, nvr, arch):
         nvre = parse_nvr(nvr)
-        url = f"https://download.eng.bos.redhat.com/brewroot/packages/{nvre['name']}/{nvre['version']}/{nvre['release']}/data/logs/{arch}.log"
+        url = f"{BREW_DOWNLOAD_URL}/packages/{nvre['name']}/{nvre['version']}/{nvre['release']}/data/logs/{arch}.log"
         self._logger.info("Fetching build log for %s %s (%s)", nvr, arch, url)
         async with aiohttp.ClientSession() as session:
             async with await session.get(url) as response:
