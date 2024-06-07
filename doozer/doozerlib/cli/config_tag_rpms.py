@@ -103,12 +103,11 @@ class TagRPMsCli:
         logger.info("Logging into Brew...")
         koji_api = self._runtime.build_retrying_koji_client()
         koji_api.gssapi_login()
-        MAX_BUILDS = 10  # getting 10 latest builds per package should be more than enough
         builds_to_tag: Dict[str, Dict[str]] = {}  # target_tag_name -> dict of NVRs {nvr_string: build_object}
         builds_to_untag: Dict[str, Set[str]] = {}  # target_tag_name -> set of NVRs
         for entry in rpm_deliveries:
-            # For each package, look at builds in stop-ship tag and candidate tag,
-            # then find an acceptable build in candidate tag.
+            # For each package, look at builds in stop-ship tag and integration tag,
+            # then find an acceptable build in integration tag.
             if not entry.target_tag:
                 logger.warning("RPM delivery config for package(s) %s doesn't define a target tag. Skipping...",
                                ", ".join(entry.packages))
@@ -121,22 +120,24 @@ class TagRPMsCli:
                 koji_api,
                 [(entry.stop_ship_tag, pkg) for pkg in entry.packages],
                 build_type="rpm")
-            # Get at most 10 builds in candidate tag
-            logger.info("Getting %s latest tagged builds in candidate tag %s...", MAX_BUILDS, entry.candidate_tag)
-            builds_in_candidate_tag = await self.get_tagged_builds(
+            # Get all builds in integration tag
+            logger.info("Getting tagged builds in integration tag %s...", entry.integration_tag)
+            builds_in_integration_tag = await self.get_tagged_builds(
                 koji_api,
-                [(entry.candidate_tag, pkg) for pkg in entry.packages],
+                [(entry.integration_tag, pkg) for pkg in entry.packages],
                 build_type="rpm",
-                latest=MAX_BUILDS)
-            # Get at most 10 builds in rhel tag
-            logger.info("Getting %s latest tagged builds in rhel tag %s...", MAX_BUILDS, entry.rhel_tag)
+                latest=0)
+            # We assume in each rhel version, there are only a few hundreds of builds in the rhel candidate tag.
+            # It should be fine to get all builds in one single Brew API call.
+            logger.info("Getting latest tagged builds in rhel tag %s...", entry.rhel_tag)
             builds_in_rhel_tag = await self.get_tagged_builds(
                 koji_api,
                 [(entry.rhel_tag, pkg) for pkg in entry.packages],
                 build_type="rpm",
-                latest=MAX_BUILDS)
-            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(entry.packages, builds_in_rhel_tag, builds_in_candidate_tag, builds_in_stop_ship_tag):
+                latest=0) if entry.rhel_tag else [[] for _ in entry.packages]
+            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag):
                 stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
+                rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
                 logger.info("Found %s build(s) of package %s in stop-ship tag %s", len(stop_ship_nvrs), package, entry.stop_ship_tag)
                 if stop_ship_nvrs:
                     # Check if those stop-ship builds are also in target tag
@@ -150,22 +151,9 @@ class TagRPMsCli:
                     if build["nvr"] in stop_ship_nvrs:
                         logger.warning("Build %s is tagged into the stop-ship tag: %s. Skipping...", build["nvr"], entry.stop_ship_tag)
                         continue
-                    # check if the build is already (or historically) tagged into the target tag
-                    logger.info("Checking if build %s is already tagged into target tag %s...", build["nvr"], entry.target_tag)
-                    history = koji_api.queryHistory(tables=["tag_listing"], build=build["nvr"], tag=entry.target_tag)["tag_listing"]
-                    if history:  # already or historically tagged
-                        if not history[-1]["active"]:  # the build was historically tagged but untagged afterwards
-                            logger.warning("Build %s was untagged from %s after being tagged. Skipping...", build["nvr"], entry.target_tag)
-                            continue  # look at the next build
-                        logger.warning("Build %s is already tagged into %s", build["nvr"], entry.target_tag)
-                        break
-                    logger.info("Build %s is acceptable for %s", build["nvr"], entry.target_tag)
-                    builds_to_tag[entry.target_tag][build["nvr"]] = build
-                    break
-                for build in rhel_builds:
-                    # check if the build is already tagged into the stop-ship tag
-                    if build["nvr"] in stop_ship_nvrs:
-                        logger.warning("Build %s is tagged into the stop-ship tag: %s. Skipping...", build["nvr"], entry.stop_ship_tag)
+                    # check if the build is in the rhel tag. If not, skip it.
+                    if entry.rhel_tag and build["nvr"] not in rhel_build_nvrs:
+                        logger.warning("Build %s is not in the rhel tag: %s. Skipping...", build["nvr"], entry.rhel_tag)
                         continue
                     # check if the build is already (or historically) tagged into the target tag
                     logger.info("Checking if build %s is already tagged into target tag %s...", build["nvr"], entry.target_tag)
@@ -183,13 +171,10 @@ class TagRPMsCli:
             # Check if kernel and kernel-rt are of the same version
             # From RHEL 9.4 on the package kernel-rt was integrated in kernel and does not exist anymore
             # Extract and convert the string values to integers
-            rhcos_el_maj = self._runtime.group_config.vars.RHCOS_EL_MAJOR
-            rhcos_el_min = self._runtime.group_config.vars.RHCOS_EL_MINOR
-            rhcos_el_version = (f"{rhcos_el_maj}.{rhcos_el_min}")
-            logger.info(f"RHCOS_EL: {rhcos_el_version}")
-            rhcos_el_float = float(rhcos_el_version)
-            rhcos_el_version = int(rhcos_el_float)
-            if rhcos_el_version >= 9.4:
+            rhcos_el_maj = int(self._runtime.group_config.vars.RHCOS_EL_MAJOR)
+            rhcos_el_min = int(self._runtime.group_config.vars.RHCOS_EL_MINOR)
+
+            if (rhcos_el_maj, rhcos_el_min) < (9, 4):
                 for tag, nvr_dict in builds_to_tag.items():
                     if not nvr_dict:
                         continue
@@ -265,7 +250,7 @@ class TagRPMsCli:
 @click_coroutine
 async def config_tag_rpms(runtime: Runtime, dry_run: bool, as_json: bool):
     """
-    This command scans RPMs (usually kernel and kernel-rt) in the candidate Brew tag defined in
+    This command scans RPMs (usually kernel and kernel-rt) in the integration Brew tag defined in
     group config, then tags acceptable builds into the target Brew tag. "acceptable" here means the
     build is not tagged into stop_ship_tag or historically tagged into the target tag.
 
@@ -276,8 +261,8 @@ async def config_tag_rpms(runtime: Runtime, dry_run: bool, as_json: bool):
             - packages:
                 - kernel
                 - kernel-rt (will not exist anymore as independent package from >= RHEL 9.4)
-              rhel_tag: rhel-9.4.0-z-candidate (added when replacing integration_tag)
-              candidate_tag: early-kernel-candidate (replaces integration_tag)
+              rhel_tag: rhel-9.4.0-z-candidate
+              integration_tag: early-kernel-candidate
               stop_ship_tag: early-kernel-stop-ship
               ship_ok_tag: early-kernel-ship-ok
               target_tag: rhaos-4.11-rhel-8-candidate
