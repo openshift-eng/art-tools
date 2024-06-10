@@ -31,6 +31,9 @@ RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64
 # Set workspace
 WORKDIR /home/dev
 
+# Fixes issue "ERROR: Cannot uninstall requests 2.25.1, RECORD file not found. Hint: The package was installed by rpm."
+RUN rpm -e --nodeps python3-requests
+
 # Copy art-tools and run the install script
 COPY . .
 RUN ./install.sh
