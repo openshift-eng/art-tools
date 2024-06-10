@@ -4,6 +4,9 @@ import sys
 if sys.version_info < (3, 8):
     sys.exit('Sorry, Python < 3.8 is not supported.')
 
+with open('./requirements.txt') as f:
+    INSTALL_REQUIRES = f.read().splitlines()
+
 setup(
     name="artcommon",
     author="AOS ART Team",
@@ -13,6 +16,7 @@ setup(
     license="Apache License, Version 2.0",
     packages=find_packages(exclude=["tests", "tests.*"]),
     dependency_links=[],
+    install_requires=INSTALL_REQUIRES,
     python_requires='>=3.8',
     classifiers=[
         "Development Status :: 5 - Production/Stable",
