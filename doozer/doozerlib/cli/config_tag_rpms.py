@@ -103,7 +103,6 @@ class TagRPMsCli:
         logger.info("Logging into Brew...")
         koji_api = self._runtime.build_retrying_koji_client()
         koji_api.gssapi_login()
-        MAX_BUILDS = 10  # getting 10 latest builds per package should be more than enough
         builds_to_tag: Dict[str, Dict[str]] = {}  # target_tag_name -> dict of NVRs {nvr_string: build_object}
         builds_to_untag: Dict[str, Set[str]] = {}  # target_tag_name -> set of NVRs
         for entry in rpm_deliveries:
@@ -121,15 +120,24 @@ class TagRPMsCli:
                 koji_api,
                 [(entry.stop_ship_tag, pkg) for pkg in entry.packages],
                 build_type="rpm")
-            # Get at most 10 builds in integration tag
-            logger.info("Getting %s latest tagged builds in integration tag %s...", MAX_BUILDS, entry.integration_tag)
+            # Get all builds in integration tag
+            logger.info("Getting tagged builds in integration tag %s...", entry.integration_tag)
             builds_in_integration_tag = await self.get_tagged_builds(
                 koji_api,
                 [(entry.integration_tag, pkg) for pkg in entry.packages],
                 build_type="rpm",
-                latest=MAX_BUILDS)
-            for package, candidate_builds, stop_ship_builds in zip(entry.packages, builds_in_integration_tag, builds_in_stop_ship_tag):
+                latest=0)
+            # We assume in each rhel version, there are only a few hundreds of builds in the rhel candidate tag.
+            # It should be fine to get all builds in one single Brew API call.
+            logger.info("Getting latest tagged builds in rhel tag %s...", entry.rhel_tag)
+            builds_in_rhel_tag = await self.get_tagged_builds(
+                koji_api,
+                [(entry.rhel_tag, pkg) for pkg in entry.packages],
+                build_type="rpm",
+                latest=0) if entry.rhel_tag else [[] for _ in entry.packages]
+            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag):
                 stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
+                rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
                 logger.info("Found %s build(s) of package %s in stop-ship tag %s", len(stop_ship_nvrs), package, entry.stop_ship_tag)
                 if stop_ship_nvrs:
                     # Check if those stop-ship builds are also in target tag
@@ -142,6 +150,10 @@ class TagRPMsCli:
                     # check if the build is already tagged into the stop-ship tag
                     if build["nvr"] in stop_ship_nvrs:
                         logger.warning("Build %s is tagged into the stop-ship tag: %s. Skipping...", build["nvr"], entry.stop_ship_tag)
+                        continue
+                    # check if the build is in the rhel tag. If not, skip it.
+                    if entry.rhel_tag and build["nvr"] not in rhel_build_nvrs:
+                        logger.warning("Build %s is not in the rhel tag: %s. Skipping...", build["nvr"], entry.rhel_tag)
                         continue
                     # check if the build is already (or historically) tagged into the target tag
                     logger.info("Checking if build %s is already tagged into target tag %s...", build["nvr"], entry.target_tag)
@@ -157,32 +169,38 @@ class TagRPMsCli:
                     break
 
             # Check if kernel and kernel-rt are of the same version
-            for tag, nvr_dict in builds_to_tag.items():
-                if not nvr_dict:
-                    continue
+            # From RHEL 9.4 on the package kernel-rt was integrated in kernel and does not exist anymore
+            # Extract and convert the string values to integers
+            rhcos_el_maj = int(self._runtime.group_config.vars.RHCOS_EL_MAJOR)
+            rhcos_el_min = int(self._runtime.group_config.vars.RHCOS_EL_MINOR)
 
-                package_names = {b['name'] for b in nvr_dict.values()}
-                are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
-                if not are_these_kernel_packages:
-                    continue
+            if (rhcos_el_maj, rhcos_el_min) < (9, 4):
+                for tag, nvr_dict in builds_to_tag.items():
+                    if not nvr_dict:
+                        continue
 
-                expected = {'kernel', 'kernel-rt'}
-                if package_names != expected:
-                    raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
-                if len(nvr_dict) != len(expected):
-                    raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
+                    package_names = {b['name'] for b in nvr_dict.values()}
+                    are_these_kernel_packages = 'kernel' in package_names or 'kernel-rt' in package_names
+                    if not are_these_kernel_packages:
+                        continue
 
-                kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
-                kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+                    expected = {'kernel', 'kernel-rt'}
+                    if package_names != expected:
+                        raise ValueError(f"Expected packages to be {expected}, found: {package_names}")
+                    if len(nvr_dict) != len(expected):
+                        raise ValueError(f"Expected 2 builds, 1 for each {expected}, found {nvr_dict.keys()}")
 
-                # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
-                kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
-                kernel_rt_version = (f"{kernel_rt_build['version']}-"
-                                     f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}")
-                if kernel_version not in kernel_rt_version:
-                    raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
-                else:
-                    logger.info(f"Version match for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
+                    kernel_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel')
+                    kernel_rt_build = next(b for b in nvr_dict.values() if b['name'] == 'kernel-rt')
+
+                    # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
+                    kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
+                    kernel_rt_version = (f"{kernel_rt_build['version']}-"
+                                         f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}")
+                    if kernel_version not in kernel_rt_version:
+                        raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
+                    else:
+                        logger.info(f"Version match for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
 
         # untag builds from target tags
         tag_build_tuples = []
@@ -242,14 +260,15 @@ async def config_tag_rpms(runtime: Runtime, dry_run: bool, as_json: bool):
         rpm_deliveries:
             - packages:
                 - kernel
-                - kernel-rt
-              integration_tag: early-kernel-integration-8.6
+                - kernel-rt (will not exist anymore as independent package from >= RHEL 9.4)
+              rhel_tag: rhel-9.4.0-z-candidate
+              integration_tag: early-kernel-candidate
               stop_ship_tag: early-kernel-stop-ship
               ship_ok_tag: early-kernel-ship-ok
               target_tag: rhaos-4.11-rhel-8-candidate
 
     Doozer will try to find latest acceptable builds of kernel and kernel-rt from Brew tag
-    early-kernel-integration-8.6, make sure that they are of the same version,
+    early-kernel-candidate, make sure that they are of the same version,
     then tag them into Brew tag rhaos-4.11-rhel-8-candidate.
     Additionally, all builds in tag early-kernel-stop-ship will be untagged from rhaos-4.11-rhel-8-candidate.
     """

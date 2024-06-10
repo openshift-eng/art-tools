@@ -73,9 +73,14 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     async def test_run_non_kernel_packages(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                            tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
+            "vars": {
+                "RHCOS_EL_MAJOR": "9",
+                "RHCOS_EL_MINOR": "4"
+            },
             "rpm_deliveries": [
                 {
                     "packages": ["foo", "bar"],
+                    "rhel_tag": "test-rhel-tag",
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
@@ -104,6 +109,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     {"nvr": "bar-1.0.1-1", "version": "1.0.1", "name": "bar"},
                     {"nvr": "bar-1.0.2-1", "version": "1.0.2", "name": "bar"},
                 ],
+                ("test-rhel-tag", "foo"): [{"nvr": "foo-1.0.0-1", "version": "1.0.0", "name": "foo"}],
+                ("test-rhel-tag", "bar"): [{"nvr": "bar-1.0.0-1", "version": "1.0.0", "name": "bar"}],
             }
             return [results[tc] for tc in tag_component_tuples]
         get_tagged_builds.side_effect = _get_tagged_builds
@@ -132,9 +139,14 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     async def test_run_kernel_version_match(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                             tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
+            "vars": {
+                "RHCOS_EL_MAJOR": "9",
+                "RHCOS_EL_MINOR": "4"
+            },
             "rpm_deliveries": [
                 {
                     "packages": ["kernel", "kernel-rt"],
+                    "rhel_tag": "test-rhel-tag",
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
@@ -167,6 +179,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             results = {
                 ("test-stop-ship-tag", "kernel"): [],
                 ("test-stop-ship-tag", "kernel-rt"): [],
+                ("test-rhel-tag", "kernel"): [kernel_build],
+                ("test-rhel-tag", "kernel-rt"): [kernel_rt_build],
                 ("test-integration-tag", "kernel"): [kernel_build],
                 ("test-integration-tag", "kernel-rt"): [kernel_rt_build],
             }
@@ -196,9 +210,14 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     async def test_run_kernel_version_mismatch(self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
                                                tag_builds: AsyncMock, get_builds_tags: Mock):
         group_config = Model({
+            "vars": {
+                "RHCOS_EL_MAJOR": "9",
+                "RHCOS_EL_MINOR": "2"
+            },
             "rpm_deliveries": [
                 {
                     "packages": ["kernel", "kernel-rt"],
+                    "rhel_tag": "test-rhel-tag",
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "ship_ok_tag": "test-ship-ok-tag",
@@ -231,6 +250,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             results = {
                 ("test-stop-ship-tag", "kernel"): [],
                 ("test-stop-ship-tag", "kernel-rt"): [],
+                ("test-rhel-tag", "kernel"): [kernel_build],
+                ("test-rhel-tag", "kernel-rt"): [kernel_rt_build],
                 ("test-integration-tag", "kernel"): [kernel_build],
                 ("test-integration-tag", "kernel-rt"): [kernel_rt_build],
             }

@@ -14,6 +14,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
             "rpm_deliveries": [
                 {
                     "packages": ["kernel", "kernel-rt"],
+                    "rhel_tag": "my-rhel-tag",
                     "integration_tag": "my-integration-tag",
                     "ship_ok_tag": "my-ship-ok-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
@@ -63,6 +64,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
             "rpm_deliveries": [
                 {
                     "packages": ["kernel", "kernel-rt"],
+                    "rhel_tag": "my-rhel-tag",
                     "integration_tag": "my-integration-tag",
                     "ship_ok_tag": "my-ship-ok-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
