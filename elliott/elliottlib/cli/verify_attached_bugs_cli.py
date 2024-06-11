@@ -258,8 +258,7 @@ class BugValidator:
                         "bugs": sorted([b.id for b in extra_bugs]),
                     }
                     issues.append(issue)
-        if issues:
-            self._complain(issues)
+        self._complain(issues)
 
     async def verify_bugs_multiple_advisories(self, non_flaw_bugs: List[Bug]):
         logger.info(f'Checking {len(non_flaw_bugs)} bugs, if any bug is attached to multiple advisories')
@@ -303,7 +302,7 @@ class BugValidator:
         first_fix_flaw_ids = {b.id for b in first_fix_flaw_bugs}
         attached_flaw_ids = {b.id for b in attached_flaws}
         missing_flaw_ids = first_fix_flaw_ids - attached_flaw_ids
-        issues = []
+        issues: List[Dict] = []
         if missing_flaw_ids:
             msg = (f"On advisory {advisory_id}, these flaw bugs are not attached but they are referenced by "
                    "attached tracker bugs. You need to attach those flaw bugs or drop corresponding tracker bugs.")
@@ -331,8 +330,8 @@ class BugValidator:
         advisory_type = next(iter(advisory_info["errata"].keys())).upper()  # should be one of [RHBA, RHSA, RHEA]
         if not first_fix_flaw_ids:
             if advisory_type == "RHSA":
-                msg = (f"Advisory {advisory_id} is of type {advisory_type} "
-                       f"but has no first-fix flaw bugs. It should be converted to RHBA or RHEA.")
+                msg = (f"Advisory {advisory_id} is of type {advisory_type} but has no first-fix flaw bugs. "
+                       "It should be converted to RHBA or RHEA.")
                 issue = {
                     "code": "wrong_advisory_type",
                     "message": msg,
@@ -342,7 +341,7 @@ class BugValidator:
             self._complain(issues)
             return  # The remaining checks are not needed for a non-RHSA.
         if advisory_type != "RHSA":
-            msg = (f"Advisory {advisory_id} is of type {advisory_type} but has first-fix flaw bugs "
+            msg = (f"Advisory {advisory_id} is of type {advisory_type} but has first-fix flaw bugs attached: "
                    f"{first_fix_flaw_ids}. It should be converted to RHSA.")
             issue = {
                 "code": "wrong_advisory_type",
@@ -422,8 +421,7 @@ class BugValidator:
             }
             issues.append(issue)
 
-        if issues:
-            self._complain(issues)
+        self._complain(issues)
 
     def get_attached_bugs(self, advisory_ids: List[str]) -> Dict[int, Set[Bug]]:
         """ Get bugs attached to specified advisories
@@ -568,15 +566,14 @@ class BugValidator:
                                 f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
                         parent_not_shipping["bugs"].append(bug.id)
                         parent_not_shipping["data"].append(message)
-        issues = []
+        issues: List[Dict] = []
         if parent_wrong_status["bugs"]:
             parent_wrong_status["bugs"] = sorted(parent_wrong_status["bugs"])
             issues.append(parent_wrong_status)
         if parent_not_shipping["bugs"]:
             parent_not_shipping["bugs"] = sorted(parent_not_shipping["bugs"])
             issues.append(parent_not_shipping)
-        if issues:
-            self._complain(issues)
+        self._complain(issues)
 
     def _verify_bug_status(self, bugs):
         data, invalid_bug_ids = [], []
