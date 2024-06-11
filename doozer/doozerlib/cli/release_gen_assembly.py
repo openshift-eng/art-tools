@@ -511,11 +511,10 @@ class GenAssemblyCli:
             'metadata': -1,
         }
 
-        if self.pre_ga_mode == 'prerelease':
-            advisories['prerelease'] = -1
-
-        if self.pre_ga_mode == 'advance':
-            advisories['advance'] = -1
+        preGA_advisory_type = ['prerelease', 'advance']
+        for key in preGA_advisory_type:
+            if self.pre_ga_mode == key:
+                advisories[key] = -1
 
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
@@ -554,17 +553,14 @@ class GenAssemblyCli:
                 return advisories, release_jira
 
         previous_group = releases_config.releases[previous_assembly].assembly.group
-        advisories.update(previous_group.advisories.primitive())
-
-        # prerelease advisory already associated with an assembly should be shipped, or dropped
-        # do not reuse it
-        # RCs can be designated as prerelease, but not always
-        # see https://docs.google.com/document/d/1S_ivD8Sh85LuZKnClqvoRvIhn4hNJQA76jpfUaFZjUA/edit
-        if 'prerelease' in advisories:
-            if self.pre_ga_mode == 'prerelease':
-                advisories['prerelease'] = -1
-            else:
-                advisories.pop('prerelease')
+        previous_advisories = previous_group.advisories.primitive()
+        
+        # preGA advisories (prerelease/advance) associated with an assembly should not be reused
+        # they should be shipped or dropped if not shipping
+        for key in preGA_advisory_type:
+            previous_advisories.pop(key, None)
+        
+        advisories.update(previous_advisories)
 
         release_jira = previous_group.release_jira
         self.logger.info(f"Reusing advisories and release ticket from previous assembly {previous_assembly}, {advisories}, {release_jira}")
