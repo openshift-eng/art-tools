@@ -848,7 +848,7 @@ class GenPayloadCli:
             multi_specs[private_mode].setdefault(payload_tag_name, dict())
 
             if private_mode is False and payload_entry.build_inspector \
-                    and payload_entry.build_inspector.is_under_embargo():
+                    and (self.runtime.assembly_type == AssemblyTypes.STREAM and payload_entry.build_inspector.is_under_embargo()):
                 # No embargoed images should go to the public release controller, so we will not have
                 # a complete set of payload tags for the public imagestream.
                 incomplete_payload_update = True
