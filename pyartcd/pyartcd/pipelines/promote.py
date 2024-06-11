@@ -302,6 +302,14 @@ class PromotePipeline:
             pullspecs_repr = ", ".join(f"{arch}: {pullspecs[arch]}" for arch in sorted(pullspecs.keys()))
             self._logger.info("All release images for %s have been promoted. Pullspecs: %s", release_name, pullspecs_repr)
 
+            # Signing payloads prior to adding it to the release controller assures that we are testing
+            # signature verification processes in an installing/running cluster. In the future, we might
+            # want to sign with a beta key before being accepted, so we don't gold sign all named releases,
+            # however, ClusterImagePolicy/ImagePolicy CRDs presently only support one public key per
+            # registry location.
+            if not self.skip_sigstore:
+                await self.sigstore_sign(release_name, release_infos)
+
             # Before waiting for release images to be accepted by release controllers,
             # we can start microshift build
             await self._build_microshift(releases_config)
@@ -404,8 +412,6 @@ class PromotePipeline:
                         lock_name=lock.value.format(signing_env=self.signing_env),
                         lock_id=lock_identifier
                     )
-                if not self.skip_sigstore:
-                    await self.sigstore_sign(release_name, release_infos)
 
         except Exception as err:
             self._logger.exception(err)
