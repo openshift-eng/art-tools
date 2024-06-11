@@ -2,7 +2,7 @@ import asyncio
 import re
 import json
 import yaml
-from typing import Any, Dict, Iterable, List, Set, Tuple
+from typing import Any, Dict, Iterable, List, Set, Tuple, Union
 import click
 from errata_tool import Erratum
 
@@ -173,7 +173,7 @@ class BugValidator:
         self.target_releases: List[str] = runtime.get_bug_tracker('jira').config['target_release']
         self.et_data: Dict[str, Any] = runtime.get_errata_config()
         self.errata_api = AsyncErrataAPI(self.et_data.get("server", constants.errata_url))
-        self.problems: Dict[str, List[str]] = {}
+        self.problems: List[Dict] = []
         self.output = output
 
     async def close(self):
@@ -183,9 +183,9 @@ class BugValidator:
         if self.problems:
             if self.output == 'text':
                 print("Found the following problems, please investigate")
-                print(yaml.dump(self.problems, indent=4))
+                print(yaml.dump(self.problems, indent=2, sort_keys=False, default_flow_style=False))
             if self.output == 'json':
-                print(json.dumps(self.problems, indent=4))
+                print(json.dumps(self.problems, indent=2, sort_keys=False))
             exit(1)
 
     def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
@@ -217,11 +217,17 @@ class BugValidator:
             else:
                 advance_release = True
         operator_bundle_advisory = "advance" if advance_release else "metadata"
+
+        bugs_by_type: Dict[str, Set]
+        issues: List[Dict]
         bugs_by_type, issues = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map,
                                                        permitted_bug_ids=permitted_bug_ids,
-                                                       permissive=True, operator_bundle_advisory=operator_bundle_advisory)
+                                                       permissive=True,
+                                                       operator_bundle_advisory=operator_bundle_advisory)
 
-        issues = []
+        # ignore this issue since we have our own dedicated check for this
+        issues = [i for i in issues if i["code"] != "invalid_tracker_bugs"]
+
         for kind, advisory_id in advisory_id_map.items():
             actual = {b for b in advisory_bug_map[advisory_id] if b.is_ocp_bug()}
 
@@ -232,15 +238,28 @@ class BugValidator:
                 continue
             if actual != expected:
                 bugs_not_found = expected - actual
-                extra_bugs = actual - expected
                 if bugs_not_found:
-                    msg = f'Expected Bugs not found in {kind} advisory ({advisory_id}): {[b.id for b in bugs_not_found]}'
-                    issues.append(msg)
+                    message = f'Expected Bugs not found in {kind} advisory ({advisory_id})'
+                    issue = {
+                        "code": "missing_bugs_in_advisory",
+                        "message": message,
+                        "advisory": advisory_id,
+                        "bugs": sorted([b.id for b in bugs_not_found]),
+                    }
+                    issues.append(issue)
+
+                extra_bugs = actual - expected
                 if extra_bugs:
-                    msg = f'Unexpected Bugs found in {kind} advisory ({advisory_id}): {[b.id for b in extra_bugs]}'
-                    issues.append(msg)
+                    msg = f'Unexpected Bugs found in {kind} advisory ({advisory_id})'
+                    issue = {
+                        "code": "extra_bugs_in_advisory",
+                        "message": msg,
+                        "advisory": advisory_id,
+                        "bugs": sorted([b.id for b in extra_bugs]),
+                    }
+                    issues.append(issue)
         if issues:
-            self._complain("verify_bugs_advisory_type", issues)
+            self._complain(issues)
 
     async def verify_bugs_multiple_advisories(self, non_flaw_bugs: List[Bug]):
         logger.info(f'Checking {len(non_flaw_bugs)} bugs, if any bug is attached to multiple advisories')
@@ -248,13 +267,19 @@ class BugValidator:
         async def get_all_advisory_ids(bug):
             all_advisories_id = bug.all_advisory_ids()
             if len(all_advisories_id) > 1:
-                return f'Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}'
+                return bug.id, all_advisories_id
             return None
 
         results = await asyncio.gather(*[asyncio.create_task(get_all_advisory_ids(bug)) for bug in non_flaw_bugs])
-        issues = [r for r in results if r]
-        if issues:
-            self._complain("verify_bugs_multiple_advisories", issues)
+        filtered_results = [r for r in results if r]
+        issue = {
+            "code": "bugs_multiple_advisories",
+            "message": "Bugs are attached to multiple advisories",
+            "bugs": sorted([r[0] for r in filtered_results]),
+            "data": filtered_results
+        }
+        if issue:
+            self._complain(issue)
 
     async def verify_attached_flaws(self, advisory_bugs: Dict[int, List[Bug]]):
         futures = []
@@ -279,18 +304,26 @@ class BugValidator:
         missing_flaw_ids = first_fix_flaw_ids - attached_flaw_ids
         issues = []
         if missing_flaw_ids:
-            msg = (f"On advisory {advisory_id}, these flaw bugs are not attached: "
-                   f"{', '.join(sorted(map(str, missing_flaw_ids)))} but "
-                   "they are referenced by attached tracker bugs. "
-                   "You need to attach those flaw bugs or drop corresponding tracker bugs.")
-            issues.append(msg)
+            msg = (f"On advisory {advisory_id}, these flaw bugs are not attached but they are referenced by "
+                   "attached tracker bugs. You need to attach those flaw bugs or drop corresponding tracker bugs.")
+            issue = {
+                "code": "missing_flaw_bugs",
+                "message": msg,
+                "advisory": advisory_id,
+                "bugs": sorted(map(str, missing_flaw_ids)),
+            }
+            issues.append(issue)
         extra_flaw_ids = attached_flaw_ids - first_fix_flaw_ids
         if extra_flaw_ids:
-            msg = (f"On advisory {advisory_id}, these flaw bugs are attached: "
-                   f"{', '.join(sorted(map(str, extra_flaw_ids)))} but "
-                   f"there are no tracker bugs referencing them. "
-                   "You need to drop those flaw bugs or attach corresponding tracker bugs.")
-            issues.append(msg)
+            msg = (f"On advisory {advisory_id}, these flaw bugs are attached but there are no tracker bugs referencing "
+                   "them. You need to drop those flaw bugs or attach corresponding tracker bugs.")
+            issue = {
+                "code": "extra_flaw_bugs",
+                "message": msg,
+                "advisory": advisory_id,
+                "bugs": sorted(map(str, extra_flaw_ids)),
+            }
+            issues.append(issue)
 
         # Check if advisory is of the expected type
         advisory_info = await self.errata_api.get_advisory(advisory_id)
@@ -299,12 +332,23 @@ class BugValidator:
             if advisory_type == "RHSA":
                 msg = (f"Advisory {advisory_id} is of type {advisory_type} "
                        f"but has no first-fix flaw bugs. It should be converted to RHBA or RHEA.")
-                issues.append(msg)
+                issue = {
+                    "code": "wrong_advisory_type",
+                    "message": msg,
+                    "advisory": advisory_id,
+                }
+                issues.append(issue)
+            self._complain(issues)
             return  # The remaining checks are not needed for a non-RHSA.
         if advisory_type != "RHSA":
             msg = (f"Advisory {advisory_id} is of type {advisory_type} but has first-fix flaw bugs "
                    f"{first_fix_flaw_ids}. It should be converted to RHSA.")
-            issues.append(msg)
+            issue = {
+                "code": "wrong_advisory_type",
+                "message": msg,
+                "advisory": advisory_id,
+            }
+            issues.append(issue)
 
         # Validate CVE mappings (of CVEs and builds)
         flaw_id_bugs = {f.id: f for f in first_fix_flaw_bugs}
@@ -333,16 +377,26 @@ class BugValidator:
                            f"{', '.join(sorted(cve_package_exclusions))}."
                            " You may need to associate the CVE with the components "
                            "in the CVE mapping or drop the tracker bugs.")
-                    issues.append(msg)
+                    issue = {
+                        "code": "extra_cve_exclusions",
+                        "message": msg,
+                        "advisory": advisory_id,
+                    }
+                    issues.append(issue)
             for cve, cve_package_exclusions in missing_exclusions.items():
                 if cve_package_exclusions:
                     msg = (f"On advisory {advisory_id}, {cve} is associated with Brew components "
                            f"{', '.join(sorted(cve_package_exclusions))} without a tracker bug."
                            " You may need to explicitly exclude those Brew components from the CVE "
                            "mapping or attach the corresponding tracker bugs.")
-                    issues.append(msg)
+                    issue = {
+                        "code": "missing_cve_exclusions",
+                        "message": msg,
+                        "advisory": advisory_id,
+                    }
+                    issues.append(issue)
         except ValueError as e:
-            issues.append(str(e))
+            issues.append({"code": "cve_build_validation_error", "message": str(e), "advisory": advisory_id})
 
         # Validate `CVE Names` field of the advisory
         advisory_cves = advisory_info["content"]["content"]["cve"].split()
@@ -350,15 +404,25 @@ class BugValidator:
         if extra_cves:
             msg = (f"On advisory {advisory_id}, bugs for the following CVEs are already attached "
                    f"but they are not listed in advisory's `CVE Names` field: {', '.join(sorted(extra_cves))}")
-            issues.append(msg)
+            issue = {
+                "code": "extra_cve_names_in_advisory",
+                "message": msg,
+                "advisory": advisory_id,
+            }
+            issues.append(issue)
         missing_cves = advisory_cves - cve_components_mapping.keys()
         if missing_cves:
             msg = (f"On advisory {advisory_id}, bugs for the following CVEs are not attached but listed in "
                    f"advisory's `CVE Names` field: {', '.join(sorted(missing_cves))}")
-            issues.append(msg)
+            issue = {
+                "code": "missing_cve_names_in_advisory",
+                "message": msg,
+                "advisory": advisory_id,
+            }
+            issues.append(issue)
 
         if issues:
-            self._complain("verify_attached_flaws", issues)
+            self._complain(issues)
 
     def get_attached_bugs(self, advisory_ids: List[str]) -> Dict[int, Set[Bug]]:
         """ Get bugs attached to specified advisories
@@ -381,17 +445,25 @@ class BugValidator:
 
     def filter_bugs_by_release(self, bugs: List[Bug], complain: bool = False) -> List[Bug]:
         # filter out bugs with an invalid target release
-        issues = []
+        issue = {
+            "code": "invalid_target_release",
+            "message": "Bugs have invalid target release",
+            "bugs": [],
+            "data": []
+        }
         filtered_bugs = []
         for b in bugs:
             # b.target release is a list of size 0 or 1
             if any(target in self.target_releases for target in b.target_release):
                 filtered_bugs.append(b)
             else:
-                msg = f"{b.id} with target release {b.target_release} is not in {self.target_releases}"
-                issues.append(msg)
-        if issues and complain:
-            self._complain("filter_bugs_by_release", issues)
+                data = {"bug_id": b.id, "possible_target_releases": list(self.target_releases),
+                        "actual_target_release": list(b.target_release)}
+                issue["bugs"].append(b.id)
+                issue["data"].append(data)
+        if issue and complain:
+            issue["bugs"] = sorted(issue["bugs"])
+            self._complain(issue)
         return filtered_bugs
 
     def _get_blocking_bugs_for(self, bugs):
@@ -444,7 +516,18 @@ class BugValidator:
 
     def _verify_blocking_bugs(self, blocking_bugs_for, is_attached=False):
         # complain about blocking bugs that aren't verified or shipped
-        issues = []
+        parent_wrong_status = {
+            "code": "parent_bug_wrong_status",
+            "message": "Regression possible: These parent bugs have valid status for the corresponding bugs",
+            "bugs": [],
+            "data": []
+        }
+        parent_not_shipping = {
+            "code": "parent_bug_not_shipping",
+            "message": "Regression possible: These parent bugs are not shipping",
+            "bugs": [],
+            "data": []
+        }
         for bug, blockers in blocking_bugs_for.items():
             for blocker in blockers:
                 message = str()
@@ -456,7 +539,8 @@ class BugValidator:
                     elif self.output == 'slack':
                         message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
                                   f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}>"
-                    issues.append(message)
+                    parent_wrong_status["bugs"].append(bug.id)
+                    parent_wrong_status["data"].append(message)
                 if blocker.status in ['CLOSED', 'Closed'] and \
                     blocker.resolution not in ['CURRENTRELEASE', 'NEXTRELEASE', 'ERRATA', 'DUPLICATE', 'NOTABUG', 'WONTFIX',
                                                'Done', 'Fixed', 'Done-Errata', 'Obsolete',
@@ -470,7 +554,8 @@ class BugValidator:
                     elif self.output == 'slack':
                         message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of bug " \
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
-                    issues.append(message)
+                    parent_wrong_status["bugs"].append(bug.id)
+                    parent_wrong_status["data"].append(message)
                 if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
                     blocker_advisories = blocker.all_advisory_ids()
                     if not blocker_advisories:
@@ -480,12 +565,20 @@ class BugValidator:
                         elif self.output == 'slack':
                             message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
                                 f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
-                        issues.append(message)
+                        parent_not_shipping["bugs"].append(bug.id)
+                        parent_not_shipping["data"].append(message)
+        issues = []
+        if parent_wrong_status["bugs"]:
+            parent_wrong_status["bugs"] = sorted(parent_wrong_status["bugs"])
+            issues.append(parent_wrong_status)
+        if parent_not_shipping["bugs"]:
+            parent_not_shipping["bugs"] = sorted(parent_not_shipping["bugs"])
+            issues.append(parent_not_shipping)
         if issues:
-            self._complain("verify_blocking_bugs", issues)
+            self._complain(issues)
 
     def _verify_bug_status(self, bugs):
-        issues = []
+        data, invalid_bug_ids = [], []
         # complain about bugs that are not yet ON_QA or more.
         good_resolution = ['CURRENTRELEASE', 'ERRATA',
                            'Done', 'Fixed', 'Done-Errata', 'Current Release', 'Errata']
@@ -496,24 +589,32 @@ class BugValidator:
                 continue
             if bug.status in ["CLOSED", "Closed"] and bug.resolution in good_resolution:
                 continue
-            status = f"{bug.status}"
+            status = bug.status
             if bug.status in ['CLOSED', 'Closed']:
                 status = f"{bug.status}: {bug.resolution}"
-            msg = f"Bug <{bug.weburl}|{bug.id}> has invalid status {status}"
-            issues.append(msg)
-        if issues:
-            self._complain("verify_bug_status", issues)
+            data.append({"bug_id": bug.id, "status": status})
+            invalid_bug_ids.append(bug.id)
+        if invalid_bug_ids:
+            issue = {
+                "code": "invalid_bug_status",
+                "message": "Bugs have invalid status",
+                "bugs": sorted(invalid_bug_ids),
+                "data": data
+            }
+            self._complain(issue)
 
     def _find_invalid_trackers(self, bugs):
-        issues = []
         logger.info("Checking for invalid tracker bugs")
-        # complain about invalid tracker bugs
-        for bug in bugs:
-            if bug.is_invalid_tracker_bug():
-                msg = f"Bug <{bug.weburl}|{bug.id}> is an invalid tracker bug. Please fix"
-                issues.append(msg)
-        if issues:
-            self._complain("find_invalid_trackers", issues)
+        invalid_bugs = [b for b in bugs if b.is_invalid_tracker_bug()]
+        if invalid_bugs:
+            issue = {
+                "code": "invalid_tracker_bugs",
+                "message": "Bugs look like CVE trackers but do not have proper metadata.",
+                "bugs": sorted([t.id for t in invalid_bugs]),
+            }
+            self._complain(issue)
 
-    def _complain(self, issue_key: str, issues: List[str]):
-        self.problems[issue_key] = issues
+    def _complain(self, issues: Union[List[Dict], Dict]):
+        if isinstance(issues, dict):
+            issues = [issues]
+        self.problems.extend(issues)
