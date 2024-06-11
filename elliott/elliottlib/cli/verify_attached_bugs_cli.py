@@ -272,14 +272,15 @@ class BugValidator:
 
         results = await asyncio.gather(*[asyncio.create_task(get_all_advisory_ids(bug)) for bug in non_flaw_bugs])
         filtered_results = [r for r in results if r]
+        if not filtered_results:
+            return
         issue = {
             "code": "bugs_multiple_advisories",
             "message": "Bugs are attached to multiple advisories",
             "bugs": sorted([r[0] for r in filtered_results]),
             "data": filtered_results
         }
-        if issue:
-            self._complain(issue)
+        self._complain(issue)
 
     async def verify_attached_flaws(self, advisory_bugs: Dict[int, List[Bug]]):
         futures = []
