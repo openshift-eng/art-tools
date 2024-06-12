@@ -553,7 +553,7 @@ class OLMBundle(object):
         labels = {
             'com.redhat.delivery.operator.bundle': 'true',
             'com.redhat.openshift.versions': versions.format(**self.runtime.group_config.vars),
-            'com.redhat.prerelease': str(self.operator_index_mode == 'pre-release'),
+            'com.redhat.prerelease': str(self.operator_index_mode == 'pre-release').lower(),
         }
         return labels
 
