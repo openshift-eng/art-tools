@@ -276,10 +276,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                             permitted_bug_ids, operator_bundle_advisory: str = "metadata",
-                            permissive=False, major_version: int = 4) -> (Dict[str, type_bug_set], List[Dict]):
+                            permissive=False, major_version: int = 4) -> (Dict[str, type_bug_set], List[VerifyIssue]):
 
     # this will capture any issues with found bugs that need to be fixed
-    issues: List[Dict] = []
+    issues: List[VerifyIssue] = []
 
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),

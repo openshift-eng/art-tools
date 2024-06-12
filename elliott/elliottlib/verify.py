@@ -57,4 +57,20 @@ class VerifyIssue:
         self.advisory = advisory
 
     def __str__(self):
-        return f"{self.code}: {self.message}"
+        return self.message
+
+    def __repr__(self):
+        return self.message
+
+    def to_dict(self):
+        d = {
+            "code": self.code.value,
+            "message": self.message,
+        }
+        if self.bugs:
+            d["bugs"] = self.bugs
+        if self.advisory:
+            d["advisory"] = self.advisory
+        if self.data:
+            d["data"] = self.data
+        return d
