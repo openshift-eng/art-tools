@@ -182,6 +182,7 @@ class BugValidator:
 
     def report(self):
         if self.problems:
+            self.problems = [p.to_dict() for p in self.problems]
             if self.output == 'text':
                 print("Found the following problems, please investigate")
                 print(yaml.dump(self.problems, indent=2, sort_keys=False, default_flow_style=False))
@@ -433,44 +434,41 @@ class BugValidator:
         :return: a dict with advisory id as key and set of bug objects as value
         """
         logger.info(f"Retrieving bugs for advisories: {advisory_ids}")
-        advisory_bug_id_map = {advisory_id: get_bug_ids(advisory_id) for advisory_id in advisory_ids}
-        for advisory_id, bug_dict in advisory_bug_id_map.items():
-            for bug_type, bug_ids in bug_dict.items():
-                logger.info(f"Retrieved {len(bug_ids)} {bug_type} bugs for advisory {advisory_id}")
 
-        attached_bug_map = {advisory_id: set() for advisory_id in advisory_ids}
+        # {12345: {'bugzilla' -> [..], 'jira' -> [..]} .. }
+        advisory_bug_id_map: Dict[int, Dict] = {advisory_id: get_bug_ids(advisory_id) for advisory_id in advisory_ids}
+
+        attached_bug_map: Dict[int, Set[Bug]] = {advisory_id: set() for advisory_id in advisory_ids}
         for bug_tracker_type in ['jira', 'bugzilla']:
             bug_tracker = self.runtime.get_bug_tracker(bug_tracker_type)
+            # we do this to get all bugs in one go
             all_bug_ids = {bug_id for bug_dict in advisory_bug_id_map.values() for bug_id in bug_dict[bug_tracker_type]}
-            logger.info(f"Retrieving bugs from {bug_tracker_type} for {len(all_bug_ids)} bug ids")
-            bug_map = bug_tracker.get_bugs_map(all_bug_ids)
+            bug_map: Dict[Bug] = bug_tracker.get_bugs_map(all_bug_ids)
             for advisory_id in advisory_ids:
-                set_of_bugs = {bug_map[bid] for bid in advisory_bug_id_map[advisory_id] if bid in bug_map}
+                set_of_bugs: Set[Bug] = {bug_map[bid] for bid in advisory_bug_id_map[advisory_id][bug_tracker_type]
+                                         if bid in bug_map}
                 attached_bug_map[advisory_id] = attached_bug_map[advisory_id] | set_of_bugs
         return attached_bug_map
 
     def filter_bugs_by_release(self, bugs: List[Bug], complain: bool = False) -> List[Bug]:
         # filter out bugs with an invalid target release
-        issue = VerifyIssue(
-            code=VerifyIssueCode.INVALID_TARGET_RELEASE,
-            message="Bugs have invalid target release",
-            bugs=[],
-            data=[]
-        )
-        filtered_bugs = []
+        invalid_bugs = []
+        valid_bugs = []
         for b in bugs:
             # b.target release is a list of size 0 or 1
             if any(target in self.target_releases for target in b.target_release):
-                filtered_bugs.append(b)
+                valid_bugs.append(b)
             else:
-                data = {"bug_id": b.id, "possible_target_releases": list(self.target_releases),
-                        "actual_target_release": list(b.target_release)}
-                issue.bugs.append(b.id)
-                issue.data.append(data)
-        if issue and complain:
-            issue.bugs.sort()
+                invalid_bugs.append(b.id)
+        if invalid_bugs and complain:
+            invalid_bugs.sort()
+            issue = VerifyIssue(
+                code=VerifyIssueCode.INVALID_TARGET_RELEASE,
+                message="Bugs have invalid target release",
+                bugs=invalid_bugs,
+            )
             self._complain(issue)
-        return filtered_bugs
+        return valid_bugs
 
     def _get_blocking_bugs_for(self, bugs):
         # get blocker bugs in the next version for all bugs we are examining
