@@ -553,9 +553,8 @@ class OLMBundle(object):
         labels = {
             'com.redhat.delivery.operator.bundle': 'true',
             'com.redhat.openshift.versions': versions.format(**self.runtime.group_config.vars),
+            'com.redhat.prerelease': str(self.operator_index_mode == 'pre-release'),
         }
-        if self.operator_index_mode == 'pre-release':
-            labels['com.redhat.prerelease'] = 'true'
         return labels
 
     @property
