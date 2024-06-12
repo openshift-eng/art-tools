@@ -15,6 +15,7 @@ from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import chunk
+from elliottlib.verify import VerifyIssueCode, VerifyIssue
 
 
 logger = logutil.get_logger(__name__)
@@ -318,11 +319,11 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     bugs_by_type["image"] = remaining
 
     if fake_trackers:
-        issue = {
-            "code": "invalid_tracker_bugs",
-            "message": "Bugs look like CVE trackers but do not have proper metadata.",
-            "bugs": sorted([t.id for t in fake_trackers]),
-        }
+        issue = VerifyIssue(
+            code=VerifyIssueCode.INVALID_TRACKER_BUGS,
+            message="Bugs look like CVE trackers but do not have proper metadata.",
+            bugs=sorted([t.id for t in fake_trackers])
+        )
         issues.append(issue)
 
     if not tracker_bugs:
@@ -356,7 +357,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component
-            if package_name == "microshift" and len(packages) == 0:
+            if kind == "microshift" and package_name == "microshift" and len(packages) == 0:
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
                 logger.info(f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached")
@@ -378,13 +379,13 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
-            issue = {
-                "code": "tracker_bugs_no_builds",
-                "message": "No attached builds found in advisories for tracker bugs. "
-                           "Either attach builds or explicitly include/exclude the bug ids in the assembly definition",
-                "bugs": sorted([t.id for t in still_not_found]),
-                "data": [{"bug_id": t.id, "component": t.whiteboard_component} for t in still_not_found]
-            }
+            issue = VerifyIssue(
+                code=VerifyIssueCode.TRACKER_BUGS_NO_BUILDS,
+                message="No attached builds found in advisories for tracker bugs. "
+                        "Either attach builds or explicitly include/exclude the bug ids in the assembly definition",
+                bugs=sorted([t.id for t in still_not_found]),
+                data=[{"bug_id": t.id, "component": t.whiteboard_component} for t in still_not_found]
+            )
             issues.append(issue)
 
     if issues:
