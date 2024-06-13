@@ -301,10 +301,15 @@ class PrepareReleasePipeline:
                 continue
             try:
                 self.change_advisory_state(advisory, "QE")
-                push_cdn_stage(advisory)
             except Exception as ex:
                 _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
                 await self._slack_client.say_in_thread(f"Unable to move {impetus} advisory {advisory} to QE. Details in log.")
+                continue
+            try:
+                push_cdn_stage(advisory)
+            except Exception as ex:
+                _LOGGER.warning(f"Unable to trigger push {impetus} advisory {advisory} to CDN stage: {ex}")
+                await self._slack_client.say_in_thread(f"Unable to trigger push {impetus} advisory {advisory} to CDN stage. Details in log.")
 
     async def load_releases_config(self) -> Optional[None]:
         repo = self.working_dir / "ocp-build-data-push"
