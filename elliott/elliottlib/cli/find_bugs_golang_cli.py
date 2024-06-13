@@ -40,6 +40,7 @@ class FindBugsGolangCli:
         self.flaw_bugs: Dict[int, BugzillaBug] = {}
         self.go_nvr_map = {}
         self.rpm_nvrps = None
+        self.flaw_compat = {}
 
         self.jira_tracker: JIRABugTracker = self._runtime.get_bug_tracker("jira")
         self.bz_tracker: BugzillaBugTracker = self._runtime.get_bug_tracker("bugzilla")
@@ -127,8 +128,8 @@ class FindBugsGolangCli:
         fixed_in_versions = set()
         for existing_version in versions_to_build_map.keys():
             for fixed_version in tracker_fixed_in:
-                if (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor and
-                   existing_version.patch >= fixed_version.patch):
+                if (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor
+                   and existing_version.patch >= fixed_version.patch):
                     self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {existing_version}")
                     fixed_in_versions.add(existing_version)
 
@@ -199,7 +200,8 @@ class FindBugsGolangCli:
 
         return fixed, comment
 
-    async def is_fixed_rpm(self, bug, rpm_name: str, tracker_fixed_in=None, fixed_in_nvr=None) -> (bool, str):
+    async def is_fixed_rpm(self, bug: JIRABug, rpm_name: str, tracker_fixed_in: Set[Version] = None,
+                           fixed_in_nvr: str = None) -> (bool, str):
         if not self.rpm_nvrps:
             # fetch assembly selected nvrs
             replace_vars = self._runtime.group_config.vars.primitive() if self._runtime.group_config.vars else {}
@@ -250,7 +252,8 @@ class FindBugsGolangCli:
         else:
             return self._is_fixed(bug, tracker_fixed_in, go_nvr_map)
 
-    async def is_fixed_golang_builder(self, bug, tracker_fixed_in=None, fixed_in_nvr=None) -> (bool, str):
+    async def is_fixed_golang_builder(self, bug: JIRABug, tracker_fixed_in: Set[Version] = None,
+                                      fixed_in_nvr: str = None) -> (bool, str):
         if not self.pullspec:
             self._logger.info('Fetching latest accepted nightly...')
             nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=False,
@@ -267,7 +270,6 @@ class FindBugsGolangCli:
             self.go_nvr_map = get_golang_container_nvrs(nvrs, self._logger)
 
         if fixed_in_nvr:
-            # TODO: fix this
             for go_build in self.go_nvr_map.keys():
                 for f in fixed_in_nvr:
                     if go_build in f:
@@ -279,7 +281,7 @@ class FindBugsGolangCli:
     async def run(self):
         logger = self._logger
 
-        # fetch golang report for the version, fetched and compiled from streams.yml
+        # fetch golang report for the version, fetched and compiled from streams.yml and brew buildroot
         # e.g. [{'go_version': '1.21.9', 'building_image_count': 239, 'building_rpm_count': 2}, {'go_version':
         # '1.19.13', 'building_image_count': 1}]
         # this will be used later to compare to flaw fixed in versions
@@ -323,7 +325,7 @@ class FindBugsGolangCli:
         cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
         cve_table = PrettyTable()
         cve_table.align = "l"
-        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Found"]
+        cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Compatible"]
         for cve_id in cves:
             response = requests.get(cve_url.format(cve_id=cve_id))
             try:
@@ -343,7 +345,13 @@ class FindBugsGolangCli:
                 logger.warning(f"Could not extract component from title {title}: {e}")
                 comp_in_title = 'Unknown'
 
-            if not self.fixed_in_nvr:
+            # Check rough compatibility of fixed-in versions with in-use golang versions
+            # example, if fixed-in is 1.21.x and in-use are [1.20.y, 1.19.z] then they are incompatible
+            # this is a rough check to exit early if there is no compatible version found
+            # we will do a more detailed check later
+            if self.fixed_in_nvr:
+                compatible = True
+            else:
                 compatible = False
                 for fixed_in_version in self.flaw_fixed_in(flaw_bug):
                     for go_version in [entry['go_version'] for entry in golang_report]:
@@ -353,8 +361,7 @@ class FindBugsGolangCli:
                             break
                     if compatible:
                         break
-            else:
-                compatible = True
+            self.flaw_compat[cve_id] = compatible
 
             cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in, compatible])
         click.echo(f"Found trackers for {len(cves)} CVEs")
@@ -397,6 +404,13 @@ class FindBugsGolangCli:
                 logger.warning("These bugs do not have `golang:` in title, therefore they do not look like golang "
                                "compiler cves and we cannot auto-determine their fixed-in-golang-version. Run "
                                f"with --fixed-in-nvr to specify the golang compiler nvr these CVEs are fixed in. {invalid_bugs}")
+
+            incompatible_fix_bugs = sorted(b.id for b in bugs if not self.flaw_compat[b.cve_id])
+            bugs = [b for b in bugs if self.flaw_compat[b.cve_id]]
+            if incompatible_fix_bugs:
+                logger.warning("These bugs have fixed-in versions incompatible with in-use golang versions. "
+                               "Run with --fixed-in-nvr to specify the golang compiler nvr these "
+                               f"CVEs are fixed in. {incompatible_fix_bugs}")
 
         if not bugs:
             exit(1)
