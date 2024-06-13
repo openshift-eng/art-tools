@@ -821,6 +821,14 @@ def set_advisory_batch(advisory_id, batch_id):
         clear_batch - removes erratum from batch (boolean)
         is_batch_blocker - indicates if advisory blocks batch (boolean)
     """
+    current_batch_id = get_advisory_batch(advisory_id)
+    if current_batch_id:
+        if current_batch_id != batch_id:
+            # The advisory has connected to a different batch, honor the parameter batch_id
+            unset_advisory_batch(advisory_id)
+        else:
+            # The advisory already set correct batch_id
+            return
     # Make sure the batch is unlocked
     unlock_batch(batch_id)
 
