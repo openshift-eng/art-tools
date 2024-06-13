@@ -5,7 +5,8 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Set
 
-import yaml
+from ruamel import yaml
+
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
@@ -319,10 +320,11 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     bugs_by_type["image"] = remaining
 
     if fake_trackers:
+        bugs = sorted([t.id for t in fake_trackers])
         issue = VerifyIssue(
             code=VerifyIssueCode.INVALID_TRACKER_BUGS,
-            message="Bugs look like CVE trackers but do not have proper metadata.",
-            bugs=sorted([t.id for t in fake_trackers])
+            message=f"Bugs look like CVE trackers but do not have proper metadata: {bugs}",
+            bugs=bugs
         )
         issues.append(issue)
 
@@ -379,21 +381,22 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
+            still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
+            message = ('No attached builds found in advisories for tracker bugs (bug, package): '
+                       f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
+                       'ids in the assembly definition')
             issue = VerifyIssue(
                 code=VerifyIssueCode.TRACKER_BUGS_NO_BUILDS,
-                message="No attached builds found in advisories for tracker bugs. "
-                        "Either attach builds or explicitly include/exclude the bug ids in the assembly definition",
+                message=message,
                 bugs=sorted([t.id for t in still_not_found]),
-                data=[{"bug_id": t.id, "component": t.whiteboard_component} for t in still_not_found]
             )
             issues.append(issue)
 
     if issues:
-        logger.warning("Found these issues with bugs:")
-        yaml.dump(issues, indent=2, default_flow_style=False, sort_keys=False)
         if not permissive:
+            logger.error("Found these issues with bugs:")
+            yaml.dump(issues, indent=2, default_style=None, default_flow_style=False)
             raise ValueError("Found issues with bugs which need to be fixed.")
-
     return bugs_by_type, issues
 
 

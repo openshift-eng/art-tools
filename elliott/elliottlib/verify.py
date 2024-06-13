@@ -48,11 +48,9 @@ class VerifyIssue:
         :param message: The description of the issue.
         :param bugs: The list of bugs related to the issue, used for bug validations.
         :param advisory: The advisory related to the issue, used for advisory validations.
-        :param data: Additional data related to the issue.
         """
         self.code = code
         self.message = message
-        self.data = data
         self.bugs = bugs
         self.advisory = advisory
 
@@ -71,6 +69,4 @@ class VerifyIssue:
             d["bugs"] = self.bugs
         if self.advisory:
             d["advisory"] = self.advisory
-        if self.data:
-            d["data"] = self.data
         return d
