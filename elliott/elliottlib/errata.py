@@ -381,7 +381,7 @@ def get_brew_builds(errata_id, session=None):
             msg=res.text))
 
 
-def get_brew_build(nvr, product_version='', session=None):
+def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
     """5.2.2.1. GET /api/v1/build/{id_or_nvr}
 
     Get Brew build details.

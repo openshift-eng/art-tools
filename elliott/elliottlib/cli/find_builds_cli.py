@@ -68,12 +68,16 @@ pass_runtime = click.make_pass_decorator(Runtime)
 @click.option(
     '--member-only', is_flag=True,
     help='(For rpms) Only sweep member rpms')
+@click.option('--clean', is_flag=True,
+              help='Remove builds from advisory that were not found in build sweep. Cannot be used with -b or -f')
+@click.option('--dry-run', '--noop', is_flag=True,
+              help='Do not attach/remove builds from advisory, only show what would be done')
 @click_coroutine
 @pass_runtime
 # # # NOTE: if you change the method signature, be aware that verify_attached_operators_cli.py # # #
 # # # invokes find_builds_cli so please avoid breaking it.                                     # # #
 async def find_builds_cli(runtime: Runtime, advisory_id, default_advisory_type, builds_file, builds, kind, as_json,
-                          no_cdn_repos, payload, non_payload, include_shipped, member_only: bool):
+                          no_cdn_repos, payload, non_payload, include_shipped, member_only: bool, clean: bool, dry_run: bool):
     """Automatically or manually find or attach viable rpm or image builds
 to ADVISORY. Default behavior searches Brew for viable builds in the
 given group. Provide builds manually by giving one or more --build
@@ -118,6 +122,11 @@ PRESENT advisory. Here are some examples:
         raise click.BadParameter('Use only one of --payload or --non-payload.')
     if builds and builds_file:
         raise click.BadParameter('Use only one of --build or --builds-file.')
+    if clean:
+        if not (advisory_id or default_advisory_type):
+            raise click.BadParameter('Cannot use --clean without --attach or --use-default-advisory.')
+        if builds or builds_file:
+            raise click.BadParameter('Cannot use --clean with --build or --builds-file.')
 
     if builds_file:
         if builds_file == "-":
@@ -155,7 +164,7 @@ PRESENT advisory. Here are some examples:
             nvrps = await _fetch_builds_by_kind_rpm(runtime, tag_pv_map, brew_session, include_shipped, member_only)
 
     LOGGER.info('Fetching info for builds from Errata')
-    builds = parallel_results_with_progress(
+    builds: List[brew.Build] = parallel_results_with_progress(
         nvrps,
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
                                            nvrp[3], session=requests.Session())
@@ -189,23 +198,50 @@ PRESENT advisory. Here are some examples:
 
     try:
         erratum = errata.Advisory(errata_id=advisory_id)
-        erratum.ensure_state('NEW_FILES')
-        erratum.attach_builds(builds, kind)
+        if dry_run:
+            yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
+        else:
+            erratum.ensure_state('NEW_FILES')
+
+        # store nvrs that are already attached to the advisory
+        advisory_build_nvrs = []
+        for build_list in erratum.errata_builds.values():  # one per product version
+            advisory_build_nvrs.extend(build_list)
+
+        if dry_run:
+            yellow_print(f"[dry-run] Would've attached {len(builds)} builds to advisory {advisory_id}")
+        else:
+            erratum.attach_builds(builds, kind)
+
+        if clean:
+            nvrs_to_remove = set(advisory_build_nvrs) - set([b.nvr for b in builds])
+            if nvrs_to_remove:
+                LOGGER.info(f"Removing builds from advisory that were not found in build sweep: {len(nvrs_to_remove)}")
+                if dry_run:
+                    yellow_print(f"[dry-run] Would've removed {len(nvrs_to_remove)} builds from advisory {advisory_id}")
+                else:
+                    erratum.remove_builds(nvrs_to_remove)
+
         cdn_repos = et_data.get('cdn_repos')
         if kind == 'image':
-            ensure_rhcos_file_meta(advisory_id)
+            if dry_run:
+                yellow_print("[dry-run] Would've modified RHCOS file metadata")
+            else:
+                ensure_rhcos_file_meta(advisory_id)
             if cdn_repos and not no_cdn_repos:
                 cdn_repos = set(cdn_repos)
                 available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
                 not_available_repos = cdn_repos - available_repos
                 repos_to_enable = cdn_repos & available_repos
                 if repos_to_enable:
-                    erratum.set_cdn_repos(repos_to_enable)
+                    if dry_run:
+                        yellow_print(f"[dry-run] Would've enabled CDN repos: {repos_to_enable}")
+                    else:
+                        erratum.set_cdn_repos(repos_to_enable)
                 if not_available_repos:
                     raise ValueError("These cdn repos defined in erratatool.yml are not available for the advisory "
                                      f"{advisory_id}: {not_available_repos}. Please remove these or request them to "
                                      "be created.")
-                erratum.set_cdn_repos(cdn_repos)
     except ErrataException as e:
         red_print(f'Cannot change advisory {advisory_id}: {e}')
         exit(1)
@@ -469,11 +505,12 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     return nvrps
 
 
-def _filter_out_attached_builds(build_objects: brew.Build, include_shipped: bool = False):
+def _filter_out_attached_builds(build_objects: List[brew.Build], include_shipped: bool = False) \
+                                -> (List[brew.Build], Dict[int, Set[str]]):
     """
     Filter out builds that are already attached to an ART advisory
     """
-    unattached_builds = []
+    unattached_builds: List[brew.Build] = []
     errata_version_cache = {}  # avoid reloading the same errata for multiple builds
     attached_to_advisories: Dict[int, Set[str]] = dict()
     for b in build_objects:
