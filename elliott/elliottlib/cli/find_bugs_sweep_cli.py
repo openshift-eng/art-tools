@@ -392,7 +392,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     if issues:
         if not permissive:
             logger.error("Found these issues with bugs:")
-            yaml.dump(issues, indent=2, sort_keys=False)
+            yaml.dump([i.to_dict() for i in issues], indent=2, sort_keys=False)
             raise ValueError("Found issues with bugs which need to be fixed.")
     return bugs_by_type, issues
 
