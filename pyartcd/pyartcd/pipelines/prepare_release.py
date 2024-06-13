@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -21,7 +22,8 @@ from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
-from elliottlib.errata import create_batch, set_advisory_batch, unset_advisory_batch, lock_batch
+from elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
@@ -51,6 +53,7 @@ class PrepareReleasePipeline:
         jira_token: str,
         default_advisories: bool = False,
         include_shipped: bool = False,
+        skip_batch: bool = False,
     ) -> None:
         _LOGGER.info("Initializing and verifying parameters...")
         self.runtime = runtime
@@ -92,6 +95,8 @@ class PrepareReleasePipeline:
         self.working_dir = self.runtime.working_dir.absolute()
         self.default_advisories = default_advisories
         self.include_shipped = include_shipped
+        self.skip_batch = skip_batch
+
         self.dry_run = self.runtime.dry_run
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self.doozer_working_dir = self.working_dir / "doozer-working"
@@ -142,7 +147,7 @@ class PrepareReleasePipeline:
             self.check_blockers()
 
         advisories = {}
-        batch_id = None
+        batch = None
 
         if self.default_advisories:
             advisories = group_config.get("advisories", {})
@@ -150,14 +155,34 @@ class PrepareReleasePipeline:
             if release_config:
                 advisories = group_config.get("advisories", {}).copy()
 
+            if not self.skip_batch and assembly_type is AssemblyTypes.STANDARD:
+                # Create or reuse a batch for the release
+                errata_api = AsyncErrataAPI()
+                batch_name = f"OCP {self.release_name}"
+                _LOGGER.info("Checking if batch '%s' exists...", batch_name)
+                batches = [b async for b in errata_api.get_batches(name=batch_name)]
+                if not batches:
+                    _LOGGER.info("Creating batch '%s'...", batch_name)
+                    batch = await errata_api.create_batch(name=batch_name,
+                                                          release_name="RHOSE ASYNC - AUTO",
+                                                          release_date=self.release_date,
+                                                          description=batch_name)
+                    _LOGGER.info("Created errata batch id %s", int(batch["id"]))
+                else:
+                    batch = batches[0]
+                    _LOGGER.info("Found batch id %s", int(batch["id"]))
+                    # Update batch release date if needed
+                    batch_date = datetime.strptime(batch["attributes"]["release_date"], "%Y-%m-%d")
+                    expected_date = datetime.strptime(self.release_date, "%Y-%b-%d")
+                    if batch_date != expected_date:
+                        _LOGGER.info("Updating batch release date to %s...", self.release_date)
+                        await errata_api.update_batch(batch["id"], release_date=self.release_date)
+                        _LOGGER.info("Batch release date updated")
+
             is_ga = self.release_version[2] == 0
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
-                    if not batch_id and assembly_type == AssemblyTypes.STANDARD:
-                        # Create a batch for a release if not created
-                        batch_id = create_batch(release_version=self.release_name, release_date=self.release_date)
-                        _LOGGER.info(f"Created errata batch id {batch_id} for release {self.release_name}")
                     if ad == "advance":
                         # Set release date to one week before
                         # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
@@ -173,18 +198,7 @@ class PrepareReleasePipeline:
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
                                                           release_date=self.release_date)
-                    if batch_id and assembly_type == AssemblyTypes.STANDARD:
-                        # Connect advisory to the batch_id
-                        set_advisory_batch(advisory_id=advisories[ad], batch_id=batch_id)
-                        _LOGGER.info(f"Advisory {advisories[ad]} connected to the batch id {batch_id}")
-                    else:
-                        unset_advisory_batch(advisory_id=advisories[ad])
-                        _LOGGER.info(f"Clear batch setting for non release advisory {advisories[ad]}")
-            if batch_id:
-                lock_batch(batch_id=batch_id)
-                _LOGGER.info(f"Batch id {batch_id} locked for release {self.release_name}")
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
-        await self.set_advisory_dependencies(advisories)
 
         jira_issue_key = group_config.get("release_jira")
         jira_issue = None
@@ -225,6 +239,48 @@ class PrepareReleasePipeline:
 
         _LOGGER.info("Updating ocp-build-data...")
         await self.update_build_data(advisories, jira_issue_key)
+
+        # Set advisory dependencies
+        await self.set_advisory_dependencies(advisories)
+
+        if batch:
+            # Update batch with advisories
+            current_advisories_in_batch = {int(ad["id"]) for ad in batch.get("relationships", {}).get("errata", [])}
+            expected_advisories_in_batch = {ad for ad_type, ad in advisories.items() if ad_type != 'advance' and ad > 0}
+            if current_advisories_in_batch != expected_advisories_in_batch:
+                if batch.get("attributes", {}).get("is_locked"):
+                    _LOGGER.info(f"Batch {batch['id']} is locked. Unlocking it...")
+                    if not self.runtime.dry_run:
+                        batch = await errata_api.update_batch(batch["id"], is_locked=False)
+                        _LOGGER.info(f"Batch {batch['id']} unlocked")
+                    else:
+                        _LOGGER.warning("[DRY RUN] Would have unlocked batch %s", batch["id"])
+                # Remove advisories that should not be in the batch
+                api_calls = []
+                advisories_to_remove = current_advisories_in_batch - expected_advisories_in_batch
+                for ad in advisories_to_remove:
+                    api_calls.append(errata_api.change_batch_for_advisory(ad, None))
+                # Add advisories that are not in the batch
+                advisories_to_add = expected_advisories_in_batch - current_advisories_in_batch
+                for ad in advisories_to_add:
+                    api_calls.append(errata_api.change_batch_for_advisory(ad, batch["id"]))
+                # Execute all API calls
+                if not self.runtime.dry_run:
+                    _LOGGER.info(f"Removing advisories {advisories_to_remove} from batch {batch['id']} and adding advisories {advisories_to_add} to batch {batch['id']}")
+                    await asyncio.gather(*api_calls)
+                    _LOGGER.info(f"Advisories updated in batch {batch['id']}")
+                else:
+                    _LOGGER.warning("[DRY RUN] Would have removed advisories %s from batch %s and added advisories %s to batch %s",
+                                    advisories_to_remove, batch["id"], advisories_to_add, batch["id"])
+
+                # Lock batch
+                if not batch.get("attributes", {}).get("is_locked"):
+                    _LOGGER.info(f"Locking batch {batch['id']}...")
+                    if not self.runtime.dry_run:
+                        await errata_api.update_batch(batch["id"], is_locked=True)
+                        _LOGGER.info(f"Batch {batch['id']} locked")
+                    else:
+                        _LOGGER.warning("[DRY RUN] Would have locked batch %s", batch["id"])
 
         if "advance" in advisories.keys():
             # Make sure that the advisory is in editable mode
@@ -823,10 +879,13 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="don't create advisories/jira; pick them up from ocp-build-data")
 @click.option("--include-shipped", is_flag=True, required=False,
               help="Do not filter our shipped builds, attach all builds to advisory")
+@click.option("--skip-batch", is_flag=True,
+              help="Skip using batch")
 @pass_runtime
 @click_coroutine
 async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Optional[str], date: str,
-                          package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool, include_shipped: bool):
+                          package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool,
+                          include_shipped: bool, skip_batch: bool):
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     await slack_client.say_in_thread(f":construction: prepare-release for {name if name else assembly} "
@@ -849,6 +908,7 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             jira_token=jira_token,
             default_advisories=default_advisories,
             include_shipped=include_shipped,
+            skip_batch=skip_batch,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: @release-artists prepare-release for {name if name else assembly} completes.")

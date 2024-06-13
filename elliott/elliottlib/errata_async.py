@@ -1,6 +1,6 @@
 import asyncio
 import base64
-from typing import Dict, Iterable, List, Set, Union
+from typing import Dict, Iterable, List, Optional, Set, Union, cast
 from urllib.parse import quote, urlparse
 from aiohttp import ClientResponseError, ClientTimeout
 
@@ -112,6 +112,109 @@ class AsyncErrataAPI:
     async def get_advisories_for_bug(self, bz_key: str):
         path = f"/bugs/{bz_key}/advisories.json"
         return await self._make_request(aiohttp.hdrs.METH_GET, path)
+
+    async def _paginated_request(self, method: str, path: str, params: Optional[Dict] = None, start_page_number: int = 1, page_size: int = 0):
+        if params is None:
+            params = {}
+        params["page[number]"] = start_page_number
+        if page_size > 0:
+            params["page[size]"] = page_size
+        while True:
+            result = cast(Dict, await self._make_request(method=method, path=path, params=params))
+            data: List[Dict] = result.get('data', [])
+            if not data:
+                break
+            for item in data:
+                yield item
+            params["page[number]"] += 1
+
+    def get_batches(self, id: int = 0, name: str = ""):
+        """ Get details of all batches ordered by name.
+        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
+
+        :param id: Filter by batch ID
+        :param name: Filter by batch name
+        :return: a generator of batches
+        """
+        path = "/api/v1/batches"
+        params = {}
+        if id > 0:
+            params["filter[id]"] = str(id)
+        if name:
+            params["filter[name]"] = name
+        return self._paginated_request(aiohttp.hdrs.METH_GET, path, params=params)
+
+    async def create_batch(self, name: str, release_name: str, release_date: str, description: str,
+                           is_active: bool = True, is_locked: bool = False):
+        """ Create a new batch.
+        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
+
+        :param name: Batch name
+        :param release_name: Release name. Use "RHOSE ASYNC - AUTO" for an OCP release.
+        :param release_date: Release date in "YYYY-MM-DD" format
+        :param description: Batch description
+        :param is_active: Whether the batch is active
+        :param is_locked: Whether the batch is locked
+        """
+        path = "/api/v1/batches"
+        data = {
+            "name": name,
+            "release_name": release_name,
+            "release_date": release_date,
+            "description": description,
+            "is_active": is_active,
+            "is_locked": is_locked,
+        }
+        return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
+
+    async def update_batch(self,
+                           batch_id: int,
+                           name: Optional[str] = None,
+                           release_name: Optional[str] = None,
+                           release_date: Optional[str] = None,
+                           description: Optional[str] = None,
+                           is_active: Optional[bool] = None,
+                           is_locked: Optional[bool] = None):
+        """ Update an existing batch.
+        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html
+
+        :param batch_id: Batch ID
+        :param name: The batch name to update if not None
+        :param release_name: The release name to update if not None
+        :param release_date: The release date to update if not None
+        :param description: The description to update if not None
+        :param is_active: Whether the batch is active to update if not None
+        :param is_locked: Whether the batch is locked to update if not None
+        """
+        path = f"/api/v1/batches/{batch_id}"
+        data = {}
+        if name is not None:
+            data["name"] = name
+        if release_name is not None:
+            data["release_name"] = release_name
+        if release_date is not None:
+            data["release_date"] = release_date
+        if description is not None:
+            data["description"] = description
+        if is_active is not None:
+            data["is_active"] = is_active
+        if is_locked is not None:
+            data["is_locked"] = is_locked
+        return await self._make_request(aiohttp.hdrs.METH_PUT, path, json=data)
+
+    async def change_batch_for_advisory(self, advisory: int, batch_id: Optional[int] = None):
+        """ Change the batch association for an advisory.
+
+        :param advisory: Advisory ID
+        :param batch_id: Batch ID to associate with the advisory. If None, clear the batch association.
+        """
+        path = f"/api/v1/erratum/{advisory}/change_batch"
+        data = {}
+        if batch_id is not None:
+            data["batch_id"] = batch_id
+        else:
+            data["clear_batch"] = True
+        return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
 
 
 class AsyncErrataUtils:
