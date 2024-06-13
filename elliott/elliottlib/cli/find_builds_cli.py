@@ -15,6 +15,7 @@ from artcommonlib.arch_util import BREW_ARCHES
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
 from artcommonlib.rhcos import get_container_configs, get_build_id_from_rhcos_pullspec
+from artcommonlib.release_util import isolate_el_version_in_release
 from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
@@ -25,6 +26,7 @@ from elliottlib.util import (ensure_erratatool_auth,
                              get_release_version,
                              isolate_el_version_in_brew_tag,
                              parallel_results_with_progress, pbar_header, progress_func)
+from doozerlib.rpm_utils import parse_nvr
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -170,6 +172,9 @@ PRESENT advisory. Here are some examples:
                                            nvrp[3], session=requests.Session())
     )
 
+    _json_dump(as_json, builds, kind, tag_pv_map)
+    canonical_nvrs = [b.nvr for b in builds]
+
     # if we want to attach found builds to an advisory -> filter out already attached builds
     # if we want to report on found builds -> do not filter out
     if advisory_id:
@@ -184,12 +189,6 @@ PRESENT advisory. Here are some examples:
                                    f'ART advisory {attached_ad_id} - {sorted(nvrs)}. Remove them from the advisory'
                                    'and then try again.')
 
-    _json_dump(as_json, builds, kind, tag_pv_map)
-
-    if not builds:
-        green_print('No eligible builds found. To include shipped builds, use --include-shipped')
-        return
-
     if not advisory_id:
         LOGGER.info(f'Found {len(builds)} builds')
         for b in sorted(builds):
@@ -197,35 +196,54 @@ PRESENT advisory. Here are some examples:
         return
 
     try:
+        LOGGER.info("Fetching advisory")
         erratum = errata.Advisory(errata_id=advisory_id)
-        if dry_run:
-            yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
-        else:
-            erratum.ensure_state('NEW_FILES')
 
         # store nvrs that are already attached to the advisory
         advisory_build_nvrs = []
         for build_list in erratum.errata_builds.values():  # one per product version
             advisory_build_nvrs.extend(build_list)
 
-        if dry_run:
+        if not builds:
+            green_print("No eligible builds found. To include shipped builds, use --include-shipped")
+        elif dry_run:
+            yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
             yellow_print(f"[dry-run] Would've attached {len(builds)} builds to advisory {advisory_id}")
         else:
+            erratum.ensure_state('NEW_FILES')
             erratum.attach_builds(builds, kind)
 
         if clean:
-            nvrs_to_remove = set(advisory_build_nvrs) - set([b.nvr for b in builds])
+            nvrs_to_remove = set(advisory_build_nvrs) - set(canonical_nvrs)
+
+            # In ET, new nvr replaces already attached nvr for a (package, el_version) in a product version.
+            # so filter out nvrs that would be replaced by canonical nvrs
+            temp = []
+            for n in nvrs_to_remove:
+                parsed_n = parse_nvr(n)
+                n_el = isolate_el_version_in_release(parsed_n['release'])
+                for n2 in canonical_nvrs:
+                    parsed_n2 = parse_nvr(n2)
+                    n2_el = isolate_el_version_in_release(parsed_n2['release'])
+                    if parsed_n['name'] == parsed_n2['name'] and n_el == n2_el:
+                        temp.append(n)
+
+            nvrs_to_remove = nvrs_to_remove - set(temp)
             if nvrs_to_remove:
                 LOGGER.info(f"Removing builds from advisory that were not found in build sweep: {len(nvrs_to_remove)}")
+                for b in sorted(nvrs_to_remove):
+                    click.echo(' ' + b)
                 if dry_run:
+                    yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
                     yellow_print(f"[dry-run] Would've removed {len(nvrs_to_remove)} builds from advisory {advisory_id}")
                 else:
+                    erratum.ensure_state('NEW_FILES')
                     erratum.remove_builds(nvrs_to_remove)
 
         cdn_repos = et_data.get('cdn_repos')
         if kind == 'image':
             if dry_run:
-                yellow_print("[dry-run] Would've modified RHCOS file metadata")
+                yellow_print("[dry-run] Would've ensured RHCOS file metadata is set")
             else:
                 ensure_rhcos_file_meta(advisory_id)
             if cdn_repos and not no_cdn_repos:
@@ -505,8 +523,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     return nvrps
 
 
-def _filter_out_attached_builds(build_objects: List[brew.Build], include_shipped: bool = False) \
-                                -> (List[brew.Build], Dict[int, Set[str]]):
+def _filter_out_attached_builds(build_objects: List[brew.Build], include_shipped: bool = False) -> (List[brew.Build], Dict[int, Set[str]]):
     """
     Filter out builds that are already attached to an ART advisory
     """
