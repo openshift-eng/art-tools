@@ -1,5 +1,18 @@
 from enum import Enum
-from typing import Dict, List, Union
+from typing import Iterable
+
+
+def stringify(i, sort=True):
+    """
+    Convert iterable containing strings to a string without single quotes
+    This is useful when dumping data to JSON/YAML for humans to read
+    Bad for serialization
+    """
+    if not isinstance(i, Iterable):
+        return str(i)
+    # sort it so it's deterministic unless told not to
+    i = sorted(i) if sort else i
+    return str(i).replace("'", "")
 
 
 class VerifyIssueCode(Enum):
@@ -41,18 +54,13 @@ class VerifyIssueCode(Enum):
 
 
 class VerifyIssue:
-    def __init__(self, code: VerifyIssueCode, message: str,
-                 bugs: List[str] = None, advisory: Union[int, str] = None, data: Dict = None):
+    def __init__(self, code: VerifyIssueCode, message: str):
         """
         :param code: The code of the issue.
-        :param message: The description of the issue.
-        :param bugs: The list of bugs related to the issue, used for bug validations.
-        :param advisory: The advisory related to the issue, used for advisory validations.
+        :param message: The description of the issue with all the necessary details.
         """
         self.code = code
         self.message = message
-        self.bugs = bugs
-        self.advisory = advisory
 
     def __str__(self):
         return self.message
@@ -61,12 +69,7 @@ class VerifyIssue:
         return self.message
 
     def to_dict(self):
-        d = {
+        return {
             "code": self.code.value,
             "message": self.message,
         }
-        if self.bugs:
-            d["bugs"] = self.bugs
-        if self.advisory:
-            d["advisory"] = self.advisory
-        return d
