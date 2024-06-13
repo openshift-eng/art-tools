@@ -1,10 +1,9 @@
 import asyncio
 import re
 import json
+import yaml
 from typing import Any, Dict, Iterable, List, Set, Tuple, Union
-
 import click
-from ruamel import yaml
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
@@ -186,7 +185,7 @@ class BugValidator:
             self.problems = [p.to_dict() for p in self.problems]
             if self.output == 'text':
                 print("Found the following problems, please investigate")
-                print(yaml.dump(self.problems, indent=2, default_style=None, default_flow_style=False))
+                print(yaml.dump(self.problems, indent=2, sort_keys=False, default_flow_style=False))
             if self.output == 'json':
                 print(json.dumps(self.problems, indent=2, sort_keys=False))
             exit(1)

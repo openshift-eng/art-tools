@@ -4,8 +4,7 @@ import sys
 import traceback
 from datetime import datetime
 from typing import List, Dict, Set
-
-from ruamel import yaml
+import yaml
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
@@ -334,7 +333,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
     for b in tracker_bugs:
-        logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        logger.debug(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
 
     if not advisory_id_map:
         logger.info("Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
@@ -366,9 +365,9 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):
                 if package_name in packages:
-                    logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
+                    logger.debug(f"{kind} build found for #{bug.id}, {package_name} ")
                 if package_name in exception_packages:
-                    logger.info(f"{package_name} bugs included by default")
+                    logger.debug(f"{package_name} bugs included by default")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 
@@ -395,7 +394,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     if issues:
         if not permissive:
             logger.error("Found these issues with bugs:")
-            yaml.dump(issues, indent=2, default_style=None, default_flow_style=False)
+            yaml.dump(issues, indent=2, default_flow_style=False, sort_keys=False)
             raise ValueError("Found issues with bugs which need to be fixed.")
     return bugs_by_type, issues
 
