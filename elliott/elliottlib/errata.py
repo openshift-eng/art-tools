@@ -859,3 +859,14 @@ def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """
     return ErrataConnector()._put(f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true',
                                   json=file_meta)
+
+
+def push_cdn_stage(advisory_id):
+    """Trigger stage push for an advisory
+    https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#pushing-advisories
+    """
+    response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/push', json=[{"target": "cdn_stage"}, {"target": "cdn_docker_stage"}])
+    if response.status_code == 400 and "dependencies" in response.text:
+        # if advisory has push dependencies then it will return 400, this is expected
+        return None
+    return response.json()
