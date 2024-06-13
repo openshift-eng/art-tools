@@ -218,11 +218,11 @@ PRESENT advisory. Here are some examples:
 
             # In ET, new nvr replaces already attached nvr for a (package, el_version) in a product version.
             # so filter out nvrs that would be replaced by canonical nvrs
-            valid_package_els = {}
+            valid_package_els = set()
             for n in canonical_nvrs:
                 parsed_n = parse_nvr(n)
                 n_el = isolate_el_version_in_release(parsed_n['release'])
-                valid_package_els[(parsed_n['name'], n_el)] = True
+                valid_package_els.add((parsed_n['name'], n_el))
 
             temp = []
             for n in nvrs_to_remove:
