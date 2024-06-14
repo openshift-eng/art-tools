@@ -197,7 +197,8 @@ class PrepareReleasePipeline:
                         continue
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
-                                                          release_date=self.release_date)
+                                                          release_date=self.release_date,
+                                                          batch_id=batch["id"] if batch else 0)
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
 
         jira_issue_key = group_config.get("release_jira")
@@ -444,7 +445,7 @@ class PrepareReleasePipeline:
         if match and int(match[1]) != 0:
             _LOGGER.info(f"{int(match[1])} Blocker Bugs found! Make sure to resolve these blocker bugs before proceeding to promote the release.")
 
-    def create_advisory(self, advisory_type: str, art_advisory_key: str, release_date: str) -> int:
+    def create_advisory(self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0) -> int:
         _LOGGER.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
         create_cmd = [
             "elliott",
@@ -459,6 +460,8 @@ class PrepareReleasePipeline:
             f"--package-owner={self.package_owner}",
             f"--date={release_date}",
         ]
+        if batch_id:
+            create_cmd.append(f"--batch-id={batch_id}")
         if not self.dry_run:
             create_cmd.append("--yes")
         _LOGGER.info("Running command: %s", create_cmd)

@@ -2,7 +2,7 @@ import asyncio
 import base64
 from typing import Dict, Iterable, List, Optional, Set, Union, cast
 from urllib.parse import quote, urlparse
-from aiohttp import ClientResponseError, ClientTimeout
+from aiohttp import ClientResponse, ClientResponseError, ClientTimeout
 
 import aiohttp
 import gssapi
@@ -43,9 +43,23 @@ class AsyncErrataAPI:
         if "headers" in kwargs:
             headers.update(kwargs.pop("headers"))
         async with self._session.request(method, self._errata_url + path, headers=headers, **kwargs) as resp:
-            resp.raise_for_status()
+            # resp.raise_for_status()
+            await self._raise_for_status(resp)
             result = await (resp.json() if parse_json else resp.read())
         return result
+
+    @staticmethod
+    async def _raise_for_status(response: ClientResponse):
+        if not response.ok:
+            error_message = await response.json()
+            response.release()
+            raise ClientResponseError(
+                response.request_info,
+                response.history,
+                status=response.status,
+                message=f"{response.reason}: {error_message}",
+                headers=response.headers,
+            )
 
     async def get_advisory(self, advisory: Union[int, str]) -> Dict:
         path = f"/api/v1/erratum/{quote(str(advisory))}"
@@ -215,6 +229,72 @@ class AsyncErrataAPI:
         else:
             data["clear_batch"] = True
         return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
+
+    async def create_advisory(self, product: str, release: str, errata_type: str,
+                              advisory_synopsis: str, advisory_topic: str, advisory_description: str, advisory_solution: str,
+                              advisory_publish_date_override: Optional[str] = None, advisory_text_only: bool = False,
+                              advisory_quality_responsibility_name: str = "Default", advisory_security_impact: Optional[str] = None,
+                              advisory_package_owner_email: Optional[str] = None, advisory_manager_email: Optional[str] = None,
+                              advisory_assigned_to_email: Optional[str] = None,
+                              idsfixed: Optional[List[Union[str, int]]] = None,
+                              batch_id: Optional[int] = None, batch_name: Optional[str] = None):
+        """ Create a new advisory.
+        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
+
+        :param product: Product name
+        :param release: Release name
+        :param errata_type: Errata type (e.g. "RHSA")
+        :param advisory_synopsis: Synopsis
+        :param advisory_topic: Topic
+        :param advisory_description: Description
+        :param advisory_solution: Solution
+        :param advisory_publish_date_override: Publish date override in "YYYY-MM-DD" format
+        :param advisory_text_only: Whether the advisory is text only
+        :param advisory_quality_responsibility_name: Quality responsibility name
+        :param advisory_security_impact: Security impact
+        :param advisory_package_owner_email: Package owner email
+        :param advisory_manager_email: Manager email
+        :param advisory_assigned_to_email: Assigned to email
+        :param idsfixed: List of IDs fixed
+        :param batch_id: Batch ID to associate with the advisory
+        :param batch_name: Batch name to associate with the advisory
+        :return: a dict containing the new advisory
+        """
+        path = "/api/v1/erratum"
+        data = {
+            "product": product,
+            "release": release,
+            "advisory": {
+                "errata_type": errata_type,
+                "solution": advisory_solution,
+                "description": advisory_description,
+                "synopsis": advisory_synopsis,
+                "topic": advisory_topic,
+                "security_impact": advisory_security_impact,
+                "quality_responsibility_name": advisory_quality_responsibility_name,
+                "idsfixed": ' '.join(str(i) for i in idsfixed) if idsfixed else None,
+                "package_owner_email": advisory_package_owner_email,
+                "manager_email": advisory_manager_email,
+                "assigned_to_email": advisory_assigned_to_email,
+                "text_only": 1 if advisory_text_only else 0,
+                "publish_date_override": advisory_publish_date_override,
+            },
+            "batch": {},
+        }
+        if batch_id:
+            data["batch"]["id"] = batch_id
+        if batch_name:
+            data["batch"]["name"] = batch_name
+        return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
+
+    async def request_liveid(self, advisory_id: int):
+        """ Request a Live ID for an advisory.
+        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
+
+        :param advisory_id: Advisory ID
+        """
+        path = f"/api/v1/erratum/{advisory_id}/set_live_advisory_name"
+        return await self._make_request(aiohttp.hdrs.METH_POST, path)
 
 
 class AsyncErrataUtils:
