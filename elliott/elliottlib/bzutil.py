@@ -18,7 +18,6 @@ from jira import JIRA, Issue
 from errata_tool import Erratum
 from errata_tool.jira_issue import JiraIssue as ErrataJira
 from errata_tool.bug import Bug as ErrataBug
-from bugzilla.bug import Bug
 from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -47,6 +46,12 @@ def get_jira_bz_bug_ids(bug_ids):
 class Bug:
     def __init__(self, bug_obj):
         self.bug = bug_obj
+
+    def __str__(self):
+        return str(self.id)
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}:{self.id}'
 
     @property
     def id(self):
@@ -100,7 +105,7 @@ class Bug:
         return None
 
     @staticmethod
-    def get_target_release(bugs: List[Bug]) -> str:
+    def get_target_release(bugs: List) -> str:
         """
         Pass in a list of bugs and get their target release version back.
         Raises exception if they have different target release versions set.

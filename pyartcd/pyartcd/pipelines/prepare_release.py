@@ -20,8 +20,7 @@ from datetime import datetime, timedelta
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date
-from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage
-from elliottlib.errata import get_brew_builds
+from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata import create_batch, set_advisory_batch, unset_advisory_batch, lock_batch
 from pyartcd import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -228,33 +227,31 @@ class PrepareReleasePipeline:
         await self.update_build_data(advisories, jira_issue_key)
 
         if "advance" in advisories.keys():
-            advisory_info = await self.get_advisory_info(advisories["advance"])
             # Make sure that the advisory is in editable mode
-            if self.is_advisory_editable(advisory_info):
+            if is_advisory_editable(advisories["advance"]):
                 # Set this as an 'advance' release
                 self.advance_release = True
 
                 # Remove all builds from the metadata advisory
                 await self.remove_builds_all(advisories["metadata"])
             else:
-                _LOGGER.info(f"'advance' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
+                _LOGGER.info(f"'advance' advisory {advisories['advance']} is not editable. Defaulting bundle advisory"
                              " to 'metadata'")
 
         if "prerelease" in advisories.keys():
             if self.advance_release:
                 raise IOError("prerelease and advance release cannot be set at the same time")
 
-            advisory_info = await self.get_advisory_info(advisories["prerelease"])
             # Make sure that the advisory is in editable mode
-            if self.is_advisory_editable(advisory_info):
+            if is_advisory_editable(advisories["prerelease"]):
                 # Set this as an 'pre-release' release
                 self.pre_release = True
 
                 # Remove all builds from the metadata advisory
                 await self.remove_builds_all(advisories["metadata"])
             else:
-                _LOGGER.info(f"'prerelease' advisory {advisory_info['id']} is not editable. Defaulting bundle advisory"
-                             " to 'metadata'")
+                _LOGGER.info(f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle "
+                             "advisory to 'metadata'")
 
         _LOGGER.info("Sweep builds into the the advisories...")
         for impetus, advisory in advisories.items():
@@ -805,25 +802,6 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
 
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
-
-    @staticmethod
-    def is_advisory_editable(advisory_info: Dict) -> bool:
-        return advisory_info["status"] in {"NEW_FILES", "QE"}
-
-    async def get_advisory_info(self, advisory: int) -> Dict:
-        cmd = [
-            "elliott",
-            f"--group={self.group_name}",
-            "get",
-            "--json", "-",
-            "--", f"{advisory}"
-        ]
-
-        _, stdout, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
-        advisory_info = json.loads(stdout)
-        if not isinstance(advisory_info, dict):
-            raise ValueError(f"Got invalid advisory info for advisory {advisory}: {advisory_info}.")
-        return advisory_info
 
 
 @cli.command("prepare-release")

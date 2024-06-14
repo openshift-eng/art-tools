@@ -22,10 +22,7 @@ from elliottlib.util import chunk
 from elliottlib import bzutil
 from requests_gssapi import HTTPSPNEGOAuth
 from errata_tool import Erratum, ErrataException, ErrataConnector
-from typing import List, Optional
-
-
-import xmlrpc.client
+from typing import List
 
 logger = logutil.get_logger(__name__)
 
@@ -870,3 +867,10 @@ def push_cdn_stage(advisory_id):
         # if advisory has push dependencies then it will return 400, this is expected
         return None
     return response.json()
+
+
+def is_advisory_editable(advisory_id: int) -> bool:
+    erratum = get_raw_erratum(advisory_id)['errata']
+    advisory_type_key = list(erratum.keys())[0]
+    status = erratum[advisory_type_key]['status']
+    return status in {"NEW_FILES", "QE"}
