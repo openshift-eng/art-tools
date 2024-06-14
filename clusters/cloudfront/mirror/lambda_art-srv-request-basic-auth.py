@@ -134,8 +134,8 @@ def lambda_handler(event: Dict, context: Dict):
             uri = link + uri[len(prefix):]
             break
 
-    if not uri.startswith('/pub') and uri != '/favicon.ico':
-        # Anything not in /pub requires basic auth header
+    if not uri.startswith('/pub') and uri != '/favicon.ico' and uri != '/robots.txt':
+        # Anything not in /pub (or few exceptions) requires basic auth header
         authorization = headers.get("authorization", [])
         if not authorization:
             if uri == '/':
