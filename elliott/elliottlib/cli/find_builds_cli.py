@@ -241,7 +241,7 @@ PRESENT advisory. Here are some examples:
                     yellow_print(f"[dry-run] Would've removed {len(nvrs_to_remove)} builds from advisory {advisory_id}")
                 else:
                     erratum.ensure_state('NEW_FILES')
-                    erratum.remove_builds(nvrs_to_remove)
+                    erratum.remove_builds(list(nvrs_to_remove))
 
         cdn_repos = et_data.get('cdn_repos')
         if kind == 'image':
