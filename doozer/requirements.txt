@@ -13,7 +13,7 @@ pyyaml >= 5.1
 requests
 requests_kerberos
 semver
-tenacity
+tenacity ~= 8.3.0  # https://github.com/jd/tenacity/issues/471
 wrapt
 mysql-connector-python >= 8.0.21
 pydantic ~= 1.10.7
