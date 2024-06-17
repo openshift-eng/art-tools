@@ -180,14 +180,11 @@ def get_jira_issue(jira_issue_id):
     return ErrataConnector()._get(f"/jira_issues/{jira_issue_id}.json")
 
 
-def get_bug_ids(advisory_id) -> (List, List):
+def get_bug_ids(advisory_id):
     """
     Retrieve just the bug IDs from an advisory without wasting time processing it, loading builds, etc.
     """
-    raw_erratum = get_raw_erratum(advisory_id)
-    bugzilla_ids = [bug['bug']['id'] for bug in raw_erratum['bugs']['bugs']]
-    jira_ids = raw_erratum['jira_issues']['idsfixed']
-    return {'bugzilla': bugzilla_ids, 'jira': jira_ids}
+    return [bug['bug']['id'] for bug in get_raw_erratum(advisory_id)['bugs']['bugs']]
 
 
 def get_erratum_content_type(advisory_id: str):

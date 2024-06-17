@@ -4,6 +4,7 @@ import json
 import yaml
 from typing import Any, Dict, Iterable, List, Set, Tuple, Union
 import click
+from errata_tool import Erratum
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
@@ -16,7 +17,6 @@ from elliottlib.bzutil import Bug
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 from elliottlib.verify import VerifyIssueCode, VerifyIssue, stringify
-from elliottlib.errata import get_bug_ids
 
 logger = logutil.get_logger(__name__)
 
@@ -421,19 +421,17 @@ class BugValidator:
         :return: a dict with advisory id as key and set of bug objects as value
         """
         logger.info(f"Retrieving bugs for advisories: {advisory_ids}")
+        advisories = [Erratum(errata_id=advisory_id) for advisory_id in advisory_ids]
 
-        # {12345: {'bugzilla' -> [..], 'jira' -> [..]} .. }
-        advisory_bug_id_map: Dict[int, Dict] = {advisory_id: get_bug_ids(advisory_id) for advisory_id in advisory_ids}
-
-        attached_bug_map: Dict[int, Set[Bug]] = {advisory_id: set() for advisory_id in advisory_ids}
+        attached_bug_map = {advisory_id: set() for advisory_id in advisory_ids}
         for bug_tracker_type in ['jira', 'bugzilla']:
             bug_tracker = self.runtime.get_bug_tracker(bug_tracker_type)
-            # we do this to get all bugs in one go
-            all_bug_ids = {bug_id for bug_dict in advisory_bug_id_map.values() for bug_id in bug_dict[bug_tracker_type]}
-            bug_map: Dict[Bug] = bug_tracker.get_bugs_map(all_bug_ids)
+            advisory_bug_id_map = {advisory.errata_id: bug_tracker.advisory_bug_ids(advisory)
+                                   for advisory in advisories}
+            bug_map = bug_tracker.get_bugs_map([bug_id for bug_list in advisory_bug_id_map.values()
+                                                for bug_id in bug_list])
             for advisory_id in advisory_ids:
-                set_of_bugs: Set[Bug] = {bug_map[bid] for bid in advisory_bug_id_map[advisory_id][bug_tracker_type]
-                                         if bid in bug_map}
+                set_of_bugs = {bug_map[bid] for bid in advisory_bug_id_map[advisory_id] if bid in bug_map}
                 attached_bug_map[advisory_id] = attached_bug_map[advisory_id] | set_of_bugs
         return attached_bug_map
 
