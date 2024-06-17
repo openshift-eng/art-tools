@@ -581,8 +581,10 @@ class PrepareReleasePipeline:
         if impetus == "microshift":
             # By default, elliott sweeps every tagged rpm. We need `--member-only` to only sweep those listed in `--rpms`.
             cmd.append("--member-only")
-        if not self.dry_run:
-            cmd.append(f"--attach={advisory}")
+        cmd.append(f"--attach={advisory}")
+        cmd.append("--clean")
+        if self.dry_run:
+            cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
