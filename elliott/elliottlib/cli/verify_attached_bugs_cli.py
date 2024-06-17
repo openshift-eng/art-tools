@@ -16,6 +16,7 @@ from elliottlib.util import minor_version_tuple
 from elliottlib.bzutil import Bug
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
+from elliottlib.errata import is_advisory_editable
 
 logger = logutil.get_logger(__name__)
 
@@ -199,12 +200,8 @@ class BugValidator:
 
     def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
         advance_release = False
-        if "advance" in advisory_id_map:
-            if "metadata" in advisory_id_map:
-                if len(advisory_bug_map[advisory_id_map["advance"]]) > len(advisory_bug_map[advisory_id_map["metadata"]]):
-                    advance_release = True
-            else:
-                advance_release = True
+        if "advance" in advisory_id_map and is_advisory_editable(advisory_id_map["advance"]):
+            advance_release = True
         operator_bundle_advisory = "advance" if advance_release else "metadata"
         bugs_by_type, issues = categorize_bugs_by_type(non_flaw_bugs, advisory_id_map,
                                                        permitted_bug_ids=permitted_bug_ids,
@@ -381,7 +378,7 @@ class BugValidator:
         next_version = (v[0], v[1] + 1)
 
         def is_next_target(target_v):
-            pattern = re.compile(r'^\d+\.\d+\.(0|z)$')
+            pattern = re.compile(r'^\d+\.\d+\.([0z])$')
             return pattern.match(target_v) and minor_version_tuple(target_v) == next_version
 
         def managed_by_art(b: Bug):
