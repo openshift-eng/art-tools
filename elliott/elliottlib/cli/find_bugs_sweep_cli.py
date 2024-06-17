@@ -4,6 +4,7 @@ import sys
 import traceback
 from datetime import datetime
 from typing import List, Dict, Set
+import yaml
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
@@ -14,6 +15,7 @@ from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import chunk
+from elliottlib.verify import VerifyIssueCode, VerifyIssue, stringify
 
 
 logger = logutil.get_logger(__name__)
@@ -274,8 +276,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                             permitted_bug_ids, operator_bundle_advisory: str = "metadata",
-                            permissive=False, major_version: int = 4):
-    issues = []
+                            permissive=False, major_version: int = 4) -> (Dict[str, type_bug_set], List[VerifyIssue]):
+
+    # this will capture any issues with found bugs that need to be fixed
+    issues: List[VerifyIssue] = []
 
     bugs_by_type: Dict[str, type_bug_set] = {
         "rpm": set(),
@@ -315,12 +319,12 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     bugs_by_type["image"] = remaining
 
     if fake_trackers:
-        message = f"Bug(s) {[t.id for t in fake_trackers]} look like CVE trackers, but really are not."
-        if permissive:
-            logger.warning(f"{message} Ignoring them.")
-            issues.append(message)
-        else:
-            raise ElliottFatalError(f"{message} Please fix.")
+        bugs = [t.id for t in fake_trackers]
+        issue = VerifyIssue(
+            code=VerifyIssueCode.INVALID_TRACKER_BUGS,
+            message=f"Bugs look like CVE trackers but do not have proper metadata: {stringify(bugs)}",
+        )
+        issues.append(issue)
 
     if not tracker_bugs:
         return bugs_by_type, issues
@@ -328,7 +332,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
     for b in tracker_bugs:
-        logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        logger.debug(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
 
     if not advisory_id_map:
         logger.info("Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
@@ -353,16 +357,16 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component
-            if package_name == "microshift" and len(packages) == 0:
+            if kind == "microshift" and package_name == "microshift" and len(packages) == 0:
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
                 logger.info(f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached")
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):
                 if package_name in packages:
-                    logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
+                    logger.debug(f"{kind} build found for #{bug.id}, {package_name} ")
                 if package_name in exception_packages:
-                    logger.info(f"{package_name} bugs included by default")
+                    logger.debug(f"{package_name} bugs included by default")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 
@@ -377,14 +381,19 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         if still_not_found:
             still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
             message = ('No attached builds found in advisories for tracker bugs (bug, package): '
-                       f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
-                       f'ids in the assembly definition')
-            if permissive:
-                logger.warning(f"{message} Ignoring them because --permissive.")
-                issues.append(message)
-            else:
-                raise ValueError(message)
+                       f'{stringify(still_not_found_with_component)}. Either attach builds or explicitly include/exclude '
+                       f'the bug ids in the assembly definition')
+            issue = VerifyIssue(
+                code=VerifyIssueCode.TRACKER_BUGS_NO_BUILDS,
+                message=message
+            )
+            issues.append(issue)
 
+    if issues:
+        if not permissive:
+            logger.error("Found these issues with bugs:")
+            yaml.dump([i.to_dict() for i in issues], indent=2, sort_keys=False)
+            raise ValueError("Found issues with bugs which need to be fixed.")
     return bugs_by_type, issues
 
 
