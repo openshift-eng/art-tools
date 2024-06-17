@@ -775,20 +775,20 @@ class PromotePipeline:
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
-        # With future releases (probably 4.15) this will eventually need to switch to rhel9
         major, minor = isolate_major_minor_in_group(self.group)
         if major == 4 and minor < 16:
             rhel_version = 'rhel8'
+            binary_name = 'openshift-baremetal-install'
         else:
             rhel_version = 'rhel9'
+            binary_name = 'openshift-install-fips'
 
         # oc adm release extract --command=openshift-baremetal-install -n=ocp <release-pullspec>
         self._logger.info('Extracting baremetal-install')
         go_arch = go_arch_for_brew_arch(build_arch)
-        extract_baremetal_installer(release_pullspec, client_mirror_dir, go_arch)
+        extract_baremetal_installer(release_pullspec, client_mirror_dir, go_arch, binary_name)
 
         # Create tarball
-        binary_name = 'openshift-baremetal-install'
         archive_name = f'openshift-install-{rhel_version}-{go_arch}.tar.gz'
         with tarfile.open(f'{client_mirror_dir}/{archive_name}', 'w:gz') as tar:
             tar.add(f'{client_mirror_dir}/{binary_name}')
