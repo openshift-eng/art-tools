@@ -626,11 +626,10 @@ class GenPayloadCli:
                 public_entries[k] = v
 
             entries_for_arch[arch] = entries
+            self.assembly_issues.extend(payload_issues)
 
-            self.assembly_issues.extend(public_payload_issues)
-
-            # Always make sure that embargoed builds do not flow to public image stream
-            # If releasing after embargo lift, this can be permitted using 'EMBARGOED_CONTENT' code
+            # Report issues for any embargoed content being made public.
+            # If releasing after embargo lift, these can be permitted using 'EMBARGOED_CONTENT' code
             embargo_issues = PayloadGenerator.embargo_issues_for_payload(public_entries, arch)
             self.assembly_issues.extend(embargo_issues)
 
