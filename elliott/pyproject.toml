@@ -56,7 +56,7 @@ dependencies = [
     "requests",
     "requests-gssapi ~= 1.2.3",
     "ruamel.yaml",
-    "tenacity",
+    "tenacity ~= 8.3.0",  # https://github.com/jd/tenacity/issues/471
     "jira >= 3.4.1",  # https://github.com/pycontribs/jira/issues/1486
     "prettytable"
 ]
