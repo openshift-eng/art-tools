@@ -83,32 +83,28 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
     # placeholder
     non_flaw_bugs = [b for b in bugs if b.is_ocp_bug()]
 
-    validator.validate(non_flaw_bugs, verify_bug_status, no_verify_blocking_bugs, is_attached=True)
+    try:
+        validator.validate(non_flaw_bugs, verify_bug_status, no_verify_blocking_bugs, is_attached=True)
 
-    # skip advisory type check if advisories are
-    # manually passed in, and we don't know their type
-    if '?' not in advisory_id_map.keys():
-        included_bug_ids = set()
-        if runtime.assembly:
-            issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
-            included_bug_ids = {issue["id"] for issue in issues_config.include}
-        validator.verify_bugs_advisory_type(non_flaw_bugs, advisory_id_map, advisory_bug_map, included_bug_ids)
+        # skip advisory type check if advisories are
+        # manually passed in, and we don't know their type
+        if '?' not in advisory_id_map.keys():
+            included_bug_ids = set()
+            if runtime.assembly:
+                issues_config = assembly_issues_config(runtime.get_releases_config(), runtime.assembly)
+                included_bug_ids = {issue["id"] for issue in issues_config.include}
+            validator.verify_bugs_advisory_type(non_flaw_bugs, advisory_id_map, advisory_bug_map, included_bug_ids)
 
-    if not skip_multiple_advisories_check:
-        await validator.verify_bugs_multiple_advisories(non_flaw_bugs)
+        if not skip_multiple_advisories_check:
+            await validator.verify_bugs_multiple_advisories(non_flaw_bugs)
 
-    if verify_flaws:
-        await validator.verify_attached_flaws(advisory_bug_map)
-
-    # Close client session
-    await validator.close()
-
-    if validator.problems:
-        if validator.output != 'slack':
-            print("Found the following problems, please investigate")
-            for p in validator.problems:
-                print(p)
-        exit(1)
+        if verify_flaws:
+            await validator.verify_attached_flaws(advisory_bug_map)
+    except Exception as e:
+        validator._complain(f"Error validating attached bugs: {e}")
+    finally:
+        await validator.close()
+        validator.report()
 
 
 @cli.command("verify-bugs", short_help="Verify bugs included in an assembly (default --assembly=stream)")
@@ -153,15 +149,13 @@ async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bug
         logger.info(f"Found {len(bugs)} {b.type} bugs: {[b.id for b in bugs]}")
         ocp_bugs.extend(bugs)
 
-    validator.validate(ocp_bugs, verify_bug_status, no_verify_blocking_bugs)
-
-    # Close client session
-    await validator.close()
-
-    if validator.problems:
-        if validator.output != 'slack':
-            red_print("Some bug problems were listed above. Please investigate.")
-        exit(1)
+    try:
+        validator.validate(ocp_bugs, verify_bug_status, no_verify_blocking_bugs)
+    except Exception as e:
+        validator._complain(f"Error validating bugs: {e}")
+    finally:
+        await validator.close()
+        validator.report()
 
 
 class BugValidator:
@@ -176,6 +170,14 @@ class BugValidator:
 
     async def close(self):
         await self.errata_api.close()
+
+    def report(self):
+        if self.problems:
+            if self.output != 'slack':
+                print("Found the following problems, please investigate")
+                for p in self.problems:
+                    print(p)
+            exit(1)
 
     def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
                  is_attached: bool = False):
