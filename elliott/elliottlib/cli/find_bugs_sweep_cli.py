@@ -332,7 +332,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     logger.info(f"Tracker Bugs found: {len(tracker_bugs)}")
 
     for b in tracker_bugs:
-        logger.debug(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
+        logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
 
     if not advisory_id_map:
         logger.info("Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
@@ -364,9 +364,9 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):
                 if package_name in packages:
-                    logger.debug(f"{kind} build found for #{bug.id}, {package_name} ")
+                    logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
                 if package_name in exception_packages:
-                    logger.debug(f"{package_name} bugs included by default")
+                    logger.info(f"{package_name} bugs included by default")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 
