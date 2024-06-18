@@ -78,6 +78,9 @@ class ScanFipsCli:
         # (nvr, pull-spec) list of tuples
         image_pullspec_mapping = []
 
+        # Package names of base images
+        base_images_package_names = [meta.config.distgit.component for meta in self.runtime.image_metas() if meta.base_only]
+
         for nvr in self.nvrs:
             # Skip CI builds since it won't be shipped
             if nvr.startswith("ci-openshift"):
@@ -86,6 +89,10 @@ class ScanFipsCli:
 
             # Find the registry pull spec
             build_info = self.koji_session.getBuild(nvr)
+
+            if build_info["package_name"] in base_images_package_names:
+                self.runtime.logger.info(f"Skipping {nvr} since its a base image build")
+                continue
 
             # Identify if it's an RPM, and skip it
             if "git+https://pkgs.devel.redhat.com/git/rpms/" in build_info["source"]:
