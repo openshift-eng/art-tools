@@ -1,5 +1,7 @@
 import asyncio
 import re
+import yaml
+import json
 from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 
@@ -173,10 +175,14 @@ class BugValidator:
 
     def report(self):
         if self.problems:
-            if self.output != 'slack':
+            if self.output == 'text':
                 print("Found the following problems, please investigate")
-                for p in self.problems:
-                    print(p)
+                print(yaml.dump(self.problems, indent=2, sort_keys=False))
+            elif self.output == 'json':
+                print(json.dumps(self.problems, indent=2, sort_keys=False))
+            elif self.output == 'slack':
+                for problem in self.problems:
+                    print(problem)
             exit(1)
 
     def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
@@ -485,5 +491,4 @@ class BugValidator:
                 self._complain(f"Bug <{bug.weburl}|{bug.id}> is an invalid tracker bug. Please fix")
 
     def _complain(self, problem: str):
-        red_print(problem)
         self.problems.append(problem)
