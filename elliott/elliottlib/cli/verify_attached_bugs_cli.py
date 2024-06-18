@@ -1,6 +1,7 @@
 import asyncio
 import re
 import yaml
+import json
 from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 from errata_tool import Erratum
@@ -173,10 +174,14 @@ class BugValidator:
 
     def report(self):
         if self.problems:
-            if self.output != 'slack':
+            if self.output == 'text':
                 print("Found the following problems, please investigate")
-                for p in self.problems:
-                    print(p)
+                print(yaml.dump(self.problems, indent=2, sort_keys=False))
+            elif self.output == 'json':
+                print(json.dumps(self.problems, indent=2, sort_keys=False))
+            elif self.output == 'slack':
+                for problem in self.problems:
+                    print(problem)
             exit(1)
 
     def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
@@ -187,7 +192,11 @@ class BugValidator:
         # Make sure the next version is GA before regression check
         major, minor = self.runtime.get_major_minor()
         version = f"{major}.{minor + 1}"
-        next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+        try:
+            next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+        except Exception as e:
+            logger.warning(f"Error checking if {version} is GA: {e}")
+            next_is_ga = False
         if not next_is_ga:
             no_verify_blocking_bugs = True
             logger.info(f"Skipping regression check because {version} is not GA")
@@ -482,5 +491,4 @@ class BugValidator:
                 self._complain(f"Bug <{bug.weburl}|{bug.id}> is an invalid tracker bug. Please fix")
 
     def _complain(self, problem: str):
-        red_print(problem)
         self.problems.append(problem)
