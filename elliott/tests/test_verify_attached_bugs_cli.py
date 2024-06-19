@@ -1,15 +1,13 @@
-import yaml
-
 from click.testing import CliRunner
-from errata_tool import Erratum
 from unittest.mock import patch
+from flexmock import flexmock
+from unittest import IsolatedAsyncioTestCase
+
 from elliottlib.cli.common import cli, Runtime
 from elliottlib.cli.verify_attached_bugs_cli import BugValidator
 import elliottlib.cli.verify_attached_bugs_cli as verify_attached_bugs_cli
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.bzutil import JIRABugTracker, BugzillaBugTracker
-from flexmock import flexmock
-from unittest import IsolatedAsyncioTestCase
 
 
 class VerifyAttachedBugs(IsolatedAsyncioTestCase):
@@ -194,16 +192,14 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 class TestBugValidator(IsolatedAsyncioTestCase):
     async def test_get_attached_bugs_jira(self):
         runtime = Runtime()
-        jira_bug_map = {
-            'bug-1': flexmock(id='bug-1'),
-            'bug-2': flexmock(id='bug-2'),
-            'bug-3': flexmock(id='bug-3')
-        }
-        bz_bug_map = {
-            1: flexmock(id=1),
-            2: flexmock(id=2),
-            3: flexmock(id=3)
-        }
+        advisory_id_1, advisory_id_2 = '123', '145'
+        bz_bugs = [1, 2, 3]
+        bz_bug_map = {b: flexmock(id=b) for b in bz_bugs}
+        jira_bugs = ['bug-1', 'bug-2', 'bug-3']
+        jira_bug_map = {j: flexmock(id=j) for j in jira_bugs}
+        advisory_1_bugs = {"bugzilla": [bz_bugs[0]], "jira": [jira_bugs[0], jira_bugs[1]]}
+        advisory_2_bugs = {"bugzilla": [bz_bugs[1], bz_bugs[2]], "jira": [jira_bugs[2]]}
+
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.9.z']})
         client = flexmock()
@@ -213,22 +209,24 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(AsyncErrataAPI).should_receive("__init__").and_return(None)
 
-        advisory1 = flexmock(errata_id='123', jira_issues=['bug-1', 'bug-2'], errata_bugs=[1])
-        advisory2 = flexmock(errata_id='145', jira_issues=['bug-3'], errata_bugs=[2, 3])
-        flexmock(Erratum).new_instances(advisory1, advisory2)
+        flexmock(verify_attached_bugs_cli).should_receive("get_bug_ids").with_args(advisory_id_1)\
+            .and_return(advisory_1_bugs)
+        flexmock(verify_attached_bugs_cli).should_receive("get_bug_ids").with_args(advisory_id_2)\
+            .and_return(advisory_2_bugs)
+
         flexmock(JIRABugTracker).should_receive("get_bugs")\
-            .with_args(list(jira_bug_map.keys()), permissive=False)\
+            .with_args(set(jira_bugs), permissive=False)\
             .and_return(jira_bug_map.values())
         flexmock(BugzillaBugTracker).should_receive("get_bugs")\
-            .with_args(list(bz_bug_map.keys()), permissive=False)\
+            .with_args(set(bz_bugs), permissive=False)\
             .and_return(bz_bug_map.values())
 
         validator = BugValidator(runtime, True)
-        actual = validator.get_attached_bugs(['123', '145'])
+        actual = validator.get_attached_bugs([advisory_id_1, advisory_id_2])
         expected = (
             {
-                '123': {jira_bug_map['bug-1'], jira_bug_map['bug-2'], bz_bug_map[1]},
-                '145': {jira_bug_map['bug-3'], bz_bug_map[2], bz_bug_map[3]}
+                advisory_id_1: {jira_bug_map[jira_bugs[0]], jira_bug_map[jira_bugs[1]], bz_bug_map[bz_bugs[0]]},
+                advisory_id_2: {jira_bug_map[jira_bugs[2]], bz_bug_map[bz_bugs[1]], bz_bug_map[bz_bugs[2]]}
             }
         )
         self.assertEqual(actual, expected)
