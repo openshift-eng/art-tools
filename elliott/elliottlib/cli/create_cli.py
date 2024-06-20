@@ -1,10 +1,12 @@
+from typing import Optional
 import click
-import datetime
+from datetime import datetime
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exectools import cmd_assert
 from artcommonlib.format_util import green_prefix
-from elliottlib.cli.common import cli
+from elliott.elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
 from elliottlib.util import YMD, validate_release_date, \
@@ -39,15 +41,19 @@ LOGGER = logutil.get_logger(__name__)
 @click.option('--with-placeholder', is_flag=True,
               default=False, type=bool,
               help="Create a placeholder bug and attach it to the advisory. Only valid if also using --yes.")
-@click.option('--with-liveid', is_flag=True,
+@click.option('--with-liveid/--no-liveid', is_flag=True,
               default=True, type=bool,
               help="Request a Live ID for the advisory. Only valid if also using --yes.")
+@click.option('--batch-id', metavar="BATCH_ID", type=int,
+              help="Batch ID to use for the advisory.")
 @click.option('--yes', '-y', is_flag=True,
               default=False, type=bool,
               help="Create the advisory (by default only a preview is displayed)")
 @click.pass_obj
 @click.pass_context
-def create_cli(ctx, runtime, errata_type, art_advisory_key, date, assigned_to, manager, package_owner, with_placeholder, with_liveid, yes):
+@click_coroutine
+async def create_cli(ctx, runtime, errata_type, art_advisory_key, date, assigned_to, manager, package_owner,
+                     with_placeholder: bool, with_liveid: bool, batch_id: Optional[int], yes: bool):
     """Create a new advisory. The boilerplate to use for the advisory must be specified with
 '--art-advisory-key'. This will be looked up from erratatool.yml.
 
@@ -83,7 +89,7 @@ advisory.
     et_data = runtime.get_errata_config()
 
     # User entered a valid value for --date, set the release date
-    release_date = datetime.datetime.strptime(date, YMD)
+    release_date = datetime.strptime(date, YMD)
 
     if "boilerplates" not in et_data:
         raise ValueError("`boilerplates` is required in erratatool.yml")
@@ -93,50 +99,69 @@ advisory.
 
     boilerplate = et_data["boilerplates"][art_advisory_key]
 
+    errata_api = AsyncErrataAPI()
     try:
-        erratum = errata.new_erratum(
-            et_data,
-            errata_type=errata_type,
-            boilerplate_name=art_advisory_key,
-            release_date=release_date.strftime(YMD),
-            assigned_to=assigned_to,
-            manager=manager,
-            package_owner=package_owner
-        )
-    except ErrataToolUnauthorizedException:
-        exit_unauthorized()
-    except ErrataToolError as ex:
-        raise ElliottFatalError(getattr(ex, 'message', repr(ex)))
-
-    if yes:
-        erratum.commit()
-        green_prefix("Created new advisory: ")
-        click.echo(str(erratum))
-
-        if with_placeholder:
-            click.echo("Creating and attaching placeholder bug...")
-            ctx.invoke(create_placeholder_cli, advisory=erratum.errata_id)
-
-        # This is to enable leaving legacy style comment when we create an advisory
-        # It is relied on by rel-eng automation to trigger binary releases to Customer Portal
-        # It is really only required for our main payload advisory "image"
-        # https://gitlab.cee.redhat.com/releng/g-chat-notifier/notifier/-/blob/3d71698a45de9f847cb272d18a5a27dccf9521a0/notifier/etera_controller.py#L128
-        # https://issues.redhat.com/browse/ART-8758
-        # Do not leave a comment for a custom assembly type
-        if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type is not AssemblyTypes.CUSTOM:
-            major, minor = runtime.get_major_minor()
-            comment = {"release": f"{major}.{minor}", "kind": art_advisory_key, "impetus": "standard"}
-            errata.add_comment(erratum.errata_id, comment)
-
-        if with_liveid:
-            click.echo("Requesting Live ID...")
-            base_url = "https://errata.devel.redhat.com/errata/set_live_advisory_name"
-            cmd_assert(
-                f"curl -X POST --fail --negotiate -u : {base_url}/{erratum.errata_id}",
-                retries=3,
-                pollrate=10,
+        if yes:
+            created_advisory = await errata_api.create_advisory(
+                product=et_data['product'],
+                release=boilerplate.get('release', et_data['release']),
+                errata_type=errata_type,
+                advisory_synopsis=boilerplate['synopsis'],
+                advisory_topic=boilerplate['topic'],
+                advisory_description=boilerplate['description'],
+                advisory_solution=boilerplate['solution'],
+                advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
+                advisory_package_owner_email=package_owner,
+                advisory_manager_email=manager,
+                advisory_assigned_to_email=assigned_to,
+                advisory_publish_date_override=release_date.strftime(YMD),
+                batch_id=batch_id
             )
-    else:
-        green_prefix("Would have created advisory: ")
-        click.echo("")
-        click.echo(erratum)
+            advisory_info = next(iter(created_advisory["errata"].values()))
+            advisory_name = advisory_info["fulladvisory"].rsplit("-", 1)[0]
+            advisory_id = advisory_info["id"]
+            green_prefix("Created new advisory: ")
+            print_advisory(advisory_name, boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], release_date, batch_id)
+
+            if with_placeholder:
+                click.echo("Creating and attaching placeholder bug...")
+                ctx.invoke(create_placeholder_cli, advisory=advisory_id)
+
+            # This is to enable leaving legacy style comment when we create an advisory
+            # It is relied on by rel-eng automation to trigger binary releases to Customer Portal
+            # It is really only required for our main payload advisory "image"
+            # https://gitlab.cee.redhat.com/releng/g-chat-notifier/notifier/-/blob/3d71698a45de9f847cb272d18a5a27dccf9521a0/notifier/etera_controller.py#L128
+            # https://issues.redhat.com/browse/ART-8758
+            # Do not leave a comment for a custom assembly type
+            if boilerplate.get("advisory_type_comment", False) in ["yes", "True", True] and runtime.assembly_type is not AssemblyTypes.CUSTOM:
+                major, minor = runtime.get_major_minor()
+                comment = {"release": f"{major}.{minor}", "kind": art_advisory_key, "impetus": "standard"}
+                errata.add_comment(advisory_id, comment)
+
+            if with_liveid:
+                click.echo("Requesting Live ID...")
+                resp = await errata_api.request_liveid(advisory_id)
+                live_advisory_name = next(iter(resp.values()))["fulladvisory"].rsplit("-", 1)[0]
+                print(f"Live ID requested for advisory: {live_advisory_name}")
+        else:
+            green_prefix("Would have created advisory: ")
+            click.echo("")
+            print_advisory("(unassigned)", boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], release_date, batch_id)
+    finally:
+        await errata_api.close()
+
+
+def print_advisory(errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str, release_date: datetime, batch_id: Optional[int] = None):
+    click.echo(f"""{errata_name}: {synopsis}
+  package owner: {package_owner}  qe: {assigned_to} qe_group: {qe_group}
+  url:   https://errata.devel.redhat.com/advisory/0
+  state: NEW_FILES
+  created:     None
+  ship target: {release_date.strftime(YMD)}
+  batch_id:    {batch_id}
+  ship date:   None
+  age:         0 days
+  bugs:        []
+  jira issues: []
+  builds:
+""")
