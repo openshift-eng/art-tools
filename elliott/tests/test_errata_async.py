@@ -35,6 +35,7 @@ class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
         actual = await api._make_request("GET", "/api/path", headers=headers, parse_json=False)
         expected_headers = {**api._headers, **headers, **{"Authorization": 'Negotiate abcdef'}}
         request.assert_called_once_with("GET", "https://errata.example.com/api/path", headers=expected_headers)
+        fake_response.raise_for_status.assert_called_once_with()
         fake_response.read.assert_awaited_once_with()
         actual = await api._make_request("GET", "/api/path", parse_json=False)
         self.assertEqual(actual, b"daedbeef")
