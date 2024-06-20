@@ -1427,10 +1427,10 @@ class PromotePipeline:
         cmd = [
             "oc",
             "tag",
+            "--import-mode=PreserveOriginal",
             "--",
             image_pullspec,
-            image_stream_tag,
-            "--import-mode=PreserveOriginal"
+            image_stream_tag
         ]
         if self.runtime.dry_run:
             self._logger.warning("[DRY RUN] Would have run %s", cmd)
