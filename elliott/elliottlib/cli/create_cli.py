@@ -5,7 +5,7 @@ from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exectools import cmd_assert
 from artcommonlib.format_util import green_prefix
-from elliott.elliottlib.errata_async import AsyncErrataAPI
+from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
 from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
