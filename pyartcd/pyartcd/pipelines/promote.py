@@ -840,6 +840,8 @@ class PromotePipeline:
             os.makedirs(client_mirror_dir)
             # extract release clients tools
             extract_release_client_tools(pullspec, f"--to={client_mirror_dir}", go_arch)
+            # extract baremetal installer binary
+            self.publish_baremetal_installer_binary(pullspec, client_mirror_dir, arch)
             # create symlink for clients
             self.create_symlink(path_to_dir=client_mirror_dir, log_tree=True, log_shasum=True)
 
