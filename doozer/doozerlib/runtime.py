@@ -44,6 +44,7 @@ from doozerlib import constants
 from doozerlib import util
 from doozerlib import brew
 from doozerlib.build_status_detector import BuildStatusDetector
+from doozerlib.release_schedule import ReleaseSchedule
 
 # Values corresponds to schema for group.yml: freeze_automation. When
 # 'yes', doozer itself will inhibit build/rebase related activity
@@ -196,6 +197,9 @@ class Runtime(GroupRuntime):
 
         # holds untouched group config
         self.raw_group_config = {}
+
+        # Used to cache the result of self.is_canonical_builders_config_enabled()
+        self._group_canonical_builders_config = -1
 
         # Used to capture missing packages for 4.x build
         self.missing_pkgs = set()
@@ -1564,6 +1568,53 @@ class Runtime(GroupRuntime):
         # releases with default rhel-8 tag do not also care about rhel-7.
         # adjust as needed (and just imagine rhel 9)!
         return {tag, tag.replace('-rhel-7', '-rhel-8')} if tag else set()
+
+    def is_canonical_builders_config_enabled(self, config_val=-1):
+        """
+        Returns True if canonical_builders_from_upstream is enabled in the group config.
+        :param config_val: The value to check. If -1, the value will be read from the group config.
+        """
+
+        # This means the value was not passed in
+        if config_val == -1:
+            # Make sure we have not previously computed this and cached
+            if self._group_canonical_builders_config == -1:
+                # Not set, read from group config
+                config_val = self.group_config.canonical_builders_from_upstream
+            else:
+                return self._group_canonical_builders_config
+
+        def _enabled(val):
+            if not val:
+                return False
+
+            if isinstance(val, str):
+                val = val.lower()
+
+            if val in ['off', 'false']:
+                return False
+
+            if val in ['on', 'true', True]:
+                return True
+
+            if val == 'auto':
+                # canonical_builders_from_upstream set to 'auto': rebase according to release schedule
+                try:
+                    feature_freeze_date = ReleaseSchedule(self).get_ff_date()
+                    return datetime.datetime.now() < feature_freeze_date
+                except ChildProcessError:
+                    # Could not access Gitlab: display a warning and fallback to default
+                    self.logger.warning("Failed retrieving release schedule from Gitlab: fallback to using ART's config")
+                    return False
+                except ValueError as e:
+                    # A GITLAB token env var was not provided: display a warning and fallback to default
+                    self.logger.warning(f'Could not fetch Fallback to default ART config: {e}')
+                    return False
+            self.logger.warning(f'Invalid value for canonical_builders_from_upstream: {val}')
+            return False
+
+        self._group_canonical_builders_config = _enabled(config_val)
+        return self._group_canonical_builders_config
 
     def get_minor_version(self) -> str:
         """

@@ -141,7 +141,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     """
 
     runtime.initialize(config_only=True)
-    clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
+    clone_distgits = runtime.is_canonical_builders_config_enabled()
     runtime.initialize(clone_distgits=clone_distgits)
 
     if not operator_nvrs:
