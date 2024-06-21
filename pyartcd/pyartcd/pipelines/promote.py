@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import io
 import sys
 import traceback
 import requests
@@ -1556,7 +1557,7 @@ class PromotePipeline:
         # get release file content
         try:
             release_content = upstream_repo.get_contents(file_path, ref="z-stream")
-            file_content = yaml.load(release_content.decoded_content, Loader=yaml.FullLoader)
+            file_content = yaml.load(release_content.decoded_content)
             file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
         except ParserError:
             self._logger.warning("release file not in valid yaml format, overwrite with new value")
@@ -1566,15 +1567,17 @@ class PromotePipeline:
             self._logger.warning("release file not found in upstream repo, skip update qe repo")
             return
         # update release file
-        file_content_bytes = yaml.dump(file_content).encode()
+        output = io.BytesIO()
+        yaml.dump(file_content, output)
+        output.seek(0)
         fork_file = fork_repo.get_contents(file_path, ref=release_name)
-        fork_repo.update_file(file_path, update_message, file_content_bytes, fork_file.sha, branch=release_name)
+        fork_repo.update_file(file_path, update_message, output.read(), fork_file.sha, branch=release_name)
         # create pr
         try:
             pr = upstream_repo.create_pull(title=update_message, body=update_message, base="z-stream", head=f"openshift-bot:{release_name}")
             pr.add_to_labels("lgtm", "approved")
             pr.merge()
-            self._logger.info(f"PR {pr.html_url} merged info qe repo")
+            self._logger.info(f"PR {pr.html_url} merged into qe repo")
         except GithubException as e:
             self._logger.warning(f"Failed to update upstream repo: {e}")
 
