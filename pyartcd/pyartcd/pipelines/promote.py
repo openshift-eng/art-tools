@@ -1428,7 +1428,6 @@ class PromotePipeline:
         cmd = [
             "oc",
             "tag",
-            "--import-mode=PreserveOriginal",
             "--",
             image_pullspec,
             image_stream_tag
