@@ -612,22 +612,22 @@ def records_results(cc: CoverityContext, stage_number, waived_cov_path_root=None
         diff_count = len(diff_json.get('issues', []))
         all_count = len(all_json.get('issues', []))
         host_stage_waived_flag_path = cc.get_stage_results_waive_path(stage_number)
-        cc.image.runtime.add_record('covscan',
-                                    distgit=cc.image.qualified_name,
-                                    distgit_key=cc.image.distgit_key,
-                                    commit_results_path=str(dest_result_path),
-                                    all_results_js_path=str(dest_all_js_path),
-                                    all_results_html_path=str(dest_all_results_html_path),
-                                    diff_results_js_path=str(dest_diff_js_path),
-                                    diff_results_html_path=str(dest_diff_results_html_path),
-                                    diff_count=str(diff_count),
-                                    all_count=str(all_count),
-                                    stage_number=str(stage_number),
-                                    waive_path=str(host_stage_waived_flag_path),
-                                    waived=str(host_stage_waived_flag_path.exists()).lower(),
-                                    owners=owners,
-                                    image=cc.image.config.name,
-                                    commit_hash=cc.dg_commit_hash)
+        cc.image.runtime.record_logger.add_record('covscan',
+                                                  distgit=cc.image.qualified_name,
+                                                  distgit_key=cc.image.distgit_key,
+                                                  commit_results_path=str(dest_result_path),
+                                                  all_results_js_path=str(dest_all_js_path),
+                                                  all_results_html_path=str(dest_all_results_html_path),
+                                                  diff_results_js_path=str(dest_diff_js_path),
+                                                  diff_results_html_path=str(dest_diff_results_html_path),
+                                                  diff_count=str(diff_count),
+                                                  all_count=str(all_count),
+                                                  stage_number=str(stage_number),
+                                                  waive_path=str(host_stage_waived_flag_path),
+                                                  waived=str(host_stage_waived_flag_path.exists()).lower(),
+                                                  owners=owners,
+                                                  image=cc.image.config.name,
+                                                  commit_hash=cc.dg_commit_hash)
 
     if write_only:
         if dest_all_js_path.exists():

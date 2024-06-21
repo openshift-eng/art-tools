@@ -13,6 +13,7 @@ from doozerlib.rpm_utils import labelCompare
 from doozerlib import brew, util
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.source_modifications import SourceModifierFactory
+from doozerlib.source_resolver import SourceResolver
 
 from .metadata import Metadata
 
@@ -40,15 +41,13 @@ class RPMMetadata(Metadata):
         self.extra_os_git_vars = {}
 
         self.source_path = None
-        self.source_head = None
         # path to the specfile
         self.specfile = None
         if clone_source:
             self.clone_source()
 
     def clone_source(self):
-        self.source_path = self.runtime.resolve_source(self)
-        self.source_head = self.runtime.resolve_source_head(self)
+        self.source_path = self.runtime.source_resolver.resolve_source(self).source_path
         with Dir(self.source_path):
             # gather source repo short sha for audit trail
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
@@ -56,7 +55,7 @@ class RPMMetadata(Metadata):
 
             # Determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.private_fix is None:
-                if self.public_upstream_branch and not self.runtime.is_branch_commit_hash(self.public_upstream_branch):
+                if self.public_upstream_branch and not SourceResolver.is_branch_commit_hash(self.public_upstream_branch):
                     self.private_fix = not util.is_commit_in_public_upstream(source_full_sha, self.public_upstream_branch, self.source_path)
                 else:
                     self.private_fix = False

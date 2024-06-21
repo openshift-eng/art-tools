@@ -6,6 +6,8 @@ from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.pushd import Dir
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
+from doozerlib.git_helper import git_clone
+from doozerlib.lock import get_named_semaphore
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
@@ -38,7 +40,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         url = self.metadata.config.content.source.git.url
 
         git_args = ["--no-single-branch", "--branch", branch]
-        self.runtime.git_clone(url, self.distgit_dir, gitargs=git_args)
+        git_clone(url, self.distgit_dir, gitargs=git_args, git_cache_dir=self.runtime.git_cache_dir)
 
     def push(self):
         """
@@ -57,7 +59,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             # be pushed. If every repo within a release is being pushed at the same
             # time, a single push invocation can take hours to complete -- making the
             # timeout value counterproductive. Limit to 5 simultaneous pushes.
-            with self.runtime.get_named_semaphore('k_distgit::push', count=5):
+            with get_named_semaphore('k_distgit::push', count=5):
                 exectools.cmd_assert(f"git checkout -b {self.upstream_branch}")
                 exectools.cmd_assert(f"git push --set-upstream origin {self.upstream_branch} -f", retries=3)
 
