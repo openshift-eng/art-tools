@@ -1556,7 +1556,7 @@ class PromotePipeline:
         # get release file content
         try:
             release_content = upstream_repo.get_contents(file_path, ref="z-stream")
-            file_content = yaml.load(release_content.decoded_content, Loader=yaml.FullLoader)
+            file_content = yaml.load(release_content.decoded_content)
             file_content['releases'][release_name] = {'advisories': advisories, 'release_jira': release_jira}
         except ParserError:
             self._logger.warning("release file not in valid yaml format, overwrite with new value")
