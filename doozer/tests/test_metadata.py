@@ -419,6 +419,7 @@ class TestMetadata(TestCase):
             return self._list_builds(builds, packageID=packageID, state=state, pattern=pattern, queryOpts=queryOpts)
 
         runtime.downstream_commitish_overrides = {}
+        runtime.group_config.use_source_fallback_branch = None
         koji_mock.listBuilds.side_effect = list_builds
         ls_remote_commit = '296ac244f3e7fd2d937316639892f90f158718b0'
 

@@ -21,7 +21,7 @@ ruamel.yaml
 semver ~= 3.0.1
 slack_sdk >= 3.13.0
 stomp.py ~= 8.1.0
-tenacity ~= 8.3.0  # https://github.com/jd/tenacity/issues/471
+tenacity ~= 8.4, != 8.4.0 # https://github.com/jd/tenacity/issues/471
 tomli ~= 2.0.1
 specfile
 aiohttp>=3.9.4 # not directly required, pinned by Snyk to avoid a vulnerability
