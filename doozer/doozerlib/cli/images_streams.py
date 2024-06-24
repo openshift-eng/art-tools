@@ -875,38 +875,6 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
     checked_upstream_images = set()  # A PR will not be opened unless the upstream image exists; keep track of ones we have checked.
     errors_raised = False  # If failures are found when opening a PR, won't break the loop but will return an exit code to signal this event
 
-    def update_gomod(desired_ci_build_root_image, repo_dir, image_config):
-        # See if go.mod needs updating to match the new buildroot go version
-        try:
-            image_info = util.oc_image_info__caching(desired_ci_build_root_image)
-        except (KeyError, ChildProcessError):
-            logger.exception(f'Did not manage to look up {desired_ci_build_root_image}. Continuing')
-            return
-
-        # determine precise version of go in use. NOTE: this requires trusting the image's "version"
-        # label, that it is set correctly by ART and not changed when transformed to CI. if either
-        # of those assumptions goes wrong we will be recommending the wrong thing in the PR. but the
-        # alternative is pulling the image and running 'go version' inside it which seems excessive.
-        try:
-            version = image_info['config']['config']['Labels']['version']  # e.g. "v1.20.12"
-        except KeyError:
-            logger.error(f"{desired_ci_build_root_image} lacked a suitable 'version' label. Continuing")
-            return
-        if not re.match(r'^v[0-9]+(\.[0-9]+){2}$', version):
-            logger.error(f"{desired_ci_build_root_image} had weird version '{version}'. Continuing")
-            return
-        go_full = version[1:]  # e.g. "1.20.12"
-        go_minor = go_full.rsplit(".", 1)[0]  # e.g. "1.20"
-
-        gomods = [Path(repo_dir, f'{p}/go.mod') for p in image_config.cachito.packages.gomod]
-        if not gomods:
-            gomods = [Path(repo_dir, 'go.mod')]
-        for gomod in gomods:
-            if gomod.is_file():
-                exectools.cmd_assert(f"sed -i -e 's/^go 1.*/go {go_minor}/; "
-                                     f"s/^toolchain go.*/toolchain go{go_full}/' {gomod}")
-                exectools.cmd_assert(f"git add --force {gomod}")
-
     for image_meta in runtime.ordered_image_metas():
         dgk = image_meta.distgit_key
         logger = image_meta.logger
@@ -1195,15 +1163,6 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                     yaml.safe_dump(ci_operator_config, config_file, default_flow_style=False)
 
                 exectools.cmd_assert(f'git add -f {str(ci_operator_config_path)}')
-
-                if desired_ci_build_root_image and 'golang' in desired_ci_build_root_image:
-                    try:
-                        # Only potentially update go.mod if there is already a diff. No need to open a PR
-                        # to fix this specifically, but if there is one open for other reasons, then take
-                        # this into account.
-                        exectools.cmd_assert('git diff --cached --exit-code --quiet')
-                    except ChildProcessError:
-                        update_gomod(desired_ci_build_root_image, Dir.getpath(), image_meta.config)
 
             desired_df_digest = compute_dockerfile_digest(df_path)
 
