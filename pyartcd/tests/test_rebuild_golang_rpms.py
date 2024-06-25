@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from pyartcd.pipelines.rebuild_golang_rpms import RebuildGolangRPMsPipeline
 
 
-class TestBumpRpms(TestCase):
+class TestBumpRelease(TestCase):
 
     def setUp(self):
         runtime = MagicMock()
