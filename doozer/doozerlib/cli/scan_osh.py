@@ -345,23 +345,10 @@ class ScanOshCli:
         """
         cmds = []
 
-        cmd_template = "osh-cli mock-build --config={config} --profile custom-ocp --brew-build {nvr} --nowait"
         for nvr in nvrs:
-            if "-container" in nvr:
-                cmds.append(cmd_template.format(config="cspodman", nvr=nvr))
-
-            else:
-                if "el7" in nvr:
-                    rhel_version = 7
-                elif "el8" in nvr:
-                    rhel_version = 8
-                elif "el9" in nvr or nvr.startswith("rhcos"):
-                    rhel_version = 9
-                else:
-                    self.runtime.logger.error("Invalid RHEL version")
-                    raise Exception("Invalid RHEL Version")
-
-                cmds.append(cmd_template.format(config=f"rhel-{rhel_version}-x86_64", nvr=nvr))
+            cmd = f"osh-cli mock-build --config=auto --profile custom-ocp --brew-build {nvr} --nowait"
+            cmds.append(cmd)
+            self.runtime.logger.debug(f"Generating command: {cmd}")
 
         return cmds
 
