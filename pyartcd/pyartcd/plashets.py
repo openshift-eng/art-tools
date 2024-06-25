@@ -208,7 +208,7 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
         logger.info('Copying %s to remote host...', base_dir)
 
         await asyncio.gather(*[
-            copy_to_remote(plashet_remote['host'], base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
+            copy_to_remote(plashet_remote['url'], base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
             for plashet_remote in PLASHET_REMOTES
         ])
 
