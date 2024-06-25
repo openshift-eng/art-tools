@@ -346,7 +346,7 @@ class ScanOshCli:
         cmds = []
 
         for nvr in nvrs:
-            cmd = f"osh-cli mock-build --config=auto --profile custom-ocp --brew-build {nvr} --nowait"
+            cmd = f"osh-cli mock-build --config=auto --profile custom-ocp --nvr {nvr} --nowait"
             cmds.append(cmd)
             self.runtime.logger.debug(f"Generating command: {cmd}")
 
