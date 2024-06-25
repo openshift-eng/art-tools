@@ -1,6 +1,6 @@
 import asyncio
 import re
-from typing import Any, Dict, Iterable, List, Set, Tuple
+from typing import Any, Dict, Iterable, List, Set, Tuple, Optional
 import click
 
 from artcommonlib import logutil
@@ -13,7 +13,7 @@ from elliottlib.runtime import Runtime
 from elliottlib.util import minor_version_tuple
 from elliottlib.bzutil import Bug
 from elliottlib.errata import get_bug_ids
-from elliottlib.cli.attach_cve_flaws_cli import get_flaws
+from elliottlib.cli.attach_cve_flaws_cli import get_flaws, process_first_fixes_param, first_fixes_param
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 from elliottlib.errata import is_advisory_editable
 
@@ -35,10 +35,12 @@ logger = logutil.get_logger(__name__)
               help="Do not check if bugs are attached to multiple advisories",
               type=bool, default=False)
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=False)
+@first_fixes_param
 @pass_runtime
 @click_coroutine
 async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, advisories: Tuple[int, ...], verify_flaws: bool,
-                                   no_verify_blocking_bugs: bool, skip_multiple_advisories_check: bool):
+                                   no_verify_blocking_bugs: bool, skip_multiple_advisories_check: bool,
+                                   first_fixes: Optional[str]):
     """
     Validate bugs in release advisories (specified in arguments or as part of an assembly).
     Requires group param (-g openshift-X.Y)
@@ -61,6 +63,9 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     Otherwise, prints the number of bugs in the advisories and exits with success.
     """
     runtime.initialize()
+
+    first_fix_cve_ids = process_first_fixes_param(first_fixes)
+
     if advisories:
         click.echo("WARNING: Cannot verify advisory bug sorting. To verify that bugs are attached to the "
                    "correct release advisories, run with --assembly=<release>")
@@ -70,11 +75,13 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     if not advisory_id_map:
         red_print("No advisories specified on command line or in [group.yml|releases.yml]")
         exit(1)
-    await verify_attached_bugs(runtime, verify_bug_status, advisory_id_map, verify_flaws, no_verify_blocking_bugs, skip_multiple_advisories_check)
+    await verify_attached_bugs(runtime, verify_bug_status, advisory_id_map, verify_flaws, no_verify_blocking_bugs,
+                               skip_multiple_advisories_check, first_fix_cve_ids)
 
 
 async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, advisory_id_map: Dict[str, int], verify_flaws:
-                               bool, no_verify_blocking_bugs: bool, skip_multiple_advisories_check: bool):
+                               bool, no_verify_blocking_bugs: bool, skip_multiple_advisories_check: bool,
+                               first_fix_cve_ids):
     validator = BugValidator(runtime, output="text")
     advisory_bug_map = validator.get_attached_bugs(list(advisory_id_map.values()))
     bugs = {b for bugs in advisory_bug_map.values() for b in bugs}
@@ -98,7 +105,7 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
         await validator.verify_bugs_multiple_advisories(non_flaw_bugs)
 
     if verify_flaws:
-        await validator.verify_attached_flaws(advisory_bug_map)
+        await validator.verify_attached_flaws(advisory_bug_map, first_fix_cve_ids)
 
     # Close client session
     await validator.close()
@@ -240,7 +247,7 @@ class BugValidator:
             if message:
                 self._complain(message)
 
-    async def verify_attached_flaws(self, advisory_bugs: Dict[int, List[Bug]]):
+    async def verify_attached_flaws(self, advisory_bugs: Dict[int, List[Bug]], first_fix_cve_ids):
         futures = []
         for advisory_id, attached_bugs in advisory_bugs.items():
             attached_trackers = [b for b in attached_bugs if b.is_tracker_bug()]
@@ -248,14 +255,15 @@ class BugValidator:
             logger.info(f"Verifying advisory {advisory_id}: attached-trackers: "
                         f"{[b.id for b in attached_trackers]} "
                         f"attached-flaws: {[b.id for b in attached_flaws]}")
-            futures.append(self._verify_attached_flaws_for(advisory_id, attached_trackers, attached_flaws))
+            futures.append(self._verify_attached_flaws_for(advisory_id, attached_trackers, attached_flaws, first_fix_cve_ids))
         await asyncio.gather(*futures)
 
-    async def _verify_attached_flaws_for(self, advisory_id: int, attached_trackers: Iterable[Bug], attached_flaws: Iterable[Bug]):
+    async def _verify_attached_flaws_for(self, advisory_id: int, attached_trackers: Iterable[Bug],
+                                         attached_flaws: Iterable[Bug], first_fix_cve_ids):
         flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
         brew_api = self.runtime.build_retrying_koji_client()
-        tracker_flaws, first_fix_flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api,
-                                                       self.runtime.logger)
+        tracker_flaws, first_fix_flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, first_fix_cve_ids,
+                                                       brew_api, self.runtime.logger)
 
         # Check if attached flaws match expected flaws
         first_fix_flaw_ids = {b.id for b in first_fix_flaw_bugs}

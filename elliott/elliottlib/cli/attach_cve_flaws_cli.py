@@ -1,7 +1,7 @@
 import sys
 import traceback
 from logging import Logger
-from typing import Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Set, Optional
 
 import click
 from errata_tool import Erratum
@@ -14,6 +14,22 @@ from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any, BugTracker
+
+
+first_fixes_param = click.option('--first-fixes',
+                                 help='CVEs which should be considered first-fixes at GA. '
+                                      'Comma separated list of CVE IDs. '
+                                      'For speeding up execution. Use `all` or `none` as special values.')
+
+
+def process_first_fixes_param(ga_first_fixes: str) -> Optional[List[str]]:
+    first_fix_cve_ids = ga_first_fixes.split(',') if ga_first_fixes else None
+    if first_fix_cve_ids:
+        if first_fix_cve_ids == ['all']:
+            first_fix_cve_ids = 'all'
+        elif first_fix_cve_ids == ['none']:
+            first_fix_cve_ids = []
+    return first_fix_cve_ids
 
 
 @cli.command('attach-cve-flaws',
@@ -29,9 +45,11 @@ from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any
 @click.option("--into-default-advisories",
               is_flag=True,
               help='Run for all advisories values defined in [group|releases].yml')
+@first_fixes_param
 @click.pass_obj
 @click_coroutine
-async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str, into_default_advisories: bool):
+async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str,
+                               into_default_advisories: bool, first_fixes: Optional[str] = None):
     """Attach corresponding flaw bugs for trackers in advisory (first-fix only).
 
     Also converts advisory to RHSA, if not already.
@@ -63,6 +81,9 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
     errata_config = runtime.get_errata_config()
     errata_api = AsyncErrataAPI(errata_config.get("server", constants.errata_url))
     brew_api = runtime.build_retrying_koji_client()
+
+    first_fix_cve_ids = process_first_fixes_param(first_fixes)
+
     for advisory_id in advisories:
         runtime.logger.info("Getting advisory %s", advisory_id)
         advisory = Erratum(errata_id=advisory_id)
@@ -71,7 +92,8 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
         for bug_tracker in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
             attached_trackers.extend(get_attached_trackers(advisory, bug_tracker, runtime.logger))
 
-        tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api, runtime.logger)
+        tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, first_fix_cve_ids,
+                                             brew_api, runtime.logger)
 
         try:
             if flaw_bugs:
@@ -104,7 +126,8 @@ def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker, logger: Lo
     return attached_tracker_bugs
 
 
-def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api, logger: Logger) -> (Dict, List):
+def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], first_fixes_cve_ids,
+              brew_api, logger: Logger) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -127,10 +150,17 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
         first_fix_flaw_bugs = [f['bug'] for f in flaw_tracker_map.values()]
     else:
         logger.info("Detected GA release, applying first-fix filtering..")
-        first_fix_flaw_bugs = [
-            flaw_bug_info['bug'] for flaw_bug_info in flaw_tracker_map.values()
-            if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], current_target_release)
-        ]
+        first_fix_flaw_bugs = []
+        for flaw_bug_info in flaw_tracker_map.values():
+            bug = flaw_bug_info['bug']
+            if first_fixes_cve_ids:
+                if first_fixes_cve_ids == 'all' or bug.cve_id in first_fixes_cve_ids:
+                    logger.info(f'{bug.cve_id} is given as first-fix for GA')
+                    first_fix_flaw_bugs.append(bug)
+                continue
+
+            if is_first_fix_any(bug, flaw_bug_info['trackers'], current_target_release):
+                first_fix_flaw_bugs.append(bug)
 
     logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')
     return tracker_flaws, first_fix_flaw_bugs
