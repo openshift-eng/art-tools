@@ -236,7 +236,7 @@ def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> 
 
     # Do some basic validation here to fail fast
     if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
-        if any(permit.code != AssemblyIssueCode.EMBARGOED_CONTENT.name for permit in defined_permits):
+        if any(permit.code not in [AssemblyIssueCode.EMBARGOED_CONTENT.name, AssemblyIssueCode.MISSING_SHIP_OK_TAG.name] for permit in defined_permits):
             raise ValueError(f'STANDARD assemblies like {assembly} only allow {AssemblyIssueCode.EMBARGOED_CONTENT.name} in "permits"')
 
     for permit in defined_permits:
