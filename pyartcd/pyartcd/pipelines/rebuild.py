@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 from collections import namedtuple
 from configparser import ConfigParser
@@ -36,7 +37,7 @@ PlashetBuildResult = namedtuple("PlashetBuildResult", ("repo_name", "local_dir",
 class RebuildPipeline:
     """ Rebuilds a component for an assembly """
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, plashet_remote: dict,
+    def __init__(self, runtime: Runtime, group: str, assembly: str,
                  type: RebuildType, dg_key: str, ocp_build_data_url: str, logger: Optional[logging.Logger] = None):
         if type in [RebuildType.RPM, RebuildType.IMAGE] and not dg_key:
             raise ValueError("'dg_key' is required.")
@@ -46,7 +47,6 @@ class RebuildPipeline:
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
-        self.plashet_remote = plashet_remote
         self.type = type
         self.dg_key = dg_key
         self.logger = logger or runtime.logger
@@ -207,7 +207,7 @@ class RebuildPipeline:
         else:
             await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
-        remote_url = self.plashet_remote['url'] + f"/{major}.{minor}"
+        remote_url = constants.PLASHET_REMOTE_URL + f"/{major}.{minor}"
         if el_version >= 8:
             remote_url += f"-el{el_version}"
         remote_url += f"/{self.assembly}/{directory_name}"
@@ -265,7 +265,7 @@ class RebuildPipeline:
             await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
         major, minor = self._ocp_version
-        remote_url = self.plashet_remote['url'] + f"/{major}.{minor}"
+        remote_url = constants.PLASHET_REMOTE_URL + f"/{major}.{minor}"
         if el_version >= 8:
             remote_url += f"-el{el_version}"
         remote_url += f"/{self.assembly}/{directory_name}"
@@ -282,7 +282,7 @@ class RebuildPipeline:
         remote_dir += f"/{self.assembly}"
         cmd = [
             "ssh",
-            self.plashet_remote['host'],
+            constants.PLASHET_REMOTE_HOST,
             "--",
             "mkdir",
             "-p",
@@ -307,7 +307,7 @@ class RebuildPipeline:
             "--perms",
             "--",
             f"{local_plashet_dir}",
-            f"{self.plashet_remote['host']}:{remote_dir}"
+            f"{constants.PLASHET_REMOTE_HOST}:{remote_dir}"
         ]
         if self.runtime.dry_run:
             self.logger.warning("[DRY RUN] Would have run %s", cmd)
@@ -318,7 +318,7 @@ class RebuildPipeline:
             # Make a symlink
             cmd = [
                 "ssh",
-                self.plashet_remote['host'],
+                constants.PLASHET_REMOTE_HOST,
                 "--",
                 "ln",
                 "-sfn",
@@ -589,14 +589,11 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
         raise click.BadParameter(f"'--component' is required for type {type}")
     elif type == "rhcos" and component:
         raise click.BadParameter("Option '--component' cannot be used when --type == 'rhcos'")
-    pipelines = [
-        RebuildPipeline(runtime, group=f'openshift-{version}', assembly=assembly, plashet_remote=remote,
-                        type=RebuildType[type.upper()], dg_key=component, ocp_build_data_url=ocp_build_data_url)
-        for remote in constants.PLASHET_REMOTES
-    ]
+    pipeline = RebuildPipeline(runtime, group=f'openshift-{version}', assembly=assembly, type=RebuildType[type.upper()],
+                               dg_key=component, ocp_build_data_url=ocp_build_data_url)
 
     if ignore_locks:
-        await asyncio.gather(*[pipeline.run() for pipeline in pipelines])
+        await pipeline.run()
 
     else:
         lock = locks.Lock.BUILD
@@ -606,12 +603,9 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
             runtime.logger.warning('Env var BUILD_URL has not been defined: '
                                    'a random identifier will be used for the locks')
 
-        await asyncio.gather(*[
-            locks.run_with_lock(
-                coro=pipeline.run(),
-                lock=lock,
-                lock_name=lock_name,
-                lock_id=lock_identifier
-            )
-            for pipeline in pipelines
-        ])
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=lock,
+            lock_name=lock_name,
+            lock_id=lock_identifier
+        )
