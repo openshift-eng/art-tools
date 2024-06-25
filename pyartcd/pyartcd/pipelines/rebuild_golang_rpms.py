@@ -157,27 +157,10 @@ class RebuildGolangRPMsPipeline:
 
         _LOGGER.info(f'{rpm}/{branch} - Bumping release in specfile')
 
-        # Increment second digit of the Release segment e.g.
-        # 42.rhaos4_8.el8 -> 42.1.rhaos4_8.el8
-        # 6.3.rhaos4_8.el8 -> 6.4.rhaos4_8.el8
         _LOGGER.info(f'{rpm}/{branch} - Current release in specfile: {spec.release}')
-        k = spec.release.split('.')
-        digits = []
-        non_digit_marker = None
-        for p in k:
-            if p.isdigit():
-                digits.append(p)
-            else:
-                non_digit_marker = spec.release.index(p)
-                break
-        if len(digits) < 1:
-            raise ValueError("unexpected release in specfile")
-        elif len(digits) < 2:
-            digits.append(0)
-        rel = f'{digits[0]}.{int(digits[1])+1}'
-        if non_digit_marker:
-            rel += f'.{spec.release[non_digit_marker:]}'
-        spec.release = rel
+
+        spec.release = self.bump_release(spec.release)
+
         _LOGGER.info(f'{rpm}/{branch} - New release in specfile: {spec.release}')
 
         _LOGGER.info(f'{rpm}/{branch} - Adding changelog entry in specfile')
@@ -206,6 +189,32 @@ class RebuildGolangRPMsPipeline:
         latest_builds = [b['nvr'] for b in self.koji_session.listTagged(tag, latest=True)]
         rpms = [b for b in latest_builds if not ('-container' in b or b.startswith('rhcos-'))]
         return rpms
+
+    @staticmethod
+    # Squash the Release segment to it's significant number and bump
+    # 42.rhaos4_8.el8 -> 43.rhaos4_8.el8
+    # 42.1.rhaos4_8.el8 -> 43.rhaos4_8.el8
+    # rhaos4_8.el8 -> 1.rhaos4_8.el8
+    def bump_release(release):
+        k = release.split('.')
+        numbers = []
+        non_number_marker = None
+        for p in k:
+            if p.isdigit():
+                numbers.append(p)
+            else:
+                non_number_marker = release.index(p)
+                break
+
+        if len(numbers) < 1:
+            rel = "1"
+        else:
+            rel = f'{int(numbers[0]) + 1}'
+
+        if non_number_marker is not None:
+            rel += f'.{release[non_number_marker:]}'
+
+        return rel
 
 
 @cli.command('rebuild-golang-rpms')
