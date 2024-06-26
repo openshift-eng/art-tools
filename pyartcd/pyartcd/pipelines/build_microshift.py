@@ -198,7 +198,9 @@ class BuildMicroShiftPipeline:
             self._logger.error(error_message)
             if assembly_type != AssemblyTypes.STREAM:
                 slack_message += "\n@release-artists"
-            await self.slack_client.say_in_thread(slack_message, reaction="art-attention")
+                await self.slack_client.say_in_thread(slack_message, reaction="art-attention")
+                raise
+            await self.slack_client.say_in_thread(slack_message)
             raise
 
     async def _attach_builds(self):
