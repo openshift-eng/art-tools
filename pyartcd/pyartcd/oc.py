@@ -124,9 +124,10 @@ def extract_baremetal_installer(release_pullspec: str, path: str, arch: str, cmd
     :param arch: "amd64", "s390x", "ppc64le", "arm64"
     """
 
+    cmd_os = f'linux/{arch}'
     # oc adm release extract --command=openshift-baremetal-install -n=ocp --to <path> <pullspec>
     args = ['release', 'extract', f'--command={cmd}', '-n=ocp', '--from',
-            release_pullspec, '--command-os', f'linux/{arch}', f'--to={path}']
+            release_pullspec, '--filter-by-os', cmd_os, '--command-os', cmd_os, f'--to={path}']
     return common_oc_wrapper(
         cmd_result_name='extract_baremetal',
         cli_verb='adm',
