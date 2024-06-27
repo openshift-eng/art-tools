@@ -16,7 +16,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                     "packages": ["kernel", "kernel-rt"],
                     "rhel_tag": "my-rhel-tag",
                     "integration_tag": "my-integration-tag",
-                    "ship_ok_tag": "my-ship-ok-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
                     "target_tag": "my-target-tag",
                 }
@@ -26,7 +25,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         brew_session.listTags.return_value = [
             {"name": "tag-a"},
             {"name": "my-integration-tag"},
-            {"name": "my-ship-ok-tag"},
         ]
         ai = AssemblyInspector(rt, brew_session)
         ai.assembly_type = AssemblyTypes.STANDARD
@@ -40,7 +38,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         brew_session.listTags.return_value = [
             {"name": "tag-a"},
             {"name": "my-integration-tag"},
-            {"name": "my-ship-ok-tag"},
             {"name": "my-stop-ship-tag"},
         ]
         issues = ai._check_installed_packages_for_rpm_delivery("foo", "foo-1.2.3-1", rpm_packages)
@@ -53,7 +50,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                     "packages": ["kernel", "kernel-rt"],
                     "rhel_tag": "my-rhel-tag",
                     "integration_tag": "my-integration-tag",
-                    "ship_ok_tag": "my-ship-ok-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
                     "target_tag": "my-target-tag",
                 }
@@ -63,7 +59,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         brew_session.listTags.return_value = [
             {"name": "tag-a"},
             {"name": "my-integration-tag"},
-            {"name": "my-ship-ok-tag"},
         ]
         ai = AssemblyInspector(rt, brew_session)
         ai.assembly_type = AssemblyTypes.STANDARD

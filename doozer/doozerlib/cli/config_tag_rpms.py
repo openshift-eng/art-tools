@@ -264,7 +264,6 @@ async def config_tag_rpms(runtime: Runtime, dry_run: bool, as_json: bool):
               rhel_tag: rhel-9.4.0-z-candidate
               integration_tag: early-kernel-candidate
               stop_ship_tag: early-kernel-stop-ship
-              ship_ok_tag: early-kernel-ship-ok
               target_tag: rhaos-4.11-rhel-8-candidate
 
     Doozer will try to find latest acceptable builds of kernel and kernel-rt from Brew tag
