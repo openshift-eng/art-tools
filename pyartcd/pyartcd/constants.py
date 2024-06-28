@@ -4,7 +4,6 @@ PLASHET_REMOTE_BASE_DIR = "/mnt/data/pub/RHOCP/plashets"
 
 SPMM_UTILS_REMOTE_HOST = "exd-ocp-buildvm-bot-prod@spmm-util"
 
-OPERATOR_URL = 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-operator-sdk'
 RELEASE_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-release"
 
 GIT_AUTHOR = "AOS Automation Release Team <noreply@redhat.com>"
