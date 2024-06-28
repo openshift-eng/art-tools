@@ -753,7 +753,7 @@ class PromotePipeline:
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
             signing_key_id=os.environ.get("KMS_KEY_ID", "dummy-key"),
             concurrency_limit=CONCURRENCY_LIMIT,
-            sign_release=False,  # until OTA-1267 is complete
+            sign_release=True,
             sign_components=True,
             verify_release=False,  # not needed when we're supplying the shasum pullspecs
         )
