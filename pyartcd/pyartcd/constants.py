@@ -52,3 +52,4 @@ UMB_BROKERS = {
 }
 
 GITHUB_OWNER = "openshift-eng"
+ART_DASH_SERVER = "https://art-dash-server-art-dashboard-server.apps.artc2023.pc3z.p1.openshiftapps.com"
