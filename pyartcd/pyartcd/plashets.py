@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import shutil
@@ -5,10 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Sequence, Optional, Tuple
 
-import yaml
-
 from pyartcd import exectools, constants, util
-from pyartcd.constants import PLASHET_REMOTE_HOST
+from pyartcd.constants import PLASHET_REMOTES
 
 working_dir = "plashet-working"
 
@@ -207,7 +206,11 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
 
         remote_base_dir = Path(f'/mnt/data/pub/RHOCP/plashets/{major}.{minor}/{assembly}/{slug}')
         logger.info('Copying %s to remote host...', base_dir)
-        await copy_to_remote(base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
+
+        await asyncio.gather(*[
+            copy_to_remote(plashet_remote['host'], base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
+            for plashet_remote in PLASHET_REMOTES
+        ])
 
         plashets_built[repo_type] = {
             'plashetDirName': revision,
@@ -278,7 +281,7 @@ def create_latest_symlink(base_dir: os.PathLike, plashet_name: str):
     return symlink_path
 
 
-async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLike,
+async def copy_to_remote(plashet_remote_host: str, local_base_dir: os.PathLike, remote_base_dir: os.PathLike,
                          dry_run: bool = False, copy_links: bool = False):
     """
     Copies plashet out to remote host (ocp-artifacts)
@@ -289,7 +292,7 @@ async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLi
     remote_base_dir = Path(remote_base_dir)
     cmd = [
         "ssh",
-        PLASHET_REMOTE_HOST,
+        plashet_remote_host,
         "--",
         "mkdir",
         "-p",
@@ -309,7 +312,7 @@ async def copy_to_remote(local_base_dir: os.PathLike, remote_base_dir: os.PathLi
     else:
         cmd.append('--links')
     cmd.extend(["--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
-                "--perms", "--", f"{local_base_dir}/", f"{PLASHET_REMOTE_HOST}:{remote_base_dir}"])
+                "--perms", "--", f"{local_base_dir}/", f"{plashet_remote_host}:{remote_base_dir}"])
 
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)

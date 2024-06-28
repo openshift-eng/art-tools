@@ -1,5 +1,14 @@
-PLASHET_REMOTE_URL = "https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets"
-PLASHET_REMOTE_HOST = "ocp-artifacts"
+PLASHET_REMOTES = [
+    {
+        'url': 'https://ocp-artifacts.hosts.prod.psi.rdu2.redhat.com/pub/RHOCP/plashets',
+        'host': 'ocp-artifacts'
+    },
+    {
+        'url': 'https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/pub/RHOCP/plashets',
+        'host': 'new-ocp-artifacts'
+    }
+]
+
 PLASHET_REMOTE_BASE_DIR = "/mnt/data/pub/RHOCP/plashets"
 
 SPMM_UTILS_REMOTE_HOST = "exd-ocp-buildvm-bot-prod@spmm-util"
