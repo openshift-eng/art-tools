@@ -465,6 +465,9 @@ class PromotePipeline:
 
         self.create_cincinnati_prs(assembly_type, data)
 
+        # send promote complete email
+        self.send_promote_complete_email(data["name"], release_infos)
+
         # Backup to ocp-doomsday-registry on AWS
         if "rc" in self.assembly or "ec" in self.assembly or "art" in self.assembly:
             # Skip for ECs, RCs and hotfixes
@@ -506,6 +509,17 @@ class PromotePipeline:
             await sync_dir_to_s3_mirror(str(src_output_dir), "/pub/openshift-v4/sources/packages/", "", "", dry_run=self.runtime.dry_run, remove_old=False)
         else:
             self._logger.info("Skipping sync srpms of rhcos")
+
+    def send_promote_complete_email(self, name, release_infos):
+        content = "PullSpecs: \n"
+        for arch, release_info in release_infos.items():
+            content += f"{arch}: {release_info['image']}\n"
+        content += f"\nJenkins Job: {os.environ.get('BUILD_URL')}\n"
+        content += "NOTE: These job links are only available to ART. Please contact us if you need to see something specific from the logs.\n"
+        mail = MailService.from_config(self.runtime.config)
+        mail.send_mail(
+            self.runtime.config["email"]["promote_complete_recipients"],
+            f"Success building release payload: {name}", content, dry_run=self.runtime.dry_run)
 
     def _reraise_if_not_permitted(self, err: VerificationError, code: str, permits: Iterable[Dict]):
         permit = next(filter(lambda waiver: waiver["code"] == code, permits), None)
