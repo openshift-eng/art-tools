@@ -8,6 +8,7 @@ import tempfile
 from multiprocessing import Lock, RLock
 import time
 from typing import Dict, Optional, Tuple
+import warnings
 
 import click
 import yaml
@@ -56,7 +57,7 @@ class Runtime(GroupRuntime):
         self.data_path = None
         self.load_wip = False
         self.load_disabled = False
-        self.logger = None
+        self._logger = None
         self.use_jira = True
         if str(os.environ.get('USEJIRA')).lower() in ["false", "0"]:
             self.use_jira = False
@@ -87,6 +88,14 @@ class Runtime(GroupRuntime):
         self.session_pool_available = {}
 
         self.initialized = False
+
+    @property
+    def logger(self):
+        """ Get the runtime logger of Elliott.
+        Your module should generally use `logging.getLogger(__name__)` instead of using this one.
+        """
+        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`", DeprecationWarning)
+        return self._logger
 
     def get_major_minor(self):
         return self.group_config.vars.MAJOR, self.group_config.vars.MINOR
@@ -144,7 +153,7 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
-        if not self.logger:
+        if not self._logger:
             self.initialize_logging()
 
         if disabled is not None:
@@ -170,12 +179,12 @@ class Runtime(GroupRuntime):
             self.assembly = None
 
         if self.branch is not None:
-            self.logger.info("Using branch from command line: %s" % self.branch)
+            self._logger.info("Using branch from command line: %s" % self.branch)
         elif self.group_config.branch is not Missing:
             self.branch = self.group_config.branch
-            self.logger.info("Using branch from group.yml: %s" % self.branch)
+            self._logger.info("Using branch from group.yml: %s" % self.branch)
         else:
-            self.logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
+            self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
 
         # Flattens a list like like [ 'x', 'y,z' ] into [ 'x.yml', 'y.yml', 'z.yml' ]
         # for later checking we need to remove from the lists, but they are tuples. Clone to list
@@ -230,7 +239,7 @@ class Runtime(GroupRuntime):
             for i in image_data.values():
                 self.late_resolve_image(i.key, add=True, data_obj=i)
             if not self.image_map:
-                self.logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
+                self._logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
 
         if mode in ['rpms', 'both']:
             rpm_data = self.gitdata.load_data(path='rpms', keys=rpm_keys,
@@ -241,7 +250,7 @@ class Runtime(GroupRuntime):
                 metadata = RPMMetadata(self, r)
                 self.rpm_map[metadata.distgit_key] = metadata
             if not self.rpm_map:
-                self.logger.warning("No rpm metadata directories found for given options within: {}".format(self.group_dir))
+                self._logger.warning("No rpm metadata directories found for given options within: {}".format(self.group_dir))
 
         missed_include = set(image_keys) - set(image_data.keys())
         if len(missed_include) > 0:
@@ -257,12 +266,12 @@ class Runtime(GroupRuntime):
                 raise ElliottFatalError(f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.')
             # If the assembly has a basis event, we constrain all brew calls to that event.
             self.brew_event = self.assembly_basis_event
-            self.logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
+            self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
 
         self.initialized = True
 
     def initialize_logging(self):
-        if self.initialized or self.logger:
+        if self.initialized or self._logger:
             return
 
         # Three flags control the output modes of the command:
@@ -277,37 +286,8 @@ class Runtime(GroupRuntime):
         else:
             log_level = logging.INFO
 
-        default_log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.WARN)
-        root_stream_handler = logging.StreamHandler()
-        root_stream_handler.setFormatter(default_log_formatter)
-        root_logger.addHandler(root_stream_handler)
-
-        # If in debug mode, let all modules log
-        if not self.debug:
-            # Otherwise, only allow children of ocp to log
-            root_logger.addFilter(logging.Filter("ocp"))
-
-        # Get a reference to the logger for elliott
-        self.logger = logutil.get_logger()
-        self.logger.propagate = False
-
-        # levels will be set at the handler level. Make sure main level is low.
-        self.logger.setLevel(logging.DEBUG)
-
-        main_stream_handler = logging.StreamHandler()
-        main_stream_handler.setFormatter(default_log_formatter)
-        main_stream_handler.setLevel(log_level)
-        self.logger.addHandler(main_stream_handler)
-
-        self.debug_log_path = os.path.join(self.working_dir, "debug.log")
-        debug_log_handler = logging.FileHandler(self.debug_log_path)
-        # Add thread information for debug log
-        debug_log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s (%(thread)d) %(message)s'))
-        debug_log_handler.setLevel(logging.DEBUG)
-        self.logger.addHandler(debug_log_handler)
+        logutil.setup_logging(log_level, self.debug_log_path)
+        self._logger = logging.getLogger('elliottlib')
 
     def image_metas(self):
         return list(self.image_map.values())
@@ -381,7 +361,7 @@ class Runtime(GroupRuntime):
 
         try:
             self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                           branch=self.group, logger=self.logger)
+                                           branch=self.group, logger=self._logger)
             self.data_dir = self.gitdata.data_dir
 
         except gitdata.GitDataException as ex:

@@ -1,3 +1,4 @@
+import warnings
 from future import standard_library
 
 import artcommonlib.util
@@ -101,7 +102,6 @@ class Runtime(GroupRuntime):
         self.quiet = False
         self.load_wip = False
         self.load_disabled = False
-        self.logger = None
         self.data_path = None
         self.data_dir = None
         self.group_commitish = None
@@ -128,6 +128,8 @@ class Runtime(GroupRuntime):
 
         self.downstreams: List[str] = []  # Click option. A list of distgit commits to checkout.
         self.downstream_commitish_overrides: Dict[str, str] = {}  # Dict from distgit key name to distgit commit to check out.
+
+        self._logger = None
 
         # See get_named_semaphore. The empty string key serves as a lock for the data structure.
         self.named_semaphores = {'': Lock()}
@@ -211,6 +213,14 @@ class Runtime(GroupRuntime):
             self.rhpkg_config_lst = self.rhpkg_config.split()
         else:
             self.rhpkg_config = ''
+
+    @property
+    def logger(self):
+        """ Get the runtime logger of Doozer.
+        Your module should generally use `logging.getLogger(__name__)` instead of using this one.
+        """
+        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`", DeprecationWarning)
+        return self._logger
 
     def get_named_semaphore(self, lock_name, is_dir=False, count=1):
         """
@@ -380,9 +390,9 @@ class Runtime(GroupRuntime):
         try:
             self.db = dblib.DB(self, self.datastore)
         except Exception as err:
-            self.logger.warning('Cannot connect to the DB: %s\n%s', str(err), traceback.format_exc())
+            self._logger.warning('Cannot connect to the DB: %s\n%s', str(err), traceback.format_exc())
 
-        self.logger.info(f'Initial execution (cwd) directory: {os.getcwd()}')
+        self._logger.info(f'Initial execution (cwd) directory: {os.getcwd()}')
 
         if no_group:
             return  # nothing past here should be run without a group
@@ -403,13 +413,13 @@ class Runtime(GroupRuntime):
         for upstream in self.upstreams:
             override_distgit_key = upstream[0]
             override_commitish = upstream[1]
-            self.logger.warning(f'Upstream source for {override_distgit_key} being set to {override_commitish}')
+            self._logger.warning(f'Upstream source for {override_distgit_key} being set to {override_commitish}')
             self.upstream_commitish_overrides[override_distgit_key] = override_commitish
 
         for upstream in self.downstreams:
             override_distgit_key = upstream[0]
             override_commitish = upstream[1]
-            self.logger.warning(f'Downstream distgit for {override_distgit_key} will be checked out to {override_commitish}')
+            self._logger.warning(f'Downstream distgit for {override_distgit_key} will be checked out to {override_commitish}')
             self.downstream_commitish_overrides[override_distgit_key] = override_commitish
 
         self.resolve_metadata()
@@ -462,17 +472,17 @@ class Runtime(GroupRuntime):
                 raise IOError(f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.')
             # If the assembly has a basis event, we constrain all brew calls to that event.
             self.brew_event = self.assembly_basis_event
-            self.logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
+            self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
 
         # This flag indicates builds should be tagged with associated hotfix tag for the artifacts branch
         self.hotfix = self.assembly_type is not AssemblyTypes.STREAM
 
         if not self.brew_event:
-            self.logger.info("Basis brew event is not set. Using the latest event....")
+            self._logger.info("Basis brew event is not set. Using the latest event....")
             with self.shared_koji_client_session() as koji_session:
                 # If brew event is not set as part of the assembly and not specified on the command line,
                 # lock in an event so that there are no race conditions.
-                self.logger.info("Getting the latest event....")
+                self._logger.info("Getting the latest event....")
                 event_info = koji_session.getLastEvent()
                 self.brew_event = event_info['id']
 
@@ -533,7 +543,7 @@ class Runtime(GroupRuntime):
             if validate_content_sets:
                 # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp
                 if not os.environ.get("RHSM_PULP_KEY") or not os.environ.get("RHSM_PULP_CERT"):
-                    self.logger.warn("Missing RHSM_PULP auth, will skip validating content sets")
+                    self._logger.warn("Missing RHSM_PULP auth, will skip validating content sets")
                 else:
                     self.repos.validate_content_sets()
 
@@ -545,11 +555,11 @@ class Runtime(GroupRuntime):
             if self.branch is None:
                 if self.group_config.branch is not Missing:
                     self.branch = self.group_config.branch
-                    self.logger.info("Using branch from group.yml: %s" % self.branch)
+                    self._logger.info("Using branch from group.yml: %s" % self.branch)
                 else:
-                    self.logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
+                    self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
             else:
-                self.logger.info("Using branch from command line: %s" % self.branch)
+                self._logger.info("Using branch from command line: %s" % self.branch)
 
             scanner = self.group_config.image_build_log_scanner
             if scanner is not Missing:
@@ -631,7 +641,7 @@ class Runtime(GroupRuntime):
                         self.image_map[metadata.distgit_key] = metadata
                         self.component_map[metadata.get_component_name()] = metadata
                 if not self.image_map:
-                    self.logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
+                    self._logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
 
                 for image in self.image_map.values():
                     image.resolve_parent()
@@ -653,7 +663,7 @@ class Runtime(GroupRuntime):
                     self.rpm_map[metadata.distgit_key] = metadata
                     self.component_map[metadata.get_component_name()] = metadata
                 if not self.rpm_map:
-                    self.logger.warning("No rpm metadata directories found for given options within: {}".format(self.group_dir))
+                    self._logger.warning("No rpm metadata directories found for given options within: {}".format(self.group_dir))
 
         # Make sure that the metadata is not asking us to check out the same exact distgit & branch.
         # This would almost always indicate someone has checked in duplicate metadata into a group.
@@ -671,7 +681,7 @@ class Runtime(GroupRuntime):
 
     def initialize_logging(self):
 
-        if self.initialized or self.logger:
+        if self.initialized or self._logger:
             return
 
         # Three flags control the output modes of the command:
@@ -686,36 +696,8 @@ class Runtime(GroupRuntime):
         else:
             log_level = logging.INFO
 
-        default_log_formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.WARN)
-        root_stream_handler = logging.StreamHandler()
-        root_stream_handler.setFormatter(default_log_formatter)
-        root_logger.addHandler(root_stream_handler)
-
-        # If in debug mode, let all modules log
-        if not self.debug:
-            # Otherwise, only allow children of ocp to log
-            root_logger.addFilter(logging.Filter("ocp"))
-
-        # Get a reference to the logger for doozer
-        self.logger = logutil.get_logger()
-        self.logger.propagate = False
-
-        # levels will be set at the handler level. Make sure master level is low.
-        self.logger.setLevel(logging.DEBUG)
-
-        main_stream_handler = logging.StreamHandler()
-        main_stream_handler.setFormatter(default_log_formatter)
-        main_stream_handler.setLevel(log_level)
-        self.logger.addHandler(main_stream_handler)
-
-        debug_log_handler = logging.FileHandler(self.debug_log_path)
-        # Add thread information for debug log
-        debug_log_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s (%(thread)d) %(message)s'))
-        debug_log_handler.setLevel(logging.DEBUG)
-        self.logger.addHandler(debug_log_handler)
+        logutil.setup_logging(log_level, self.debug_log_path)
+        self._logger = logging.getLogger('doozerlib')
 
     def build_jira_client(self) -> JIRA:
         """
@@ -754,7 +736,7 @@ class Runtime(GroupRuntime):
             if self._koji_client_session is None:
                 self._koji_client_session = self.build_retrying_koji_client()
                 if not self.disable_gssapi:
-                    self.logger.info("Authenticating to Brew...")
+                    self._logger.info("Authenticating to Brew...")
                     self._koji_client_session.gssapi_login()
             yield self._koji_client_session
 
@@ -765,7 +747,7 @@ class Runtime(GroupRuntime):
         """
         with self.bs_lock:
             if self._build_status_detector is None:
-                self._build_status_detector = BuildStatusDetector(self, self.logger)
+                self._build_status_detector = BuildStatusDetector(self, self._logger)
             yield self._build_status_detector
 
     @contextmanager
@@ -931,7 +913,7 @@ class Runtime(GroupRuntime):
         return filter(lambda meta: not meta.for_release, self.image_metas())
 
     def register_source_alias(self, alias, path):
-        self.logger.info("Registering source alias %s: %s" % (alias, path))
+        self._logger.info("Registering source alias %s: %s" % (alias, path))
         path = os.path.abspath(path)
         assertion.isdir(path, "Error registering source alias %s" % alias)
         with Dir(path):
@@ -953,7 +935,7 @@ class Runtime(GroupRuntime):
 
                     origin_url = "https://%s" % origin_url
             else:
-                self.logger.error("Failed acquiring origin url for source alias %s: %s" % (alias, err_origin))
+                self._logger.error("Failed acquiring origin url for source alias %s: %s" % (alias, err_origin))
 
             branch = None
             rc2, out_branch, err_branch = exectools.cmd_gather(
@@ -961,7 +943,7 @@ class Runtime(GroupRuntime):
             if rc2 == 0:
                 branch = out_branch.strip()
             else:
-                self.logger.error("Failed acquiring origin branch for source alias %s: %s" % (alias, err_branch))
+                self._logger.error("Failed acquiring origin branch for source alias %s: %s" % (alias, err_branch))
 
             if self.group_config.public_upstreams:
                 if not (url and branch):
@@ -988,7 +970,7 @@ class Runtime(GroupRuntime):
             self.add_record("source_alias", alias=alias, origin_url=origin_url, branch=branch or '?', path=path)
 
     def register_stream_override(self, name, image):
-        self.logger.info("Registering image stream name override %s: %s" % (name, image))
+        self._logger.info("Registering image stream name override %s: %s" % (name, image))
         self.stream_overrides[name] = image
 
     @property
@@ -1085,7 +1067,7 @@ class Runtime(GroupRuntime):
         if mode == "disabled" and not self.load_disabled or mode == "wip" and not self.load_wip:
             if required:
                 raise DoozerFatalError('Attempted to load image {} but it has mode {}'.format(distgit_name, mode))
-            self.logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
+            self._logger.warning("Image %s will not be loaded because it has mode %s", distgit_name, mode)
             return None
 
         meta = ImageMetadata(self, data_obj, self.upstream_commitish_overrides.get(data_obj.key))
@@ -1202,10 +1184,10 @@ class Runtime(GroupRuntime):
             # Strip special chars out of normalized url to create a human friendly, but unique filename
             file_friendly_url = normalized_url.split('//')[-1].replace('/', '_')
             repo_dir = os.path.join(git_cache_dir, file_friendly_url)
-            self.logger.info(f'Cache for {remote_url} going to {repo_dir}')
+            self._logger.info(f'Cache for {remote_url} going to {repo_dir}')
 
             if not os.path.exists(repo_dir):
-                self.logger.info(f'Initializing cache directory for git remote: {remote_url}')
+                self._logger.info(f'Initializing cache directory for git remote: {remote_url}')
 
                 # If the cache directory for this repo does not exist yet, we will create one.
                 # But we must do so carefully to minimize races with any other doozer instance
@@ -1228,14 +1210,14 @@ class Runtime(GroupRuntime):
 
             # If we get here, we have a bare repo with a remote set
             # Pull content to update the cache. This should be safe for multiple doozer instances to perform.
-            self.logger.info(f'Updating cache directory for git remote: {remote_url}')
+            self._logger.info(f'Updating cache directory for git remote: {remote_url}')
             # Fire and forget this fetch -- just used to keep cache as fresh as possible
             exectools.fire_and_forget(repo_dir, 'git fetch --all')
             gitargs.extend(['--dissociate', '--reference-if-able', repo_dir])
 
         gitargs.append('--recurse-submodules')
 
-        self.logger.info(f'Cloning to: {target_dir}')
+        self._logger.info(f'Cloning to: {target_dir}')
 
         # Perform the clone (including --reference args if cache_dir was set)
         cmd = []
@@ -1300,10 +1282,10 @@ class Runtime(GroupRuntime):
         else:
             return None
 
-        self.logger.debug("Resolving local source directory for alias {}".format(alias))
+        self._logger.debug("Resolving local source directory for alias {}".format(alias))
         if alias in self.source_resolutions:
             path, _, _, meta.public_upstream_url, meta.public_upstream_branch = self.source_resolutions[alias]
-            self.logger.debug("returning previously resolved path for alias {}: {}".format(alias, path))
+            self._logger.debug("returning previously resolved path for alias {}: {}".format(alias, path))
             return path
 
         # Where the source will land, check early so we know if old or new style
@@ -1315,12 +1297,12 @@ class Runtime(GroupRuntime):
                 raise DoozerFatalError("Source alias not found in specified sources or in the current group: %s" % alias)
             source_details = self.group_config.sources[alias]
 
-        self.logger.debug("checking for source directory in source_dir: {}".format(source_dir))
+        self._logger.debug("checking for source directory in source_dir: {}".format(source_dir))
 
         with self.get_named_semaphore(source_dir, is_dir=True):
             if alias in self.source_resolutions:  # we checked before, but check again inside the lock
                 path, _, _, meta.public_upstream_url, meta.public_upstream_branch = self.source_resolutions[alias]
-                self.logger.debug("returning previously resolved path for alias {}: {}".format(alias, path))
+                self._logger.debug("returning previously resolved path for alias {}: {}".format(alias, path))
                 return path
 
             # If this source has already been extracted for this working directory
@@ -1329,9 +1311,9 @@ class Runtime(GroupRuntime):
                 self.register_source_alias(alias, source_dir)
                 if self.group_config.public_upstreams:
                     _, _, _, meta.public_upstream_url, meta.public_upstream_branch = self.source_resolutions[alias]
-                self.logger.info("Source '{}' already exists in (skipping clone): {}".format(alias, source_dir))
+                self._logger.info("Source '{}' already exists in (skipping clone): {}".format(alias, source_dir))
                 if self.upcycle:
-                    self.logger.info("Refreshing source for '{}' due to --upcycle: {}".format(alias, source_dir))
+                    self._logger.info("Refreshing source for '{}' due to --upcycle: {}".format(alias, source_dir))
                     with Dir(source_dir):
                         exectools.cmd_assert('git fetch --all', retries=3)
                         exectools.cmd_assert('git reset --hard @{upstream}', retries=3)
@@ -1347,7 +1329,7 @@ class Runtime(GroupRuntime):
                 if not meta.public_upstream_branch:  # default to the same branch name as private upstream
                     meta.public_upstream_branch = clone_branch
 
-            self.logger.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
+            self._logger.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
             try:
                 # clone all branches as we must sometimes reference master /OWNERS for maintainer information
                 if self.is_branch_commit_hash(branch=clone_branch):
@@ -1366,7 +1348,7 @@ class Runtime(GroupRuntime):
                     util.setup_and_fetch_public_upstream_source(meta.public_upstream_url, meta.public_upstream_branch, source_dir)
 
             except IOError as e:
-                self.logger.info("Unable to checkout branch {}: {}".format(clone_branch, str(e)))
+                self._logger.info("Unable to checkout branch {}: {}".format(clone_branch, str(e)))
                 shutil.rmtree(source_dir)
                 raise DoozerFatalError("Error checking out target branch of source '%s' in: %s" % (alias, source_dir))
 
@@ -1375,10 +1357,10 @@ class Runtime(GroupRuntime):
 
             if meta.commitish:
                 # With the alias registered, check out the commit we want
-                self.logger.info(f"Determining if commit-ish {meta.commitish} exists")
+                self._logger.info(f"Determining if commit-ish {meta.commitish} exists")
                 cmd = ["git", "-C", source_dir, "branch", "--contains", meta.commitish]
                 exectools.cmd_assert(cmd)
-                self.logger.info(f"Checking out commit-ish {meta.commitish}")
+                self._logger.info(f"Checking out commit-ish {meta.commitish}")
                 exectools.cmd_assert(["git", "-C", source_dir, "checkout", meta.commitish])
 
             return source_dir
@@ -1399,7 +1381,7 @@ class Runtime(GroupRuntime):
         stage_branch = branches.get("stage", None) if self.stage else None
 
         if stage_branch:
-            self.logger.info('Normal branch overridden by --stage option, using "{}"'.format(stage_branch))
+            self._logger.info('Normal branch overridden by --stage option, using "{}"'.format(stage_branch))
             result = self._get_remote_branch_ref(git_url, stage_branch)
             if result:
                 return stage_branch, result
@@ -1414,7 +1396,7 @@ class Runtime(GroupRuntime):
         elif not fallback_branch:
             raise DoozerFatalError('Requested target branch {} does not exist and no fallback provided'.format(branch))
 
-        self.logger.info('Target branch does not exist in {}, checking fallback branch {}'.format(git_url, fallback_branch))
+        self._logger.info('Target branch does not exist in {}, checking fallback branch {}'.format(git_url, fallback_branch))
         result = self._get_remote_branch_ref(git_url, fallback_branch)
         if result:
             return fallback_branch, result
@@ -1427,13 +1409,13 @@ class Runtime(GroupRuntime):
         :param branch: The name of the branch. If the name is not a branch and appears to be a commit
                 hash, the hash will be returned without modification.
         """
-        self.logger.info('Checking if target branch {} exists in {}'.format(branch, git_url))
+        self._logger.info('Checking if target branch {} exists in {}'.format(branch, git_url))
 
         try:
             out, _ = exectools.cmd_assert('git ls-remote --heads {} {}'.format(git_url, branch), retries=3)
         except Exception as err:
             # We don't expect and exception if the branch does not exist; just an empty string
-            self.logger.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
+            self._logger.error('Error attempting to find target branch {} hash: {}'.format(branch, err))
             return None
         result = out.strip()  # any result means the branch is found; e.g. "7e66b10fbcd6bb4988275ffad0a69f563695901f	refs/heads/some_branch")
         if not result and self.is_branch_commit_hash(branch):
@@ -1465,7 +1447,7 @@ class Runtime(GroupRuntime):
             return head_content
 
     def export_sources(self, output):
-        self.logger.info('Writing sources to {}'.format(output))
+        self._logger.info('Writing sources to {}'.format(output))
         with io.open(output, 'w', encoding='utf-8') as sources_file:
             yaml.dump({k: v.path for k, v in self.source_resolutions.items()}, sources_file, default_flow_style=False)
 
@@ -1480,7 +1462,7 @@ class Runtime(GroupRuntime):
         """
 
         repo_url = self.repos['rhel-server-ose-rpms'].baseurl(repo_type, 'x86_64')
-        self.logger.info(
+        self._logger.info(
             "Getting version from atomic-openshift package in {}".format(
                 repo_url)
         )
@@ -1500,7 +1482,7 @@ class Runtime(GroupRuntime):
 
         version = "v" + auto_version.strip()
 
-        self.logger.info("Auto-detected OCP version: {}".format(version))
+        self._logger.info("Auto-detected OCP version: {}".format(version))
         return version
 
     def valid_version(self, version):
@@ -1517,7 +1499,7 @@ class Runtime(GroupRuntime):
         return re.match(r"^v\d+((\.\d+)+)?$", version) is not None
 
     def clone_distgits(self, n_threads=None):
-        with exectools.timer(self.logger.info, 'Full runtime clone'):
+        with exectools.timer(self._logger.info, 'Full runtime clone'):
             if n_threads is None:
                 n_threads = self.global_opts['distgit_threads']
             return exectools.parallel_exec(
@@ -1597,7 +1579,7 @@ class Runtime(GroupRuntime):
                  ).format(self.cfg_obj.full_path))
 
         self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                       commitish=self.group_commitish, reclone=self.upcycle, logger=self.logger)
+                                       commitish=self.group_commitish, reclone=self.upcycle, logger=self._logger)
         self.data_dir = self.gitdata.data_dir
 
     def get_rpm_config(self) -> dict:
