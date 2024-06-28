@@ -144,7 +144,7 @@ class SigstorePipeline:
               help="The name of an assembly to be signed. e.g. 4.15.1")
 @click.option("--multi", type=click.Choice(("yes", "no", "only")), default="yes",
               help="Whether to sign multi-arch or arch-specific payloads.")
-@click.option("--sign-release", type=click.Choice(("yes", "no", "only")), default="no",
+@click.option("--sign-release", type=click.Choice(("yes", "no", "only")), default="yes",
               help="Whether to sign the release image or just component images.")
 @click.option("--verify-release", is_flag=True, default=False,
               help="Verify that release images have a legacy signature before re-signing.")
