@@ -68,7 +68,7 @@ class TagRPMsPipeline:
                     message += f"To revert, run `brew untag {tag} {' '.join(nvrs)}`.\n"
                 if tagged:
                     message += "If you untag a build manually, it will not be re-tagged by this job again.\n\n"
-                    await self.slack_client.say(f":white_check_mark: Hi @release-artists ,\n{message}")
+                    await self.slack_client.say(f":white_check_mark: New rpm tagged! \n{message}")
         except Exception as err:
             error_message = f"Error running tag-rpms: {err}\n {traceback.format_exc()}"
             self.logger.error(error_message)
