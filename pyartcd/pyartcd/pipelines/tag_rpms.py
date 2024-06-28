@@ -55,7 +55,8 @@ class TagRPMsPipeline:
                     for nvr in nvrs:
                         message += f"\t{nvr}\n"
                 if untagged:
-                    message += "Builds were untagged because they were tagged into the stop-ship tags.\n\n"
+                    message += "Builds were untagged because they were tagged into the stop-ship tags. Notify ota-monitor on Slack channel #forum-release if a release contains this build is already promoted\n\n"
+                    await self.slack_client.say(f":alert-siren: Hi @release-artists ,\n{message}", reaction="art-attention")
             if report["tagged"]:
                 for tag, nvrs in report["tagged"].items():
                     if not nvrs:
@@ -67,8 +68,7 @@ class TagRPMsPipeline:
                     message += f"To revert, run `brew untag {tag} {' '.join(nvrs)}`.\n"
                 if tagged:
                     message += "If you untag a build manually, it will not be re-tagged by this job again.\n\n"
-            if untagged or tagged:  # Don't spam release-artists if nothing changed
-                await self.slack_client.say(f":white_check_mark: Hi @release-artists ,\n{message}")
+                    await self.slack_client.say(f":white_check_mark: New rpm tagged! \n{message}")
         except Exception as err:
             error_message = f"Error running tag-rpms: {err}\n {traceback.format_exc()}"
             self.logger.error(error_message)
