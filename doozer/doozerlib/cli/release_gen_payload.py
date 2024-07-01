@@ -799,6 +799,9 @@ class GenPayloadCli:
             False: dict()
         }
 
+        # Ensure that all payload images have been mirrored before updating
+        # the imagestream. Otherwise, the imagestream will fail to import the
+        # image.
         tasks = []
         for arch, payload_entries in self.private_payload_entries_for_arch.items():
             tasks.append(self.mirror_payload_content(arch, payload_entries, True))
