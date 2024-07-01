@@ -298,6 +298,16 @@
         "dockerfile!": {
           "$ref": "#/properties/source/properties/dockerfile"
         },
+        "dockerfile_fallback": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dockerfile_fallback?": {
+          "$ref": "#/properties/source/properties/dockerfile"
+        },
+        "dockerfile_fallback!": {
+          "$ref": "#/properties/source/properties/dockerfile"
+        },
         "dockerfile-": {},
         "git": {
           "type": "object",
