@@ -1983,6 +1983,10 @@ class ImageDistGitRepo(DistGitRepo):
                 if in_mod_block:
                     continue
 
+                # ART-9441 keep / dir for following cmd
+                if "rm -rf --no-preserve-root /" in line:
+                    continue
+
                 # remove any old instances of empty.repo mods that aren't in mod block
                 if 'empty.repo' not in line:
                     if line.endswith('\n'):
