@@ -40,7 +40,7 @@ class FindBugsGolangCli:
         self.flaw_bugs: Dict[int, BugzillaBug] = {}
         self.go_nvr_map = {}
         self.rpm_nvrps = None
-        self.flaw_compat = {}
+        self.compatible_cves = set()
 
         self.jira_tracker: JIRABugTracker = self._runtime.get_bug_tracker("jira")
         self.bz_tracker: BugzillaBugTracker = self._runtime.get_bug_tracker("bugzilla")
@@ -349,11 +349,18 @@ class FindBugsGolangCli:
             # example, if fixed-in is 1.21.x and in-use are [1.20.y, 1.19.z] then they are incompatible
             # this is a rough check to exit early if there is no compatible version found
             # we will do a more detailed check later
+            compatible = False
             if self.fixed_in_nvr:
                 compatible = True
             else:
-                compatible = False
-                for fixed_in_version in self.flaw_fixed_in(flaw_bug):
+                flaw_fixed_in = self.flaw_fixed_in(flaw_bug)
+                if not flaw_fixed_in:
+                    self._logger.error(
+                        f"Could not determine fixed in version for {flaw_id}")
+                    cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", "NOT FOUND"])
+                    continue
+
+                for fixed_in_version in flaw_fixed_in:
                     for go_version in [entry['go_version'] for entry in golang_report]:
                         go_v = Version.parse(go_version)
                         if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
@@ -361,7 +368,8 @@ class FindBugsGolangCli:
                             break
                     if compatible:
                         break
-            self.flaw_compat[cve_id] = compatible
+            if compatible:
+                self.compatible_cves.add(cve_id)
 
             cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in, compatible])
         click.echo(f"Found trackers for {len(cves)} CVEs")
@@ -405,8 +413,8 @@ class FindBugsGolangCli:
                                "compiler cves and we cannot auto-determine their fixed-in-golang-version. Run "
                                f"with --fixed-in-nvr to specify the golang compiler nvr these CVEs are fixed in. {invalid_bugs}")
 
-            incompatible_fix_bugs = sorted(b.id for b in bugs if not self.flaw_compat[b.cve_id])
-            bugs = [b for b in bugs if self.flaw_compat[b.cve_id]]
+            incompatible_fix_bugs = sorted(b.id for b in bugs if b.cve_id not in self.compatible_cves)
+            bugs = [b for b in bugs if b.cve_id in self.compatible_cves]
             if incompatible_fix_bugs:
                 logger.warning("These bugs have fixed-in versions incompatible with in-use golang versions. "
                                "Run with --fixed-in-nvr to specify the golang compiler nvr these "
