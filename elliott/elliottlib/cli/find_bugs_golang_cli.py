@@ -123,25 +123,27 @@ class FindBugsGolangCli:
             versions_to_build_map[version] += len(go_nvr_map[go_build])
             total_builds += len(go_nvr_map[go_build])
 
-        self._logger.info(f'Found parent go build versions {sorted(versions_to_build_map.keys())}')
+        self._logger.info(f'Found parent go build versions {[str(v) for v in sorted(versions_to_build_map.keys())]}')
 
         fixed_in_versions = set()
         for existing_version in versions_to_build_map.keys():
             for fixed_version in tracker_fixed_in:
                 if (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor
                    and existing_version.patch >= fixed_version.patch):
-                    self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {existing_version}")
+                    self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {str(existing_version)}")
                     fixed_in_versions.add(existing_version)
 
         fixed = False
         if fixed_in_versions:
-            self._logger.info(f"Fix is found in versions {fixed_in_versions}")
+            self._logger.info(f"Fix is found in versions {[str(v) for v in fixed_in_versions]}")
 
         not_fixed_in = set(versions_to_build_map.keys()) - fixed_in_versions
         if not_fixed_in:
-            self._logger.info(f"Couldn't determine if fix is in builders for versions {not_fixed_in}")
+            self._logger.info(f"Couldn't determine if fix is in builders for versions {[str(v) for v in not_fixed_in]}")
             vuln_builds = sum([versions_to_build_map[v] for v in not_fixed_in])
-            self._logger.info(f"Potentially vulnerable builds: {vuln_builds}")
+            vuln_builds_by_version = {str(k): v for k, v in versions_to_build_map.items() if k in not_fixed_in}
+            self._logger.info(f"Vulnerable builds by version: {vuln_builds_by_version}")
+            self._logger.info(f"Total vulnerable builds: {vuln_builds}")
 
             # In case this is for builder image
             # and if vulnerable builds make up for less than 10% of total builds, consider it fixed
@@ -194,9 +196,9 @@ class FindBugsGolangCli:
             build_artifacts = f"These nvrs {sorted(nvrs)}"
 
         comment = f"{bug.id} is associated with flaw bug(s) {bug.corresponding_flaw_bug_ids} " \
-                  f"which are fixed in golang version(s) {tracker_fixed_in}. {build_artifacts} are built by " \
-                  f"parent golang build versions {sorted(go_nvr_map.keys())}. " \
-                  f"Fix is determined to be in builder versions {fixed_in_versions}."
+                  f"which are fixed in golang version(s) {str(tracker_fixed_in)}. {build_artifacts} are built by " \
+                  f"parent golang build versions {[str(v) for v in sorted(go_nvr_map.keys())]}. " \
+                  f"Fix is determined to be in builder versions {[str(v) for v in fixed_in_versions]}."
 
         return fixed, comment
 
@@ -255,9 +257,11 @@ class FindBugsGolangCli:
     async def is_fixed_golang_builder(self, bug: JIRABug, tracker_fixed_in: Set[Version] = None,
                                       fixed_in_nvr: str = None) -> (bool, str):
         if not self.pullspec:
-            self._logger.info('Fetching latest accepted nightly...')
-            nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=False,
-                                                allow_rejected=False)
+            self._logger.info('Fetching latest nightly...')
+            # we fetch pending and rejected nightlies as well since
+            # we only need to determine if image builds are complete and have the fix
+            nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=True,
+                                                allow_rejected=True)
             if len(nightlies['x86_64']) < 1:
                 raise ElliottFatalError("Could not find any accepted nightlies. Please investigate")
             self.pullspec = nightlies['x86_64'][0]['pullSpec']
@@ -440,7 +444,7 @@ class FindBugsGolangCli:
                     self._logger.warning(
                         f"Could not determine fixed in versions for {bug.id}. Ignoring it for now")
                     continue
-                logger.info(f"{bug.id} is fixed in: {tracker_fixed_in}")
+                logger.info(f"{bug.id} is fixed in: {[str(v) for v in tracker_fixed_in]}")
 
                 if component == constants.GOLANG_BUILDER_CVE_COMPONENT:
                     fixed, comment = await self.is_fixed_golang_builder(bug, tracker_fixed_in=tracker_fixed_in)
