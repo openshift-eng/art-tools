@@ -24,6 +24,7 @@ from artcommonlib.rhcos import RhcosMissingContainerException
 async def no_sleep(arg):
     pass
 
+
 rgp_cli.asyncio.sleep = no_sleep
 
 
@@ -171,6 +172,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             nonlocal build_id
             build_id += 1
             return dict(spam=dict(id=build_id))
+
         ai = flexmock(Mock(AssemblyInspector), get_group_rpm_build_dicts=rpm_build_dict)
 
         # test when we should be tagging for GC prevention
@@ -209,15 +211,19 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues, ["stuff"])
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
-    def test_generate_payload_entries(self, pg_fpe_mock):
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.embargo_issues_for_payload")
+    def test_generate_payload_entries(self, pg_eissuesfp_mock, pg_findpe_mock):
         gpcli = rgp_cli.GenPayloadCli(
             exclude_arch=["s390x"],
             runtime=MagicMock(arches=["ppc64le", "s390x"]),
         )
-        pg_fpe_mock.return_value = ("entries", ["issues"])
+        pg_eissuesfp_mock.return_value = ["embargo_issues"]
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="spam"), issues=[], dest_pullspec="dummy")
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
-        self.assertEqual(gpcli.assembly_issues, ["issues"])
+        self.assertEqual(e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+        self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
 
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())
@@ -271,7 +277,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues[0].code, AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS)
 
     def test_summarize_issue_permits(self):
-        gpcli = rgp_cli.GenPayloadCli()
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
         gpcli.assembly_issues = [
             Mock(AssemblyIssue, code=AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS, component="spam", msg=""),
             Mock(AssemblyIssue, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED, component="eggs", msg=""),
@@ -283,7 +289,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertFalse(report["eggs"][0]["permitted"])
 
     def test_assess_assembly_viability(self):
-        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True)
+        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True, runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
 
         gpcli.payload_permitted, gpcli.emergency_ignore_issues = True, False
         gpcli.assess_assembly_viability()
@@ -302,15 +308,19 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_sync_payloads(self):
         runtime = MagicMock(group_config=Model(dict(multi_arch=dict(enabled=True))))
         gpcli = rgp_cli.GenPayloadCli(runtime, apply_multi_arch=True)
-        gpcli.payload_entries_for_arch = dict(x86_64=["x86_entries"], aarch64=["arm_entries"])
+        payload_entry_test = rgp_cli.PayloadEntry(
+            issues=[], dest_pullspec="eggs_pullspec",
+            build_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
+        )
+        gpcli.payload_entries_for_arch = {"x86_64": {"x86_entries": payload_entry_test}}
 
         gpcli.mirror_payload_content = AsyncMock()
         gpcli.generate_specific_payload_imagestreams = AsyncMock()
         gpcli.sync_heterogeneous_payloads = AsyncMock()
 
         await gpcli.sync_payloads()
-        self.assertEqual(gpcli.mirror_payload_content.await_count, 2)
-        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 2)
+        self.assertEqual(gpcli.mirror_payload_content.await_count, 1)
+        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 1)
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
 
     @patch("aiofiles.open")
