@@ -727,7 +727,7 @@ manifests:
         )
         ai.check_installed_rpms_in_image.side_effect = lambda dg_key, bi: {
             "foo": [],
-            "bar": [Mock(AssemblyIssue, code=AssemblyIssueCode.MISSING_SHIP_OK_TAG, component="bar", msg="")]
+            "bar": [Mock(AssemblyIssue, code=AssemblyIssueCode.MISSING_RHCOS_CONTAINER, component="bar", msg="")]
         }[dg_key]
         gpcli.detect_installed_rpms_issues(ai)
         self.assertEqual(len(gpcli.assembly_issues), 1)
