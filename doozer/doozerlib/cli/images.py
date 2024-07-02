@@ -17,7 +17,6 @@ from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.k_distgit import KonfluxImageDistGitRepo
 from doozerlib.brew import get_watch_task_info_copy
 from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
 
@@ -392,7 +391,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
 @option_commit_message
 @option_push
 @pass_runtime
-def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[str], embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool):
+def k_images_rebase(runtime: Runtime, embargoed: bool, repo_type: str, force_yum_updates: bool, message: str, push: bool, skip_config_check: bool, dry_run: bool, version: Optional[str], release: Optional[str]):
     """
     Reusing most of the code from 'images_rebase' for now, since we might need to change once we discuss with the Konflux team
     """
@@ -422,6 +421,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
         )
 
     metas = runtime.ordered_image_metas()
+
     lstate['total'] = len(metas)
 
     def dgr_rebase(image_meta, terminate_event):
@@ -731,6 +731,71 @@ def print_build_metrics(runtime):
                            elapsed_total_minutes=int(elapsed_total_minutes), task_count=len(watch_task_info))
     else:
         runtime.logger.info('Unable to determine timestamps from collected info: {}'.format(watch_task_info))
+
+
+@cli.command("k:images:build", short_help="Build images for the group.")
+@click.option("--threads", default=1, metavar="NUM_THREADS",
+              help="Number of concurrent builds to execute. Only valid for --local builds.")
+@click.option("--namespace", required=True, help="OCP namespace where konflux is deployed to")
+@pass_runtime
+def k_images_build_image(runtime, threads, namespace):
+    runtime.initialize(clone_distgits=False)
+
+    runtime.assert_mutation_is_permitted()
+
+    cmd = runtime.command
+
+    runtime.state[cmd] = dict(state.TEMPLATE_IMAGE)
+    lstate = runtime.state[cmd]  # get local convenience copy
+
+    pre_step = None
+    if 'k:images:rebase' in runtime.state:
+        pre_step = runtime.state['k:images:rebase']
+
+    required = []
+    failed = []
+
+    if pre_step:
+        for img, status in pre_step['images'].items():
+            if status is not True:  # anything other than true is fail
+                img_obj = runtime.image_map[img]
+                failed.append(img)
+                if img_obj.required:
+                    required.append(img)
+
+    items = [m.k_distgit_repo() for m in runtime.ordered_image_metas()]
+
+    lstate['total'] = len(items)
+
+    if not items:
+        runtime.logger.info("No images found. Check the arguments.")
+        exit(1)
+
+    if required:
+        msg = 'The following images failed during the previous step and are required:\n{}'.format('\n'.join(required))
+        lstate['status'] = state.STATE_FAIL
+        lstate['msg'] = msg
+        raise DoozerFatalError(msg)
+    elif failed:
+        # filter out failed images and their children
+        failed = runtime.filter_failed_image_trees(failed)
+        yellow_print(
+            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format(
+                '\n'.join(failed)))
+        # reload after fail filtered
+        items = [m.k_distgit_repo() for m in runtime.ordered_image_metas()]
+
+        if not items:
+            runtime.logger.info("No images left to build after failures and children filtered out.")
+            exit(1)
+
+    results = exectools.parallel_exec(
+        lambda dgr, terminate_event: dgr.k_build_container(terminate_event, namespace),
+        items, n_threads=threads)
+
+    results = results.get()
+
+    print(results)
 
 
 @cli.command("images:build", short_help="Build images for the group.")

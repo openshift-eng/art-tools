@@ -1,0 +1,22 @@
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: Component
+metadata:
+  annotations:
+    image.redhat.com/image: {{ registry_details }}
+  namespace: {{ namespace }}
+  ownerReferences:
+    - apiVersion: appstudio.redhat.com/v1alpha1
+      kind: Application
+      name: {{ application.name }}
+      uid: {{ application.uid }}
+  name: {{ component.name }}
+spec:
+  application: {{ application.name }}
+  componentName: {{ component.name }}
+  secret: {{ git.token_name }}
+  source:
+    git:
+      context: {{ git.context }}
+      dockerfileUrl: {{ git.dockerfile_path }}
+      revision: {{ git.branch }}
+      url: {{ git.url }}

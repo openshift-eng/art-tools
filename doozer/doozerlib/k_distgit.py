@@ -1,11 +1,23 @@
+import asyncio
 import os
 import pathlib
+import traceback
 
-from dockerfile_parse import DockerfileParser
-from artcommonlib import assertion, logutil, build_util, exectools
+from artcommonlib import assertion, build_util, exectools, logutil
+from artcommonlib.model import ListModel, Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.release_util import (isolate_assembly_in_release,
+                                       isolate_el_version_in_release)
+from dockerfile_parse import DockerfileParser
+
+from doozerlib import state
+from doozerlib.constants import (KONFLUX_REPO_CA_BUNDLE_FILENAME,
+                                 KONFLUX_REPO_CA_BUNDLE_HOST,
+                                 KONFLUX_REPO_CA_BUNDLE_TMP_PATH)
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
+from doozerlib.konflux_builder import KonfluxBuilder
+
+KONFLUX_QUAY_REGISTRY = "quay.io/rh_ee_asdas/konflux-test"
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):
@@ -67,7 +79,7 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
         return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=True)
 
     def update_distgit_dir(self, version, release, prev_release=None, force_yum_updates=False):
-        version, release = super().update_distgit_dir(version="v0.0.0", release=release, prev_release=prev_release, force_yum_updates=force_yum_updates)
+        version, release = super().update_distgit_dir(version=version, release=release, prev_release=prev_release, force_yum_updates=force_yum_updates)
 
         # DNF repo injection steps for Konflux
         dfp = DockerfileParser(path=str(self.dg_path.joinpath('Dockerfile')))
@@ -89,3 +101,70 @@ class KonfluxImageDistGitRepo(ImageDistGitRepo):
             "# End Konflux-specific steps\n\n"
         )
         return version, release
+
+    def _mapped_image_from_member(self, image, original_parent, dfp):
+        base = image.member
+
+        # Parent images need to be rebased for konflux as well
+        from_image_metadata = self.runtime.resolve_image(base)
+
+        if from_image_metadata is None:
+            raise Exception("For konflux, parent images needs to be rebased as well, for now")
+
+        from_image_distgit = from_image_metadata.k_distgit_repo()
+        if from_image_distgit.private_fix is None:  # This shouldn't happen.
+            raise ValueError(
+                f"Parent image {base} doesn't have .p0/.p1 flag determined. "
+                f"This indicates a bug in Doozer."
+            )
+        # If the parent we are going to build is embargoed, this image should also be embargoed
+        self.private_fix = from_image_distgit.private_fix
+
+        # Tag format <distgit_name>_<distgit_branch>_<uuid_tag>
+        # Eg: quay.io/rh_ee_asdas/konflux-test:openshift-base-rhel9_rhaos-4.17-rhel-9_v4.17.0.20240606.094143
+        return f"{KONFLUX_QUAY_REGISTRY}:{from_image_metadata.distgit_key}_{self.config.distgit.branch}_{self.uuid_tag}"
+
+    def k_build_container(self, terminate_event, namespace):
+
+        release = self.org_release if self.org_release is not None else '?'
+
+        try:
+            # If this image is FROM another group member, we need to wait on that group member
+            # Use .get('from',None) since from is a reserved word.
+            image_from = Model(self.config.get('from', None))
+            if image_from.member is not Missing:
+                self._set_wait_for(image_from.member, terminate_event)
+            for builder in image_from.get('builder', []):
+                if 'member' in builder:
+                    self._set_wait_for(builder['member'], terminate_event)
+
+            konflux_builder = KonfluxBuilder(runtime=self.runtime, distgit_name=self.name, namespace=namespace, dry_run=self.dry_run)
+            try:
+                status = asyncio.run(konflux_builder.build(self.metadata))
+
+                if not status:
+                    raise Exception("Error in konflux builder")
+
+            except Exception:
+                raise
+
+            self.build_status = True
+        except (Exception, KeyboardInterrupt):
+            tb = traceback.format_exc()
+            self.logger.info("Exception occurred during build:\n{}".format(tb))
+            # This is designed to fall through to finally. Since this method is designed to be
+            # threaded, we should not throw an exception; instead return False.
+        finally:
+            # Regardless of success, allow other images depending on this one to progress or fail.
+            self.build_lock.release()
+
+    # def _konflux_watch_build(self):
+    #     terminate_event = threading.Event()
+    #     try:
+    #         error = await exectools.to_thread(
+    #             watch_task, session, log_f, task_id, terminate_event
+    #         )
+    #     except (asyncio.CancelledError, KeyboardInterrupt):
+    #         terminate_event.set()
+    #         raise
+    #     return error
