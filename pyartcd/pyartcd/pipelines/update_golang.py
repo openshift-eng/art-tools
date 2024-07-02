@@ -282,9 +282,9 @@ class UpdateGolangPipeline:
             "--push-to-defaults"
         ]
         if self.dry_run:
-            cmd += "--dry-run"
+            cmd.append("--dry-run")
         if self.scratch:
-            cmd += "--scratch"
+            cmd.append("--scratch")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
 
     @staticmethod
