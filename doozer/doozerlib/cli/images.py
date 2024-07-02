@@ -19,7 +19,7 @@ from doozerlib import Runtime, state
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.k_distgit import KonfluxImageDistGitRepo
 from doozerlib.brew import get_watch_task_info_copy
-from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch
+from doozerlib.cli import cli, pass_runtime, validate_semver_major_minor_patch, option_commit_message, option_push
 
 from doozerlib import coverity
 from doozerlib.exceptions import DoozerFatalError
@@ -27,34 +27,7 @@ from typing import Optional
 from numbers import Number
 from dockerfile_parse import DockerfileParser
 
-
-class RemoteRequired(click.Option):
-    """
-    Option wrapper class for items that aren't needed for local
-    builds. Automatically handles them being required for remote
-    but ignored when building local.
-    When specified, options are assumed to be required for remote.
-    There is no need to include `required=True` in the click.Option init.
-    """
-    def __init__(self, *args, **kwargs):
-        kwargs['help'] = (
-            kwargs.get('help', '') + '\nNOTE: This argument is ignored with the global option --local'
-        ).strip()
-        super(RemoteRequired, self).__init__(*args, **kwargs)
-
-    def handle_parse_result(self, ctx, opts, args):
-        if not ctx.obj.local and not (self.name in opts):
-            self.required = True
-
-        return super(RemoteRequired, self).handle_parse_result(
-            ctx, opts, args)
-
-
-standard_library.install_aliases()
-
-option_commit_message = click.option("--message", "-m", cls=RemoteRequired, metavar='MSG', help="Commit message for dist-git.")
-option_push = click.option('--push/--no-push', default=False, is_flag=True,
-                           help='Pushes to distgit after local changes (--no-push by default).')
+from doozerlib.source_resolver import SourceResolver
 
 
 @cli.command("images:clone", help="Clone a group's image distgit repos locally.")
@@ -324,7 +297,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
             (real_version, real_release) = dgr.rebase_dir(version, release, terminate_event, force_yum_updates)
             sha = dgr.commit(message, log_diff=True)
             dgr.tag(real_version, real_release)
-            runtime.add_record(
+            runtime.record_logger.add_record(
                 "distgit_commit",
                 distgit=image_meta.qualified_name,
                 image=image_meta.config.name,
@@ -344,7 +317,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
 
             owners = image_meta.config.owners
             owners = ",".join(list(owners) if owners is not Missing else [])
-            runtime.add_record(
+            runtime.record_logger.add_record(
                 "distgit_commit_failure",
                 distgit=image_meta.qualified_name,
                 image=image_meta.config.name,
@@ -436,7 +409,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
             (real_version, real_release) = k_dgr.rebase_dir(version, release, terminate_event, force_yum_updates)
             sha = k_dgr.commit(message, log_diff=True)
             k_dgr.tag(real_version, real_release)
-            runtime.add_record(
+            runtime.record_logger.add_record(
                 "k_distgit_commit",
                 distgit=image_meta.qualified_name,
                 image=image_meta.config.name,
@@ -454,7 +427,7 @@ def k_images_rebase(runtime: Runtime, version: Optional[str], release: Optional[
 
             owners = image_meta.config.owners
             owners = ",".join(list(owners) if owners is not Missing else [])
-            runtime.add_record(
+            runtime.record_logger.add_record(
                 "k_distgit_commit_failure",
                 distgit=image_meta.qualified_name,
                 image=image_meta.config.name,
@@ -727,8 +700,8 @@ def print_build_metrics(runtime):
         elapsed_total_minutes = (max_completion_ts - min_create_ts) / 60.0
         runtime.logger.info("Elapsed time (from first submit to last completion) for all builds: {:.1f}m".format(elapsed_total_minutes))
 
-        runtime.add_record("image_build_metrics", elapsed_wait_minutes=int(elapsed_wait_minutes),
-                           elapsed_total_minutes=int(elapsed_total_minutes), task_count=len(watch_task_info))
+        runtime.record_logger.add_record("image_build_metrics", elapsed_wait_minutes=int(elapsed_wait_minutes),
+                                         elapsed_total_minutes=int(elapsed_total_minutes), task_count=len(watch_task_info))
     else:
         runtime.logger.info('Unable to determine timestamps from collected info: {}'.format(watch_task_info))
 
@@ -1163,7 +1136,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
         source_url = image.config.content.source.git.url
         s = s.replace("{upstream}", source_url or 'None')
         if source_url:
-            public_url = runtime.get_public_upstream(source_url)[0]
+            public_url = SourceResolver.get_public_upstream(source_url, runtime.group_config.public_upstreams)[0]
         else:
             public_url = None
         s = s.replace("{upstream_public}", public_url or 'None')
