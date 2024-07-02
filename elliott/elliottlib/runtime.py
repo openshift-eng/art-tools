@@ -153,6 +153,8 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
+        self.debug_log_path = os.path.join(self.working_dir, 'debug.log')
+
         if not self._logger:
             self.initialize_logging()
 
