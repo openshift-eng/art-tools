@@ -3,25 +3,31 @@ import koji
 import logging
 import re
 import os
-import yaml
 import base64
 from typing import List
 from datetime import datetime
 from ghapi.all import GhApi
+from ruamel.yaml import YAML
 
 from artcommonlib.constants import BREW_HUB
-from artcommonlib.format_util import green_print, yellow_print, red_print
 from artcommonlib.release_util import split_el_suffix_in_release
 from pyartcd import exectools
 from pyartcd import jenkins
+from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.git import GitRepository
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import BuildStates
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from elliottlib import util as elliottutil
 
 _LOGGER = logging.getLogger(__name__)
+
+yaml = YAML(typ="rt")
+yaml.default_flow_style = False
+yaml.preserve_quotes = True
+yaml.width = 4096
 
 
 def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
@@ -188,12 +194,8 @@ class UpdateGolangPipeline:
                 missing_in = el_nvr_map.keys() - builder_nvrs.keys()
                 raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
 
-        _LOGGER.info("Checking if existing builder images are pinned in streams.yml")
-        need_update = self.are_golang_streams_updated(go_version, builder_nvrs)
-        if not need_update:
-            green_print("Builders don't need update since nvr are built and pinned in streams.yml")
-        else:
-            red_print("Please update streams.yml")
+        _LOGGER.info("Updating streams.yml with found builder images")
+        await self.update_golang_streams(go_version, builder_nvrs)
 
     def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -222,37 +224,85 @@ class UpdateGolangPipeline:
                     builder_nvrs[el_v] = build['nvr']
         return builder_nvrs
 
-    def are_golang_streams_updated(self, go_version, builder_nvrs):
-        need_update = False
-        owner, repo = 'openshift-eng', 'ocp-build-data'
-        branch, filename = f'openshift-{self.ocp_version}', 'streams.yml'
+    async def update_golang_streams(self, go_version, builder_nvrs):
+        # clone ocp-build-data repo
+        group_name = f"openshift-{self.ocp_version}"
+        build_data_path = self.runtime.working_dir / "ocp-build-data-push"
+        build_data = GitRepository(build_data_path, dry_run=self.dry_run)
+        ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
+        await build_data.setup(ocp_build_data_repo_push_url)
+        branch = f"update-golang-{self.ocp_version}-{go_version}"
+        await build_data.fetch_switch_branch(branch, group_name)
 
-        api = GhApi(owner=owner, repo=repo, token=self.github_token)
-        blob = api.repos.get_content(filename, ref=branch)
-        group_config = yaml.safe_load(base64.b64decode(blob['content']))
+        streams_yaml_path = build_data_path / "streams.yml"
+        streams_yaml = yaml.load(streams_yaml_path)
+
+        # update image nvrs in streams.yml
+        need_update = False
         major_go, minor_go, _ = go_version.split('.')
-        for stream_name, info in group_config.items():
+        for stream_name, info in streams_yaml.items():
             if 'golang' not in stream_name:
                 continue
             image_nvr_like = info['image']
             if 'golang-builder' not in image_nvr_like:
                 continue
             name, vr = image_nvr_like.split(':')
-            nvr = f"{name.replace('/', '-')}-container-{vr}"
-            pattern = f"{GOLANG_BUILDER_CVE_COMPONENT}-v{major_go}.{minor_go}"
-            if not nvr.startswith(pattern):
+            if not vr.startswith(f"v{major_go}.{minor_go}"):
                 continue
 
             _, el_version = split_el_suffix_in_release(vr)  # 'el8'
             el_version = int(el_version[2:])  # 8
             if el_version not in builder_nvrs:
                 continue
-            if nvr == builder_nvrs[el_version]:
-                _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{nvr}')
+
+            parsed_nvr = parse_nvr(builder_nvrs[el_version])
+            expected_vr = f'{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+            expected_nvr_like = f'{name}:{expected_vr}'
+            if image_nvr_like == expected_nvr_like:
+                _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{expected_nvr_like}')
             else:
-                yellow_print(f'update stream:{stream_name}:image to {builder_nvrs[el_version]}')
+                streams_yaml[stream_name]['image'] = expected_nvr_like
                 need_update = True
-        return need_update
+
+        if not need_update:
+            _LOGGER.info("No update needed in streams.yml")
+            return
+
+        yaml.dump(streams_yaml, streams_yaml_path)
+        title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
+
+        # Create a PR
+        build_url = jenkins.get_build_url()
+        body = ""
+        if build_url:
+            body = f"Created by job run {build_url}"
+        match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
+        if not match:
+            raise ValueError(
+                f"Cannot push: {ocp_build_data_repo_push_url} is not a valid github repo url")
+        head = f"{match[1]}:{branch}"
+        base = group_name
+        if self.dry_run:
+            _LOGGER.info(f"[DRY RUN] Would have created pull-request with {head=} {base=} {title=} {body=}")
+            return
+        pushed = await build_data.commit_push(f"{title}\n{body}")
+
+        if not pushed:
+            raise RuntimeError("Commit not pushed: Please investigate")
+
+        repo = "ocp-build-data"
+        api = GhApi(owner=GITHUB_OWNER, repo=repo, token=self.github_token)
+        existing_prs = api.pulls.list(state="open", base=base, head=head)
+        if not existing_prs.items:
+            try:
+                result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+                _LOGGER.info(f"PR created: {result['html_url']}")
+            except Exception as e:
+                _LOGGER.warning(f"Failed to create PR: {e}")
+                manual_pr_url = f"https://github.com/{GITHUB_OWNER}/{repo}/compare/{base}...{head}?expand=1"
+                _LOGGER.info(f"Create a PR manually {manual_pr_url}")
+        else:
+            _LOGGER.info(f"Existing PR updated: {existing_prs.items[0]['html_url']}")
 
     async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
@@ -323,18 +373,6 @@ class UpdateGolangPipeline:
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
-        # # create a new branch rhel-{el_v}-golang-{go_v}-update using ghapi
-        # branch = f'rhel-{el_v}-golang-{go_v}-update'
-        # title = f'Update golang rpms for {nvr}'
-        # body = f'Update golang rpms for {nvr} by updating group.yml'
-        # api.repos.create_branch(branch, 'rhel-{el_v}-golang-{go_v}')
-        #
-        # # create a pull request with the updated group.yml using ghapi
-        # branch = f'rhel-{el_v}-golang-{go_v}-update'
-        # title = f'Rebuild golang rpms for {nvr}'
-        # body = f'Rebuild golang rpms for {nvr} by updating group.yml'
-        # api.repos.create_pull(title=title, body=body, head=branch, base=branch)
-
     def get_content_repo_url(self, el_v):
         url = 'https://download-node-02.eng.bos.redhat.com/brewroot/repos/{repo}/latest'
         return url.format(repo=f'rhaos-{self.ocp_version}-rhel-{el_v}-build')
@@ -378,7 +416,7 @@ The new NVRs are:
 
 
 @cli.command('update-golang')
-@click.option('--ocp-version', required=True, help='OCP version to update golang for')
+@click.option('--ocp-version', required=True, help='OCP version to update golang for, e.g. 4.16')
 @click.option('--scratch', is_flag=True, default=False, help='Build images in scratch mode')
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
