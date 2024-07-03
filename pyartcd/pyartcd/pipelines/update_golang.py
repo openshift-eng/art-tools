@@ -235,10 +235,21 @@ class UpdateGolangPipeline:
         # This is because golang builders are used across minor versions
         # and if we are not careful, we can miss updating them
         major, minor = self.ocp_version.split('.')
-        for ocp_version in [f"{major}.{int(minor)-1}", self.ocp_version, f"{major}.{int(minor)+1}"]:
+        next_minor = f"{major}.{int(minor)+1}"
+        previous_minor = f"{major}.{int(minor)-1}"
+        for ocp_version in [previous_minor, self.ocp_version, next_minor]:
             group_name = f"openshift-{ocp_version}"
             branch = f"update-golang-{ocp_version}-{go_version}"
-            await build_data.fetch_switch_branch(branch, group_name)
+            _LOGGER.info(f"Checking if {group_name}:streams.yml needs update...")
+            try:
+                await build_data.fetch_switch_branch(branch, group_name)
+            except Exception as e:
+                message = f"Failed to fetch {group_name} branch: {e}"
+                if ocp_version == next_minor:
+                    _LOGGER.warning(message)
+                    continue
+                else:
+                    raise
 
             streams_yaml_path = build_data_path / "streams.yml"
             streams_yaml = yaml.load(streams_yaml_path)
