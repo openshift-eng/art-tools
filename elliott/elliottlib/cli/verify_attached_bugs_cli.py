@@ -185,7 +185,11 @@ class BugValidator:
         # Make sure the next version is GA before regression check
         major, minor = self.runtime.get_major_minor()
         version = f"{major}.{minor + 1}"
-        next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+        try:
+            next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
+        except Exception as e:
+            logger.warning(f"Failed to determine if {version} is GA: {e}. Assuming it is not GA.")
+            next_is_ga = False
         if not next_is_ga:
             no_verify_blocking_bugs = True
             logger.info(f"Skipping regression check because {version} is not GA")
