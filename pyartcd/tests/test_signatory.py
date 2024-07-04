@@ -1,8 +1,14 @@
 import asyncio
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from io import BytesIO
 import json
+from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
+
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from pyartcd.signatory import AsyncSignatory
@@ -10,45 +16,38 @@ from pyartcd.signatory import AsyncSignatory
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):
     @patch("aiofiles.open", autospec=True)
-    async def test_get_certificate_common_name(self, open: AsyncMock):
+    async def test_get_certificate_account_name(self, open: AsyncMock):
         # Well, this is the content of "Red Hat IT Root CA"
-        open.return_value.__aenter__.return_value.read.return_value = b"""
------BEGIN CERTIFICATE-----
-MIIENDCCAxygAwIBAgIJANunI0D662cnMA0GCSqGSIb3DQEBCwUAMIGlMQswCQYD
-VQQGEwJVUzEXMBUGA1UECAwOTm9ydGggQ2Fyb2xpbmExEDAOBgNVBAcMB1JhbGVp
-Z2gxFjAUBgNVBAoMDVJlZCBIYXQsIEluYy4xEzARBgNVBAsMClJlZCBIYXQgSVQx
-GzAZBgNVBAMMElJlZCBIYXQgSVQgUm9vdCBDQTEhMB8GCSqGSIb3DQEJARYSaW5m
-b3NlY0ByZWRoYXQuY29tMCAXDTE1MDcwNjE3MzgxMVoYDzIwNTUwNjI2MTczODEx
-WjCBpTELMAkGA1UEBhMCVVMxFzAVBgNVBAgMDk5vcnRoIENhcm9saW5hMRAwDgYD
-VQQHDAdSYWxlaWdoMRYwFAYDVQQKDA1SZWQgSGF0LCBJbmMuMRMwEQYDVQQLDApS
-ZWQgSGF0IElUMRswGQYDVQQDDBJSZWQgSGF0IElUIFJvb3QgQ0ExITAfBgkqhkiG
-9w0BCQEWEmluZm9zZWNAcmVkaGF0LmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEP
-ADCCAQoCggEBALQt9OJQh6GC5LT1g80qNh0u50BQ4sZ/yZ8aETxt+5lnPVX6MHKz
-bfwI6nO1aMG6j9bSw+6UUyPBHP796+FT/pTS+K0wsDV7c9XvHoxJBJJU38cdLkI2
-c/i7lDqTfTcfLL2nyUBd2fQDk1B0fxrskhGIIZ3ifP1Ps4ltTkv8hRSob3VtNqSo
-GxkKfvD2PKjTPxDPWYyruy9irLZioMffi3i/gCut0ZWtAyO3MVH5qWF/enKwgPES
-X9po+TdCvRB/RUObBaM761EcrLSM1GqHNueSfqnho3AjLQ6dBnPWlo638Zm1VebK
-BELyhkLWMSFkKwDmne0jQ02Y4g075vCKvCsCAwEAAaNjMGEwHQYDVR0OBBYEFH7R
-4yC+UehIIPeuL8Zqw3PzbgcZMB8GA1UdIwQYMBaAFH7R4yC+UehIIPeuL8Zqw3Pz
-bgcZMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgGGMA0GCSqGSIb3DQEB
-CwUAA4IBAQBDNvD2Vm9sA5A9AlOJR8+en5Xz9hXcxJB5phxcZQ8jFoG04Vshvd0e
-LEnUrMcfFgIZ4njMKTQCM4ZFUPAieyLx4f52HuDopp3e5JyIMfW+KFcNIpKwCsak
-oSoKtIUOsUJK7qBVZxcrIyeQV2qcYOeZhtS5wBqIwOAhFwlCET7Ze58QHmS48slj
-S9K0JAcps2xdnGu0fkzhSQxY8GPQNFTlr6rYld5+ID/hHeS76gq0YG3q6RLWRkHf
-4eTkRjivAlExrFzKcljC4axKQlnOvVAzz+Gm32U0xPBF4ByePVxCJUHw1TsyTmel
-RxNEp7yHoXcwn+fXna+t5JWh1gxUZty3
------END CERTIFICATE-----
-"""
-        actual = await AsyncSignatory._get_certificate_common_name("/path/to/client.crt")
-        self.assertEqual(actual, "Red Hat IT Root CA")
+        expected = "Red Hat IT Root CA"
+        one_day = timedelta(1, 0, 0)
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public_key = private_key.public_key()
 
-    @patch("pyartcd.signatory.AsyncSignatory._get_certificate_common_name", autospec=True)
+        builder = x509.CertificateBuilder()
+        builder = builder.subject_name(x509.Name([
+            x509.NameAttribute(NameOID.USER_ID, expected),
+        ]))
+        builder = builder.issuer_name(x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
+        ]))
+        builder = builder.not_valid_before(datetime.today() - one_day)
+        builder = builder.not_valid_after(datetime.today() + (one_day * 30))
+        builder = builder.serial_number(x509.random_serial_number())
+        builder = builder.public_key(public_key)
+        certificate = builder.sign(
+            private_key=private_key, algorithm=hashes.SHA256(),
+        )
+        open.return_value.__aenter__.return_value.read.return_value = certificate.public_bytes(Encoding.PEM)
+        actual = await AsyncSignatory._get_certificate_account_name("/path/to/client.crt")
+        self.assertEqual(actual, expected)
+
+    @patch("pyartcd.signatory.AsyncSignatory._get_certificate_account_name", autospec=True)
     @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
-    async def test_start(self, AsyncUMBClient: AsyncMock, _get_certificate_common_name: AsyncMock):
+    async def test_start(self, AsyncUMBClient: AsyncMock, _get_certificate_account_name: AsyncMock):
         uri = "failover:(stomp+ssl://stomp1.example.com:12345,stomp://stomp2.example.com:23456)"
         cert_file = "/path/to/client.crt"
         key_file = "/path/to/client.key"
-        _get_certificate_common_name.return_value = "fake-service-account"
+        _get_certificate_account_name.return_value = "fake-service-account"
         umb = AsyncUMBClient.return_value
         receiver = umb.subscribe.return_value
 
