@@ -77,16 +77,16 @@ class AsyncSignatory:
         await self.close()
 
     @staticmethod
-    async def _get_certificate_common_name(cert_file: str):
-        """ Get common name for the specified certificate file
+    async def _get_certificate_account_name(cert_file: str):
+        """ Get service account name embedded in the certificate file
         """
         async with aiofiles.open(cert_file, "rb") as f:
             cert = x509.load_pem_x509_certificate(await f.read())
-        return cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+        return cert.subject.get_attributes_for_oid(NameOID.USER_ID)[0].value
 
     async def start(self):
         # Get service account name embedded in the client certificate
-        service_account = await self._get_certificate_common_name(self.cert_file)
+        service_account = await self._get_certificate_account_name(self.cert_file)
         _LOGGER.info("Using UMB service account: %s", service_account)
         # Connect to UMB
         await self._umb.connect()

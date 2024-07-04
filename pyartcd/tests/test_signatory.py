@@ -10,7 +10,7 @@ from pyartcd.signatory import AsyncSignatory
 
 class TestAsyncSignatory(IsolatedAsyncioTestCase):
     @patch("aiofiles.open", autospec=True)
-    async def test_get_certificate_common_name(self, open: AsyncMock):
+    async def test_get_certificate_account_name(self, open: AsyncMock):
         # Well, this is the content of "Red Hat IT Root CA"
         open.return_value.__aenter__.return_value.read.return_value = b"""
 -----BEGIN CERTIFICATE-----
@@ -39,16 +39,16 @@ S9K0JAcps2xdnGu0fkzhSQxY8GPQNFTlr6rYld5+ID/hHeS76gq0YG3q6RLWRkHf
 RxNEp7yHoXcwn+fXna+t5JWh1gxUZty3
 -----END CERTIFICATE-----
 """
-        actual = await AsyncSignatory._get_certificate_common_name("/path/to/client.crt")
+        actual = await AsyncSignatory._get_certificate_account_name("/path/to/client.crt")
         self.assertEqual(actual, "Red Hat IT Root CA")
 
-    @patch("pyartcd.signatory.AsyncSignatory._get_certificate_common_name", autospec=True)
+    @patch("pyartcd.signatory.AsyncSignatory._get_certificate_account_name", autospec=True)
     @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
-    async def test_start(self, AsyncUMBClient: AsyncMock, _get_certificate_common_name: AsyncMock):
+    async def test_start(self, AsyncUMBClient: AsyncMock, _get_certificate_account_name: AsyncMock):
         uri = "failover:(stomp+ssl://stomp1.example.com:12345,stomp://stomp2.example.com:23456)"
         cert_file = "/path/to/client.crt"
         key_file = "/path/to/client.key"
-        _get_certificate_common_name.return_value = "fake-service-account"
+        _get_certificate_account_name.return_value = "fake-service-account"
         umb = AsyncUMBClient.return_value
         receiver = umb.subscribe.return_value
 
