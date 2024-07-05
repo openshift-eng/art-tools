@@ -1,13 +1,12 @@
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Optional
 
 from artcommonlib import exectools
 from artcommonlib import util as art_util
-
-from doozerlib import util
-from doozerlib.lock import get_named_semaphore
+from artcommonlib.lock import get_named_semaphore
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=
               git_cache_dir: Optional[str] = None):
 
     if git_cache_dir:
-        util.mkdirs(git_cache_dir)
+        Path(git_cache_dir).mkdir(parents=True, exist_ok=True)
         normalized_url = art_util.convert_remote_git_to_https(remote_url)
         # Strip special chars out of normalized url to create a human friendly, but unique filename
         file_friendly_url = normalized_url.split('//')[-1].replace('/', '_')

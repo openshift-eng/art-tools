@@ -1,7 +1,6 @@
 import logging
 import os
 import shutil
-import tempfile
 import urllib.parse
 from dataclasses import dataclass
 from multiprocessing import Lock
@@ -10,11 +9,11 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 
 from artcommonlib import assertion, exectools
 from artcommonlib import util as art_util
+from artcommonlib.git_helper import git_clone
+from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
 
-from doozerlib import constants, util
-from doozerlib.git_helper import git_clone
-from doozerlib.lock import get_named_semaphore
+from doozerlib import constants
 from doozerlib.record_logger import RecordLogger
 
 if TYPE_CHECKING:

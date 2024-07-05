@@ -20,7 +20,7 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import constants, util
-from doozerlib.git_helper import git_clone
+from artcommonlib.git_helper import git_clone
 from doozerlib.image import ImageMetadata
 from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields, resolve_dockerfile_name
 from doozerlib.source_resolver import SourceResolver

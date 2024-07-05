@@ -35,8 +35,8 @@ from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
-from doozerlib.git_helper import git_clone
-from doozerlib.lock import get_named_semaphore
+from artcommonlib.git_helper import git_clone
+from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory

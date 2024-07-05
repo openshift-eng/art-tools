@@ -6,8 +6,8 @@ from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.pushd import Dir
 from doozerlib.distgit import ImageDistGitRepo
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_HOST, KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
-from doozerlib.git_helper import git_clone
-from doozerlib.lock import get_named_semaphore
+from artcommonlib.git_helper import git_clone
+from artcommonlib.lock import get_named_semaphore
 
 
 class KonfluxImageDistGitRepo(ImageDistGitRepo):

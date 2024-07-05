@@ -17,12 +17,11 @@ from github import Github, UnknownObjectException
 from dockerfile_parse import DockerfileParser
 
 from artcommonlib import exectools
-from artcommonlib.format_util import green_print, yellow_print
+from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
-from doozerlib import constants, util
-from doozerlib.git_helper import git_clone
+from artcommonlib.git_helper import git_clone
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import what_is_in_master, extract_version_fields

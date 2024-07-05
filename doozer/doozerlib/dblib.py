@@ -9,7 +9,7 @@ from doozerlib import constants
 import functools
 import datetime
 
-from doozerlib.lock import get_named_semaphore
+from artcommonlib.lock import get_named_semaphore
 
 try:
     import mysql.connector as mysql_connector
