@@ -415,7 +415,10 @@ class SigstoreSignatory:
                # needed, and we also do not have our own service to upload it to; so it will be
                # skipped until something about that situation changes to require and enable it.
                "--tlog-upload=false",
-               "--key", f"awskms:///{self.signing_key_id}", pullspec]
+               # https://issues.redhat.com/browse/ART-10052
+               f"--sign-container-identity={pullspec}",
+               "--key", f"awskms:///{self.signing_key_id}",
+               pullspec]
 
         if self.dry_run:
             log.info("[DRY RUN] Would have signed image: %s", cmd)
