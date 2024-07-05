@@ -21,12 +21,12 @@ spec:
 
         touch /root/.config/artcd.toml
 
-        kinit -kt /tmp/keytab/keytab ocp-build/buildvm.openshift.eng.bos.redhat.com@IPA.REDHAT.COM
+        kinit -kt /tmp/keytab/keytab exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM
         
         pip install stomp.py==8.1.0
         pip install setuptools==65.5.1
 
-        artcd -vv scan-fips --version $(params.version) --nvrs $(params.nvrs)
+        artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs)
 
       securityContext:
         runAsGroup: 0
@@ -38,7 +38,7 @@ spec:
         - mountPath: /root/.config/doozer
           name: doozer-config
         - mountPath: /tmp/keytab
-          name: art-bot-keytab
+          name: synced-exd-ocp-buildvm-bot-prod-keytab
       env:
         - name: SLACK_BOT_TOKEN
           valueFrom:
@@ -52,6 +52,6 @@ spec:
     - name: doozer-config
       secret:
         secretName: doozer-config
-    - name: art-bot-keytab
+    - name: synced-exd-ocp-buildvm-bot-prod-keytab
       secret:
-        secretName: art-bot-keytab
+        secretName: synced-exd-ocp-buildvm-bot-prod-keytab
