@@ -216,7 +216,7 @@ class ConfigScanSources:
                 continue
 
             # If they don't, clone source repo
-            path = self.runtime.source_resolver.resolve_source(metadata)
+            path = self.runtime.source_resolver.resolve_source(metadata).source_path
 
             # SHAs might differ because of previous rebase; let's check the actual content across upstreams
             if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
