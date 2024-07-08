@@ -369,6 +369,49 @@ class Runtime(GroupRuntime):
         except gitdata.GitDataException as ex:
             raise ElliottFatalError(ex)
 
+    def get_public_upstream(self, remote_git: str) -> Tuple[str, Optional[str]]:
+        """
+        Some upstream repo are private in order to allow CVE workflows. While we
+        may want to build from a private upstream, we don't necessarily want to confuse
+        end-users by referencing it in our public facing image labels / etc.
+        In group.yaml, you can specify a mapping in "public_upstreams". It
+        represents private_url_prefix => public_url_prefix. Remote URLs passed to this
+        method which contain one of the private url prefixes will be translated
+        into a new string with the public prefix in its place. If there is not
+        applicable mapping, the incoming url will still be normalized into https.
+        :param remote_git: The URL to analyze for private repo patterns.
+        :return: tuple (url, branch)
+            - url: An https normalized remote address with private repo information replaced.
+            - branch: Optional public branch name if the public upstream source use a different branch name from the private upstream.
+        """
+        remote_https = util.convert_remote_git_to_https(remote_git)
+
+        if self.group_config.public_upstreams:
+
+            # We prefer the longest match in the mapping, so iterate through the entire
+            # map and keep track of the longest matching private remote.
+            target_priv_prefix = None
+            target_pub_prefix = None
+            target_pub_branch = None
+            for upstream in self.group_config.public_upstreams:
+                priv = upstream["private"]
+                pub = upstream["public"]
+                # priv can be a full repo, or an organization (e.g. git@github.com:openshift)
+                # It will be treated as a prefix to be replaced
+                https_priv_prefix = util.convert_remote_git_to_https(priv)  # Normalize whatever is specified in group.yaml
+                https_pub_prefix = util.convert_remote_git_to_https(pub)
+                if remote_https.startswith(f'{https_priv_prefix}/') or remote_https == https_priv_prefix:
+                    # If we have not set the prefix yet, or if it is longer than the current contender
+                    if not target_priv_prefix or len(https_priv_prefix) > len(target_pub_prefix):
+                        target_priv_prefix = https_priv_prefix
+                        target_pub_prefix = https_pub_prefix
+                        target_pub_branch = upstream.get("public_branch")
+
+            if target_priv_prefix:
+                return (f'{target_pub_prefix}{remote_https[len(target_priv_prefix):]}', target_pub_branch)
+
+        return (remote_https, None)
+
     def get_releases_config(self):
         if self.releases_config is not None:
             return self.releases_config

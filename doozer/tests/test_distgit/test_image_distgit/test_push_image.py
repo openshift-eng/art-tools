@@ -2,7 +2,7 @@ import errno
 import os
 import io
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from flexmock import flexmock
 
@@ -25,7 +25,6 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
             command="some-command",
             add_record=lambda *_, **__: None,
             assembly_type=AssemblyTypes.STANDARD,
-            record_logger=Mock()
         )
 
     @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)

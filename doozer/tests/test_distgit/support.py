@@ -56,6 +56,9 @@ class MockRuntime(object):
         self.cache_dir = None
         self.assembly_type = AssemblyTypes.STANDARD
 
+    def detect_remote_source_branch(self, _):
+        pass
+
 
 class MockMetadata(object):
 

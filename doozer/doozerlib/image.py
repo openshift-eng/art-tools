@@ -30,7 +30,7 @@ class ImageMetadata(Metadata):
             dependent.dependencies.add(self.distgit_key)
             self.children.append(dependent)
         if clone_source:
-            runtime.source_resolver.resolve_source(self)
+            runtime.resolve_source(self)
 
     @property
     def image_name(self):

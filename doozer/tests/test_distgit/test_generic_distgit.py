@@ -388,8 +388,8 @@ class TestGenericDistGit(TestDistgit):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
         flexmock(distgit.os.path).should_receive("isdir").and_return(True)
-        source_resolver = flexmock(resolve_source=flexmock(source_path="source-root"))
-        metadata = flexmock(runtime=self.mock_runtime(source_resolver=source_resolver,
+
+        metadata = flexmock(runtime=self.mock_runtime(resolve_source=lambda *_: "source-root",
                                                       branch="_irrelevant_"),
                             config=flexmock(content=flexmock(source=flexmock(path="sub-path")),
                                             distgit=flexmock(branch="_irrelevant_")),
@@ -405,8 +405,7 @@ class TestGenericDistGit(TestDistgit):
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
         flexmock(distgit.os.path).should_receive("isdir").and_return(True)
 
-        source_resolver = flexmock(resolve_source=flexmock(source_path="source-root"))
-        metadata = flexmock(runtime=self.mock_runtime(source_resolver=source_resolver,
+        metadata = flexmock(runtime=self.mock_runtime(resolve_source=lambda *_: "source-root",
                                                       branch="_irrelevant_"),
                             config=flexmock(content=flexmock(source=flexmock(path=distgit.Missing)),
                                             distgit=flexmock(branch="_irrelevant_")),
