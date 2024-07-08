@@ -50,23 +50,6 @@ def dict_get(dct, path, default=DICT_EMPTY):
     return dct
 
 
-def setup_and_fetch_public_upstream_source(public_source_url: str, public_upstream_branch: str, source_dir: str):
-    """
-    Fetch public upstream source for specified Git repository. Set up public_upstream remote if needed.
-
-    :param public_source_url: HTTPS Git URL of the public upstream source
-    :param public_upstream_branch: Git branch of the public upstream source
-    :param source_dir: Path to the local Git repository
-    """
-    out, err = exectools.cmd_assert(["git", "-C", source_dir, "remote"])
-    if 'public_upstream' not in out.strip().split():
-        exectools.cmd_assert(["git", "-C", source_dir, "remote", "add", "--", "public_upstream", public_source_url])
-    else:
-        exectools.cmd_assert(["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url])
-    exectools.cmd_assert(["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch], retries=3,
-                         set_env=constants.GIT_NO_PROMPTS)
-
-
 def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, source_dir: str):
     """
     Determine if the public upstream branch includes the specified commit.
