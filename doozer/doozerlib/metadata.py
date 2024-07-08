@@ -109,8 +109,8 @@ class Metadata(object):
         self.prevent_cloning = prevent_cloning
 
         # URL and branch of public upstream source are set later by Runtime.resolve_source()
-        self.public_upstream_url = None
-        self.public_upstream_branch = None
+        self.public_upstream_url: Optional[str] = None
+        self.public_upstream_branch: Optional[str] = None
 
         # Some config filenames have suffixes to avoid name collisions; strip off the suffix to find the real
         # distgit repo name (which must be combined with the distgit namespace).

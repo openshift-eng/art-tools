@@ -149,6 +149,8 @@ class SourceResolver:
             url = str(source_details["url"])
             if self._group_config.public_upstreams:
                 meta.public_upstream_url, meta.public_upstream_branch = self.get_public_upstream(url, self._group_config.public_upstreams)
+            if meta.public_upstream_url and not not meta.public_upstream_branch:
+                meta.public_upstream_branch = clone_branch
 
             LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
             try:
