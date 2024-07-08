@@ -9,7 +9,7 @@ import urllib.parse
 import dateutil.parser
 import requests
 from enum import Enum
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 from defusedxml import ElementTree
 from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
@@ -24,7 +24,6 @@ from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
 from doozerlib.k_distgit import KonfluxImageDistGitRepo
-from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
 
@@ -674,13 +673,6 @@ class Metadata(object):
         """
         return self._component_name
 
-    def has_source(self):
-        """
-        Check whether this component has source content
-        """
-        return "git" in self.config.content.source or \
-               "alias" in self.config.content.source
-
     def needs_rebuild(self):
         if self.config.targets:
             # If this meta has multiple build targets, check currency of each
@@ -768,13 +760,18 @@ class Metadata(object):
         # Otherwise, we have source. In the case of git source, check the upstream with ls-remote.
         # In the case of alias (only legacy stuff afaik), check the cloned repo directory.
 
-        use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
         if "git" in self.config.content.source:
-            _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(self.config.content.source.git, self.runtime.stage, use_source_fallback_branch)
+            remote_branch = self.runtime.detect_remote_source_branch(self.config.content.source.git)[0]
+            out, _ = exectools.cmd_assert(["git", "ls-remote", self.config.content.source.git.url, remote_branch], strip=True, retries=5, on_retry='sleep 5')
+            # Example output "296ac244f3e7fd2d937316639892f90f158718b0	refs/heads/openshift-4.8"
+            upstream_commit_hash = out.split()[0]
         elif self.config.content.source.alias and self.runtime.group_config.sources and self.config.content.source.alias in self.runtime.group_config.sources:
             # This is a new style alias with url information in group config
             source_details = self.runtime.group_config.sources[self.config.content.source.alias]
-            _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(source_details, self.runtime.stage, use_source_fallback_branch)
+            remote_branch = self.runtime.detect_remote_source_branch(source_details)[0]
+            out, _ = exectools.cmd_assert(["git", "ls-remote", source_details.url, remote_branch], strip=True, retries=5, on_retry='sleep 5')
+            # Example output "296ac244f3e7fd2d937316639892f90f158718b0	refs/heads/openshift-4.8"
+            upstream_commit_hash = out.split()[0]
         else:
             # If it is not git, we will need to punt to the rest of doozer to get the upstream source for us.
             with Dir(dgr.source_path()):
@@ -869,9 +866,10 @@ class Metadata(object):
                 May be empty if there is no kube information in the source dir.
         """
         envs = dict()
-        if not self.has_source():  # distgit only. Return empty.
+        upstream_source_path: pathlib.Path = pathlib.Path(self.runtime.resolve_source(self))
+        if not upstream_source_path:
+            # distgit only. Return empty.
             return envs
-        upstream_source_path: pathlib.Path = pathlib.Path(self.runtime.source_resolver.resolve_source(self).source_path)
 
         with Dir(upstream_source_path):
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])

@@ -9,8 +9,6 @@ from doozerlib import constants
 import functools
 import datetime
 
-from artcommonlib.lock import get_named_semaphore
-
 try:
     import mysql.connector as mysql_connector
 except:
@@ -491,7 +489,7 @@ class Record(object):
 
     def __exit__(self, *args):
         try:
-            with get_named_semaphore('dblib::mysql'):
+            with self.db.runtime.get_named_semaphore('dblib::mysql'):
 
                 attr_payload = {}
 

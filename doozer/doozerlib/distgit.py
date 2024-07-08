@@ -35,15 +35,12 @@ from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
-from artcommonlib.git_helper import git_clone
-from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.util import extract_version_fields, resolve_dockerfile_name
-from doozerlib.source_resolver import SourceResolver
 
 # doozer used to be part of OIT
 OIT_COMMENT_PREFIX = '#oit##'
@@ -222,9 +219,8 @@ class DistGitRepo(object):
                             gitargs.extend(["--depth", str(rhpkg_clone_depth)])
 
                         try:
-                            git_clone(self.metadata.distgit_remote_url(), self.distgit_dir, gitargs=gitargs,
-                                      set_env=constants.GIT_NO_PROMPTS, timeout=timeout,
-                                      git_cache_dir=self.runtime.git_cache_dir)
+                            self.runtime.git_clone(self.metadata.distgit_remote_url(), self.distgit_dir, gitargs=gitargs,
+                                                   set_env=constants.GIT_NO_PROMPTS, timeout=timeout)
                         except ChildProcessError as err:
                             # Create branch on demand
                             if len(err.args) > 1 and self.has_source() and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch):
@@ -287,7 +283,8 @@ class DistGitRepo(object):
         """
         Check whether this dist-git repo has source content
         """
-        return self.metadata.has_source()
+        return "git" in self.config.content.source or \
+               "alias" in self.config.content.source
 
     def source_path(self):
         """
@@ -295,7 +292,7 @@ class DistGitRepo(object):
                 the source.path subdirectory if the metadata includes one.
         """
 
-        source_root = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+        source_root = self.runtime.resolve_source(self.metadata)
         sub_path = self.config.content.source.path
 
         path = source_root
@@ -383,7 +380,7 @@ class DistGitRepo(object):
                 # be pushed. If every distgit within a release is being pushed at the same
                 # time, a single push invocation can take hours to complete -- making the
                 # timeout value counterproductive. Limit to 5 simultaneous pushes.
-                with get_named_semaphore('rhpkg::push', count=5):
+                with self.runtime.get_named_semaphore('rhpkg::push', count=5):
                     timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
                     exectools.cmd_assert(f"timeout {timeout} git push --set-upstream origin {self.branch}", retries=3)
                     # Many builds require a tag associated with a commit to be a semver
@@ -479,7 +476,7 @@ class ImageDistGitRepo(DistGitRepo):
         if self._canonical_builders_enabled():
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
-                source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+                source_path = self.runtime.resolve_source(self.metadata)
                 self.art_intended_el_version = self._determine_art_rhel_version()
                 self.upstream_intended_el_version = self._determine_upstream_rhel_version(source_path)
             # To match upstream, we need to be able to infer upstream intended RHEL version
@@ -954,7 +951,7 @@ class ImageDistGitRepo(DistGitRepo):
                     raise
 
                 finally:
-                    self.runtime.record_logger.add_record(action, **record)
+                    self.runtime.add_record(action, **record)
 
             return (self.metadata.distgit_key, True)
 
@@ -1166,7 +1163,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         record['push_status'] = '0' if self.push_status else '-1'
 
-        self.runtime.record_logger.add_record(action, **record)
+        self.runtime.add_record(action, **record)
         lstate = self.runtime.state[self.runtime.command]
         if not (self.build_status and self.push_status):
             state.record_image_fail(lstate, self.metadata, 'Build failure', self.runtime.logger)
@@ -2495,10 +2492,10 @@ class ImageDistGitRepo(DistGitRepo):
 
             out, _ = exectools.cmd_assert(["git", "remote", "get-url", "origin"], strip=True)
             self.actual_source_url = out  # This may differ from the URL we report to the public
-            self.public_facing_source_url, _ = SourceResolver.get_public_upstream(out, self.runtime.group_config.public_upstreams)  # Point to public upstream if there are private components to the URL
+            self.public_facing_source_url, _ = self.runtime.get_public_upstream(out)  # Point to public upstream if there are private components to the URL
             # If private_fix has not already been set (e.g. by --embargoed), determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.private_fix is None:
-                if self.metadata.public_upstream_branch and not SourceResolver.is_branch_commit_hash(self.metadata.public_upstream_branch):
+                if self.metadata.public_upstream_branch and not self.runtime.is_branch_commit_hash(self.metadata.public_upstream_branch):
                     self.private_fix = not util.is_commit_in_public_upstream(self.source_full_sha, self.metadata.public_upstream_branch, source_dir)
                 else:
                     self.private_fix = False
@@ -2607,16 +2604,16 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 source_dockerfile_subpath = "{}/{}".format(sub_path, dockerfile_name)
             # there ought to be a better way to determine the source alias that was registered:
-            source_root = self.runtime.source_resolver.resolve_source(self.metadata).source_path
+            source_root = self.runtime.resolve_source(self.metadata)
             source_alias = self.config.content.source.get('alias', os.path.basename(source_root))
 
-            self.runtime.record_logger.add_record("dockerfile_notify",
-                                                  distgit=self.metadata.qualified_name,
-                                                  image=self.config.name,
-                                                  owners=','.join(owners),
-                                                  source_alias=source_alias,
-                                                  source_dockerfile_subpath=source_dockerfile_subpath,
-                                                  dockerfile=str(dg_path.joinpath('Dockerfile')))
+            self.runtime.add_record("dockerfile_notify",
+                                    distgit=self.metadata.qualified_name,
+                                    image=self.config.name,
+                                    owners=','.join(owners),
+                                    source_alias=source_alias,
+                                    source_dockerfile_subpath=source_dockerfile_subpath,
+                                    dockerfile=str(dg_path.joinpath('Dockerfile')))
 
     def _run_modifications(self):
         """

@@ -213,6 +213,7 @@ async def _rebase_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata, v
         record["release"] = rpm.release
         record["specfile"] = rpm.specfile
         record["private_fix"] = rpm.private_fix
+        record["source_head"] = rpm.source_head
         record["source_commit"] = rpm.pre_init_sha or ""
         record["dg_branch"] = rpm.distgit_repo().branch
         record["status"] = 0
@@ -223,7 +224,7 @@ async def _rebase_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata, v
         record["message"] = "Exception occurred:\n{}".format(tb)
         logger.error("Exception occurred when rebasing %s:\n%s", rpm.distgit_key, tb)
     finally:
-        runtime.record_logger.add_record(action, **record)
+        runtime.add_record(action, **record)
     return record["status"]
 
 
@@ -300,5 +301,5 @@ async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata):
             record["task_urls"] = task_urls
             record["task_id"] = task_ids[0]
             record["task_url"] = task_urls[0]
-        runtime.record_logger.add_record(action, **record)
+        runtime.add_record(action, **record)
     return record["status"]
