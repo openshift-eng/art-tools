@@ -251,24 +251,11 @@ class PromotePipeline:
                 logger.info("Verifying attached bugs...")
                 advisories = list(filter(lambda ad: ad > 0, impetus_advisories.values()))
 
-                # FIXME: We used to skip blocking bug check for the latest minor version,
-                # because there were a lot of ON_QA bugs in the upcoming GA version blocking us
-                # from preparing z-stream releases for the latest minor version.
-                # Per https://coreos.slack.com/archives/GDBRP5YJH/p1662036090856369?thread_ts=1662024464.786929&cid=GDBRP5YJH,
-                # we would like to try not skipping it by commenting out the following lines and see what will happen.
-                # major, minor = util.isolate_major_minor_in_group(self.group)
-                # next_minor = f"{major}.{minor + 1}"
-                # logger.info("Checking if %s is GA'd...", next_minor)
-                # graph_data = await CincinnatiAPI().get_graph(channel=f"fast-{next_minor}")
-                # if not graph_data.get("nodes"):
-                #     logger.info("%s is not GA'd. Blocking Bug check will be skipped.", next_minor)
-                #     no_verify_blocking_bugs = True
-                # else:
-                #     logger.info("%s is GA'd. Blocking Bug check will be enforced.", next_minor)
-
                 no_verify_blocking_bugs = False
                 if assembly_type in [AssemblyTypes.PREVIEW,
                                      AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
+                    no_verify_blocking_bugs = True
+                if self.is_latest_ga_release():
                     no_verify_blocking_bugs = True
 
                 verify_flaws = True
@@ -483,6 +470,20 @@ class PromotePipeline:
     def _get_image_stream_name(assembly_type: AssemblyTypes, arch: str):
         go_arch_suffix = go_suffix_for_arch(arch)
         return f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
+
+    def is_latest_ga_release(self):
+        major, minor = isolate_major_minor_in_group(self.group)
+        github_client = Github(os.environ.get("GITHUB_TOKEN"))
+        repo = github_client.get_repo("openshift/cincinnati-graph-data")
+        contents = repo.get_contents("channels", ref="master")
+        fast_files = []
+        for item in contents:
+            if item.type == 'file' and item.name.startswith('fast-'):
+                match = re.search(r'fast-(\d+).(\d+)', item.name)
+                if match:
+                    fast_files.append((int(match.group(1)), int(match.group(2))))
+        ga_version = sorted(fast_files, key=lambda x: (-(x[0]), -(x[1])))[0]
+        return major == ga_version[0] and minor == ga_version[1]
 
     async def sync_rhcos_srpms(self, assembly_type, data):
         # Sync potential pre-release source on which RHCOS depends. See ART-6419 for details.
