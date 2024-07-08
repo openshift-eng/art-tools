@@ -335,7 +335,7 @@ def assert_signed(config, nvre, koji_api: koji.ClientSession, poll_for=15):
                 nvre=nvre,
                 signed_path=br_arch_base_path,
             ))
-        print(f'Waiting for up to {poll_for} more minutes')
+        logger.info(f'Waiting for up to {poll_for} more minutes, get back to default of 20 minutes after SIGNSERVER-267 is solved')
         poll_for -= 1
         time_used += 1
         time.sleep(60)
@@ -463,7 +463,7 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
 @click.option('--signing-advisory-id', type=click.INT, required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
 @click.option('--signing-advisory-mode', required=False, default="clean", type=click.Choice(['leave', 'clean'], case_sensitive=False),
               help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign')
-@click.option('--poll-for', default=30, type=click.INT, help='Allow up to this number of minutes for auto-signing')
+@click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 @click.option('--include-previous-for', multiple=True, metavar='PACKAGE_NAME_PREFFIX', required=False, help='For specified package (may be package name prefix), include latest-1 tagged nvr in the plashet')
 @click.option('--include-previous', default=False, is_flag=True,
               help='Like --include-previous-for, but performs the operation for all packages found in the tags')
@@ -728,7 +728,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
 @click.option('--signing-advisory-id', type=click.INT, required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
 @click.option('--signing-advisory-mode', required=False, default="clean", type=click.Choice(['leave', 'clean'], case_sensitive=False),
               help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign')
-@click.option('--poll-for', default=30, type=click.INT, help='Allow up to this number of minutes for auto-signing')
+@click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_version: Optional[int], signing_advisory_id: Optional[int], signing_advisory_mode: str, poll_for: int):
     """
     Creates a directory containing arch specific yum repository subdirectories based on RPMs explicitly listed as dependencies in the assembly
@@ -858,7 +858,7 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
 @click.option('--replace', multiple=True, metavar='RPM_PACKAGE_NVR', required=False, help='Include or override the package NVR used in the image(s) with this package version.')
 @click.option('-t', '--brew-tag', multiple=True, required=False, nargs=2, help='One or more brew tags which will be used to sign RPMs required by this plashet: <tag> <product_version>')
 @click.option('--signing-advisory-id', required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
-@click.option('--poll-for', default=30, type=click.INT, help='Allow up to this number of minutes for auto-signing')
+@click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for):
     """
     Creates a directory containing arch specific yum repository subdirectories based on RPMs
