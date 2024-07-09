@@ -17,12 +17,13 @@ from github import Github, UnknownObjectException
 from dockerfile_parse import DockerfileParser
 
 from artcommonlib import exectools
-from artcommonlib.format_util import green_print, yellow_print
+from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
-from doozerlib import constants, util
+from artcommonlib.git_helper import git_clone
 from doozerlib.image import ImageMetadata
+from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import what_is_in_master, extract_version_fields
 from artcommonlib.util import split_git_url, remove_prefix, convert_remote_git_to_ssh, download_file_from_github
 
@@ -577,7 +578,7 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
     # Clone the openshift/release repo so we can open a PR if necessary.
     runtime.logger.info(f'Cloning {release_repo_url}')
 
-    runtime.git_clone(release_repo_url, release_clone_dir)
+    git_clone(release_repo_url, release_clone_dir, git_cache_dir=runtime.git_cache_dir)
     with Dir(release_clone_dir):
         exectools.cmd_gather('git remote remove fork')  # In case we are reusing a cloned path
         exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(release_fork_repo.git_url)}')
@@ -669,7 +670,7 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
             logger.info(f'Skipping non-OKD image: {image_meta.distgit_key}')
             continue
 
-        public_repo_url, public_branch = runtime.get_public_upstream(source_repo_url)
+        public_repo_url, public_branch = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
         if not public_branch:
             public_branch = source_repo_branch
 

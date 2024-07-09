@@ -194,8 +194,7 @@ class TestImageDistGit(TestDistgit):
             .with_args("timeout 999 git push --tags", retries=3)\
             .ordered()
 
-        metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": 999},
-                                                      get_named_semaphore=lambda *_, **__: Lock()),
+        metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": 999}),
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             name="_irrelevant_",
                             logger=flexmock(info=lambda *_: None))
@@ -216,8 +215,7 @@ class TestImageDistGit(TestDistgit):
         # pretending cmd_assert raised an IOError
         flexmock(distgit.exectools).should_receive("cmd_assert").and_raise(IOError("io-error"))
 
-        metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": "_irrelevant_"},
-                                                      get_named_semaphore=lambda *_, **__: Lock()),
+        metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": "_irrelevant_"}),
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             name="_irrelevant_",
                             logger=flexmock(info=lambda *_: None))

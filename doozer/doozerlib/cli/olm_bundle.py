@@ -189,7 +189,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             runtime.logger.error('Error during rebase or build for: {}'.format(operator_nvr))
             record['message'] = str(err)
         finally:
-            runtime.add_record("build_olm_bundle", **record)
+            runtime.record_logger.add_record("build_olm_bundle", **record)
             return record
 
     olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
