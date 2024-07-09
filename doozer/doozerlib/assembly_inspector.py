@@ -379,7 +379,7 @@ class AssemblyInspector:
         content_git_url = image_meta.config.content.source.git.url
         if content_git_url:
             # Make sure things are in https form so we can compare
-            content_git_url, _ = SourceResolver.get_public_upstream(content_git_url, self.group_config.public_upstreams)
+            content_git_url, _ = SourceResolver.get_public_upstream(content_git_url, self.runtime.group_config.public_upstreams)
             build_git_url = artutil.convert_remote_git_to_https(build_inspector.get_source_git_url())
             if content_git_url != build_git_url:
                 # Impermissible as artist can just fix upstream git source in assembly definition
