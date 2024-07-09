@@ -70,12 +70,6 @@ def remove_tmp_working_dir(runtime):
         click.echo("Temporary working directory preserved by operation: %s" % runtime.working_dir)
 
 
-# A named tuple for caching the result of Runtime._resolve_source.
-SourceResolution = namedtuple('SourceResolution', [
-    'source_path', 'url', 'branch', 'public_upstream_url', 'public_upstream_branch'
-])
-
-
 class Runtime(GroupRuntime):
     # Use any time it is necessary to synchronize feedback from multiple threads.
     mutex = RLock()

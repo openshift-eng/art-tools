@@ -963,7 +963,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
             logger.info('Skipping PR check since there is no configured github source URL')
             continue
 
-        public_repo_url, public_branch = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
+        public_repo_url, public_branch, _ = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
         if not public_branch:
             public_branch = source_repo_branch
 

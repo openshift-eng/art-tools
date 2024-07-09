@@ -2497,7 +2497,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             out, _ = exectools.cmd_assert(["git", "remote", "get-url", "origin"], strip=True)
             self.actual_source_url = out  # This may differ from the URL we report to the public
-            self.public_facing_source_url, _ = SourceResolver.get_public_upstream(out, self.runtime.group_config.public_upstreams)  # Point to public upstream if there are private components to the URL
+            self.public_facing_source_url, _, _ = SourceResolver.get_public_upstream(out, self.runtime.group_config.public_upstreams)  # Point to public upstream if there are private components to the URL
             # If private_fix has not already been set (e.g. by --embargoed), determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.private_fix is None:
                 if self.metadata.public_upstream_branch and not SourceResolver.is_branch_commit_hash(self.metadata.public_upstream_branch):

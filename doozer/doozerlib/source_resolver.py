@@ -129,11 +129,11 @@ class SourceResolver:
             if os.path.isdir(source_dir):
                 if not self.upcycle:
                     # Store so that the next attempt to resolve the source hits the map
-                    r = self.source_resolutions[alias]
+                    r = self.register_source_alias(alias, source_dir)
                     path = r.source_path
+                    LOGGER.info("Source '{}' already exists in (skipping clone): {}".format(alias, source_dir))
                     meta.public_upstream_url = r.public_upstream_url
                     meta.public_upstream_branch = r.public_upstream_branch
-                    LOGGER.info("Source '{}' already exists in (skipping clone): {}".format(alias, source_dir))
                     return self.source_resolutions[alias]
                 if self.local:
                     raise IOError("--upcycle mode doesn't work with --local.")
@@ -148,7 +148,7 @@ class SourceResolver:
 
             url = str(source_details["url"])
             if self._group_config.public_upstreams:
-                meta.public_upstream_url, meta.public_upstream_branch = self.get_public_upstream(url, self._group_config.public_upstreams)
+                meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
 
             LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
             try:
@@ -165,8 +165,8 @@ class SourceResolver:
                         exectools.cmd_assert(f'git checkout {clone_branch}')
 
                 # fetch public upstream source
-                if meta.public_upstream_url and meta.public_upstream_branch:
-                    self.setup_and_fetch_public_upstream_source(meta.public_upstream_url, meta.public_upstream_branch, source_dir)
+                if has_public_upstream:
+                    self.setup_and_fetch_public_upstream_source(meta.public_upstream_url, meta.public_upstream_branch or clone_branch, source_dir)
 
             except IOError as e:
                 LOGGER.info("Unable to checkout branch {}: {}".format(clone_branch, str(e)))
@@ -314,7 +314,7 @@ class SourceResolver:
             public_upstream_branch = None
             if branch != 'HEAD' and self._group_config.public_upstreams:
                 # If branch == HEAD, our source is a detached HEAD.
-                public_upstream_url, public_upstream_branch = self.get_public_upstream(url, self._group_config.public_upstreams)
+                public_upstream_url, public_upstream_branch, _ = self.get_public_upstream(url, self._group_config.public_upstreams)
                 if public_upstream_url and not public_upstream_branch:
                     public_upstream_branch = branch
 
@@ -339,7 +339,7 @@ class SourceResolver:
             return resolution
 
     @staticmethod
-    def get_public_upstream(remote_git: str, public_upstreams: ListModel) -> Tuple[str, Optional[str]]:
+    def get_public_upstream(remote_git: str, public_upstreams: ListModel) -> Tuple[str, Optional[str], bool]:
         """
         Some upstream repo are private in order to allow CVE workflows. While we
         may want to build from a private upstream, we don't necessarily want to confuse
@@ -351,10 +351,11 @@ class SourceResolver:
         applicable mapping, the incoming url will still be normalized into https.
         :param remote_git: The URL to analyze for private repo patterns.
         :param public_upstreams: The public upstream configuration from group.yaml.
-        :return: tuple (url, branch)
+        :return: tuple (url, branch, has_public_upstream)
             - url: An https normalized remote address with private repo information replaced. If there is no
                    applicable private repo replacement, remote_git will be returned (normalized to https).
             - branch: Optional public branch name if the public upstream source use a different branch name from the private upstream.
+            - has_public_upstream: True if the public upstream source is found in the public_upstreams mapping.
         """
         remote_https = art_util.convert_remote_git_to_https(remote_git)
 
@@ -380,9 +381,9 @@ class SourceResolver:
                         target_pub_branch = upstream.get("public_branch")
 
             if target_priv_prefix:
-                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix):]}', target_pub_branch
+                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix):]}', target_pub_branch, True
 
-        return remote_https, None
+        return remote_https, None, False
 
     @staticmethod
     def setup_and_fetch_public_upstream_source(public_source_url: str, public_upstream_branch: str, source_dir: str):

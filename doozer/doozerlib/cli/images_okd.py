@@ -670,7 +670,7 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
             logger.info(f'Skipping non-OKD image: {image_meta.distgit_key}')
             continue
 
-        public_repo_url, public_branch = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
+        public_repo_url, public_branch, _ = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
         if not public_branch:
             public_branch = source_repo_branch
 
