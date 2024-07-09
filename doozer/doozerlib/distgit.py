@@ -503,12 +503,7 @@ class ImageDistGitRepo(DistGitRepo):
 
     @property
     def image_build_method(self):
-        build_method = self.runtime.group_config.default_image_build_method or "osbs2"
-        # If our config specifies something, override with that.
-        if self.config.image_build_method is not Missing:
-            build_method = self.config.image_build_method
-
-        return build_method
+        return self.metadata.image_build_method
 
     def _write_fetch_artifacts(self):
         # Write fetch-artifacts-url.yaml for OSBS to fetch external artifacts

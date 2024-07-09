@@ -185,7 +185,7 @@ class Runtime(GroupRuntime):
         # allows mapping from name or distgit to meta
         self.image_name_map = {}
         # allows mapping from name in bundle to meta
-        self.name_in_bundle_map: Dict[str, ImageMetadata] = {}
+        self.name_in_bundle_map: Dict[str, str] = {}
 
         # holds untouched group config
         self.raw_group_config = {}

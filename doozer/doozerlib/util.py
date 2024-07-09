@@ -50,7 +50,7 @@ def dict_get(dct, path, default=DICT_EMPTY):
     return dct
 
 
-def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, source_dir: str):
+def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, source_dir: Union[str, Path]):
     """
     Determine if the public upstream branch includes the specified commit.
 
@@ -58,7 +58,8 @@ def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, sou
     :param public_upstream_branch: Git branch of the public upstream source
     :param source_dir: Path to the local Git repository
     """
-    cmd = ["git", "merge-base", "--is-ancestor", "--", revision, "public_upstream/" + public_upstream_branch]
+    out, _ = exectools.cmd_assert(["git", "-C", source_dir, "remote"])
+    cmd = ["git", "-C", str(source_dir), "merge-base", "--is-ancestor", "--", revision, "public_upstream/" + public_upstream_branch]
     # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
     # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
     rc, out, err = exectools.cmd_gather(cmd)
