@@ -153,14 +153,18 @@ class ConfigScanSources:
         """
 
         with Dir(path):
+            # Check if the first <commit> is an ancestor of the second <commit>,
+            # and exit with status 0 if true, or with status 1 if not.
+            # Errors are signaled by a non-zero status that is not 1.
             rc, _, _ = exectools.cmd_gather(['git', 'merge-base', '--is-ancestor',
                                              f'public_upstream/{pub_branch_name}', f'origin/{priv_branch_name}'])
-            if rc:
-                self.runtime.logger.info('Public upstream is ahead of private for %s: will need to rebase', repo_name)
-                return False
-
-        self.runtime.logger.info('Private upstream is ahead of public for %s: no need to rebase', repo_name)
-        return True
+        if rc == 1:
+            self.runtime.logger.info('Public upstream is ahead of private for %s: will need to rebase', repo_name)
+            return False
+        if rc == 0:
+            self.runtime.logger.info('Private upstream is ahead of public for %s: no need to rebase', repo_name)
+            return True
+        raise IOError(f'Could not determine ancestry between public and private upstreams for {repo_name}')
 
     def rebase_into_priv(self):
         self.runtime.logger.info('Rebasing public upstream contents into openshift-priv')
