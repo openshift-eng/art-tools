@@ -1,6 +1,5 @@
 import asyncio
 import re
-import yaml
 import json
 from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
@@ -177,7 +176,8 @@ class BugValidator:
         if self.problems:
             if self.output == 'text':
                 print("Found the following problems, please investigate")
-                print(yaml.dump(self.problems, indent=2, sort_keys=False))
+                for problem in self.problems:
+                    print(problem)
             elif self.output == 'json':
                 print(json.dumps(self.problems, indent=2, sort_keys=False))
             elif self.output == 'slack':
