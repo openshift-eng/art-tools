@@ -72,6 +72,10 @@ class Bug:
     def whiteboard_component(self):
         raise NotImplementedError
 
+    @property
+    def keywords(self):
+        raise NotImplementedError
+
     def all_advisory_ids(self):
         raise NotImplementedError
 
@@ -158,6 +162,10 @@ class BugzillaBug(Bug):
         return self.bug.id
 
     @property
+    def keywords(self):
+        return self.bug.keywords
+
+    @property
     def product(self):
         return self.bug.product
 
@@ -223,7 +231,7 @@ class BugzillaBug(Bug):
 
 class JIRABug(Bug):
     def __getattr__(self, attr):
-        if attr in self.__dict__:
+        if attr in dir(self):
             return getattr(self, attr)
         return getattr(self.bug.fields, attr)
 
