@@ -8,6 +8,7 @@ from elliottlib.cli.verify_attached_bugs_cli import BugValidator
 import elliottlib.cli.verify_attached_bugs_cli as verify_attached_bugs_cli
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.bzutil import JIRABugTracker, BugzillaBugTracker
+from artcommonlib.util import is_release_ga
 
 
 class VerifyAttachedBugs(IsolatedAsyncioTestCase):
@@ -23,12 +24,12 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         validator = BugValidator(runtime, True)
         self.assertEqual(validator.target_releases, ['4.9.z'])
 
-    def test_verify_bugs_skip_blocking_bugs_for_prerelease(self):
+    @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
+    def test_verify_bugs_skip_blocking_bugs_for_prerelease(self, is_release_ga: False):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(False)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -51,12 +52,12 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
         self.assertEqual(result.exit_code, 0)
 
-    def test_verify_bugs_with_sweep_cli(self):
+    @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
+    def test_verify_bugs_with_sweep_cli(self, is_release_ga: False):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -93,12 +94,12 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
     @patch('elliottlib.errata_async.AsyncErrataAPI._generate_auth_header')
-    def test_verify_attached_bugs_cli_fail(self, *_):
+    @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
+    def test_verify_attached_bugs_cli_fail(self, is_release_ga: False, *_):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
         client = flexmock()

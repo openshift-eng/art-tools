@@ -27,7 +27,7 @@ from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.exectools import to_thread, manifest_tool
 from artcommonlib.rhcos import get_primary_container_name
-from artcommonlib.util import isolate_major_minor_in_group
+from artcommonlib.util import isolate_major_minor_in_group, is_release_ga
 from pyartcd.locks import Lock
 from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 from pyartcd.util import nightlies_with_pullspecs
@@ -77,6 +77,7 @@ class PromotePipeline:
                  ) -> None:
         self.runtime = runtime
         self.group = group
+        self.major, self.minor = isolate_major_minor_in_group(group)
         self.assembly = assembly
         self.skip_blocker_bug_check = skip_blocker_bug_check
         self.skip_attached_bug_check = skip_attached_bug_check
@@ -255,7 +256,7 @@ class PromotePipeline:
                 if assembly_type in [AssemblyTypes.PREVIEW,
                                      AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
                     no_verify_blocking_bugs = True
-                if self.is_latest_ga_release():
+                if is_release_ga(self.major, int(self.minor) + 1):
                     no_verify_blocking_bugs = True
 
                 verify_flaws = True
@@ -471,23 +472,8 @@ class PromotePipeline:
         go_arch_suffix = go_suffix_for_arch(arch)
         return f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
 
-    def is_latest_ga_release(self):
-        major, minor = isolate_major_minor_in_group(self.group)
-        github_client = Github(os.environ.get("GITHUB_TOKEN"))
-        repo = github_client.get_repo("openshift/cincinnati-graph-data")
-        contents = repo.get_contents("channels", ref="master")
-        fast_files = []
-        for item in contents:
-            if item.type == 'file' and item.name.startswith('fast-'):
-                match = re.search(r'fast-(\d+).(\d+)', item.name)
-                if match:
-                    fast_files.append((int(match.group(1)), int(match.group(2))))
-        ga_version = sorted(fast_files, key=lambda x: (-(x[0]), -(x[1])))[0]
-        return major == ga_version[0] and minor == ga_version[1]
-
     async def sync_rhcos_srpms(self, assembly_type, data):
         # Sync potential pre-release source on which RHCOS depends. See ART-6419 for details.
-        major, minor = isolate_major_minor_in_group(self.group)
         if assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
             src_output_dir = self._working_dir / "rhcos_src_staging"
             src_output_dir.mkdir(parents=True, exist_ok=True)
@@ -689,8 +675,7 @@ class PromotePipeline:
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
-        major, minor = isolate_major_minor_in_group(self.group)
-        if (major > 4 or minor >= 14) or (major == 4 and minor >= 10 and build_arch == 'x86_64'):
+        if (self.major > 4 or self.minor >= 14) or (self.major == 4 and self.minor >= 10 and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
@@ -779,8 +764,7 @@ class PromotePipeline:
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
-        major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 16:
+        if self.major == 4 and self.minor < 16:
             rhel_version = 'rhel8'
             binary_name = 'openshift-baremetal-install'
         else:
@@ -944,12 +928,11 @@ class PromotePipeline:
             self._logger.info("Skipping microshift build because SKIP_BUILD_MICROSHIFT is set.")
             return
 
-        major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 14:
+        if self.major == 4 and self.minor < 14:
             self._logger.info("Skip microshift build for version < 4.14")
             return
 
-        jenkins.start_build_microshift(f'{major}.{minor}', self.assembly, self.runtime.dry_run)
+        jenkins.start_build_microshift(f'{self.major}.{self.minor}', self.assembly, self.runtime.dry_run)
 
     @staticmethod
     def get_live_id(advisory_info: Dict):
@@ -1067,9 +1050,8 @@ class PromotePipeline:
         if not dest_image_info or self.permit_overwrite:
             if dest_image_info:
                 self._logger.warning("The existing release image %s will be overwritten!", dest_image_pullspec)
-            major, minor = isolate_major_minor_in_group(self.group)
             # Ensure build-sync has been run for this assembly
-            is_name = f"{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
+            is_name = f"{self.major}.{self.minor}-art-assembly-{self.assembly}{go_arch_suffix}"
             imagestream = await self.get_image_stream(f"ocp{go_arch_suffix}", is_name)
             if not imagestream:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
@@ -1108,9 +1090,8 @@ class PromotePipeline:
                 if reference_release:
                     dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-release": reference_release}}
                 else:
-                    major, minor = isolate_major_minor_in_group(self.group)
                     go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
-                    dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
+                    dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{self.major}.{self.minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
 
         if not tag_stable:
             self._logger.info("Release image %s will not appear on the release controller.", dest_image_pullspec)
@@ -1174,13 +1155,12 @@ class PromotePipeline:
         if not dest_image_digest or self.permit_overwrite:
             if dest_image_digest:
                 self._logger.warning("The existing payload %s will be overwritten!", dest_image_pullspec)
-            major, minor = isolate_major_minor_in_group(self.group)
             # The imagestream for the assembly in ocp-multi contains a single tag.
             # That single istag points to a top-level manifest-list on quay.io.
             # Each entry in the manifest-list is an arch-specific heterogeneous payload.
             # We need to fetch that manifest-list and recreate all arch-specific heterogeneous payloads first,
             # then recreate the top-level manifest-list.
-            multi_is_name = f"{major}.{minor}-art-assembly-{self.assembly}-multi"
+            multi_is_name = f"{self.major}.{self.minor}-art-assembly-{self.assembly}-multi"
             multi_is = await self.get_image_stream("ocp-multi", multi_is_name)
             if not multi_is:
                 raise ValueError(f"Image stream {multi_is_name} is not found. Did you run build-sync?")
@@ -1548,8 +1528,7 @@ class PromotePipeline:
         upstream_repo = github_client.get_repo("openshift/release-tests")
         fork_repo = github_client.get_repo("openshift-bot/release-tests")
         update_message = f"Add release {release_name}"
-        major, minor = isolate_major_minor_in_group(self.group)
-        file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
+        file_path = f"_releases/{self.major}.{self.minor}/{self.major}.{self.minor}.z.yaml"
         self._logger.info("Updating QE release repo")
         # create branch
         for branch in fork_repo.get_branches():
