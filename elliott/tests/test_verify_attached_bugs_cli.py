@@ -23,12 +23,12 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         validator = BugValidator(runtime, True)
         self.assertEqual(validator.target_releases, ['4.9.z'])
 
+    @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga', return_value=True)
     def test_verify_bugs_skip_blocking_bugs_for_prerelease(self):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(False)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])

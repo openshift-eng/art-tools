@@ -444,7 +444,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
     }))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
-    async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    @patch("pyartcd.pipelines.promote.is_release_ga", return_value=False)
+    async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, is_release_ga: False, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                               build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
         runtime = MagicMock(

@@ -256,7 +256,7 @@ class PromotePipeline:
                 if assembly_type in [AssemblyTypes.PREVIEW,
                                      AssemblyTypes.CANDIDATE] or self.assembly.endswith(".0"):
                     no_verify_blocking_bugs = True
-                if is_release_ga(self.major, self.minor):
+                if is_release_ga(self.major, int(self.minor) + 1):
                     no_verify_blocking_bugs = True
 
                 verify_flaws = True
