@@ -5,7 +5,7 @@ import click
 
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
-from artcommonlib.format_util import red_print
+from artcommonlib.format_util import red_print, yellow_print
 from artcommonlib.util import is_release_ga
 from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
@@ -63,7 +63,7 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     """
     runtime.initialize()
     if advisories:
-        click.echo("WARNING: Cannot verify advisory bug sorting. To verify that bugs are attached to the "
+        yellow_print("WARNING: Cannot verify advisory bug sorting. To verify that bugs are attached to the "
                    "correct release advisories, run with --assembly=<release>")
         advisory_id_map = {'?': a for a in advisories}
     else:

@@ -53,7 +53,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         self.assertEqual(result.exit_code, 0)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
-    def test_verify_bugs_with_sweep_cli(self, is_release_ga: True):
+    def test_verify_bugs_with_sweep_cli(self, is_release_ga: False):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
