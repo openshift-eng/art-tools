@@ -63,8 +63,7 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     """
     runtime.initialize()
     if advisories:
-        yellow_print("WARNING: Cannot verify advisory bug sorting. To verify that bugs are attached to the "
-                   "correct release advisories, run with --assembly=<release>")
+        yellow_print("WARNING: Cannot verify advisory bug sorting. To verify that bugs are attached to the correct release advisories, run with --assembly=<release>")
         advisory_id_map = {'?': a for a in advisories}
     else:
         advisory_id_map = runtime.get_default_advisories()
