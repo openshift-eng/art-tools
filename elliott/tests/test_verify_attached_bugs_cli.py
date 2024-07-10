@@ -25,7 +25,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         self.assertEqual(validator.target_releases, ['4.9.z'])
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
-    def test_verify_bugs_skip_blocking_bugs_for_prerelease(self):
+    def test_verify_bugs_skip_blocking_bugs_for_prerelease(self, is_release_ga: False):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
@@ -53,7 +53,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         self.assertEqual(result.exit_code, 0)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
-    def test_verify_bugs_with_sweep_cli(self):
+    def test_verify_bugs_with_sweep_cli(self, is_release_ga: False):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
@@ -96,7 +96,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
     @patch('elliottlib.errata_async.AsyncErrataAPI._generate_auth_header')
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
-    def test_verify_attached_bugs_cli_fail(self, *_):
+    def test_verify_attached_bugs_cli_fail(self, is_release_ga: False, *_):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
