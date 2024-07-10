@@ -6,6 +6,7 @@ import click
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
+from artcommonlib.util import is_release_ga
 from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
@@ -184,15 +185,9 @@ class BugValidator:
 
         # Make sure the next version is GA before regression check
         major, minor = self.runtime.get_major_minor()
-        version = f"{major}.{minor + 1}"
-        try:
-            next_is_ga = self.runtime.is_version_in_lifecycle_phase("release", version)
-        except Exception as e:
-            logger.warning(f"Failed to determine if {version} is GA: {e}. Assuming it is not GA.")
-            next_is_ga = False
-        if not next_is_ga:
+        if is_release_ga(major, int(minor) + 1):
             no_verify_blocking_bugs = True
-            logger.info(f"Skipping regression check because {version} is not GA")
+            logger.info(f"Skipping regression check because {major}.{int(minor) + 1} is not GA")
 
         if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
