@@ -161,6 +161,16 @@ def get_inflight(assembly, group):
     return inflight_release
 
 
+def is_release_ga(major, minor):
+    """
+    Check if this release version is GA
+    """
+    ga_date = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor}/?fields=ga_date&format=json').json()['ga_date']
+    if not ga_date:
+        return False # furture release date is not set
+    return datetime.now() > datetime.strptime(ga_date, "%Y-%m-%d")
+
+
 def isolate_rhel_major_from_version(version: str) -> Optional[int]:
     """
     E.g. '9.2' => 9
