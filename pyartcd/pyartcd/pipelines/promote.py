@@ -416,6 +416,17 @@ class PromotePipeline:
                         lock_id=lock_identifier
                     )
 
+                # publish rhcos on mirror via rhcos_sync job
+                # only if release is EC or a GA release (.0)
+                # job will not mirror & overwrite if destination already exists (sync already happened)
+                # if that is desired, run rhcos_sync with FORCE=true
+                is_ga = assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0")
+                if assembly_type == AssemblyTypes.PREVIEW or is_ga:
+                    for arch, pullspec in pullspecs.items():
+                        if arch == "multi":
+                            continue
+                        jenkins.start_rhcos_sync(pullspec, dry_run=self.runtime.dry_run)
+
         except Exception as err:
             self._logger.exception(err)
             message = f"Promoting release {release_name} failed"
@@ -473,6 +484,8 @@ class PromotePipeline:
             await self.ocp_doomsday_backup()
 
         json.dump(data, sys.stdout)
+
+        await self._slack_client.say_in_thread(f":white_check_mark: promote completed for {release_name}.")
 
     @staticmethod
     def _get_release_stream_name(assembly_type: AssemblyTypes, arch: str):

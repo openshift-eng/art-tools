@@ -31,6 +31,7 @@ class Jobs(Enum):
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
+    RHCOS_SYNC = 'aos-cd-builds/build%2Frhcos_sync'
 
 
 def get_jenkins_url():
@@ -361,6 +362,21 @@ def start_microshift_sync(version: str, assembly: str, **kwargs):
         params={
             'BUILD_VERSION': version,
             'ASSEMBLY': assembly
+        },
+        **kwargs
+    )
+
+
+def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> Optional[str]:
+    return start_build(
+        job=Jobs.RHCOS_SYNC,
+        params={
+            'FROM_RELEASE_TAG': release_tag_or_pullspec,
+            'DRY_RUN': dry_run,
+            # job determines these based on FROM_RELEASE_TAG
+            'OCP_VERSION': 'auto',
+            'ARCH': 'auto',
+            'MIRROR_PREFIX': 'auto',
         },
         **kwargs
     )
