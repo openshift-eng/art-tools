@@ -5,6 +5,7 @@ from typing import Dict, Iterable, List, Set
 
 import click
 from errata_tool import Erratum
+from artcommonlib import arch_util
 
 from elliottlib import constants
 from elliottlib.bzutil import sort_cve_bugs
@@ -12,6 +13,7 @@ from elliottlib.cli.common import (cli, click_coroutine, find_default_advisory,
                                    use_default_advisory_option)
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
+from elliottlib.rpm_utils import parse_nvr
 from elliottlib.runtime import Runtime
 from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any, BugTracker
 
@@ -153,11 +155,22 @@ def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
 async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Erratum, flaw_bugs: Iterable[Bug], attached_tracker_bugs: List[Bug], tracker_flaws: Dict[int, Iterable], dry_run: bool):
     # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
     attached_builds = await errata_api.get_builds_flattened(advisory.errata_id)
+    attached_components = {parse_nvr(build)["name"] for build in attached_builds}
+
     cve_components_mapping: Dict[str, Set[str]] = {}
     for tracker in attached_tracker_bugs:
-        component_name = tracker.whiteboard_component
-        if not component_name:
+        whiteboard_component = tracker.whiteboard_component
+        if not whiteboard_component:
             raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
+        if whiteboard_component == "rhcos":
+            # rhcos trackers are special, since they have per-architecture component names
+            # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
+            # but the tracker bug has a generic "rhcos" component name
+            # so we need to associate this CVE with all per-architecture component names
+            component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
+        else:
+            component_names = {whiteboard_component}
+
         flaw_id_bugs = {flaw_bug.id: flaw_bug for flaw_bug in flaw_bugs}
         for flaw_id in tracker_flaws[tracker.id]:
             if flaw_id not in flaw_id_bugs:
@@ -166,7 +179,7 @@ async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Errat
             if len(alias) != 1:
                 raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
             cve = alias[0]
-            cve_components_mapping.setdefault(cve, set()).add(component_name)
+            cve_components_mapping.setdefault(cve, set()).update(component_names)
 
     await AsyncErrataUtils.associate_builds_with_cves(errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=dry_run)
 
