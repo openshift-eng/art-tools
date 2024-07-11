@@ -77,6 +77,7 @@ class PromotePipeline:
                  ) -> None:
         self.runtime = runtime
         self.group = group
+        self.major, self.minor = isolate_major_minor_in_group(group)
         self.assembly = assembly
         self.skip_blocker_bug_check = skip_blocker_bug_check
         self.skip_attached_bug_check = skip_attached_bug_check
@@ -499,7 +500,6 @@ class PromotePipeline:
 
     async def sync_rhcos_srpms(self, assembly_type, data):
         # Sync potential pre-release source on which RHCOS depends. See ART-6419 for details.
-        major, minor = isolate_major_minor_in_group(self.group)
         if assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
             src_output_dir = self._working_dir / "rhcos_src_staging"
             src_output_dir.mkdir(parents=True, exist_ok=True)
@@ -701,8 +701,7 @@ class PromotePipeline:
 
         # Starting from 4.14, oc-mirror will be synced for all arches. See ART-6820 and ART-6863
         # oc-mirror was introduced in 4.10, so skip for <= 4.9.
-        major, minor = isolate_major_minor_in_group(self.group)
-        if (major > 4 or minor >= 14) or (major == 4 and minor >= 10 and build_arch == 'x86_64'):
+        if (self.major > 4 or self.minor >= 14) or (self.major == 4 and self.minor >= 10 and build_arch == 'x86_64'):
             # oc image  extract requires an empty destination directory. So do this before extracting tools.
             # oc adm release extract --tools does not require an empty directory.
             image_stat, oc_mirror_pullspec = get_release_image_pullspec(pullspec, "oc-mirror")
@@ -791,8 +790,7 @@ class PromotePipeline:
         self._logger.info('baremetal-installer pullspec: %s', baremetal_installer_pullspec)
 
         # Check rhel version (used for archive naming)
-        major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 16:
+        if self.major == 4 and self.minor < 16:
             rhel_version = 'rhel8'
             binary_name = 'openshift-baremetal-install'
         else:
@@ -956,12 +954,11 @@ class PromotePipeline:
             self._logger.info("Skipping microshift build because SKIP_BUILD_MICROSHIFT is set.")
             return
 
-        major, minor = isolate_major_minor_in_group(self.group)
-        if major == 4 and minor < 14:
+        if self.major == 4 and self.minor < 14:
             self._logger.info("Skip microshift build for version < 4.14")
             return
 
-        jenkins.start_build_microshift(f'{major}.{minor}', self.assembly, self.runtime.dry_run)
+        jenkins.start_build_microshift(f'{self.major}.{self.minor}', self.assembly, self.runtime.dry_run)
 
     @staticmethod
     def get_live_id(advisory_info: Dict):
@@ -1079,9 +1076,8 @@ class PromotePipeline:
         if not dest_image_info or self.permit_overwrite:
             if dest_image_info:
                 self._logger.warning("The existing release image %s will be overwritten!", dest_image_pullspec)
-            major, minor = isolate_major_minor_in_group(self.group)
             # Ensure build-sync has been run for this assembly
-            is_name = f"{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
+            is_name = f"{self.major}.{self.minor}-art-assembly-{self.assembly}{go_arch_suffix}"
             imagestream = await self.get_image_stream(f"ocp{go_arch_suffix}", is_name)
             if not imagestream:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
@@ -1120,9 +1116,8 @@ class PromotePipeline:
                 if reference_release:
                     dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-release": reference_release}}
                 else:
-                    major, minor = isolate_major_minor_in_group(self.group)
                     go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
-                    dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
+                    dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{self.major}.{self.minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
 
         if not tag_stable:
             self._logger.info("Release image %s will not appear on the release controller.", dest_image_pullspec)
@@ -1186,13 +1181,12 @@ class PromotePipeline:
         if not dest_image_digest or self.permit_overwrite:
             if dest_image_digest:
                 self._logger.warning("The existing payload %s will be overwritten!", dest_image_pullspec)
-            major, minor = isolate_major_minor_in_group(self.group)
             # The imagestream for the assembly in ocp-multi contains a single tag.
             # That single istag points to a top-level manifest-list on quay.io.
             # Each entry in the manifest-list is an arch-specific heterogeneous payload.
             # We need to fetch that manifest-list and recreate all arch-specific heterogeneous payloads first,
             # then recreate the top-level manifest-list.
-            multi_is_name = f"{major}.{minor}-art-assembly-{self.assembly}-multi"
+            multi_is_name = f"{self.major}.{self.minor}-art-assembly-{self.assembly}-multi"
             multi_is = await self.get_image_stream("ocp-multi", multi_is_name)
             if not multi_is:
                 raise ValueError(f"Image stream {multi_is_name} is not found. Did you run build-sync?")
@@ -1560,8 +1554,7 @@ class PromotePipeline:
         upstream_repo = github_client.get_repo("openshift/release-tests")
         fork_repo = github_client.get_repo("openshift-bot/release-tests")
         update_message = f"Add release {release_name}"
-        major, minor = isolate_major_minor_in_group(self.group)
-        file_path = f"_releases/{major}.{minor}/{major}.{minor}.z.yaml"
+        file_path = f"_releases/{self.major}.{self.minor}/{self.major}.{self.minor}.z.yaml"
         self._logger.info("Updating QE release repo")
         # create branch
         for branch in fork_repo.get_branches():
