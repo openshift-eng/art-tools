@@ -3,6 +3,8 @@ BREW_ARCH_SUFFIXES = ["", "-s390x", "-ppc64le", "-aarch64", "-multi"]
 GO_ARCHES = ["amd64", "s390x", "ppc64le", "arm64", "multi"]
 GO_ARCH_SUFFIXES = ["", "-s390x", "-ppc64le", "-arm64", "-multi"]
 
+RHCOS_BREW_COMPONENTS = {f"rhcos-{arch}" for arch in BREW_ARCHES} - {"rhcos-multi"}
+
 
 def go_arch_for_brew_arch(brew_arch: str) -> str:
     if brew_arch in GO_ARCHES:

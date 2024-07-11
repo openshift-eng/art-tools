@@ -4,12 +4,13 @@ import json
 from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 
-from artcommonlib import logutil
+from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
 from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
+from elliottlib.rpm_utils import parse_nvr
 from elliottlib.runtime import Runtime
 from elliottlib.util import minor_version_tuple
 from elliottlib.bzutil import Bug
@@ -23,7 +24,7 @@ logger = logutil.get_logger(__name__)
 
 @cli.command("verify-attached-bugs",
              short_help="Run validations on bugs attached to release advisories and report results")
-@click.option("--verify-bug-status", is_flag=True,
+@click.option("--verify-bug-status/--no-verify-bug-status", is_flag=True,
               help="Check that bugs of advisories are all ON_QA or more",
               type=bool, default=True)
 @click.option("--verify-flaws", is_flag=True,
@@ -297,11 +298,25 @@ class BugValidator:
             self._complain(f"Advisory {advisory_id} is of type {advisory_type} but has first-fix flaw bugs "
                            f"{first_fix_flaw_ids}. It should be converted to RHSA.")
 
+        # Get attached builds
+        attached_builds = await self.errata_api.get_builds_flattened(advisory_id)
+        attached_components = {parse_nvr(build)["name"] for build in attached_builds}
+
         # Validate CVE mappings (of CVEs and builds)
         flaw_id_bugs = {f.id: f for f in first_fix_flaw_bugs}
         cve_components_mapping: Dict[str, Set[str]] = {}
         for tracker in attached_trackers:
-            component_name = tracker.whiteboard_component
+            whiteboard_component = tracker.whiteboard_component
+            if not whiteboard_component:
+                raise ValueError(f"Bug {tracker.id} doesn't have a valid whiteboard component.")
+            if whiteboard_component == "rhcos":
+                # rhcos trackers are special, since they have per-architecture component names
+                # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
+                # but the tracker bug has a generic "rhcos" component name
+                # so we need to associate this CVE with all per-architecture component names
+                component_names = attached_components & arch_util.RHCOS_BREW_COMPONENTS
+            else:
+                component_names = {whiteboard_component}
             flaw_ids = tracker_flaws[tracker.id]
             for flaw_id in flaw_ids:
                 if flaw_id not in flaw_id_bugs:  # This means associated flaw wasn't considered a first fix
@@ -310,9 +325,8 @@ class BugValidator:
                 if len(alias) != 1:
                     raise ValueError(f"Bug {flaw_id} should have exactly 1 CVE alias.")
                 cve = alias[0]
-                cve_components_mapping.setdefault(cve, set()).add(component_name)
+                cve_components_mapping.setdefault(cve, set()).update(component_names)
 
-        attached_builds = await self.errata_api.get_builds_flattened(advisory_id)
         try:
             extra_exclusions, missing_exclusions = await AsyncErrataUtils.validate_cves_and_get_exclusions_diff(
                 self.errata_api,

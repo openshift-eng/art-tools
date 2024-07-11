@@ -5,7 +5,7 @@ import traceback
 from datetime import datetime
 from typing import List, Dict, Set
 
-from artcommonlib import logutil
+from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
 from elliottlib.bzutil import BugTracker, Bug, JIRABug
@@ -275,6 +275,10 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
 def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                             permitted_bug_ids, operator_bundle_advisory: str = "metadata",
                             permissive=False, major_version: int = 4):
+
+    """ Categorize bugs into different types of advisories
+    :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
+    """
     issues = []
 
     bugs_by_type: Dict[str, type_bug_set] = {
@@ -344,7 +348,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         if not advisory:
             continue
         attached_builds = errata.get_advisory_nvrs(advisory)
-        packages = list(attached_builds.keys())
+        packages = set(attached_builds.keys())
         exception_packages = []
         if kind == 'image':
             # golang builder is a special tracker component
@@ -363,6 +367,13 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                     logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
                 if package_name in exception_packages:
                     logger.info(f"{package_name} bugs included by default")
+                found.add(bug)
+                bugs_by_type[kind].add(bug)
+            elif package_name == "rhcos" and packages & arch_util.RHCOS_BREW_COMPONENTS:
+                # rhcos trackers are special, since they have per-architecture component names
+                # (rhcos-x86_64, rhcos-aarch64, ...) in Brew,
+                # but the tracker bug has a generic "rhcos" component name
+                logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
 

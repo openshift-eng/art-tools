@@ -22,7 +22,7 @@ from elliottlib.util import chunk
 from elliottlib import bzutil
 from requests_gssapi import HTTPSPNEGOAuth
 from errata_tool import Erratum, ErrataException, ErrataConnector
-from typing import List
+from typing import List, Dict
 
 logger = logutil.get_logger(__name__)
 
@@ -603,7 +603,7 @@ def get_advisory_nvrs(advisory):
     except exceptions.ErrataToolError as ex:
         raise exceptions.ElliottFatalError(getattr(ex, 'message', repr(ex)))
 
-    all_advisory_nvrs = {}
+    all_advisory_nvrs: Dict[str, str] = {}
     # Results come back with top level keys which are brew tags
     for tag in builds.keys():
         # Each top level has a key 'builds' which is a list of dicts
