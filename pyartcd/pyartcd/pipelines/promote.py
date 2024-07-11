@@ -194,7 +194,6 @@ class PromotePipeline:
                 logger.info("Blocker Bug check is skipped.")
             else:
                 logger.info("Checking for blocker bugs...")
-                # TODO: Needs an option in releases.yml to skip this check
                 try:
                     await self.check_blocker_bugs()
                 except VerificationError as err:
@@ -206,18 +205,23 @@ class PromotePipeline:
             if assembly_type == AssemblyTypes.STANDARD:
                 # Attempt to move all advisories to QE
                 tasks = []
-                for impetus, advisory in impetus_advisories.items():
+                sorted_advisories = sorted(impetus_advisories.items())
+                for impetus, advisory in sorted_advisories:
+                    # microshift advisory is special, and it will not be ready at this time
+                    if impetus == "microshift":
+                        continue
                     if not advisory or advisory <= 0:
                         continue
                     logger.info("Moving advisory %s to QE...", advisory)
-                    if not self.runtime.dry_run:
-                        tasks.append(self.change_advisory_state(advisory, "QE"))
-                    else:
-                        logger.warning("[DRY RUN] Would have moved advisory %s to QE", advisory)
-                try:
-                    await asyncio.gather(*tasks)
-                except ChildProcessError as err:
-                    logger.warn("Error moving advisory %s to QE: %s", advisory, err)
+                    tasks.append(self.change_advisory_state(advisory, "QE"))
+
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for i in range(len(results)):
+                    if isinstance(results[i], Exception):
+                        impetus, advisory = sorted_advisories[i]
+                        logger.warn("Error moving advisory %s %s to QE: %s", impetus, advisory, results[i])
+                        await self._slack_client.say_in_thread(
+                            f"Unable to move {impetus} advisory {advisory} to QE. Details in log.")
 
             # Ensure the image advisory is in QE (or later) state.
             image_advisory = impetus_advisories.get("image", 0)

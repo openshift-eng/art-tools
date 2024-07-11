@@ -379,6 +379,9 @@ class PrepareReleasePipeline:
 
         # Move advisories to QE
         for impetus, advisory in advisories.items():
+            # microshift advisory is special, and it will not be ready at this time
+            if impetus == 'microshift':
+                continue
             if impetus == 'metadata' and (self.advance_release or self.pre_release):
                 # We don't need to move emtpy metadata advisory if it's an advance release
                 _LOGGER.info("Not moving metadata advisory to QE since prerelease/advance release detected")
