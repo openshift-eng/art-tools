@@ -357,7 +357,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
 
         for bug in tracker_bugs:
             package_name = bug.whiteboard_component
-            if package_name == "microshift" and len(packages) == 0:
+            if kind == "microshift" and package_name == "microshift" and len(packages) == 0:
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
                 logger.info(f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached")
