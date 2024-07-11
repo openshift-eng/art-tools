@@ -12,8 +12,10 @@ import click
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
 
+from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group
 from doozerlib.cli.get_nightlies import rc_api_url
+from doozerlib.util import infer_assembly_type
 from pyartcd import exectools, constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
@@ -74,6 +76,18 @@ class GenAssemblyPipeline:
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._working_dir / "doozer-working")
         self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path if data_path else \
             self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
+
+        # Infer assembly type
+        self.assembly_type = infer_assembly_type(self.custom, self.assembly)
+
+        # For 4.18+ there will be release version in the release name. For example 4.18.0-0.ec.0, 4.18.0-0.rc.0, 4.18.2-0 etc.
+        # We have to figure this out from a value set in group config maybe
+        self.includes_release_version = False
+
+        # TODO: Remove after testing
+        # For 4.18, enable the name works with release field
+        if self.includes_release_version and self.assembly_type is AssemblyTypes.STANDARD and "-" not in self.assembly:
+            raise ValueError(f"Invalid assembly name: {self.assembly}. Has to include release field. Eg: 4.18.0-0")
 
     async def run(self):
         self._slack_client.bind_channel(self.group)

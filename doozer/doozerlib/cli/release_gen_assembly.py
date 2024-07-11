@@ -148,14 +148,7 @@ class GenAssemblyCli:
         self.final_previous_list: List[VersionInfo] = []
 
         # Infer assembly type
-        if self.custom:
-            self.assembly_type = AssemblyTypes.CUSTOM
-        elif re.search(r'^[fr]c\.[0-9]+$', self.gen_assembly_name):
-            self.assembly_type = AssemblyTypes.CANDIDATE
-        elif re.search(r'^ec\.[0-9]+$', self.gen_assembly_name):
-            self.assembly_type = AssemblyTypes.PREVIEW
-        else:
-            self.assembly_type = AssemblyTypes.STANDARD
+        self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
 
         # Create a map of package_name to RPMMetadata
         self.package_rpm_meta: Dict[str, RPMMetadata] = \
@@ -164,6 +157,9 @@ class GenAssemblyCli:
         # ECs are always prerelease
         if self.assembly_type == AssemblyTypes.PREVIEW:
             self.pre_ga_mode = 'prerelease'
+
+        # For 4.18+ there will be release version in the release name. For example 4.18.0-0.ec.0, 4.18.0-0.rc.0, 4.18.2-0 etc.
+        self.includes_release_version = False
 
     async def run(self):
         self._validate_params()
@@ -200,6 +196,10 @@ class GenAssemblyCli:
 
         if self.pre_ga_mode == "prerelease" and self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             self._exit_with_error("Prerelease is only valid for preview and candidate assemblies.")
+
+        if self.assembly_type is AssemblyTypes.STANDARD and self.runtime.group == "openshift-4.18":
+            if "-" not in self.gen_assembly_name:
+                self._exit_with_error(f"Invalid assembly name: {self.gen_assembly_name}. Has to include release field. Eg: 4.18.0-0")
 
     def _get_release_pullspecs(self):
         for nightly_name in self.nightlies:
@@ -490,7 +490,10 @@ class GenAssemblyCli:
             # gen_assembly_name should be in the form of `ec.0`, `fc.0`, `rc.1`, or `4.10.1`
             if self.assembly_type == AssemblyTypes.CANDIDATE or self.assembly_type == AssemblyTypes.PREVIEW:
                 major_minor = self.runtime.get_minor_version()  # x.y
-                version = f"{major_minor}.0-{self.gen_assembly_name}"
+
+                # Support both 4.18+ and lower versions (former has release version while the latter does not)
+                version = f"{major_minor}.0-0.{self.gen_assembly_name}" if self.includes_release_version else f"{major_minor}.0-{self.gen_assembly_name}"
+
             else:
                 version = self.gen_assembly_name
             for arch in self.runtime.arches:
