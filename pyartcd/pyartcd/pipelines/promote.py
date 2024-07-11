@@ -743,13 +743,7 @@ class PromotePipeline:
         self.create_symlink(client_mirror_dir, False, False)
 
         # extract opm binaries
-        if (major > 4 or minor >= 16):
-            # from 4.16 opm has multi rhel binaries
-            _, operator_framework_tools = get_release_image_pullspec(pullspec, "operator-framework-tools")
-            self.extract_framework_tools(client_mirror_dir, release_name, operator_framework_tools, build_arch)
-        else:
-            _, operator_registry = get_release_image_pullspec(pullspec, "operator-registry")
-            self.extract_opm(client_mirror_dir, release_name, operator_registry, build_arch)
+        self.extract_opm(client_mirror_dir, release_name, pullspec, build_arch)
 
         util.log_dir_tree(client_mirror_dir)  # print dir tree
         util.log_file_content(f"{client_mirror_dir}/sha256sum.txt")  # print sha256sum.txt
@@ -828,39 +822,29 @@ class PromotePipeline:
         # Remove baremetal-installer binary
         os.remove(f'{client_mirror_dir}/{binary_name}')
 
-    def extract_opm(self, client_mirror_dir, release_name, operator_registry, arch):
-        binaries = ['opm']
-        platforms = ['linux']
-        if arch == 'x86_64':  # For x86_64, we have binaries for macOS and Windows
-            binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
-            platforms += ['mac', 'windows']
+    def extract_opm(self, client_mirror_dir, release_name, release_pullspec, arch):
+        major, minor = isolate_major_minor_in_group(self.group)
         path_args = []
-        for binary in binaries:
-            path_args.append(f'--path=/usr/bin/registry/{binary}:{client_mirror_dir}')
-        extract_release_binary(operator_registry, path_args)
-        # Compress binaries into tar.gz files and calculate sha256 digests
-        for idx, binary in enumerate(binaries):
-            platform = platforms[idx]
-            os.chmod(f"{client_mirror_dir}/{binary}", 0o755)
-            with tarfile.open(f"{client_mirror_dir}/opm-{platform}-{release_name}.tar.gz", "w:gz") as tar:  # archive file
-                tar.add(f"{client_mirror_dir}/{binary}", arcname=binary)
-            os.remove(f"{client_mirror_dir}/{binary}")  # remove opm binary
-            os.symlink(f"opm-{platform}-{release_name}.tar.gz", f"{client_mirror_dir}/opm-{platform}.tar.gz")  # create symlink
-            with open(f"{client_mirror_dir}/opm-{platform}-{release_name}.tar.gz", 'rb') as f:  # calc shasum
-                shasum = hashlib.sha256(f.read()).hexdigest()
-            with open(f"{client_mirror_dir}/sha256sum.txt", 'a') as f:  # write shasum to sha256sum.txt
-                f.write(f"{shasum}  opm-{platform}-{release_name}.tar.gz\n")
-
-    def extract_framework_tools(self, client_mirror_dir, release_name, operator_registry, arch):
-        binaries = ['opm-rhel8', 'opm-rhel9']
-        platforms = ['linux', 'linux-rhel9']
-        if arch == 'x86_64':  # For x86_64, we have binaries for macOS and Windows
-            binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
-            platforms += ['mac', 'windows']
-        path_args = []
-        for binary in binaries:
-            path_args.append(f'--path=/tools/{binary}:{client_mirror_dir}')
-        extract_release_binary(operator_registry, path_args)
+        if (major, minor) >= (4, 16):
+            # from 4.16 opm has multi rhel binaries, will use operator-framework-tools
+            _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-framework-tools")
+            binaries = ['opm-rhel8', 'opm-rhel9']
+            platforms = ['linux', 'linux-rhel9']
+            if arch == 'x86_64':  # For x86_64, we have binaries for macOS and Windows
+                binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
+                platforms += ['mac', 'windows']
+            for binary in binaries:
+                path_args.append(f'--path=/tools/{binary}:{client_mirror_dir}')
+        else:
+            _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-registry")
+            binaries = ['opm']
+            platforms = ['linux']
+            if arch == 'x86_64':  # For x86_64, we have binaries for macOS and Windows
+                binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
+                platforms += ['mac', 'windows']
+            for binary in binaries:
+                path_args.append(f'--path=/usr/bin/registry/{binary}:{client_mirror_dir}')
+        extract_release_binary(operator_pullspec, path_args)
         # Compress binaries into tar.gz files and calculate sha256 digests
         for idx, binary in enumerate(binaries):
             platform = platforms[idx]
