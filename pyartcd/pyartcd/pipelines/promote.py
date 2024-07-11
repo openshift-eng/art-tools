@@ -205,20 +205,19 @@ class PromotePipeline:
             if assembly_type == AssemblyTypes.STANDARD:
                 # Attempt to move all advisories to QE
                 tasks = []
-                sorted_advisories = sorted(impetus_advisories.items())
-                for impetus, advisory in sorted_advisories:
+                for impetus, advisory in impetus_advisories.items():
                     # microshift advisory is special, and it will not be ready at this time
                     if impetus == "microshift":
                         continue
                     if not advisory or advisory <= 0:
                         continue
                     logger.info("Moving advisory %s to QE...", advisory)
-                    tasks.append(self.change_advisory_state(advisory, "QE"))
+                    tasks.append((impetus, advisory, self.change_advisory_state(advisory, "QE")))
 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(*[t[2] for t in tasks], return_exceptions=True)
                 for i in range(len(results)):
                     if isinstance(results[i], Exception):
-                        impetus, advisory = sorted_advisories[i]
+                        impetus, advisory = tasks[i][:2]
                         logger.warn("Error moving advisory %s %s to QE: %s", impetus, advisory, results[i])
                         await self._slack_client.say_in_thread(
                             f"Unable to move {impetus} advisory {advisory} to QE. Details in log.")
