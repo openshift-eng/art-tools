@@ -599,7 +599,7 @@ class GenPayloadCli:
         Returns a dict of dicts, keyed by architecture, then by payload component name.
         """
 
-        entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
+        public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         for arch in self.runtime.arches:
             if arch in self.exclude_arch:
@@ -607,8 +607,8 @@ class GenPayloadCli:
                 continue
             # No adjustment for private or public; the assembly's canonical payload content is the same.
 
-            # public_entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
-            # public_payload_issues: List[AssemblyIssue]
+            entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
+            payload_issues: List[AssemblyIssue]
             entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
 
             public_entries: Dict[str, PayloadEntry] = dict()
@@ -625,7 +625,7 @@ class GenPayloadCli:
 
                 public_entries[k] = v
 
-            entries_for_arch[arch] = entries
+            public_entries_for_arch[arch] = public_entries
             self.assembly_issues.extend(payload_issues)
 
             # Report issues for any embargoed content being made public.
@@ -635,11 +635,13 @@ class GenPayloadCli:
 
             private_entries, private_payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
             private_entries_for_arch[arch] = private_entries
-            # We do not want to add private_payload_issues into the assembly issues list because it will just be the same issues as public, so we'll get duplicates
-            # This can be uncommented if it changes in the future
-            # self.assembly_issues.extend(private_payload_issues)
 
-        return entries_for_arch, private_entries_for_arch
+            # Check to see if there are private only issues, and add them to the list of assembly issues
+            private_only_issues = set(private_payload_issues) - set(payload_issues)
+
+            self.assembly_issues.extend(list(private_only_issues))
+
+        return public_entries_for_arch, private_entries_for_arch
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.detect_extend_payload_entry_issues")
     async def detect_extend_payload_entry_issues(self, assembly_inspector: AssemblyInspector):
