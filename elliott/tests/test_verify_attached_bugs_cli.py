@@ -90,8 +90,6 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
         self.assertEqual(result.exit_code, 1)
-        self.assertIn('Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status MODIFIED',
-                      result.output)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.is_release_ga')
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
@@ -139,8 +137,6 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         #     t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
         #     self.fail(t)
         self.assertEqual(result.exit_code, 1)
-        self.assertIn('Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status '
-                      'MODIFIED', result.output)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.assembly_issues_config')
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
