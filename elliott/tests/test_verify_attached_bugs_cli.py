@@ -58,7 +58,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        flexmock(is_release_ga).should_receive(4, 6).and_return(False)
+        flexmock(is_release_ga).should_receive(with: [4, 6]).and_return(False)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -100,7 +100,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize")
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(Runtime).should_receive("get_major_minor").and_return((4, 6))
-        flexmock(is_release_ga).should_receive(4, 6).and_return(False)
+        flexmock(is_release_ga).should_receive(with: [4, 6]).and_return(False)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({'project': 'OCPBUGS', 'target_release': [
             '4.6.z']})
         client = flexmock()
