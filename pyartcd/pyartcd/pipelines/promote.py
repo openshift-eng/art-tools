@@ -827,23 +827,21 @@ class PromotePipeline:
         path_args = []
         if (major, minor) >= (4, 16):
             # from 4.16 opm has multi rhel binaries, will use operator-framework-tools
+            base_path = '/tools/'
             _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-framework-tools")
             binaries = ['opm-rhel8', 'opm-rhel9']
             platforms = ['linux', 'linux-rhel9']
-            if arch == 'x86_64':  # For x86_64, we have binaries for macOS and Windows
-                binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
-                platforms += ['mac', 'windows']
-            for binary in binaries:
-                path_args.append(f'--path=/tools/{binary}:{client_mirror_dir}')
         else:
+            base_path = '/usr/bin/registry/'
             _, operator_pullspec = get_release_image_pullspec(release_pullspec, "operator-registry")
             binaries = ['opm']
             platforms = ['linux']
-            if arch == 'x86_64':  # For x86_64, we have binaries for macOS and Windows
-                binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
-                platforms += ['mac', 'windows']
-            for binary in binaries:
-                path_args.append(f'--path=/usr/bin/registry/{binary}:{client_mirror_dir}')
+        # For x86_64, we have binaries for macOS and Windows
+        if arch == 'x86_64':
+            binaries += ['darwin-amd64-opm', 'windows-amd64-opm']
+            platforms += ['mac', 'windows']
+        for binary in binaries:
+            path_args.append(f'--path={base_path}{binary}:{client_mirror_dir}')
         extract_release_binary(operator_pullspec, path_args)
         # Compress binaries into tar.gz files and calculate sha256 digests
         for idx, binary in enumerate(binaries):
