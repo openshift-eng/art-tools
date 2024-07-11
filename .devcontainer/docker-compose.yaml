@@ -6,7 +6,7 @@ services:
     image: local/doozer-dev:latest
     command: /bin/bash
     volumes:
-    - ../:/workspaces/doozer:cached,z
+    - ../:/workspaces/art-tools:cached,z
     - ${HOME:-}${USERPROFILE:-}/.ssh:/home/dev/.ssh:ro,cached,z
     - ${HOME:-}${USERPROFILE:-}/.docker:/home/dev/.docker:ro,cached,z
     - ./doozer.settings.yaml:/home/dev/.config/doozer/settings.yaml:ro,cached,z
@@ -15,7 +15,7 @@ services:
     - dev-doozer-working-dir:/workspaces/doozer-working-dir:delegated,z
     - dev-doozer-cache-dir:/workspaces/doozer-cache:delegated,z
     - /var/run/docker.sock:/var/run/docker.sock:z
-    working_dir: /workspaces/doozer
+    working_dir: /workspaces/art-tools
     tty: true
     stdin_open: true
 volumes:

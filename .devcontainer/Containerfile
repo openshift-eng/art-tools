@@ -61,7 +61,7 @@ COPY artcommon/configs/krb5-redhat.conf /etc/krb5.conf.d/
 
 # Preinstall dependencies and doozer
 WORKDIR /workspaces/art-tools
-COPY . .
+ADD . .
 RUN chown "$USERNAME" -R /workspaces/art-tools
 RUN sudo -u "$USERNAME" pip3 install --user -U "pip>=22.3" "setuptools>=64"
 RUN sudo -u "$USERNAME" pip3 install --user -e ./artcommon -e ./doozer -e ./elliott -e ./pyartcd
