@@ -142,7 +142,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.assembly_issues_config')
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
-    @patch('elliottlib.cli.verify_attached_bugs_cli.AsyncErrataAPI')
+    @patch('elliottlib.errata_async.AsyncErrataAPI._generate_auth_header')
     def test_verify_attached_bugs_cli_fail_on_type(self, *_):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
