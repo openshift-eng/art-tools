@@ -180,7 +180,11 @@ class FindBugsGolangCli:
                     return s
 
                 for nvr in nvrs:
-                    build = errata.get_brew_build(nvr)
+                    try:
+                        build = errata.get_brew_build(nvr)
+                    except Exception as e:
+                        self._logger.warning(f"Could not fetch info about build {nvr} from errata: {e}")
+                        continue
                     # filter out dropped advisories
                     advisories = [ad for ad in build.all_errata if ad["status"] != "DROPPED_NO_SHIP"]
                     if not advisories:
@@ -195,10 +199,10 @@ class FindBugsGolangCli:
 
             build_artifacts = f"These nvrs {sorted(nvrs)}"
 
-        comment = f"{bug.id} is associated with flaw bug(s) {bug.corresponding_flaw_bug_ids} " \
-                  f"which are fixed in golang version(s) {str(tracker_fixed_in)}. {build_artifacts} are built by " \
-                  f"parent golang build versions {[str(v) for v in sorted(go_nvr_map.keys())]}. " \
-                  f"Fix is determined to be in builder versions {[str(v) for v in fixed_in_versions]}."
+        comment = (f"{bug.id} is associated with flaw bug(s) {bug.corresponding_flaw_bug_ids} "
+                   f"which are fixed in golang version(s) {[str(v) for v in tracker_fixed_in]}. {build_artifacts} are built by "
+                   f"parent golang build versions {[str(v) for v in sorted(go_nvr_map.keys())]}. "
+                   f"Fix is determined to be in builder versions {[str(v) for v in fixed_in_versions]}.")
 
         return fixed, comment
 
@@ -456,7 +460,7 @@ class FindBugsGolangCli:
                     if not self.art_jira:
                         raise ElliottFatalError("Please provide ART Jira ticket for reference with --art-jira")
                     message = f"Refer to {self.art_jira} for details"
-                    comment = f"{comment}. \n{message}"
+                    comment = f"{comment} {message}"
                     if bug.status in ['New', 'ASSIGNED', 'POST']:
                         self.jira_tracker.update_bug_status(bug, 'MODIFIED', comment=comment, noop=self.dry_run)
                     else:
