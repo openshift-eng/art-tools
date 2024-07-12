@@ -839,7 +839,7 @@ class Ocp4Pipeline:
             self.runtime.logger.warning('All image builds failed: skipping sweep')
             return
         if self.assembly != 'stream':
-            self.runtime.logger.info('Not setting bugs to QE, as assembly is not stream')
+            self.runtime.logger.info('Not setting bugs to ON_QA since assembly is not stream')
             return
 
         cmd = [
@@ -852,16 +852,38 @@ class Ocp4Pipeline:
 
         try:
             await exectools.cmd_assert_async(cmd)
-
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
+            await self._slack_client.say(f'Bug sweep failed for {self.version.stream}. Please investigate')
 
-            self._mail_client.send_mail(
-                to='aos-art-automation+failed-sweep@redhat.com',
-                subject=f'Problem sweeping after {jenkins.current_build_url}',
-                content=f'Check Jenkins console for details: {jenkins.current_build_url}/console'
-            )
+        await self._golang_bug_sweep()
+
+    async def _golang_bug_sweep(self):
+        # find-bugs:golang only modifies bug state after verifying
+        # that the bug is fixed in the builds found in latest nightly / rpms in candidate tag
+        # therefore we do not need to check which builds are successful to run this
+        if self.assembly != 'stream':
+            self.runtime.logger.info('Not setting golang bugs to ON_QA since assembly is not stream')
+            return
+
+        cmd = [
+            'elliott',
+            f'--group=openshift-{self.version.stream}',
+            "find-bugs:golang",
+            "--analyze",
+            "--update-tracker"
+        ]
+
+        if self.runtime.dry_run:
+            cmd.append('--dry-run')
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+        except ChildProcessError:
+            if self.runtime.dry_run:
+                return
+            await self._slack_client.say(f'Golang bug sweep failed for {self.version.stream}. Please investigate')
 
     def _report_success(self):
         # Update description with build metrics
