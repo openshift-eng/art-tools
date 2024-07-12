@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import json
+import logging
 import re
 import sys
 from typing import Dict, List, Set, Union
@@ -290,10 +291,10 @@ def get_rhcos_nvrs_from_assembly(runtime: Runtime, brew_session: koji.ClientSess
         for build_id in builds:
             nvr = f'rhcos-{arch}-{build_id}'
             if brew_session.getBuild(nvr):
-                runtime.logger.info(f'Found rhcos nvr: {nvr}')
+                LOGGER.info(f'Found rhcos nvr: {nvr}')
                 nvrs.append(nvr)
             else:
-                runtime.logger.warning(f'rhcos nvr not found: {nvr}')
+                LOGGER.warning(f'rhcos nvr not found: {nvr}')
     return nvrs
 
 

@@ -3,6 +3,7 @@ import re
 import json
 from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
+import logging
 
 from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
@@ -19,7 +20,7 @@ from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 from elliottlib.errata import is_advisory_editable
 
-logger = logutil.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 @cli.command("verify-attached-bugs",
@@ -268,7 +269,7 @@ class BugValidator:
         flaw_bug_tracker = self.runtime.get_bug_tracker('bugzilla')
         brew_api = self.runtime.build_retrying_koji_client()
         tracker_flaws, first_fix_flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api,
-                                                       self.runtime.logger)
+                                                       logger)
 
         # Check if attached flaws match expected flaws
         first_fix_flaw_ids = {b.id for b in first_fix_flaw_bugs}

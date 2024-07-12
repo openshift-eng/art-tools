@@ -1,5 +1,6 @@
 import re
 import sys
+import logging
 from typing import Dict, List, Optional, Sequence, TextIO, Tuple, cast
 
 import click
@@ -16,6 +17,8 @@ from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import JIRABugTracker
 
 
+LOGGER = logging.getLogger(__name__)
+
 # [lmeyer] I like terms to distinguish between the two types of Jira issues we deal with here.
 # trackers: the KMAINT issues the kernel team creates for tracking these special releases.
 # bugs: OCPBUGS issues that clone the actual kernel bugs driving the need for a special OCP build.
@@ -27,7 +30,7 @@ class FindBugsKernelClonesCli:
     def __init__(self, runtime: Runtime, trackers: Sequence[str], bugs: Sequence[str],
                  move: bool, update_tracker: bool, dry_run: bool):
         self._runtime = runtime
-        self._logger = runtime.logger
+        self._logger = LOGGER
         self.trackers = list(trackers)
         self.bugs = list(bugs)
         self.move = move
@@ -165,7 +168,7 @@ class FindBugsKernelClonesCli:
                 logger.info("No need to move %s because its status is %s", bug.key, current_status)
 
     def _update_jira_bugs(self, jira_client: JIRA, found_bugs: List[Issue], koji_api: koji.ClientSession, config: KernelBugSweepConfig):
-        logger = self._runtime.logger
+        logger = LOGGER
         trackers, tracker_bugs = self._find_trackers_for_bugs(config, found_bugs, jira_client)
 
         for tracker_id, tracker in trackers.items():

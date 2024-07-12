@@ -2,6 +2,7 @@ import functools
 import requests
 import click
 import re
+import logging
 
 from typing import Dict, List, Union, Set
 from prettytable import PrettyTable
@@ -22,12 +23,14 @@ from doozerlib.cli.get_nightlies import find_rc_nightlies
 from pyartcd.util import get_release_name_for_assembly, load_releases_config
 from pyartcd import constants as pyartcd_constants
 
+LOGGER = logging.getLogger(__name__)
+
 
 class FindBugsGolangCli:
     def __init__(self, runtime: Runtime, pullspec: str, cve_id: str, analyze: bool,
                  fixed_in_nvr: str, update_tracker: bool, art_jira: str, dry_run: bool):
         self._runtime = runtime
-        self._logger = runtime.logger
+        self._logger = LOGGER
         self.cve_id = cve_id
         self.analyze = analyze
         self.fixed_in_nvr = fixed_in_nvr
