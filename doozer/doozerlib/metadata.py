@@ -673,6 +673,21 @@ class Metadata(object):
         """
         return self._component_name
 
+    def resolve_dockerfile_name(self) -> str:
+        """
+        :return: Upstream Dockerfile name
+        If content.source.dockerfile is not specified, use content.source.dockerfile_fallback
+        If content.source.dockerfile_fallback is not specified, use "Dockerfile"
+        """
+        dockerfile_name = "Dockerfile"
+        if self.config.content.source.dockerfile is not Missing:
+            # Be aware that this attribute sometimes contains path elements
+            dockerfile_name = self.config.content.source.dockerfile
+        elif self.config.content.source.dockerfile_fallback is not Missing:
+            dockerfile_name = self.config.content.source.dockerfile_fallback
+            self.logger.info(f"source.dockerfile not found, using source.dockerfile_fallback {dockerfile_name}")
+        return dockerfile_name
+
     def needs_rebuild(self):
         if self.config.targets:
             # If this meta has multiple build targets, check currency of each
