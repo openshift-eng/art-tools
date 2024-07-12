@@ -15,7 +15,6 @@ from elliottlib.cli.get_golang_report_cli import golang_report_for_version
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug
 from artcommonlib.rhcos import get_container_configs
-from artcommonlib.format_util import green_print, red_print
 from elliottlib.util import get_nvrs_from_payload, get_golang_container_nvrs, get_golang_rpm_nvrs
 from elliottlib.rpm_utils import parse_nvr
 from elliottlib import errata
@@ -191,14 +190,14 @@ class FindBugsGolangCli:
                     # filter out dropped advisories
                     advisories = [ad for ad in build.all_errata if ad["status"] != "DROPPED_NO_SHIP"]
                     if not advisories:
-                        red_print(f"Build {nvr} is not attached to any advisories.")
+                        self._logger.info(f"Build {nvr} is not attached to any advisories.")
                         continue
                     for advisory in advisories:
                         if advisory["status"] == "SHIPPED_LIVE":
                             synopsis = advisory_synopsis(advisory['id'])
                             if "OpenShift Container Platform" in synopsis:
                                 message = f"{nvr} has shipped with OCP advisory {advisory['name']} - {synopsis}."
-                                green_print(message)
+                                self._logger.info(message)
 
             build_artifacts = f"These nvrs {sorted(nvrs)}"
 
@@ -383,8 +382,8 @@ class FindBugsGolangCli:
                 self.compatible_cves.add(cve_id)
 
             cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in, compatible])
-        click.echo(f"Found trackers for {len(cves)} CVEs")
-        click.echo(cve_table)
+        self._logger.info(f"Found trackers for {len(cves)} CVEs")
+        self._logger.info(f"\n{cve_table}")
 
         def compare(b1, b2):
             # compare function for a bug
@@ -406,8 +405,8 @@ class FindBugsGolangCli:
         table.field_names = ["Jira ID", "CVE", "pscomponent", "Status", "Age (days)"]
         for b in bugs:
             table.add_row([b.id, b.cve_id, b.whiteboard_component, b.status, b.created_days_ago()])
-        click.echo(f"Found {len(bugs)} trackers in Jira")
-        click.echo(table)
+        self._logger.info(f"Found {len(bugs)} trackers in Jira")
+        self._logger.info(f"\n{table}")
 
         if not self.analyze:
             return
@@ -473,9 +472,9 @@ class FindBugsGolangCli:
                 unfixed_bugs.append(bug.id)
 
         if fixed_bugs:
-            green_print(f'Fixed bugs: {sorted(fixed_bugs)}')
+            self._logger.info(f'Fixed bugs: {sorted(fixed_bugs)}')
         if unfixed_bugs:
-            red_print(f'Not fixed / unsure bugs: {sorted(unfixed_bugs)}')
+            self._logger.info(f'Not fixed / unsure bugs: {sorted(unfixed_bugs)}')
 
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
