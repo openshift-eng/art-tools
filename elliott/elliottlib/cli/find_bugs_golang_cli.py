@@ -306,7 +306,7 @@ class FindBugsGolangCli:
         logger.info(f"Searching for open golang security trackers with target version {tr}")
 
         query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
-                 'and status not in (MODIFIED, ON_QA, Verified) and labels = "SecurityTracking" '
+                 'and status not in (ON_QA, Verified) and labels = "SecurityTracking" '
                  f'and "Target Version" in ({tr})')
 
         bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
@@ -460,12 +460,12 @@ class FindBugsGolangCli:
 
             if fixed:
                 if self.update_tracker:
-                    if not self.art_jira:
-                        raise ElliottFatalError("Please provide ART Jira ticket for reference with --art-jira")
-                    message = f"Refer to {self.art_jira} for details"
+                    message = ''
+                    if self.art_jira:
+                        message = f"Refer to {self.art_jira} for details."
                     comment = f"{comment} {message}"
-                    if bug.status in ['New', 'ASSIGNED', 'POST']:
-                        self.jira_tracker.update_bug_status(bug, 'MODIFIED', comment=comment, noop=self.dry_run)
+                    if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED']:
+                        self.jira_tracker.update_bug_status(bug, 'ON_QA', comment=comment, noop=self.dry_run)
                     else:
                         self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
                 fixed_bugs.append(bug.id)
