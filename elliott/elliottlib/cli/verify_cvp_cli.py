@@ -68,7 +68,7 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
         image_metas = runtime.image_metas()
         builds = await get_latest_image_builds(image_metas)
     elif nvrs:
-        runtime.logger.info(f"Finding {len(builds)} builds from Brew...")
+        LOGGER.info(f"Finding {len(builds)} builds from Brew...")
         builds = brew.get_build_objects(nvrs, brew_session)
     for b in builds:
         try:
@@ -76,19 +76,19 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
         except KeyError:
             pass
     nvr_builds = {build["nvr"]: build for build in builds}  # a dict mapping NVRs to build dicts
-    runtime.logger.info(f"Found {len(builds)} image builds.")
+    LOGGER.info(f"Found {len(builds)} image builds.")
 
     inspector = None
     try:
-        inspector = CVPInspector(group_config=runtime.group_config, image_metas=runtime.image_metas(), logger=runtime.logger)
+        inspector = CVPInspector(group_config=runtime.group_config, image_metas=runtime.image_metas(), logger=LOGGER)
 
         # Get latest CVP sanity_test results for specified NVRs
-        runtime.logger.info(f"Getting CVP test results for {len(nvr_builds)} image builds...")
+        LOGGER.info(f"Getting CVP test results for {len(nvr_builds)} image builds...")
         nvr_results = await inspector.latest_sanity_test_results(nvr_builds.keys())
         nvr_results = OrderedDict(sorted(nvr_results.items(), key=lambda t: t[0]))
 
         # process and populate dict `report` for output
-        runtime.logger.info("Processing CVP test results...")
+        LOGGER.info("Processing CVP test results...")
         passed, failed, missing = inspector.categorize_test_results(nvr_results)
 
         def _reconstruct_test_results(test_results: Dict):
@@ -115,11 +115,11 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
 
             # Find failed optional CVP checks in case some of the tiem *will* become required.
             completed = sorted(passed.keys() | failed.keys())
-            runtime.logger.info(f"Getting optional checks for {len(completed)} CVP tests...")
+            LOGGER.info(f"Getting optional checks for {len(completed)} CVP tests...")
 
             optional_check_results = await inspector.get_sanity_test_optional_results([nvr_results[nvr] for nvr in completed])
 
-            runtime.logger.info("Processing CVP optional test results...")
+            LOGGER.info("Processing CVP optional test results...")
             included_checks = {"content_set_check"}
             passed_optional, failed_optional, missing_optional = inspector.categorize_sanity_test_optional_results(dict(zip(completed, optional_check_results)), included_checks=included_checks)
 
@@ -137,7 +137,7 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                         r["outcome"] = outcome
                         r["failed_checks"] = sorted(failed)
                         if failed:
-                            runtime.logger.info("Examining content_set_check for %s", nvr)
+                            LOGGER.info("Examining content_set_check for %s", nvr)
                             failed_checks = [check for check in result["checks"] if check["name"] in failed]
                             tasks[nvr] = inspector.diagnostic_sanity_test_optional_checks(nvr_builds[nvr], failed_checks, included_checks=included_checks)
                 if tasks:
