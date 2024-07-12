@@ -2,6 +2,7 @@ from typing import List, Tuple
 import click
 import requests
 import koji
+import logging
 
 from artcommonlib.format_util import red_print, green_print, yellow_print
 from elliottlib import Runtime
@@ -9,6 +10,8 @@ from elliottlib import errata, brew, constants, exceptions
 from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
 
 pass_runtime = click.make_pass_decorator(Runtime)
+
+LOGGER = logging.getLogger(__name__)
 
 
 #
@@ -66,7 +69,7 @@ def tag_builds_cli(runtime: Runtime, advisories: Tuple[int], default_advisory_ty
         raise click.BadParameter('--product-version should only be used with --use-default-advisory or --advisory/-a.')
 
     runtime.initialize()
-    logger = runtime.logger
+    logger = LOGGER
     if default_advisory_type:
         advisories = (find_default_advisory(runtime, default_advisory_type), )
 

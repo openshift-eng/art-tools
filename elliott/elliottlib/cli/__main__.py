@@ -15,6 +15,7 @@ from multiprocessing.dummy import Pool as ThreadPool
 import datetime
 import json
 import sys
+import logging
 from typing import Dict, List
 
 from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_prefix, yellow_print
@@ -73,6 +74,7 @@ from errata_tool import ErrataException
 # Constants and defaults
 # -----------------------------------------------------------------------------
 pass_runtime = click.make_pass_decorator(Runtime)
+LOGGER = logging.getLogger(__name__)
 
 
 #
@@ -206,7 +208,7 @@ written out to summary_results.json.
 
     click.echo("Found {} builds".format(len(all_advisory_nvrs)))
 
-    all_payload_nvrs = await util.get_nvrs_from_payload(payload, rhcos_images, runtime.logger)
+    all_payload_nvrs = await util.get_nvrs_from_payload(payload, rhcos_images, LOGGER)
 
     missing_in_errata = {}
     payload_doesnt_match_errata = {}

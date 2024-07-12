@@ -100,7 +100,6 @@ class TestEarlyKernel(TestCase):
         self.assertEqual(1, len(msgs))
 
     def test_move_jira(self):
-        runtime = MagicMock()
         jira_client = MagicMock(spec=JIRA)
         comment = "Test message"
         issue = MagicMock(spec=Issue, **{
@@ -109,7 +108,7 @@ class TestEarlyKernel(TestCase):
             "fields.status.name": "New",
         })
         jira_client.current_user.return_value = "fake-user"
-        early_kernel.move_jira(runtime.logger(), False, jira_client, issue, "MODIFIED", comment)
+        early_kernel.move_jira(Mock(), False, jira_client, issue, "MODIFIED", comment)
         jira_client.assign_issue.assert_called_once_with("FOO-1", "fake-user")
         jira_client.transition_issue.assert_called_once_with("FOO-1", "MODIFIED")
 

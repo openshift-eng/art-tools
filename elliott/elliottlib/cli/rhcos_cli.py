@@ -1,5 +1,6 @@
 import click
 import json
+import logging
 
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BREW_ARCHES, GO_ARCHES
@@ -7,6 +8,8 @@ from artcommonlib.format_util import green_print
 from elliottlib.cli.common import cli
 from elliottlib import rhcos, util
 from artcommonlib.rhcos import get_primary_container_name, get_build_id_from_rhcos_pullspec
+
+LOGGER = logging.getLogger(__name__)
 
 
 @cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")
@@ -73,7 +76,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
                 break
 
     version = f'{major}.{minor}'
-    logger = runtime.logger
+    logger = LOGGER
 
     if arch == 'all':
         target_arches = BREW_ARCHES

@@ -412,7 +412,7 @@ class KojiWrapper(koji.ClientSession):
     Using KojiWrapper adds the following to the normal ClientSession:
     - Calls are retried if requests.exceptions.ConnectionError is encountered.
     - If the koji api call has a KojiWrapperOpts as a positional parameter:
-        - If opts.logger is set, e.g. wrapper.getLastEvent(KojiWrapperOpts(logger=runtime.logger)), the invocation
+        - If opts.logger is set, e.g. wrapper.getLastEvent(KojiWrapperOpts(logger=logger)), the invocation
           and results will be logged (the positional argument will not be passed to the koji server).
         - If opts.cached is True, the result will be cached and an identical invocation (also with caching=True)
           will return the cached value.

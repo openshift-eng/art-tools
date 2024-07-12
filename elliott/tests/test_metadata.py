@@ -16,7 +16,6 @@ class TestMetadata(unittest.TestCase):
         runtime = MagicMock()
         runtime.group_config.urls.cgit = "https://distgit.example.com/cgit"
         runtime.group_config.scan_freshness.threshold_hours = 6
-        runtime.logger = Mock()
 
         koji_mock = Mock()
         koji_mock.__enter__ = Mock()

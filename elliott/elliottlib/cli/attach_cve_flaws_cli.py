@@ -1,6 +1,6 @@
 import sys
 import traceback
-from logging import Logger
+import logging
 from typing import Dict, Iterable, List, Set
 
 import click
@@ -16,6 +16,8 @@ from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.rpm_utils import parse_nvr
 from elliottlib.runtime import Runtime
 from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any, BugTracker
+
+LOGGER = logging.getLogger(__name__)
 
 
 @cli.command('attach-cve-flaws',
@@ -66,34 +68,34 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
     errata_api = AsyncErrataAPI(errata_config.get("server", constants.errata_url))
     brew_api = runtime.build_retrying_koji_client()
     for advisory_id in advisories:
-        runtime.logger.info("Getting advisory %s", advisory_id)
+        LOGGER.info("Getting advisory %s", advisory_id)
         advisory = Erratum(errata_id=advisory_id)
 
         attached_trackers = []
         for bug_tracker in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
-            attached_trackers.extend(get_attached_trackers(advisory, bug_tracker, runtime.logger))
+            attached_trackers.extend(get_attached_trackers(advisory, bug_tracker, LOGGER))
 
-        tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api, runtime.logger)
+        tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api, LOGGER)
 
         try:
             if flaw_bugs:
                 _update_advisory(runtime, advisory, flaw_bugs, flaw_bug_tracker, noop)
                 # Associate builds with CVEs
-                runtime.logger.info('Associating CVEs with builds')
+                LOGGER.info('Associating CVEs with builds')
                 await associate_builds_with_cves(errata_api, advisory, flaw_bugs, attached_trackers,
                                                  tracker_flaws, noop)
             else:
                 pass  # TODO: convert RHSA back to RHBA
         except Exception as e:
-            runtime.logger.error(traceback.format_exc())
-            runtime.logger.error(f'Exception: {e}')
+            LOGGER.error(traceback.format_exc())
+            LOGGER.error(f'Exception: {e}')
             exit_code = 1
 
     await errata_api.close()
     sys.exit(exit_code)
 
 
-def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker, logger: Logger):
+def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker, logger: logging.Logger):
     # get attached bugs from advisory
     advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
     if not advisory_bug_ids:
@@ -106,7 +108,8 @@ def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker, logger: Lo
     return attached_tracker_bugs
 
 
-def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api, logger: Logger) -> (Dict, List):
+def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api,
+              logger: logging.Logger) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -142,13 +145,13 @@ def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
     advisory_id = advisory.errata_id
     errata_config = runtime.get_errata_config()
     cve_boilerplate = errata_config['boilerplates']['cve']
-    advisory, updated = get_updated_advisory_rhsa(runtime.logger, cve_boilerplate, advisory, flaw_bugs)
+    advisory, updated = get_updated_advisory_rhsa(LOGGER, cve_boilerplate, advisory, flaw_bugs)
     if not noop and updated:
-        runtime.logger.info("Updating advisory details %s", advisory_id)
+        LOGGER.info("Updating advisory details %s", advisory_id)
         advisory.commit()
 
     flaw_ids = [flaw_bug.id for flaw_bug in flaw_bugs]
-    runtime.logger.info(f'Attaching {len(flaw_ids)} flaw bugs')
+    LOGGER.info(f'Attaching {len(flaw_ids)} flaw bugs')
     bug_tracker.attach_bugs(flaw_ids, advisory_obj=advisory, noop=noop)
 
 
@@ -184,10 +187,10 @@ async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Errat
     await AsyncErrataUtils.associate_builds_with_cves(errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=dry_run)
 
 
-def get_updated_advisory_rhsa(logger, cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
+def get_updated_advisory_rhsa(logger: logging.Logger, cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
     """Given an advisory object, get updated advisory to RHSA
 
-    :param logger: logger object from runtime
+    :param logger: logger object
     :param cve_boilerplate: cve template for rhsa
     :param advisory: advisory object to update
     :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory

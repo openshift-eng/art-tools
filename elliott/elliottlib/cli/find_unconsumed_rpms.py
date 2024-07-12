@@ -1,6 +1,7 @@
 import asyncio
 from typing import Dict, List, Optional
 import click
+import logging
 
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
@@ -12,6 +13,8 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.runtime import Runtime
 import koji
+
+LOGGER = logging.getLogger(__name__)
 
 
 class FindUnconsumedRpms:
@@ -96,7 +99,7 @@ class FindUnconsumedRpms:
         return rpm_dicts
 
     async def run(self):
-        logger = self._runtime.logger
+        logger = LOGGER
         koji_api = self._runtime.build_retrying_koji_client(caching=True)
 
         # Get rpms in RHCOS builds

@@ -1,12 +1,15 @@
 import click
 import sys
 import traceback
+import logging
 
 from artcommonlib.format_util import green_prefix
 from elliottlib.cli.find_bugs_sweep_cli import print_report, FindBugsMode
 from elliottlib.bzutil import BugTracker
 from elliottlib import (Runtime, constants)
 from elliottlib.cli.common import cli
+
+LOGGER = logging.getLogger(__name__)
 
 
 class FindBugsBlocker(FindBugsMode):
@@ -65,8 +68,8 @@ Use --exclude_status to filter out from default status list.
         try:
             find_bugs_blocker(runtime, output, find_bugs_obj, b)
         except Exception as e:
-            runtime.logger.error(traceback.format_exc())
-            runtime.logger.error(f'exception with {b.type} bug tracker: {e}')
+            LOGGER.error(traceback.format_exc())
+            LOGGER.error(f'exception with {b.type} bug tracker: {e}')
             exit_code = 1
     sys.exit(exit_code)
 

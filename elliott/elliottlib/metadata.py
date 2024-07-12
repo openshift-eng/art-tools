@@ -1,5 +1,6 @@
 import re
 import time
+import logging
 from builtins import object
 from typing import Any, Optional, Tuple, Union, List
 
@@ -19,6 +20,7 @@ CONFIG_MODES = [
 ]
 
 CONFIG_MODE_DEFAULT = CONFIG_MODES[0]
+LOGGER = logging.getLogger(__name__)
 
 
 class Metadata(object):
@@ -44,7 +46,7 @@ class Metadata(object):
         self.distgit_key = data_obj.key
         self.name = self.distgit_key.split('.')[0]   # Split off any '.apb' style differentiator (if present)
 
-        self.runtime.logger.debug("Loading metadata from {}".format(self.full_config_path))
+        LOGGER.debug("Loading metadata from {}".format(self.full_config_path))
 
         self.raw_config = Model(data_obj.data)  # Config straight from ocp-build-data
         assert (self.raw_config.name is not Missing)
@@ -62,7 +64,7 @@ class Metadata(object):
         self.qualified_key = "%s/%s" % (self.namespace, self.distgit_key)
 
         # Includes information to identify the metadata being used with each log message
-        self.logger = logutil.EntityLoggingAdapter(logger=self.runtime.logger, extra={'entity': self.qualified_key})
+        self.logger = logutil.EntityLoggingAdapter(logger=LOGGER, extra={'entity': self.qualified_key})
 
         self._distgit_repo = None
 

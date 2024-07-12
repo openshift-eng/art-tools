@@ -1,5 +1,6 @@
 import re
 import sys
+import logging
 from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple, cast
 
 import click
@@ -17,6 +18,8 @@ from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import JIRABugTracker
 
+LOGGER = logging.getLogger(__name__)
+
 
 @retry(reraise=True, stop=stop_after_attempt(3))
 def _search_issues(jira_client, *args, **kwargs):
@@ -27,7 +30,7 @@ class FindBugsKernelCli:
     def __init__(self, runtime: Runtime, trackers: Sequence[str],
                  clone: bool, reconcile: bool, update_tracker: bool, dry_run: bool):
         self._runtime = runtime
-        self._logger = runtime.logger
+        self._logger = LOGGER
         self.trackers = list(trackers)
         self.clone = clone
         self.reconcile = reconcile
@@ -205,7 +208,7 @@ class FindBugsKernelCli:
 
     def _update_tracker(self, jira_client: JIRA, tracker: Issue, koji_api: koji.ClientSession,
                         conf: KernelBugSweepConfig.TargetJiraConfig):
-        logger = self._runtime.logger
+        logger = LOGGER
         logger.info("Checking if an update to tracker %s is needed...", tracker.key)
         # Determine which NVRs have the fix. e.g. ["kernel-5.14.0-284.14.1.el9_2"]
         nvrs, candidate, shipped = early_kernel.get_tracker_builds_and_tags(logger, tracker, koji_api, conf)
