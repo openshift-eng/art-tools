@@ -682,7 +682,7 @@ class ScanOshCli:
                 continue
 
             # Exclude all test builds
-            if build["nvr"].endswith(".test"):
+            if "assembly.test" in build["nvr"]:
                 self.runtime.logger.debug(f"Skipping test build: {build['nvr']}")
                 continue
 
@@ -760,7 +760,7 @@ class ScanOshCli:
             package_name = build["package_name"]
 
             # Exclude all test builds
-            if nvr.endswith(".test"):
+            if "assembly.test" in nvr:
                 self.runtime.logger.debug(f"Skipping test build: {nvr}")
                 continue
 
