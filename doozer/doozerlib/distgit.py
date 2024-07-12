@@ -40,7 +40,7 @@ from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr
-from doozerlib.util import extract_version_fields, resolve_dockerfile_name
+from doozerlib.util import extract_version_fields
 
 # doozer used to be part of OIT
 OIT_COMMENT_PREFIX = '#oit##'
@@ -1671,7 +1671,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
-        df_name = resolve_dockerfile_name(self.config, self.source_path(), self.logger)
+        df_name = self.metadata.resolve_dockerfile_name()
         subdir = self.config.content.source.path
         if not subdir:
             subdir = '.'
@@ -2502,7 +2502,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             self.env_vars_from_source.update(self.metadata.extract_kube_env_vars())
 
-        dockerfile_name = resolve_dockerfile_name(self.config, self.source_path(), self.logger)
+        dockerfile_name = self.metadata.resolve_dockerfile_name()
 
         # The path to the source Dockerfile we are reconciling against.
         source_dockerfile_path = os.path.join(self.source_path(), dockerfile_name)

@@ -22,7 +22,7 @@ from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import constants, util
 from doozerlib.image import ImageMetadata
-from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields, resolve_dockerfile_name
+from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
 from pyartcd import jenkins
 
@@ -1032,7 +1032,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
             exectools.cmd_assert('git fetch --all', retries=3)
 
             df_path = Dir.getpath()
-            dockerfile_name = resolve_dockerfile_name(image_meta.config, image_meta.config.content.source.dockerfile, logger)
+            dockerfile_name = image_meta.resolve_dockerfile_name()
 
             df_path = df_path.joinpath(dockerfile_name).resolve()
             ci_operator_config_path = Dir.getpath().joinpath('.ci-operator.yaml').resolve()  # https://docs.ci.openshift.org/docs/architecture/ci-operator/#build-root-image
