@@ -1,4 +1,4 @@
-import boto3
+from lambda_r2_lib import get_r2_s3_client, S3_BUCKET_NAME
 from urllib.parse import unquote
 
 
@@ -13,11 +13,9 @@ def lambda_handler(event, context):
             # Nothing to do. This should have already hit the index.html
             return response
 
-        # Let's see if a s3 key prefix of this name exists
-        bucket_name = 'art-srv-enterprise'
-        s3_conn = boto3.client('s3')
         prefix = unquote(uri.lstrip('/'))  # URL escaped chars like "%2B" need to be converted to + for s3 API query.
-        s3_result = s3_conn.list_objects_v2(Bucket=bucket_name, Prefix=prefix, Delimiter="/")
+        s3_client = get_r2_s3_client()
+        s3_result = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=prefix, Delimiter="/")
 
         if s3_result.get('CommonPrefixes', []) or s3_result.get('Contents', []):
             # print(f'Redirecting because: {s3_result}')
