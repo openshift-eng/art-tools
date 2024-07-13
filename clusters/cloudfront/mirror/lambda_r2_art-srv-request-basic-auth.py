@@ -1,6 +1,8 @@
 import base64
 import hmac
-import os
+import os.path
+
+from botocore.exceptions import ClientError
 from typing import Dict, List, Optional
 from urllib.parse import quote, unquote_plus
 
@@ -35,6 +37,28 @@ def redirect(uri: str, code: int = 302, description="Found"):
                 "value": str(uri)
             }],
         }
+    }
+
+
+def not_found(description="File Not Found"):
+    return {
+        'status': '404',
+        'statusDescription': description,
+        'headers': {
+            'cache-control': [
+                {
+                    'key': 'Cache-Control',
+                    'value': 'max-age=0'
+                }
+            ],
+            "content-type": [
+                {
+                    'key': 'Content-Type',
+                    'value': 'text/html'
+                }
+            ]
+        },
+        'body': 'File not found',
     }
 
 
@@ -141,21 +165,65 @@ def lambda_handler(event: Dict, context: Dict):
         # request function. That will be in the index.html
         # generator.
         pass
-    elif uri == '/404.html':
+    elif uri == '/404.html' or uri == '/robots.txt':
         # We don't want the browser to redirect to an R2 URL whenever it needs
         # to display an error page. This page should, therefore reside on the
         # ACTUAL S3 bucket origin in AWS. The 404.html file should be read
         # from there and streamed back from CloudFRONT.
+        # Same for robots.txt so bots don't need to follow redirect.
         pass
     else:
         # If we have not initialized an R2 client, do so now.
         s3_client = get_r2_s3_client()
+        file_key = unquote_plus(uri.lstrip('/'))  # Strip '/' prefix and decode any uri encoding like "%2B"
+
+        try:
+            s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=file_key)
+        except ClientError as e:
+            # If a client error is thrown, check if it's a 404 error indicating the object does not exist
+            if e.response['Error']['Code'] == '404':
+                # Either the user has legitimately attempted to access a file
+                # that does not exist OR they have entered a key prefix without
+                # a trailing slash; e.g. https://mirror.openshift.com/pub   .
+                # Without the subsequent logic, the user would always get a
+                # 404 if they don't specify a trailing slash. For improved usability, redirect them to
+                # a directory listing IFF we find keys with the file_key prefix.
+                prefix = file_key
+                s3_result = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=prefix, Delimiter="/")
+
+                if s3_result.get('CommonPrefixes', []) or s3_result.get('Contents', []):
+                    # If there are "sub-directories" or "files" in this directory, redirect with a trailing slash
+                    # So that the user will get a directory listing.
+                    host = request['headers']['host'][0]['value']
+                    # Otherwise, maybe the caller entered a directory name without
+                    # a trailing slash and it is not found. Make another attempt with a
+                    # trailing slash which should trigger the lookup of uri/index.html
+                    # if it exists.
+                    return redirect(f'{uri}/', code=307, description="S3DirRedirect")
+                else:
+                    # We tried the key exactly and as a prefix without luck. No sense
+                    # trying to redirect to R2. Just 404 now.
+                    return not_found()
 
         url = s3_client.generate_presigned_url(
             ClientMethod='get_object',
             Params={
                 'Bucket': S3_BUCKET_NAME,
-                'Key': unquote_plus(uri[1:]),  # Strip '/'
+                'Key': file_key,
+                # If you click on a file like "release.txt" in a mirror.openshift.com listing,
+                # under the covers, the browser is receiving a redirect to a presigned URL.
+                # By default, for a text file, the browser will render that file in the browser
+                # window and modify the URL bar to show the presigned URL.
+                # This is very ugly and navigates the user away from mirror.openshift.com
+                # and to a cloudflare URL.
+                # Instead, by setting a content disposition header, we can tell the browser to
+                # prefer downloading any physical file linked to from mirror.openshift.com
+                # instead of displaying it.
+                # You encode this preference in the presigned URL that the browser accesses.
+                # When the browser hits that presigned URL, the S3 API will find the
+                # content-disposition preference in the encoding, and return that back to
+                # the browser along with the file content.
+                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"'
             },
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )
