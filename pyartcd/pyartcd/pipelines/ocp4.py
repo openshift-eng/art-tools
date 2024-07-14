@@ -855,6 +855,7 @@ class Ocp4Pipeline:
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
+            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(f'Bug sweep failed for {self.version.stream}. Please investigate')
 
         await self._golang_bug_sweep()
@@ -883,6 +884,7 @@ class Ocp4Pipeline:
         except ChildProcessError:
             if self.runtime.dry_run:
                 return
+            self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(f'Golang bug sweep failed for {self.version.stream}. Please investigate')
 
     def _report_success(self):
