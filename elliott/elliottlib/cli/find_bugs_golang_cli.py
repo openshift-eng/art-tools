@@ -431,7 +431,7 @@ class FindBugsGolangCli:
                                f"CVEs are fixed in. {incompatible_fix_bugs}")
 
         if not bugs:
-            exit(1)
+            exit(0)
 
         fixed_bugs, unfixed_bugs = [], []
         for bug in bugs:
