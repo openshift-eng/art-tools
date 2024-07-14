@@ -15,7 +15,6 @@ def lambda_handler(event, context):
 
         # Let's see if a s3 key prefix of this name exists
         bucket_name = 'art-srv-enterprise'
-        s3 = boto3.resource('s3', region_name='us-east-1')
         s3_conn = boto3.client('s3')
         prefix = unquote(uri.lstrip('/'))  # URL escaped chars like "%2B" need to be converted to + for s3 API query.
         s3_result = s3_conn.list_objects_v2(Bucket=bucket_name, Prefix=prefix, Delimiter="/")
