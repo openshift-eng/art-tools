@@ -1,6 +1,5 @@
 import datetime
 import io
-import os
 import pathlib
 import re
 import fnmatch
@@ -677,27 +676,17 @@ class Metadata(object):
     def resolve_dockerfile_name(self) -> str:
         """
         :return: Upstream Dockerfile name
-        Resolve the Dockerfile name of upstream. If file specified in content.source.dockerfile doesn't exist,
-        try looking at the one specified in content.source.dockerfile_fallback as well.
+        If content.source.dockerfile is not specified, use content.source.dockerfile_fallback
+        If content.source.dockerfile_fallback is not specified, use "Dockerfile"
         """
+        dockerfile_name = "Dockerfile"
         if self.config.content.source.dockerfile is not Missing:
-            # Be aware that this attribute sometimes contains path elements too.
+            # Be aware that this attribute sometimes contains path elements
             dockerfile_name = self.config.content.source.dockerfile
-
-            source_dockerfile_path = os.path.join(self.config.content.source.path, dockerfile_name)
-
-            if not os.path.isfile(source_dockerfile_path):
-                dockerfile_name_fallback = self.config.content.source.dockerfile_fallback
-                if dockerfile_name_fallback is not Missing:
-                    self.logger.info(
-                        f"Could not find source dockerfile at {dockerfile_name}, using fallback {dockerfile_name_fallback}")
-                    return dockerfile_name_fallback
-                raise IOError(
-                    f"Fallback dockerfile {dockerfile_name_fallback} is Missing and source dockerfile {source_dockerfile_path} doesn't exist")
-            else:
-                return dockerfile_name
-        else:
-            return "Dockerfile"
+        elif self.config.content.source.dockerfile_fallback is not Missing:
+            dockerfile_name = self.config.content.source.dockerfile_fallback
+            self.logger.info(f"source.dockerfile not found, using source.dockerfile_fallback {dockerfile_name}")
+        return dockerfile_name
 
     def needs_rebuild(self):
         if self.config.targets:
