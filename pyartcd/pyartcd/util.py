@@ -622,6 +622,9 @@ async def mirror_to_s3(source: Union[str, Path], dest: str, exclude: Optional[st
     cmd.extend(["--", f"{source}", f"{dest}"])
     await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
 
+    # Mirror to Cloudflare as well
+    await exectools.cmd_assert_async(cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]], env=os.environ.copy(), stdout=sys.stderr)
+
 
 async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=False):
     """

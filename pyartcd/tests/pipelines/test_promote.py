@@ -110,8 +110,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             "REDIS_PORT": "12345",
             "JENKINS_SERVICE_ACCOUNT": "fake-jenkins-service-account",
             "JENKINS_SERVICE_ACCOUNT_TOKEN": "fake-jenkins-service-account-token",
-            "AWS_ACCESS_KEY_ID": "fake-aws-access-key-id",
-            "AWS_SECRET_ACCESS_KEY": "fake-aws-crecret-access-key",
+            "AWS_SHARED_CREDENTIALS_FILE": "/path/to/credentials/file",
+            "CLOUDFLARE_ENDPOINT": "fake-cloudflare-endpoint",
             "ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG": "/path/to/kube/config"
         })
 
