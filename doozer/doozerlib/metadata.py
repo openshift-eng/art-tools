@@ -286,22 +286,6 @@ class Metadata(object):
         """
         return [self.hotfix_brew_tag()]
 
-    def source_path(self):
-        """
-        :return: Returns the directory containing the source which should be used to populate distgit. This includes
-                the source.path subdirectory if the metadata includes one.
-        """
-
-        source_root = self.runtime.resolve_source(self)
-        sub_path = self.config.content.source.path
-
-        path = source_root
-        if sub_path is not Missing:
-            path = os.path.join(source_root, sub_path)
-
-        assertion.isdir(path, "Unable to find path for source [%s] for config: %s" % (path, self.config_filename))
-        return path
-
     def get_arches(self):
         """
         :return: Returns the list of architecture this image/rpm should build for. This is an intersection
@@ -689,31 +673,6 @@ class Metadata(object):
         the distgit repo name + '-container'.
         """
         return self._component_name
-
-    def resolve_dockerfile_name(self) -> str:
-        """
-        :return: Upstream Dockerfile name
-        Resolve the Dockerfile name of upstream. If file specified in content.source.dockerfile doesn't exist,
-        try looking at the one specified in content.source.dockerfile_fallback as well.
-        """
-        if self.config.content.source.dockerfile is not Missing:
-            # Be aware that this attribute sometimes contains path elements too.
-            dockerfile_name = self.config.content.source.dockerfile
-
-            source_dockerfile_path = os.path.join(self.source_path(), dockerfile_name)
-
-            if not os.path.isfile(source_dockerfile_path):
-                dockerfile_name_fallback = self.config.content.source.dockerfile_fallback
-                if dockerfile_name_fallback is not Missing:
-                    self.logger.info(
-                        f"Could not find source dockerfile at {dockerfile_name}, using fallback {dockerfile_name_fallback}")
-                    return dockerfile_name_fallback
-                raise IOError(
-                    f"Fallback dockerfile {dockerfile_name_fallback} is Missing and source dockerfile {source_dockerfile_path} doesn't exist")
-            else:
-                return dockerfile_name
-        else:
-            return "Dockerfile"
 
     def needs_rebuild(self):
         if self.config.targets:
