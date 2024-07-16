@@ -451,20 +451,17 @@ class Metadata(object):
             # listBuilds returns all builds for the package; We need to limit the query to the builds
             # relevant for our major/minor.
 
-            rpm_suffix = ''  # By default, find the latest RPM build - regardless of el7, el8, ...
-
             el_ver = None
+            if el_target:
+                el_ver = isolate_el_version_in_brew_tag(el_target)
+                if not el_ver:
+                    raise IOError(f'Unable to determine rhel version from specified el_target: {el_target}')
+
             if self.meta_type == 'image':
                 ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
             else:
                 # RPMs do not have a 'v' in front of their version; images do.
                 ver_prefix = ''  # openshift-clients-4.7.0-202106032231.p0.git.e29b355.el8
-                if el_target:
-                    el_ver = isolate_el_version_in_brew_tag(el_target)
-                    if el_ver:
-                        rpm_suffix = f'.el{el_ver}'
-                    else:
-                        raise IOError(f'Unable to determine rhel version from specified el_target: {el_target}')
 
             pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
 
@@ -482,84 +479,12 @@ class Metadata(object):
                     list_builds_kwargs['completeBefore'] = complete_before_ts
 
             def default_return():
-                msg = f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', assembly: '{assembly}', build_state: '{build_state.name}', el_target: '{el_target}'"
+                msg = (f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', "
+                       f"assembly: '{assembly}', build_state: '{build_state.name}', el_ver: '{el_ver}'")
                 if default != -1:
                     self.logger.info(msg)
                     return default
                 raise IOError(msg)
-
-            def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate other release components that might be introduced later.
-                # Also include a .el<version> suffix to match the new build pattern
-                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
-                assert 'None' not in rhel_pattern
-                builds = koji_api.listBuilds(packageID=package_id,
-                                             state=None if build_state is None else build_state.value,
-                                             pattern=rhel_pattern,
-                                             queryOpts={'limit': 1, 'order': '-creation_event_id'},
-                                             **list_builds_kwargs)
-
-                # If no builds were found, the component might still be following the old pattern,
-                # where a .el suffix was not included in the NVR
-                if not builds:
-                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
-
-                    legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
-                    assert 'None' not in legacy_pattern
-                    builds = koji_api.listBuilds(packageID=package_id,
-                                                 state=None if build_state is None else build_state.value,
-                                                 pattern=legacy_pattern,
-                                                 queryOpts={'limit': 1, 'order': '-creation_event_id'},
-                                                 **list_builds_kwargs)
-                    if not builds:
-                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
-
-                # Ensure the suffix ends the string OR at least terminated by a '.' .
-                # This latter check ensures that 'assembly.how' doesn't match a build from
-                # "assembly.howdy'.
-                refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
-
-                # .el? was added to images well after assemblies were established. It allows us to build multiple
-                # images out of the same distgit if they differ in RHEL version. Because this was added late, not
-                # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
-                # version, if they do.
-                if self.meta_type == 'image':
-                    image_el_ver = f'.el{self.branch_el_target()}'
-                    # Ensure the suffix ends the string OR at least terminated by a '.' .
-                    el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
-                    if el_refined:
-                        # if there were any images which had .el?, prefer them over the non-qualified.
-                        refined = el_refined
-                    else:
-                        # Everything was eliminated when elX was included. So at least filter out those which possess elY
-                        # where X != Y
-                        el_pattern = re.compile(r'.*\.el\d+.*')
-                        refined = [b for b in refined if not el_pattern.match(b['nvr'])]
-
-                if refined and build_state == BuildStates.COMPLETE:
-                    # A final sanity check to see if the build is tagged with something we
-                    # respect. There is a chance that a human may untag a build. There
-                    # is no standard practice at present in which they should (they should just trigger
-                    # a rebuild). If we find the latest build is not tagged appropriately, blow up
-                    # and let a human figure out what happened.
-                    check_nvr = refined[0]['nvr']
-                    for i in range(2):
-                        tags = {tag['name'] for tag in koji_api.listTags(build=check_nvr)}
-                        if tags:
-                            refined[0]['_tags'] = tags  # save tag names to dict for future use
-                            break
-                        # Observed that a complete build needs some time before it gets tagged. Give it some
-                        # time if not immediately available.
-                        time.sleep(60)
-
-                    # RPMS have multiple targets, so our self.branch() isn't perfect.
-                    # We should permit rhel-8/rhel-7/etc.
-                    tag_prefix = self.branch().rsplit('-', 1)[0] + '-'   # String off the rhel version.
-                    accepted_tags = [name for name in tags if name.startswith(tag_prefix)]
-                    if not accepted_tags:
-                        self.logger.warning(f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way')
-
-                return refined
 
             if honor_is and self.config['is']:
                 if build_state != BuildStates.COMPLETE:
@@ -594,7 +519,8 @@ class Metadata(object):
             if not assembly:
                 # if assembly is '' (by parameter) or still None after runtime.assembly,
                 # we are returning true latest.
-                builds = latest_build_list('')
+                builds = self.latest_build_list('', pattern_prefix, extra_pattern, el_ver,
+                                                package_id, build_state, list_builds_kwargs, koji_api)
             else:
                 basis_event = assembly_basis_event(self.runtime.get_releases_config(), assembly=assembly)
                 if basis_event:
@@ -605,13 +531,18 @@ class Metadata(object):
                 # Assemblies without a basis will return assembly qualified builds for their
                 # latest images. This includes "stream" and "test", but could also include
                 # an assembly that is customer specific  with its own branch.
-                builds = latest_build_list(f'.assembly.{assembly}')
+                builds = self.latest_build_list(f'.assembly.{assembly}', pattern_prefix, extra_pattern, el_ver,
+                                                package_id, build_state, list_builds_kwargs, koji_api)
                 if not builds:
                     if assembly != 'stream':
-                        builds = latest_build_list('.assembly.stream')
+                        builds = self.latest_build_list('.assembly.stream', pattern_prefix, extra_pattern, el_ver,
+                                                        package_id, build_state, list_builds_kwargs,
+                                                        koji_api)
                     if not builds:
                         # Fall back to true latest
-                        builds = latest_build_list('')
+                        builds = self.latest_build_list('', pattern_prefix, extra_pattern, el_ver,
+                                                        package_id, build_state, list_builds_kwargs,
+                                                        koji_api)
                         if builds and '.assembly.' in builds[0]['release']:
                             # True latest belongs to another assembly. In this case, just return
                             # that they are no builds for this assembly.
@@ -624,6 +555,69 @@ class Metadata(object):
             # Different brew apis return different keys here; normalize to make the rest of doozer not need to change.
             found_build['id'] = found_build['build_id']
             return found_build
+
+    def latest_build_list(self, pattern_suffix, pattern_prefix, extra_pattern, el_ver, package_id, build_state,
+                          list_builds_kwargs, koji_api):
+        # Include * after pattern_suffix to tolerate other release components that might be introduced later.
+        # Also include a .el<version> suffix to match the new build pattern
+
+        el_ver = int(el_ver) if el_ver else None
+        el_suffix = f'.el{el_ver}' if el_ver else ''
+        pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{el_suffix}*'
+        builds = koji_api.listBuilds(packageID=package_id,
+                                     state=None if build_state is None else build_state.value,
+                                     pattern=pattern,
+                                     queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                                     **list_builds_kwargs)
+
+        # Ensure the suffix ends the string OR at least terminated by a '.' .
+        # This latter check ensures that 'assembly.how' doesn't match a build from
+        # "assembly.howdy'.
+        refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
+
+        # .el? was added to images well after assemblies were established. It allows us to build multiple
+        # images out of the same distgit if they differ in RHEL version. Because this was added late, not
+        # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
+        # version, if they do.
+        if self.meta_type == 'image':
+            image_el_ver = f'.el{self.branch_el_target()}'
+            # Ensure the suffix ends the string OR at least terminated by a '.' .
+            el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
+            if el_refined:
+                # if there were any images which had .el?, prefer them over the non-qualified.
+                refined = el_refined
+            else:
+                # Everything was eliminated when elX was included. So at least filter out those which possess elY
+                # where X != Y
+                el_pattern = re.compile(r'.*\.el\d+.*')
+                refined = [b for b in refined if not el_pattern.match(b['nvr'])]
+
+        if refined and build_state == BuildStates.COMPLETE:
+            # A final sanity check to see if the build is tagged with something we
+            # respect. There is a chance that a human may untag a build. There
+            # is no standard practice at present in which they should (they should just trigger
+            # a rebuild). If we find the latest build is not tagged appropriately, blow up
+            # and let a human figure out what happened.
+            check_nvr = refined[0]['nvr']
+            tags = set()
+            for i in range(2):
+                tags = {tag['name'] for tag in koji_api.listTags(build=check_nvr)}
+                if tags:
+                    refined[0]['_tags'] = tags  # save tag names to dict for future use
+                    break
+                # Observed that a complete build needs some time before it gets tagged. Give it some
+                # time if not immediately available.
+                time.sleep(60)
+
+            # RPMS have multiple targets, so our self.branch() isn't perfect.
+            # We should permit rhel-8/rhel-7/etc.
+            tag_prefix = self.branch().rsplit('-', 1)[0] + '-'  # String off the rhel version.
+            accepted_tags = [name for name in tags if name.startswith(tag_prefix)]
+            if not accepted_tags:
+                self.logger.warning(
+                    f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way')
+
+        return refined
 
     def get_latest_build_info(self, default=-1, **kwargs):
         """
