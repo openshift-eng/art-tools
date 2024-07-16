@@ -11,9 +11,9 @@ class TestCommentOnPr(unittest.TestCase):
         self.nvr = "nvr"
         self.build_id = "build_id"
         self.distgit_name = "distgit_name"
-        self.comment = '**[ART PR BUILD NOTIFIER]**\n\nThis PR has been included in build ' \
-                       '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id) for ' \
-                       'distgit *distgit_name*. \n All builds following this will include this PR.'
+        self.comment = '**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build ' \
+                       '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n' \
+                       'All builds following this will include this PR.'
 
     def test_list_comments(self):
         pr_no = 1
@@ -29,7 +29,7 @@ class TestCommentOnPr(unittest.TestCase):
     @patch.object(CommentOnPr, "list_comments")
     def test_check_if_comment_exist(self, mock_list_comments):
         api_mock = MagicMock()
-        api_mock.issues.list_comments.return_value = [{"body": "[ART PR BUILD NOTIFIER]"}]
+        api_mock.issues.list_comments.return_value = [{"body": "[ART PR BUILD NOTIFIER]\n\nDistgit: distgit_name"}]
         mock_list_comments.return_value = api_mock.issues.list_comments()
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
         result = comment_on_pr.check_if_comment_exist()
