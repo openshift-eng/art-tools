@@ -109,10 +109,16 @@ class OperatorSDKPipeline:
             s3_path = f"/pub/openshift-v4/{arch}/clients/operator-sdk/{self.assembly}/"
         cmd = f"aws s3 sync --no-progress --exact-timestamps {extra_args} --delete ./{arch}/ s3://art-srv-enterprise{s3_path}"
         self.exec_cmd(cmd)
+
+        # Sync temporarily to Cloudflare as well
+        self.exec_cmd(cmd + f" --profile cloudflare --endpoint-url {os.environ['CLOUDFLARE_ENDPOINT']}")
         if self.updatelatest:
             s3_path_latest = f"/pub/openshift-v4/{arch}/clients/operator-sdk/latest/"
             cmd = f"aws s3 sync --no-progress --exact-timestamps {extra_args} --delete ./{arch}/ s3://art-srv-enterprise{s3_path_latest}"
             self.exec_cmd(cmd)
+
+            # Sync temporarily to Cloudflare as well
+            self.exec_cmd(cmd + f" --profile cloudflare --endpoint-url {os.environ['CLOUDFLARE_ENDPOINT']}")
 
     def exec_cmd(self, cmd):
         self._logger.info(f"running command: {cmd}")
