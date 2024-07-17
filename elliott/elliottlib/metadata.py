@@ -261,8 +261,6 @@ class Metadata(object):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
 
-                nonlocal el_ver
-                el_ver = int(el_ver) if el_ver else None
                 el_suffix = f'.el{el_ver}*' if el_ver else ''
                 pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{el_suffix}'
                 builds = koji_api.listBuilds(packageID=package_id,
