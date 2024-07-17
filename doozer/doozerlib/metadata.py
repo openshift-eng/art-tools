@@ -562,8 +562,8 @@ class Metadata(object):
         # Also include a .el<version> suffix to match the new build pattern
 
         el_ver = int(el_ver) if el_ver else None
-        el_suffix = f'.el{el_ver}' if el_ver else ''
-        pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{el_suffix}*'
+        el_suffix = f'.el{el_ver}*' if el_ver else ''
+        pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{el_suffix}'
         builds = koji_api.listBuilds(packageID=package_id,
                                      state=None if build_state is None else build_state.value,
                                      pattern=pattern,
