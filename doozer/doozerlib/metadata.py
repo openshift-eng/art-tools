@@ -445,6 +445,8 @@ class Metadata(object):
                     el_ver = isolate_el_version_in_brew_tag(el_target)
                 if not el_ver:
                     raise ValueError(f'Unable to determine rhel version from specified el_target: {el_target}')
+            elif self.meta_type == 'image':
+                el_ver = self.branch_el_target()
 
             if self.meta_type == 'image':
                 ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
@@ -476,11 +478,16 @@ class Metadata(object):
                 raise IOError(msg)
 
             def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate other release components that might be introduced later.
-                # Also include a .el<version> suffix to match the new build pattern
+                # Include * after pattern_suffix to tolerate other release components that might be introduced later
+                # we do not want "**" in the pattern so do some additional checks
+                main_pattern = f"{pattern_prefix}{extra_pattern}{pattern_suffix}"
+                if not main_pattern.endswith("*"):
+                    main_pattern = f"{main_pattern}*"
 
+                # include a .el<version> suffix to match the new build pattern
                 el_suffix = f'.el{el_ver}*' if el_ver else ''
-                pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{el_suffix}'
+                pattern = f'{main_pattern}{el_suffix}'
+                self.logger.info(f'Searching latest build for pattern={pattern}, state={build_state.name}')
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=pattern,
@@ -491,24 +498,6 @@ class Metadata(object):
                 # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
                 refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
-
-                # .el? was added to images well after assemblies were established. It allows us to build multiple
-                # images out of the same distgit if they differ in RHEL version. Because this was added late, not
-                # all image NVRs will possess .el? . Nonetheless, we want to filter down the list to the desired el
-                # version, if they do.
-                if self.meta_type == 'image':
-                    image_el_ver = f'.el{self.branch_el_target()}'
-                    # Ensure the suffix ends the string OR at least terminated by a '.' .
-                    el_refined = [b for b in refined if
-                                  b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
-                    if el_refined:
-                        # if there were any images which had .el?, prefer them over the non-qualified.
-                        refined = el_refined
-                    else:
-                        # Everything was eliminated when elX was included. So at least filter out those which possess elY
-                        # where X != Y
-                        el_pattern = re.compile(r'.*\.el\d+.*')
-                        refined = [b for b in refined if not el_pattern.match(b['nvr'])]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we

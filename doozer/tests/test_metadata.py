@@ -72,7 +72,7 @@ class TestMetadata(TestCase):
 
     def build_record(self, creation_dt: datetime.datetime, assembly, name='foo-container',
                      version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-                     release_prefix=None, release_suffix='',
+                     release_prefix=None, el_target=8,
                      build_state: BuildStates = BuildStates.COMPLETE,
                      is_rpm: bool = False):
         """
@@ -90,7 +90,9 @@ class TestMetadata(TestCase):
             release += f'.g{git_commit[:7]}'
 
         if assembly is not None:
-            release += f'.assembly.{assembly}{release_suffix}'
+            release += f'.assembly.{assembly}'
+
+        release += f'.el{el_target}'
 
         ver_prefix = '' if is_rpm else 'v'
 
@@ -201,7 +203,7 @@ class TestMetadata(TestCase):
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
             self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=f'{runtime.assembly}', release_suffix='.el8')
+            self.build_record(now, assembly=f'{runtime.assembly}')
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[3])
 
@@ -223,7 +225,7 @@ class TestMetadata(TestCase):
         # Check whether extra pattern matching works
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', release_prefix='99999.g1234567', release_suffix='.el8'),
+            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', release_prefix='99999.g1234567'),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
             self.build_record(now, assembly='not_ours'),
             self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}')
@@ -256,20 +258,20 @@ class TestMetadata(TestCase):
 
         builds = [
             self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True, release_suffix='.el8')
+            self.build_record(now, assembly='stream', is_rpm=True)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # No target should find el7 or el8
-        self.assertIsNone(meta.get_latest_build(default=None, el_target='7'))
-        self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[1])
+        self.assertIsNone(meta.get_latest_build(default=None, el_target=7))
+        self.assertEqual(meta.get_latest_build(default=None, el_target=8), builds[1])
 
         builds = [
             self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True, release_suffix='.el7'),
-            self.build_record(now - datetime.timedelta(hours=1), assembly='stream', is_rpm=True, release_suffix='.el8')
+            self.build_record(now, assembly='stream', is_rpm=True, el_target=7),
+            self.build_record(now - datetime.timedelta(hours=1), assembly='stream', is_rpm=True, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # Latest is el7 by one hour
-        self.assertEqual(meta.get_latest_build(default=None, el_target='7'), builds[1])
-        self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[2])
+        self.assertEqual(meta.get_latest_build(default=None, el_target=7), builds[1])
+        self.assertEqual(meta.get_latest_build(default=None, el_target=8), builds[2])
 
     def test_needs_rebuild_disgit_only(self):
         runtime = self.runtime
@@ -362,20 +364,20 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=now, id='1234567')
         ]
         builds = [
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7')
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
         # Now establish a build for each target, but don't satisfy currency condition yet.
         builds = [
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7'),
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8')
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
         builds = [
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7', build_state=BuildStates.FAILED),
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8')
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7, build_state=BuildStates.FAILED),
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
@@ -386,24 +388,24 @@ class TestMetadata(TestCase):
 
         # If both builds are newer, no rebuild is necessary
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7'),
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8')
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER)
 
         # If a build is newer, but el7 failed
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7', build_state=BuildStates.FAILED),
-            self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7'),
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8')
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7, build_state=BuildStates.FAILED),
+            self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
         # If a build is newer, but el8 failed
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8', build_state=BuildStates.FAILED),
-            self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el8'),
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, release_suffix='.el7')
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8, build_state=BuildStates.FAILED),
+            self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
