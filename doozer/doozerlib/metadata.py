@@ -479,15 +479,14 @@ class Metadata(object):
 
             def latest_build_list(pattern_suffix):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later
-                # we do not want "**" in the pattern so do some additional checks
+                # we do not want "**" in the pattern so check first
                 main_pattern = f"{pattern_prefix}{extra_pattern}{pattern_suffix}"
-                if not main_pattern.endswith("*"):
-                    main_pattern = f"{main_pattern}*"
+                if main_pattern[-1] != "*":
+                    main_pattern += "*"
 
                 # include a .el<version> suffix to match the new build pattern
                 el_suffix = f'.el{el_ver}*' if el_ver else ''
                 pattern = f'{main_pattern}{el_suffix}'
-                self.logger.info(f'Searching latest build for pattern={pattern}, state={build_state.name}')
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=pattern,

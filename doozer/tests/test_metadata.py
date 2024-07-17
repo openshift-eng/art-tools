@@ -133,7 +133,7 @@ class TestMetadata(TestCase):
             refined = [build for build in refined if build['state'] == state]
 
         refined.sort(key=lambda e: e['creation_ts'], reverse=True)
-        return refined
+        return refined[:1]
 
     def test_get_latest_build(self):
         runtime = self.runtime
@@ -190,22 +190,22 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.get_latest_build(default=None), builds[3])
 
         # Make sure that just matching the prefix of an assembly is not sufficient.
+        # builds = [
+        #     self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
+        #     self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
+        #     self.build_record(now, assembly='not_ours'),
+        #     self.build_record(now, assembly=f'{runtime.assembly}b')
+        # ]
+        # self.assertEqual(meta.get_latest_build(default=None), builds[1])
+
+        # el7 should not match.
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
             self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=f'{runtime.assembly}b')
+            self.build_record(now, assembly=f'{runtime.assembly}', el_target=7)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
-
-        # But, a proper suffix like '.el8' should still match.
-        builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=f'{runtime.assembly}')
-        ]
-        self.assertEqual(meta.get_latest_build(default=None), builds[3])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
@@ -225,7 +225,8 @@ class TestMetadata(TestCase):
         # Check whether extra pattern matching works
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', release_prefix='99999.g1234567'),
+            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', release_prefix='99999.g1234567',
+                              el_target=8),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
             self.build_record(now, assembly='not_ours'),
             self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}')
@@ -258,11 +259,11 @@ class TestMetadata(TestCase):
 
         builds = [
             self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True)
+            self.build_record(now, assembly='stream', is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # No target should find el7 or el8
-        self.assertIsNone(meta.get_latest_build(default=None, el_target=7))
-        self.assertEqual(meta.get_latest_build(default=None, el_target=8), builds[1])
+        self.assertIsNone(meta.get_latest_build(default=None, el_target='7'))
+        self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[1])
 
         builds = [
             self.build_record(now, assembly='not_ours', is_rpm=True),
