@@ -9,7 +9,6 @@ class RPMDelivery(BaseModel):
     packages: List[str] = Field(min_items=1)
     rhel_tag: Optional[str] = Field(min_length=1)
     integration_tag: str = Field(min_length=1)
-    ship_ok_tag: Optional[str] = Field(min_length=1)
     stop_ship_tag: str = Field(min_length=1)
     target_tag: Optional[str] = Field(min_length=1)
 

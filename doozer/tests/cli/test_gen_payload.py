@@ -717,17 +717,3 @@ manifests:
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
-
-    def test_rpm_deliveries(self):
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
-        ai = MagicMock(spec=AssemblyInspector)
-        ai.get_group_release_images.return_value = dict(
-            foo=Mock(spec=BrewBuildImageInspector),
-            bar=Mock(spec=BrewBuildImageInspector),
-        )
-        ai.check_installed_rpms_in_image.side_effect = lambda dg_key, bi: {
-            "foo": [],
-            "bar": [Mock(AssemblyIssue, code=AssemblyIssueCode.MISSING_SHIP_OK_TAG, component="bar", msg="")]
-        }[dg_key]
-        gpcli.detect_installed_rpms_issues(ai)
-        self.assertEqual(len(gpcli.assembly_issues), 1)
