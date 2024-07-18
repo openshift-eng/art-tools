@@ -841,17 +841,21 @@ def unset_advisory_batch(advisory_id):
     """
     batch_id = get_advisory_batch(advisory_id)
     if not batch_id:
+        logger.info(f'No batch found for {advisory_id}')
         return
 
     # Make sure the batch is unlocked
+    logger.info(f'Unlocking batch {batch_id} for advisory {advisory_id}')
     unlock_batch(batch_id)
 
     # Clear batch
     response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"clear_batch": True})
+    logger.info(f'Attempted to remove advisory {advisory_id} from batch {batch_id}, got http status {response.status_code}')
     if response.status_code != requests.codes.created:
         raise IOError(f'Failed to unset advisory batch with code {response.status_code} and error: {response.text}')
 
     # Lock the batch
+    logger.info(f'Locking batch {batch_id} for advisory {advisory_id}')
     lock_batch(batch_id)
 
 
