@@ -3,7 +3,7 @@ import os
 from urllib.parse import quote, parse_qs, unquote
 from pathlib import Path
 from io import StringIO
-from lambda_r2_lib import get_r2_s3_client, S3_BUCKET_NAME
+from lambda_r2_lib import S3_BUCKET_NAME
 
 VERBOSE = False
 
@@ -477,11 +477,25 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
     return body_top + index_file.getvalue(), entry_count
 
 
+aws_s3_client = None
+
+
 def lambda_handler(event, context):
+    global aws_s3_client
+
     if VERBOSE:
         print(event)
 
-    s3_client = get_r2_s3_client()
+    # When we truly want to switch to R2 as the source of truth, get the S3 client
+    # that communicates with the R2 bucket. For now, so that we don't have to migrate
+    # terrabytes of data from S3 to R2 in one shot, use the AWS S3 bucket to
+    # provide the file listing. Anything a user actually clicks will ultimately
+    # be redirected to R2. Files not on R2 will be pulled, by CloudFlare, into
+    # the R2 bucket via incremental update (which they call sippy).
+    # r2_s3_client = get_r2_s3_client()
+    if aws_s3_client is None:
+        aws_s3_client = boto3.client('s3')
+
     request = event['Records'][0]['cf']['request']
     uri = request.get('uri', '')
     query_string = request.get('querystring', '')
@@ -510,7 +524,7 @@ def lambda_handler(event, context):
             # on to the origin.
             return request
 
-    content, entry_count = process_dir(s3_client, S3_BUCKET_NAME, Path(dir_key), entry_offset=entry_offset)
+    content, entry_count = process_dir(aws_s3_client, S3_BUCKET_NAME, Path(dir_key), entry_offset=entry_offset)
 
     if entry_count == 0:
         return request
