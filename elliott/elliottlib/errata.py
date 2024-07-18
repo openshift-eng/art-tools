@@ -850,7 +850,7 @@ def unset_advisory_batch(advisory_id):
 
     # Clear batch
     response = ErrataConnector()._post(f'/api/v1/erratum/{advisory_id}/change_batch', json={"clear_batch": True})
-    logger.info(f'Attempted to rmove advisory {advisory_id} from batch {batch_id}, got http status {response.status_code}')
+    logger.info(f'Attempted to remove advisory {advisory_id} from batch {batch_id}, got http status {response.status_code}')
     if response.status_code != requests.codes.created:
         raise IOError(f'Failed to unset advisory batch with code {response.status_code} and error: {response.text}')
 
