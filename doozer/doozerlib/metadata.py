@@ -481,7 +481,7 @@ class Metadata(object):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later
                 # we do not want "**" in the pattern so check first
                 main_pattern = f"{pattern_prefix}{extra_pattern}{pattern_suffix}"
-                if main_pattern[-1] != "*":
+                if not main_pattern.endswith("*"):
                     main_pattern += "*"
 
                 # include a .el<version> suffix to match the new build pattern
