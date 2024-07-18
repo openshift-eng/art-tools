@@ -190,13 +190,13 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.get_latest_build(default=None), builds[3])
 
         # Make sure that just matching the prefix of an assembly is not sufficient.
-        # builds = [
-        #     self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-        #     self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-        #     self.build_record(now, assembly='not_ours'),
-        #     self.build_record(now, assembly=f'{runtime.assembly}b')
-        # ]
-        # self.assertEqual(meta.get_latest_build(default=None), builds[1])
+        builds = [
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
+            self.build_record(now, assembly='not_ours'),
+            self.build_record(now, assembly=f'{runtime.assembly}b')
+        ]
+        self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # el7 should not match.
         builds = [

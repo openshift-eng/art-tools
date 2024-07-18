@@ -264,16 +264,15 @@ class Metadata(object):
                     return default
                 raise IOError(msg)
 
-            def latest_build_list(pattern_suffix):
-                # Include * after pattern_suffix to tolerate other release components that might be introduced later
-                # we do not want "**" in the pattern so check first
-                main_pattern = f"{pattern_prefix}{extra_pattern}{pattern_suffix}"
-                if not main_pattern.endswith("*"):
-                    main_pattern += "*"
+            def latest_build_list(assembly_suffix):
+                # we always add el_suffix to a nvr
+                # so search for latest build regardless of el_ver if not specified.
+                el_suffix = f'.el{el_ver if el_ver else "*"}'
 
-                # include a .el<version> suffix to match the new build pattern
-                el_suffix = f'.el{el_ver}*' if el_ver else ''
-                pattern = f'{main_pattern}{el_suffix}'
+                # we will not tolerate new naming components in pattern by default
+                # so this will need to updated as new nvr naming components are added
+                pattern = f"{pattern_prefix}{extra_pattern}{assembly_suffix}{el_suffix}"
+
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
                                              pattern=pattern,
@@ -283,7 +282,7 @@ class Metadata(object):
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
-                refined = [b for b in builds if b['nvr'].endswith(pattern_suffix) or f'{pattern_suffix}.' in b['nvr']]
+                refined = [b for b in builds if b['nvr'].endswith(assembly_suffix) or f'{assembly_suffix}.' in b['nvr']]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we
