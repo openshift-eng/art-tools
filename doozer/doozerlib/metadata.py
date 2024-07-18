@@ -437,9 +437,14 @@ class Metadata(object):
 
             el_ver = None
             if el_target:
-                el_ver = isolate_el_version_in_brew_tag(el_target)
+                if isinstance(el_target, int):
+                    el_ver = el_target
+                elif isinstance(el_target, str) and el_target.isdigit():
+                    el_ver = int(el_target)
+                else:
+                    el_ver = isolate_el_version_in_brew_tag(el_target)
                 if not el_ver:
-                    raise IOError(f'Unable to determine rhel version from specified el_target: {el_target}')
+                    raise ValueError(f'Unable to determine rhel version from specified el_target: {el_target}')
 
             if self.meta_type == 'image':
                 ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
