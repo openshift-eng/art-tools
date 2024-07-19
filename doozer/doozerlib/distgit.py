@@ -1671,7 +1671,9 @@ class ImageDistGitRepo(DistGitRepo):
 
         Return either an integer representing the RHEL major version, or None if something went wrong.
         """
-        df_name = self.metadata.resolve_dockerfile_name()
+        df_name = self.config.content.source.dockerfile
+        if not df_name:
+            df_name = 'Dockerfile'
         subdir = self.config.content.source.path
         if not subdir:
             subdir = '.'
@@ -2502,7 +2504,13 @@ class ImageDistGitRepo(DistGitRepo):
 
             self.env_vars_from_source.update(self.metadata.extract_kube_env_vars())
 
-        dockerfile_name = self.metadata.resolve_dockerfile_name()
+            # See if the config is telling us a file other than "Dockerfile" defines the
+            # distgit image content.
+            if self.config.content.source.dockerfile is not Missing:
+                # Be aware that this attribute sometimes contains path elements too.
+                dockerfile_name = self.config.content.source.dockerfile
+            else:
+                dockerfile_name = "Dockerfile"
 
         # The path to the source Dockerfile we are reconciling against.
         source_dockerfile_path = os.path.join(self.source_path(), dockerfile_name)

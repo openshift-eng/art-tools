@@ -402,15 +402,13 @@ class ImageMetadata(Metadata):
             # Populate all rpms contained in the image build
             arch_rpms: Dict[str, List[Dict]] = {}  # arch => list of rpm dicts to check for updates in configured repos
             for arch, archive_inspector in arch_archives.items():
-                arch_rpms[arch] = []
                 # Example results of listing RPMs in an given imageID:
                 # https://gist.github.com/jupierce/a8798858104dcf6dfa4bd1d6dd99d2d8
                 rpm_entries = archive_inspector.get_installed_rpm_dicts()
                 for rpm_entry in rpm_entries:
                     is_exempt, pattern = self.is_rpm_exempt(rpm_entry["name"])
                     if is_exempt:
-                        self.logger.warning("%s is exempt from rpm change detection by '%s'",
-                                            to_nevra(rpm_entry), pattern)
+                        self.logger.info(f"{to_nevra(rpm_entry)} is exempt from rpm change detection by '{pattern}'")
                         continue
 
                     build_id = rpm_entry['build_id']
@@ -426,19 +424,22 @@ class ImageMetadata(Metadata):
                         self.logger.debug(f'Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur')
                         continue
                     # Add this rpm_entry to arch_rpms in order to chech whether it is latest in repos
+                    if arch not in arch_rpms:
+                        arch_rpms[arch] = []
                     arch_rpms[arch].append(rpm_entry)
 
-        self.logger.info('Checking whether any of the installed rpms is outdated')
-        non_latest_rpms = await bbii.find_non_latest_rpms(arch_rpms)
-        rebuild_hints = [
-            f"Outdated RPM {installed_rpm} installed in {image_nvr} ({arch}) when {latest_rpm} was available in repo {repo}"
-            for arch, non_latest in non_latest_rpms.items() for installed_rpm, latest_rpm, repo in non_latest
-        ]
-        if rebuild_hints:
-            return self, RebuildHint(
-                RebuildHintCode.PACKAGE_CHANGE,
-                ";\n".join(rebuild_hints)
-            )
+        if arch_rpms:
+            self.logger.info('Checking whether any of the installed rpms is outdated')
+            non_latest_rpms = await bbii.find_non_latest_rpms(arch_rpms)
+            rebuild_hints = [
+                f"Outdated RPM {installed_rpm} installed in {image_nvr} ({arch}) when {latest_rpm} was available in repo {repo}"
+                for arch, non_latest in non_latest_rpms.items() for installed_rpm, latest_rpm, repo in non_latest
+            ]
+            if rebuild_hints:
+                return self, RebuildHint(
+                    RebuildHintCode.PACKAGE_CHANGE,
+                    ";\n".join(rebuild_hints)
+                )
         return self, RebuildHint(RebuildHintCode.BUILD_IS_UP_TO_DATE, 'No change detected')
 
     def covscan(self, cc: coverity.CoverityContext) -> bool:

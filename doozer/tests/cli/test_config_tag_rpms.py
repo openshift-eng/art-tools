@@ -83,7 +83,6 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "rhel_tag": "test-rhel-tag",
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
-                    "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
                 }
             ]
@@ -149,7 +148,6 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "rhel_tag": "test-rhel-tag",
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
-                    "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
                 }
             ]
@@ -220,7 +218,6 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "rhel_tag": "test-rhel-tag",
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
-                    "ship_ok_tag": "test-ship-ok-tag",
                     "target_tag": "test-target-tag",
                 }
             ]

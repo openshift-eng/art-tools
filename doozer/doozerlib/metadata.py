@@ -286,22 +286,6 @@ class Metadata(object):
         """
         return [self.hotfix_brew_tag()]
 
-    def source_path(self):
-        """
-        :return: Returns the directory containing the source which should be used to populate distgit. This includes
-                the source.path subdirectory if the metadata includes one.
-        """
-
-        source_root = self.runtime.resolve_source(self)
-        sub_path = self.config.content.source.path
-
-        path = source_root
-        if sub_path is not Missing:
-            path = os.path.join(source_root, sub_path)
-
-        assertion.isdir(path, "Unable to find path for source [%s] for config: %s" % (path, self.config_filename))
-        return path
-
     def get_arches(self):
         """
         :return: Returns the list of architecture this image/rpm should build for. This is an intersection
@@ -451,20 +435,22 @@ class Metadata(object):
             # listBuilds returns all builds for the package; We need to limit the query to the builds
             # relevant for our major/minor.
 
-            rpm_suffix = ''  # By default, find the latest RPM build - regardless of el7, el8, ...
-
             el_ver = None
+            if el_target:
+                if isinstance(el_target, int):
+                    el_ver = el_target
+                elif isinstance(el_target, str) and el_target.isdigit():
+                    el_ver = int(el_target)
+                else:
+                    el_ver = isolate_el_version_in_brew_tag(el_target)
+                if not el_ver:
+                    raise ValueError(f'Unable to determine rhel version from specified el_target: {el_target}')
+
             if self.meta_type == 'image':
                 ver_prefix = 'v'  # openshift-enterprise-console-container-v4.7.0-202106032231.p0.git.d9f4379
             else:
                 # RPMs do not have a 'v' in front of their version; images do.
                 ver_prefix = ''  # openshift-clients-4.7.0-202106032231.p0.git.e29b355.el8
-                if el_target:
-                    el_ver = isolate_el_version_in_brew_tag(el_target)
-                    if el_ver:
-                        rpm_suffix = f'.el{el_ver}'
-                    else:
-                        raise IOError(f'Unable to determine rhel version from specified el_target: {el_target}')
 
             pattern_prefix = f'{component_name}-{ver_prefix}{self.branch_major_minor()}.'
 
@@ -482,7 +468,8 @@ class Metadata(object):
                     list_builds_kwargs['completeBefore'] = complete_before_ts
 
             def default_return():
-                msg = f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', assembly: '{assembly}', build_state: '{build_state.name}', el_target: '{el_target}'"
+                msg = (f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', "
+                       f"assembly: '{assembly}', build_state: '{build_state.name}', el_ver: '{el_ver}'")
                 if default != -1:
                     self.logger.info(msg)
                     return default
@@ -491,28 +478,14 @@ class Metadata(object):
             def latest_build_list(pattern_suffix):
                 # Include * after pattern_suffix to tolerate other release components that might be introduced later.
                 # Also include a .el<version> suffix to match the new build pattern
-                rhel_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}.{f"el{el_target}" if el_target else ""}*'
-                assert 'None' not in rhel_pattern
+
+                el_suffix = f'.el{el_ver}*' if el_ver else ''
+                pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{el_suffix}'
                 builds = koji_api.listBuilds(packageID=package_id,
                                              state=None if build_state is None else build_state.value,
-                                             pattern=rhel_pattern,
+                                             pattern=pattern,
                                              queryOpts={'limit': 1, 'order': '-creation_event_id'},
                                              **list_builds_kwargs)
-
-                # If no builds were found, the component might still be following the old pattern,
-                # where a .el suffix was not included in the NVR
-                if not builds:
-                    self.logger.warning('No builds found using pattern %s', rhel_pattern)
-
-                    legacy_pattern = f'{pattern_prefix}{extra_pattern}{pattern_suffix}*{rpm_suffix}'
-                    assert 'None' not in legacy_pattern
-                    builds = koji_api.listBuilds(packageID=package_id,
-                                                 state=None if build_state is None else build_state.value,
-                                                 pattern=legacy_pattern,
-                                                 queryOpts={'limit': 1, 'order': '-creation_event_id'},
-                                                 **list_builds_kwargs)
-                    if not builds:
-                        self.logger.warning('No builds found using pattern %s', legacy_pattern)
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
@@ -526,7 +499,8 @@ class Metadata(object):
                 if self.meta_type == 'image':
                     image_el_ver = f'.el{self.branch_el_target()}'
                     # Ensure the suffix ends the string OR at least terminated by a '.' .
-                    el_refined = [b for b in refined if b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
+                    el_refined = [b for b in refined if
+                                  b['nvr'].endswith(image_el_ver) or f'{image_el_ver}.' in b['nvr']]
                     if el_refined:
                         # if there were any images which had .el?, prefer them over the non-qualified.
                         refined = el_refined
@@ -543,6 +517,7 @@ class Metadata(object):
                     # a rebuild). If we find the latest build is not tagged appropriately, blow up
                     # and let a human figure out what happened.
                     check_nvr = refined[0]['nvr']
+                    tags = set()
                     for i in range(2):
                         tags = {tag['name'] for tag in koji_api.listTags(build=check_nvr)}
                         if tags:
@@ -554,10 +529,11 @@ class Metadata(object):
 
                     # RPMS have multiple targets, so our self.branch() isn't perfect.
                     # We should permit rhel-8/rhel-7/etc.
-                    tag_prefix = self.branch().rsplit('-', 1)[0] + '-'   # String off the rhel version.
+                    tag_prefix = self.branch().rsplit('-', 1)[0] + '-'  # String off the rhel version.
                     accepted_tags = [name for name in tags if name.startswith(tag_prefix)]
                     if not accepted_tags:
-                        self.logger.warning(f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way')
+                        self.logger.warning(
+                            f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way')
 
                 return refined
 
@@ -689,31 +665,6 @@ class Metadata(object):
         the distgit repo name + '-container'.
         """
         return self._component_name
-
-    def resolve_dockerfile_name(self) -> str:
-        """
-        :return: Upstream Dockerfile name
-        Resolve the Dockerfile name of upstream. If file specified in content.source.dockerfile doesn't exist,
-        try looking at the one specified in content.source.dockerfile_fallback as well.
-        """
-        if self.config.content.source.dockerfile is not Missing:
-            # Be aware that this attribute sometimes contains path elements too.
-            dockerfile_name = self.config.content.source.dockerfile
-
-            source_dockerfile_path = os.path.join(self.source_path(), dockerfile_name)
-
-            if not os.path.isfile(source_dockerfile_path):
-                dockerfile_name_fallback = self.config.content.source.dockerfile_fallback
-                if dockerfile_name_fallback is not Missing:
-                    self.logger.info(
-                        f"Could not find source dockerfile at {dockerfile_name}, using fallback {dockerfile_name_fallback}")
-                    return dockerfile_name_fallback
-                raise IOError(
-                    f"Fallback dockerfile {dockerfile_name_fallback} is Missing and source dockerfile {source_dockerfile_path} doesn't exist")
-            else:
-                return dockerfile_name
-        else:
-            return "Dockerfile"
 
     def needs_rebuild(self):
         if self.config.targets:

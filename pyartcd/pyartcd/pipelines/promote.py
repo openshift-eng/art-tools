@@ -125,7 +125,7 @@ class PromotePipeline:
 
         required_vars = ["GITHUB_TOKEN", "JIRA_TOKEN", "QUAY_PASSWORD"]
         if not self.skip_mirror_binaries and not self.skip_signing:
-            required_vars += ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]
+            required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
         if not self.skip_signing:
             required_vars += ["SIGNING_CERT", "SIGNING_KEY", "REDIS_SERVER_PASSWORD", "REDIS_HOST", "REDIS_PORT"]
         if not self.skip_sigstore:

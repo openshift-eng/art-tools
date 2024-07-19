@@ -1031,8 +1031,16 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
             exectools.cmd_assert(f'git remote add fork {convert_remote_git_to_ssh(fork_repo.git_url)}')
             exectools.cmd_assert('git fetch --all', retries=3)
 
+            # The path to the Dockerfile in the target branch
+            if image_meta.config.content.source.dockerfile is not Missing:
+                # Be aware that this attribute sometimes contains path elements too.
+                dockerfile_name = image_meta.config.content.source.dockerfile
+            else:
+                dockerfile_name = "Dockerfile"
+
             df_path = Dir.getpath()
-            dockerfile_name = image_meta.resolve_dockerfile_name()
+            if image_meta.config.content.source.path:
+                dockerfile_name = os.path.join(image_meta.config.content.source.path, dockerfile_name)
 
             df_path = df_path.joinpath(dockerfile_name).resolve()
             ci_operator_config_path = Dir.getpath().joinpath('.ci-operator.yaml').resolve()  # https://docs.ci.openshift.org/docs/architecture/ci-operator/#build-root-image
