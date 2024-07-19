@@ -86,8 +86,8 @@ advisory.
 
     et_data = runtime.get_errata_config()
 
-    if date and batch_id:
-        raise click.BadParameter("Cannot specify both --date and --batch-id")
+    if sum(map(bool, [date, batch_id])) != 1:
+        raise click.BadParameter("Need either --date or --batch-id")
 
     if "boilerplates" not in et_data:
         raise ValueError("`boilerplates` is required in erratatool.yml")
