@@ -39,7 +39,7 @@ class CommentOnPr:
         """
         issue_comments = self.list_comments()
         for issue_comment in issue_comments:
-            if f"Distgit: {self.distgit_name}" in issue_comment["body"]:
+            if  "[ART PR BUILD NOTIFIER]" in issue_comment["body"] and f"Distgit: {self.distgit_name}" in issue_comment["body"]:
                 return True
         return False
 
