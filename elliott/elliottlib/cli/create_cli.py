@@ -3,12 +3,10 @@ import click
 from datetime import datetime
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.exectools import cmd_assert
 from artcommonlib.format_util import green_prefix
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
-from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
 from elliottlib.util import YMD, validate_release_date, \
     validate_email_address, exit_unauthorized
 from elliottlib import errata
@@ -24,8 +22,8 @@ LOGGER = logutil.get_logger(__name__)
 @click.option("--art-advisory-key", required=True,
               help="Boilerplate for the advisory. This will be looked up from erratatool.yml")
 @click.option("--date",
-              callback=validate_release_date,
-              help="Release date for the advisory. Format: YYYY-Mon-DD.")
+              callback=validate_release_date, default=None,
+              help="Release date for the advisory, only needed if --batch-id is not used. Format: YYYY-Mon-DD.")
 @click.option('--assigned-to', metavar="EMAIL_ADDR", required=True,
               envvar="ELLIOTT_ASSIGNED_TO_EMAIL",
               callback=validate_email_address,
@@ -91,11 +89,6 @@ advisory.
     if date and batch_id:
         raise click.BadParameter("Cannot specify both --date and --batch-id")
 
-    release_date = None
-    if date:
-        # User entered a valid value for --date, set the release date
-        release_date = datetime.strptime(date, YMD).strftime(YMD)
-
     if "boilerplates" not in et_data:
         raise ValueError("`boilerplates` is required in erratatool.yml")
 
@@ -119,14 +112,15 @@ advisory.
                 advisory_package_owner_email=package_owner,
                 advisory_manager_email=manager,
                 advisory_assigned_to_email=assigned_to,
-                advisory_publish_date_override=release_date,
+                advisory_publish_date_override=date,
                 batch_id=batch_id
             )
             advisory_info = next(iter(created_advisory["errata"].values()))
             advisory_name = advisory_info["fulladvisory"].rsplit("-", 1)[0]
             advisory_id = advisory_info["id"]
             green_prefix("Created new advisory: ")
-            print_advisory(advisory_id, advisory_name, boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], release_date, batch_id)
+            print_advisory(advisory_id, advisory_name, boilerplate['synopsis'], package_owner, assigned_to,
+                           et_data['quality_responsibility_name'], date or batch_id)
 
             if with_placeholder:
                 click.echo("Creating and attaching placeholder bug...")
