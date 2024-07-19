@@ -120,7 +120,7 @@ advisory.
             advisory_id = advisory_info["id"]
             green_prefix("Created new advisory: ")
             print_advisory(advisory_id, advisory_name, boilerplate['synopsis'], package_owner, assigned_to,
-                           et_data['quality_responsibility_name'], date or batch_id)
+                           et_data['quality_responsibility_name'], date, batch_id)
 
             if with_placeholder:
                 click.echo("Creating and attaching placeholder bug...")
@@ -145,18 +145,20 @@ advisory.
         else:
             green_prefix("Would have created advisory: ")
             click.echo("")
-            print_advisory(0, "(unassigned)", boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], release_date, batch_id)
+            print_advisory(0, "(unassigned)", boilerplate['synopsis'], package_owner, assigned_to,
+                           et_data['quality_responsibility_name'], date, batch_id)
     finally:
         await errata_api.close()
 
 
-def print_advisory(advisory_id: int, errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str, release_date: datetime, batch_id: Optional[int] = None):
+def print_advisory(advisory_id: int, errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str,
+                   release_date: Optional[datetime], batch_id: Optional[int] = None):
     click.echo(f"""{errata_name}: {synopsis}
   package owner: {package_owner}  qe: {assigned_to} qe_group: {qe_group}
   url:   https://errata.devel.redhat.com/advisory/{advisory_id}
   state: NEW_FILES
   created:     None
-  ship target: {release_date.strftime(YMD)}
+  ship target: {release_date}
   batch_id:    {batch_id}
   ship date:   None
   age:         0 days
