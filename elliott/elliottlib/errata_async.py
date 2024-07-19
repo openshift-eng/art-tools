@@ -286,6 +286,8 @@ class AsyncErrataAPI:
             if batch_name:
                 data["batch"]["name"] = batch_name
         else:
+            if not advisory_publish_date_override:
+                raise ValueError("Either batch or advisory_publish_date_override must be provided")
             data["advisory"]["publish_date_override"] = advisory_publish_date_override
         return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
 
