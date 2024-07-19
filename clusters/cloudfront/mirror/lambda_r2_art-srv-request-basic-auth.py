@@ -1,6 +1,7 @@
 import base64
 import hmac
 import os.path
+import ipaddress
 
 from botocore.exceptions import ClientError
 from typing import Dict, List, Optional
@@ -84,6 +85,7 @@ def lambda_handler(event: Dict, context: Dict):
     request: Dict = event['Records'][0]['cf']['request']
     uri: str = request['uri']
     headers: Dict[str, List[Dict[str, str]]] = request['headers']
+    request_ip = request['clientIp']
 
     if uri.startswith('/srv/enterprise/'):
         # Strip off '/srv'. This was the original location I uploaded things to.
@@ -171,6 +173,20 @@ def lambda_handler(event: Dict, context: Dict):
         # ACTUAL S3 bucket origin in AWS. The 404.html file should be read
         # from there and streamed back from CloudFRONT.
         # Same for robots.txt so bots don't need to follow redirect.
+        pass
+    elif request.get('method', None).lower() != "get":
+        # HEAD is not a supported operation for signed URLs. Allow
+        # CloudFront to handle HEAD for now. We could do it ourselves
+        # if the future.
+        # The URI still needs to be adjusted, so just pass.
+        pass
+    elif ipaddress.ip_address(request_ip) in ipaddress.ip_network('169.59.196.160/28'):
+        # There is presently an issue with vsphere where it is improperly resolving
+        # cloudflare IP addresses. vsphere is reaching out from IBM and with a
+        # CIDR 169.59.196.160/28 .
+        # If we see an IP in this range, serve the request from CloudFront instead
+        # of R2 -- until the vsphere environment can be fixed to correctly resolve
+        # the IP address of R2 hostnames.
         pass
     else:
         # If we have not initialized an R2 client, do so now.
