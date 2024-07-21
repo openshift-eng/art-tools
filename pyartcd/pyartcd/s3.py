@@ -45,24 +45,26 @@ async def sync_dir_to_s3_mirror(local_dir: str, s3_path: str, exclude: Optional[
     env = os.environ.copy()
     full_s3_path = f's3://art-srv-enterprise{s3_path}'  # Note that s3_path has / prefix.
     base_cmd = ['aws', 's3', 'sync', '--no-progress', '--exact-timestamps']
+    options = []
     if dry_run:
-        base_cmd.append('--dryrun')
+        options.append('--dryrun')
     if exclude:
-        base_cmd += ['--exclude', exclude]
+        options += ['--exclude', exclude]
     elif include_only:  # include_only will over-ride exclude.
-        base_cmd += ['--exclude', '*', '--include', include_only]
+        options += ['--exclude', '*', '--include', include_only]
     if remove_old:
-        base_cmd.append('--delete')
-    base_cmd += [local_dir, full_s3_path]
+        options.append('--delete')
+    full_command = base_cmd + options + [local_dir, full_s3_path]
     await retry(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True
-    )(exectools.cmd_assert_async)(base_cmd, env=env, stdout=sys.stderr)
+    )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)
 
+    full_command = base_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']] + options + [local_dir, full_s3_path]
     # Sync temporarily to Cloudflare as well
     await retry(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True
-    )(exectools.cmd_assert_async)(base_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']], env=env, stdout=sys.stderr)
+    )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)
