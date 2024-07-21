@@ -3,12 +3,10 @@ import click
 from datetime import datetime
 from artcommonlib import logutil
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.exectools import cmd_assert
 from artcommonlib.format_util import green_prefix
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.create_placeholder_cli import create_placeholder_cli
-from elliottlib.exceptions import ElliottFatalError, ErrataToolUnauthorizedException, ErrataToolError
 from elliottlib.util import YMD, validate_release_date, \
     validate_email_address, exit_unauthorized
 from elliottlib import errata
@@ -23,9 +21,9 @@ LOGGER = logutil.get_logger(__name__)
               help="Type of Advisory to create.")
 @click.option("--art-advisory-key", required=True,
               help="Boilerplate for the advisory. This will be looked up from erratatool.yml")
-@click.option("--date", required=True,
-              callback=validate_release_date,
-              help="Release date for the advisory. Format: YYYY-Mon-DD.")
+@click.option("--date",
+              callback=validate_release_date, default=None,
+              help="Release date for the advisory, only needed if --batch-id is not used. Format: YYYY-Mon-DD.")
 @click.option('--assigned-to', metavar="EMAIL_ADDR", required=True,
               envvar="ELLIOTT_ASSIGNED_TO_EMAIL",
               callback=validate_email_address,
@@ -88,8 +86,8 @@ advisory.
 
     et_data = runtime.get_errata_config()
 
-    # User entered a valid value for --date, set the release date
-    release_date = datetime.strptime(date, YMD)
+    if sum(map(bool, [date, batch_id])) != 1:
+        raise click.BadParameter("Need either --date or --batch-id")
 
     if "boilerplates" not in et_data:
         raise ValueError("`boilerplates` is required in erratatool.yml")
@@ -114,14 +112,15 @@ advisory.
                 advisory_package_owner_email=package_owner,
                 advisory_manager_email=manager,
                 advisory_assigned_to_email=assigned_to,
-                advisory_publish_date_override=release_date.strftime(YMD),
+                advisory_publish_date_override=date,
                 batch_id=batch_id
             )
             advisory_info = next(iter(created_advisory["errata"].values()))
             advisory_name = advisory_info["fulladvisory"].rsplit("-", 1)[0]
             advisory_id = advisory_info["id"]
             green_prefix("Created new advisory: ")
-            print_advisory(advisory_id, advisory_name, boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], release_date, batch_id)
+            print_advisory(advisory_id, advisory_name, boilerplate['synopsis'], package_owner, assigned_to,
+                           et_data['quality_responsibility_name'], date, batch_id)
 
             if with_placeholder:
                 click.echo("Creating and attaching placeholder bug...")
@@ -146,18 +145,20 @@ advisory.
         else:
             green_prefix("Would have created advisory: ")
             click.echo("")
-            print_advisory(0, "(unassigned)", boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], release_date, batch_id)
+            print_advisory(0, "(unassigned)", boilerplate['synopsis'], package_owner, assigned_to,
+                           et_data['quality_responsibility_name'], date, batch_id)
     finally:
         await errata_api.close()
 
 
-def print_advisory(advisory_id: int, errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str, release_date: datetime, batch_id: Optional[int] = None):
+def print_advisory(advisory_id: int, errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str,
+                   release_date: Optional[datetime], batch_id: Optional[int] = None):
     click.echo(f"""{errata_name}: {synopsis}
   package owner: {package_owner}  qe: {assigned_to} qe_group: {qe_group}
   url:   https://errata.devel.redhat.com/advisory/{advisory_id}
   state: NEW_FILES
   created:     None
-  ship target: {release_date.strftime(YMD)}
+  ship target: {release_date}
   batch_id:    {batch_id}
   ship date:   None
   age:         0 days
