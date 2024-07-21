@@ -65,4 +65,4 @@ async def sync_dir_to_s3_mirror(local_dir: str, s3_path: str, exclude: Optional[
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True
-    )(exectools.cmd_assert_async)(base_cmd + f" --profile cloudflare --endpoint-url {os.environ['CLOUDFLARE_ENDPOINT']}", env=env, stdout=sys.stderr)
+    )(exectools.cmd_assert_async)(base_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']], env=env, stdout=sys.stderr)
