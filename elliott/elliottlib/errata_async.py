@@ -248,7 +248,7 @@ class AsyncErrataAPI:
         :param advisory_topic: Topic
         :param advisory_description: Description
         :param advisory_solution: Solution
-        :param advisory_publish_date_override: Publish date override in "YYYY-MM-DD" format. This will only be set if batch is not provided
+        :param advisory_publish_date_override: Publish date override in "YYYY-MM-DD" format
         :param advisory_text_only: Whether the advisory is text only
         :param advisory_quality_responsibility_name: Quality responsibility name
         :param advisory_security_impact: Security impact
@@ -277,18 +277,14 @@ class AsyncErrataAPI:
                 "manager_email": advisory_manager_email,
                 "assigned_to_email": advisory_assigned_to_email,
                 "text_only": 1 if advisory_text_only else 0,
+                "publish_date_override": advisory_publish_date_override,
             },
             "batch": {},
         }
-        if batch_id or batch_name:
-            if batch_id:
-                data["batch"]["id"] = batch_id
-            if batch_name:
-                data["batch"]["name"] = batch_name
-        else:
-            if not advisory_publish_date_override:
-                raise ValueError("Either batch or advisory_publish_date_override must be provided")
-            data["advisory"]["publish_date_override"] = advisory_publish_date_override
+        if batch_id:
+            data["batch"]["id"] = batch_id
+        if batch_name:
+            data["batch"]["name"] = batch_name
         return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
 
     async def request_liveid(self, advisory_id: int):
