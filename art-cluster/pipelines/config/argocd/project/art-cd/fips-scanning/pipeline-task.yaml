@@ -24,7 +24,7 @@ spec:
         kinit -kt /tmp/keytab/keytab exd-ocp-buildvm-bot-prod@IPA.REDHAT.COM
         
         pip install stomp.py==8.1.0
-        pip install setuptools==65.5.1
+        pip install setuptools==70.0.0
 
         artcd -vv --dry-run scan-fips --version $(params.version) --nvrs $(params.nvrs)
 
