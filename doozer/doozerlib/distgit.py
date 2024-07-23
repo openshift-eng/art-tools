@@ -2479,31 +2479,22 @@ class ImageDistGitRepo(DistGitRepo):
         # Initialize env_vars_from source.
         # update_distgit_dir makes a distinction between None and {}
         self.env_vars_from_source = {}
+        assert self.runtime.source_resolver is not None
+        source_resolution = self.runtime.source_resolver.resolve_source(self.metadata)
         source_dir = self.source_path()
         with Dir(source_dir):
-            if self.metadata.commitish:
-                self.runtime.logger.info(f"Rebasing image {self.name} from specified commit-ish {self.metadata.commitish}...")
-                cmd = ["git", "checkout", self.metadata.commitish]
-                exectools.cmd_assert(cmd)
             # gather source repo short sha for audit trail
-            rc, out, _ = exectools.cmd_gather(["git", "rev-parse", "--short", "HEAD"])
-            self.source_sha = out.strip()
-            out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
-            self.source_full_sha = out.strip()
-            rc, out, _ = exectools.cmd_gather("git log -1 --format=%ct")
-            self.source_date_epoch = out.strip()
-            rc, out, _ = exectools.cmd_gather("git describe --always --tags HEAD")
-            self.source_latest_tag = out.strip()
+            self.source_full_sha = source_resolution.commit_hash
+            self.source_date_epoch = str(int(source_resolution.committer_date.timestamp()))
+            self.source_latest_tag = source_resolution.latest_tag
 
-            out, _ = exectools.cmd_assert(["git", "remote", "get-url", "origin"], strip=True)
-            self.actual_source_url = out  # This may differ from the URL we report to the public
-            self.public_facing_source_url, _, _ = SourceResolver.get_public_upstream(out, self.runtime.group_config.public_upstreams)  # Point to public upstream if there are private components to the URL
+            self.actual_source_url = source_resolution.url  # This may differ from the URL we report to the public
+            self.public_facing_source_url = source_resolution.public_upstream_url  # Point to public upstream if there are private components to the URL
             # If private_fix has not already been set (e.g. by --embargoed), determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.private_fix is None:
-                if self.metadata.public_upstream_branch and not SourceResolver.is_branch_commit_hash(self.metadata.public_upstream_branch):
-                    self.private_fix = not util.is_commit_in_public_upstream(self.source_full_sha, self.metadata.public_upstream_branch, source_dir)
-                else:
-                    self.private_fix = False
+                self.private_fix = source_resolution.has_public_upstream \
+                    and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch) \
+                    and not util.is_commit_in_public_upstream(source_resolution.commit_hash, source_resolution.public_upstream_branch, source_dir)
 
             self.env_vars_from_source.update(self.metadata.extract_kube_env_vars())
 

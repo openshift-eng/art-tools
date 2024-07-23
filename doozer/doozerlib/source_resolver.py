@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import logging
 import os
 import shutil
@@ -34,11 +35,23 @@ class SourceResolution:
     https_url: str
     """ The HTTPS URL (instead of SSH) of the source code repository. """
     commit_hash: str
-    """ The commit hash of the source code repository. """
-    public_upstream_url: Optional[str]
-    """ The public upstream URL of the source code repository. """
-    public_upstream_branch: Optional[str]
-    """ The public upstream branch name of the source code repository. """
+    """ The commit hash of the current HEAD. """
+
+    @property
+    def commit_hash_short(self):
+        """ The short commit hash of the current HEAD. """
+        return self.commit_hash[:7]
+
+    committer_date: datetime
+    """ The committer date of the current HEAD. """
+    latest_tag: str
+    """ The latest tag of the current HEAD. """
+    has_public_upstream: bool
+    """ True if the source code repository has a public upstream """
+    public_upstream_url: str
+    """ The public upstream URL of the source code repository. If the source code repository does not have a public upstream, this will be the same as the https_url. """
+    public_upstream_branch: str
+    """ The public upstream branch name of the source code repository. If the source code repository does not have a public upstream, this will be the same as the branch. """
 
 
 class SourceResolver:
@@ -164,6 +177,14 @@ class SourceResolver:
                     with exectools.Dir(source_dir):
                         exectools.cmd_assert(f'git checkout {clone_branch}')
 
+                if meta.commitish:
+                    # With the alias registered, check out the commit we want
+                    LOGGER.info(f"Determining if commit-ish {meta.commitish} exists")
+                    cmd = ["git", "-C", source_dir, "branch", "--contains", meta.commitish]
+                    exectools.cmd_assert(cmd)
+                    LOGGER.info(f"Checking out commit-ish {meta.commitish}")
+                    exectools.cmd_assert(["git", "-C", source_dir, "reset", meta.commitish])
+
                 # fetch public upstream source
                 if has_public_upstream:
                     self.setup_and_fetch_public_upstream_source(meta.public_upstream_url, meta.public_upstream_branch or clone_branch, source_dir)
@@ -172,14 +193,6 @@ class SourceResolver:
                 LOGGER.info("Unable to checkout branch {}: {}".format(clone_branch, str(e)))
                 shutil.rmtree(source_dir)
                 raise IOError("Error checking out target branch of source '%s' in %s: %s" % (alias, source_dir, str(e)))
-
-            if meta.commitish:
-                # With the alias registered, check out the commit we want
-                LOGGER.info(f"Determining if commit-ish {meta.commitish} exists")
-                cmd = ["git", "-C", source_dir, "branch", "--contains", meta.commitish]
-                exectools.cmd_assert(cmd)
-                LOGGER.info(f"Checking out commit-ish {meta.commitish}")
-                exectools.cmd_assert(["git", "-C", source_dir, "checkout", meta.commitish])
 
             # Store so that the next attempt to resolve the source hits the map
             self.register_source_alias(alias, source_dir)
@@ -310,13 +323,19 @@ class SourceResolver:
             out, _ = exectools.cmd_assert(["git", "rev-parse", "HEAD"])
             commit_hash = out.strip()
 
-            public_upstream_url = None
-            public_upstream_branch = None
+            out, _ = exectools.cmd_assert("git log -1 --format=%ct")
+            comitter_date = datetime.fromtimestamp(float(out.strip()), timezone.utc)
+            out, _ = exectools.cmd_assert("git describe --always --tags HEAD")
+            latest_tag = out.strip()
+
+            has_public_upstream = False
+            public_upstream_url = origin_url
+            public_upstream_branch = branch
             if branch != 'HEAD' and self._group_config.public_upstreams:
                 # If branch == HEAD, our source is a detached HEAD.
-                public_upstream_url, public_upstream_branch, _ = self.get_public_upstream(url, self._group_config.public_upstreams)
-                if public_upstream_url and not public_upstream_branch:
-                    public_upstream_branch = branch
+                public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
+                if public_upstream_branch_override:
+                    public_upstream_branch = public_upstream_branch_override
 
             resolution = SourceResolution(
                 source_path=path,
@@ -324,6 +343,9 @@ class SourceResolver:
                 branch=branch,
                 https_url=origin_url,
                 commit_hash=commit_hash,
+                committer_date=comitter_date,
+                latest_tag=latest_tag,
+                has_public_upstream=has_public_upstream,
                 public_upstream_url=public_upstream_url,
                 public_upstream_branch=public_upstream_branch,
             )
