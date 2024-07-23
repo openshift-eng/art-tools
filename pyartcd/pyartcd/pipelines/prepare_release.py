@@ -332,17 +332,26 @@ class PrepareReleasePipeline:
 
         # Verify attached operators - and gather builds if needed
         if any(x in advisories for x in ("metadata", "prerelease", "advance")):
+            gather_dependencies = self.advance_release or self.pre_release
+            advisory_args = []
+            if self.advance_release:
+                advisory_args = [advisories['advance']]
+            elif self.pre_release:
+                advisory_args = [advisories['prerelease']]
+            elif 'metadata' in advisories:
+                advisory_args = [advisories["metadata"], advisories["extras"], advisories["image"]]
+
             try:
-                if 'advance' in advisories:
-                    await self.verify_attached_operators(advisories['advance'], gather_dependencies=True)
-                elif 'prerelease' in advisories:
-                    await self.verify_attached_operators(advisories['prerelease'], gather_dependencies=True)
-                elif 'metadata' in advisories:
-                    await self.verify_attached_operators(advisories["image"], advisories["extras"],
-                                                         advisories['metadata'])
+                await self.verify_attached_operators(*advisory_args, gather_dependencies=gather_dependencies)
             except Exception as ex:
-                _LOGGER.warning(f"Unable to verify attached operators: {ex}")
-                await self._slack_client.say_in_thread("`elliott verify-attached-operators` failed, details in log. Please retry", reaction="art-attention")
+                _LOGGER.error(f"Unable to verify attached operators: {ex}")
+                message = "`elliott verify-attached-operators` failed, details in log."
+                if self.advance_release:
+                    message += " Could not prepare advance advisory for release."
+                elif self.pre_release:
+                    message += " Could not prepare prerelease advisory for release."
+                await self._slack_client.say_in_thread(message, reaction="art-attention")
+                raise ex
 
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
