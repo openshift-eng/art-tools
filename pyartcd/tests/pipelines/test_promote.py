@@ -219,7 +219,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.util.load_group_config",
            return_value=Model(dict(arches=["x86_64", "s390x"])))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
-    async def test_run_with_custom_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    @patch("pyartcd.pipelines.promote.PromotePipeline.send_promote_complete_email")
+    async def test_run_with_custom_assembly(self, send_promote_complete_email: Mock, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                             load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                             build_release_image: AsyncMock, _):
 
@@ -444,7 +445,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
     }))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
-    async def test_run_with_standard_assembly(self, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    @patch("pyartcd.pipelines.promote.PromotePipeline.send_promote_complete_email")
+    async def test_run_with_standard_assembly(self, send_promote_complete_email: Mock, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                               build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
         runtime = MagicMock(
