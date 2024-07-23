@@ -471,10 +471,11 @@ class PrepareReleasePipeline:
             f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
             f"--manager={self.runtime.config['advisory']['manager']}",
             f"--package-owner={self.package_owner}",
-            f"--date={release_date}",
         ]
         if batch_id:
             create_cmd.append(f"--batch-id={batch_id}")
+        else:
+            create_cmd.append(f"--date={release_date}")
         if not self.dry_run:
             create_cmd.append("--yes")
         _LOGGER.info("Running command: %s", create_cmd)
