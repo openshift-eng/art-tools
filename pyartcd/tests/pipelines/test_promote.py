@@ -354,7 +354,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
                                                 signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
-        pipeline.change_advisory_state = AsyncMock()
+        pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={
             "id": 2,
             "errata_id": 2,
@@ -394,7 +394,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline = await PromotePipeline.create(runtime, group="openshift-4.10", assembly="4.10.99",
                                                 signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
-        pipeline.change_advisory_state = AsyncMock()
+        pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={
             "id": 2,
             "errata_id": 2222,
@@ -468,7 +468,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             runtime, group="openshift-4.10", assembly="4.10.99",
             skip_mirror_binaries=True, signing_env="prod", skip_sigstore=True)
         pipeline.check_blocker_bugs = AsyncMock()
-        pipeline.change_advisory_state = AsyncMock()
+        pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(return_value={
             "id": 2,
             "errata_id": 2222,
@@ -487,7 +487,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         load_releases_config.assert_awaited_once_with(group='openshift-4.10', data_path='https://example.com/ocp-build-data.git')
         pipeline.check_blocker_bugs.assert_awaited_once_with()
         for advisory in [1, 2, 3, 4]:
-            pipeline.change_advisory_state.assert_any_await(advisory, "QE")
+            pipeline.change_advisory_state_qe.assert_any_await(advisory)
         pipeline.get_advisory_info.assert_awaited_once_with(2)
         pipeline.verify_attached_bugs.assert_awaited_once_with([1, 2, 3, 4], no_verify_blocking_bugs=False,
                                                                verify_flaws=True)

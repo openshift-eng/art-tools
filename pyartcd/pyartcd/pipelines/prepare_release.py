@@ -396,7 +396,7 @@ class PrepareReleasePipeline:
                 _LOGGER.info("Not moving metadata advisory to QE since prerelease/advance release detected")
                 continue
             try:
-                self.change_advisory_state_qe(advisory)
+                await self.change_advisory_state_qe(advisory)
             except Exception as ex:
                 _LOGGER.warning(f"Unable to move {impetus} advisory {advisory} to QE: {ex}")
                 await self._slack_client.say_in_thread(f"Unable to move {impetus} advisory {advisory} to QE. Details in log.")
@@ -657,7 +657,7 @@ class PrepareReleasePipeline:
         _LOGGER.info("Running command: %s", cmd)
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
-    def change_advisory_state_qe(self, advisory: int):
+    async def change_advisory_state_qe(self, advisory: int):
         cmd = [
             "elliott",
             f"--working-dir={self.elliott_working_dir}",
@@ -671,8 +671,7 @@ class PrepareReleasePipeline:
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", cmd)
-        subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
-        _LOGGER.info("Moved advisory %d to %s", advisory, state)
+        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def verify_payload(self, pullspec: str, advisory: int):
