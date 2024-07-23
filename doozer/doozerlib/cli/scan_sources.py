@@ -254,13 +254,15 @@ class ConfigScanSources:
                 if not rebuild_hint.rebuild:
                     # A package may contain multiple RPMs; find the oldest one in the latest package build.
                     eldest_rpm_build = None
-                    latest_rpms = koji_api.getLatestRPMS(tag=meta.branch() + '-candidate', package=package_name)[1]
+                    tag = meta.branch() + '-candidate'
+                    latest_rpms = koji_api.getLatestRPMS(tag=tag, package=package_name)[1]
 
                     for latest_rpm_build in latest_rpms:
                         if not eldest_rpm_build or latest_rpm_build['creation_event_id'] < \
                                 eldest_rpm_build['creation_event_id']:
                             eldest_rpm_build = latest_rpm_build
 
+                    self.runtime.logger.info(f'Determining build root changes for package {package_name} in tag {tag} and its eldest rpm {eldest_rpm_build}')
                     # Detect if our buildroot changed since the oldest rpm of the package latest build of was built.
                     build_root_change = brew.has_tag_changed_since_build(self.runtime, koji_api, eldest_rpm_build,
                                                                          meta.build_root_tag(), inherit=True)
