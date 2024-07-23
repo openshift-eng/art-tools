@@ -456,8 +456,12 @@ class PromotePipeline:
 
         self.create_cincinnati_prs(assembly_type, data)
 
-        # send promote complete email
-        self.send_promote_complete_email(data["name"], release_infos)
+        try:
+            # send promote complete email
+            self.send_promote_complete_email(data["name"], release_infos)
+        except Exception as e:
+            self._logger.error("Failed to send promote complete email: %s", str(e))
+            await self._slack_client.say_in_thread("Failed to send promote complete email")
 
         # Backup to ocp-doomsday-registry on AWS
         if "rc" in self.assembly or "ec" in self.assembly or "art" in self.assembly:
