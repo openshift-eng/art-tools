@@ -184,15 +184,27 @@ class PrepareReleasePipeline:
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
                 if advisories[ad] < 0:
-                    if ad == "advance":
-                        # Set release date to one week before
-                        # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
-                        current_date = datetime.strptime(self.release_date, "%Y-%b-%d")
-                        one_week_before = current_date - timedelta(days=7)
-                        one_week_before_text = one_week_before.strftime("%Y-%b-%d")
+                    if ad in ["advance", "prerelease"]:
+                        release_date = None
+                        if ad == "advance":
+                            # Set release date of advance advisory to one week before GA
+                            # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
+                            ga_date = datetime.strptime(self.release_date, "%Y-%b-%d")
+                            one_week_before = ga_date - timedelta(days=7)
+                            release_date = one_week_before.strftime("%Y-%b-%d")
+                        elif ad == "prerelease":
+                            # Set release date of prerelease advisory to 3 days after when we prepare the release
+                            # it should not be a weekend
+                            today = datetime.now()
+                            release_date = today + timedelta(days=3)
+                            if release_date.weekday() == 5:  # Saturday
+                                release_date += timedelta(days=2)
+                            elif release_date.weekday() == 6:  # Sunday
+                                release_date += timedelta(days=1)
+                            release_date = release_date.strftime("%Y-%b-%d")
                         advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                               art_advisory_key=ad,
-                                                              release_date=one_week_before_text)
+                                                              release_date=release_date)
                         await self._slack_client.say_in_thread(
                             f"Advance advisory created with release date {one_week_before_text}")
                         continue

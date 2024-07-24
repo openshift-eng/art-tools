@@ -289,7 +289,17 @@ class AsyncErrataAPI:
             if not advisory_publish_date_override:
                 raise ValueError("Either batch or advisory_publish_date_override must be provided")
             data["advisory"]["publish_date_override"] = advisory_publish_date_override
-        return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
+        advisory = cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
+
+        # if no batch is provided, make sure to clear the batch association of advisory after it is created
+        # this is because ErrataTool will automatically associate the advisory with the latest unlocked batch
+        # if it is present for the Errata release
+        if not batch_id and not batch_name:
+            advisory_info = next(iter(advisory["errata"].values()))
+            advisory_id = advisory_info["id"]
+            await self.change_batch_for_advisory(advisory_id)
+
+        return advisory
 
     async def request_liveid(self, advisory_id: int):
         """ Request a Live ID for an advisory.
