@@ -38,6 +38,8 @@ class OLMBundle(object):
         self.dry_run = dry_run
         self.brew_session = brew_session or runtime.build_retrying_koji_client()
         self.operator_dict: Optional[dict] = None
+        self.image_references = {}
+        self.found_image_references = {}
 
         if isinstance(operator_nvr_or_dict, dict):
             self.operator_dict = operator_nvr_or_dict
@@ -215,6 +217,9 @@ class OLMBundle(object):
             shutil.copy2(src, dest, follow_symlinks=False)
         refs = dest / "image-references"
         if refs.exists():
+            with open(refs, 'r') as f:
+                image_refs_yml = yaml.safe_load(f.read())
+                self.image_references = image_refs_yml["spec"]["tags"]
             refs.unlink()
 
     def replace_image_references_by_sha_on_bundle_manifests(self):
@@ -236,6 +241,16 @@ class OLMBundle(object):
                     f.write(yaml.dump(yml_content))
                 else:
                     f.write(contents)
+
+        if len(self.found_image_references) != len(self.image_references):
+            message = ("Mismatch between found image references and image references. "
+                       f"Found {len(self.found_image_references)} images:"
+                       f" {self.found_image_references}, Expected"
+                       f" {len(self.image_references)} "
+                       f"images: {self.image_references}. Operator build "
+                       f"{self.operator_nvr} is likely broken and contains invalid references")
+            self.runtime.logger.error(message)
+            raise ValueError(message)
 
     def generate_bundle_annotations(self):
         """Create an annotations YAML file for the bundle, using info extracted from operator's
@@ -358,22 +373,27 @@ class OLMBundle(object):
         found_images = {}
 
         def collect_replaced_image(match):
+            source_image = f'{match.group(1)}:{match.group(2)}'
+            sha = self.fetch_image_sha(source_image)
             image = '{}/{}@{}'.format(
                 'registry.redhat.io',  # hardcoded until appregistry is dead
                 match.group(1).replace('openshift/', 'openshift4/'),
-                self.fetch_image_sha('{}:{}'.format(match.group(1), match.group(2)))
+                sha
             )
-            key = u'{}'.format(re.search(r'([^\/]+)\/(.+)', match.group(1)).group(2))
-            found_images[key] = u'{}'.format(image)
+            key = re.search(r'([^\/]+)\/(.+)', match.group(1)).group(2)
+            self.runtime.logger.info(f"Replacing {self.operator_csv_config['registry']}/{source_image} with {image}")
+            found_images[key] = image
             return image
 
+        pattern = fr'{self.operator_csv_config['registry']}\/([^:]+):([^\'"\\\s]+)'
         new_contents = re.sub(
-            r'{}\/([^:]+):([^\'"\\\s]+)'.format(self.operator_csv_config['registry']),
+            pattern,
             collect_replaced_image,
             contents,
             flags=re.MULTILINE
         )
 
+        self.found_image_references.update(found_images)
         return self.append_related_images_spec(new_contents, found_images)
 
     def fetch_image_sha(self, image):
