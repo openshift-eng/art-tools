@@ -775,6 +775,9 @@ class PromotePipeline:
 
         # Publish the clients to our S3 bucket.
         await util.mirror_to_s3(f"{base_to_mirror_dir}/{build_arch}", f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}", dry_run=self.runtime.dry_run)
+
+        await util.invalidate_cloudfront_cache("/pub/openshift-v4/clients/ocp-dev-preview/latest/*")
+
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
     async def sigstore_sign(self, release_name: str, release_infos: Dict):
