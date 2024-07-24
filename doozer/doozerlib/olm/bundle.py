@@ -379,12 +379,12 @@ class OLMBundle(object):
                 match.group(1).replace('openshift/', 'openshift4/'),
                 sha
             )
-            key = re.search(r'([^\/]+)\/(.+)', match.group(1)).group(2)
+            key = re.search(r'([^/]+)/(.+)', match.group(1)).group(2)
             self.runtime.logger.info(f"Replacing {self.operator_csv_config['registry']}/{source_image} with {image}")
             found_images[key] = image
             return image
 
-        pattern = fr'{self.operator_csv_config['registry']}\/([^:]+):([^\'"\\\s]+)'
+        pattern = rf'{self.operator_csv_config['registry']}\/([^:]+):([^\'"\\\s]+)'
         new_contents = re.sub(
             pattern,
             collect_replaced_image,

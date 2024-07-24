@@ -2201,7 +2201,7 @@ class ImageDistGitRepo(DistGitRepo):
                 self.runtime.logger.error(e)
                 raise
 
-        if len(image_refs) != found_image_refs:
+        if len(image_refs) != len(found_image_refs):
             message = (f"Mismatch between number of found image references in {csv_file} and image-references file. "
                        f"Found {len(found_image_refs)}: {sorted(found_image_refs)}, "
                        f"Expected {len(image_refs)}: {sorted([i['name'] for i in image_refs])}. "
