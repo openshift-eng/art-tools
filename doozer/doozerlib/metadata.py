@@ -127,6 +127,9 @@ class Metadata(object):
         self.raw_config = Model(data_obj.data)  # Config straight from ocp-build-data
         assert (self.raw_config.name is not Missing)
 
+        self.private_fix: Optional[bool] = None
+        """ True if the source contains embargoed (private) CVE fixes. Defaulting to None means this should be auto-determined. """
+
         self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, self.raw_config)
         self.namespace, self._component_name = Metadata.extract_component_info(meta_type, self.name, self.config)
 
