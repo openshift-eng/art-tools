@@ -6,6 +6,7 @@ import datetime
 from unittest.mock import MagicMock, Mock, patch
 
 from artcommonlib.model import Model
+from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, CgitAtomFeedEntry, RebuildHintCode
 from doozerlib.brew import BuildStates
 
@@ -32,7 +33,7 @@ class TestMetadata(TestCase):
         koji_mock.listTags = Mock(return_value=[{'name': 'rhaos-4.7-rhel-8-candidate'}])
 
         runtime.assembly = 'hotfix_a'
-        image_meta = Metadata("image", runtime, data_obj)
+        image_meta = ImageMetadata(runtime, data_obj)
         image_meta.logger = Mock()
         image_meta.get_component_name = Mock(return_value='foo-container')
         image_meta.branch_major_minor = Mock(return_value='4.7')

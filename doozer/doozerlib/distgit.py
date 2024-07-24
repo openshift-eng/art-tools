@@ -13,7 +13,7 @@ import sys
 import time
 import traceback
 from multiprocessing import Event, Lock
-from typing import Dict, List, Optional, Tuple, Union, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, Set, cast
 
 import aiofiles
 import bashlex
@@ -44,6 +44,9 @@ from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_fr
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.util import extract_version_fields
 from doozerlib.source_resolver import SourceResolver
+if TYPE_CHECKING:
+    from doozerlib.metadata import Metadata
+    from doozerlib.image import ImageMetadata
 
 # doozer used to be part of OIT
 OIT_COMMENT_PREFIX = '#oit##'
@@ -100,7 +103,7 @@ def map_image_name(name, image_map):
 
 class DistGitRepo(object):
 
-    def __init__(self, metadata, autoclone=True):
+    def __init__(self, metadata: "Metadata", autoclone=True):
         self.metadata = metadata
         self.config: Model = metadata.config
         self.runtime: "doozerlib.Runtime" = metadata.runtime
@@ -121,13 +124,6 @@ class DistGitRepo(object):
         self.public_facing_source_url: str = None
 
         self.uuid_tag = None
-
-        # If this is a standard release, private_fix will be set to True if the source contains
-        # embargoed (private) CVE fixes. Defaulting to None which means the value should be determined while rebasing.
-        self.private_fix = None
-        if self.runtime.assembly_type != AssemblyTypes.STREAM:
-            # Only stream releases can have embargoed workflows.
-            self.private_fix = False
 
         # If we are rebasing, this map can be populated with
         # variables acquired from the source path.
@@ -309,7 +305,7 @@ class DistGitRepo(object):
         return None  # to actually record a diff, child classes must override this function
 
     def add_distgits_diff(self, diff):
-        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=False)
+        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
 
     def commit(self, cmdline_commit_msg: str, commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None, log_diff=False):
         if self.runtime.local:
@@ -452,19 +448,19 @@ class ImageDistGitRepo(DistGitRepo):
         ),
     )
 
-    def __init__(self, metadata, autoclone=True,
+    def __init__(self, metadata: "ImageMetadata", autoclone=True,
                  source_modifier_factory=SourceModifierFactory()):
         self.org_image_name = None
         self.org_version = None
         self.org_release = None
         super(ImageDistGitRepo, self).__init__(metadata, autoclone=False)
+        self.metadata = metadata
         self.build_lock = Lock()
         self.build_lock.acquire()
         self.rebase_event = Event()
         self.rebase_status = False
         self.logger: logging.Logger = metadata.logger
         self.source_modifier_factory = source_modifier_factory
-        self.is_konflux = False
 
         # If there's an upstream source, there can be a mismatch between
         # how upstream wants to build their sources and ART's configuration
@@ -476,7 +472,7 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self._canonical_builders_enabled():
+        if self.metadata.canonical_builders_enabled:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
@@ -500,10 +496,6 @@ class ImageDistGitRepo(DistGitRepo):
         rc, out, _ = exectools.cmd_gather(["git", "-C", self.distgit_dir, "diff", "Dockerfile"])
         assertion.success(rc, 'Failed fetching distgit diff')
         return out
-
-    @property
-    def image_build_method(self):
-        return self.metadata.image_build_method
 
     def _write_fetch_artifacts(self):
         # Write fetch-artifacts-url.yaml for OSBS to fetch external artifacts
@@ -633,8 +625,8 @@ class ImageDistGitRepo(DistGitRepo):
                 ]
             })
 
-        if self.image_build_method is not Missing and self.image_build_method != "osbs2":
-            config_overrides['image_build_method'] = self.image_build_method
+        if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
+            config_overrides['image_build_method'] = self.metadata.image_build_method
 
         if arches:
             config_overrides.setdefault('platforms', {})['only'] = arches
@@ -750,7 +742,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         for t in repos.repotypes:
             with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
-                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=self.is_konflux)
+                content = repos.repo_file(t, enabled_repos=enabled_repos)
                 rc.write(content)
 
         with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
@@ -975,7 +967,7 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image build since it is not included: %s" % image_name)
             return
-        parent_dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
+        parent_dgr = image.distgit_repo()
         parent_dgr.wait_for_build(self.metadata.qualified_name)
         if terminate_event.is_set():
             raise KeyboardInterrupt()
@@ -987,7 +979,7 @@ class ImageDistGitRepo(DistGitRepo):
             self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
             return
 
-        dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
+        dgr = image.distgit_repo()
 
         self.logger.info("Waiting for image rebase: %s" % image_name)
         dgr.rebase_event.wait()
@@ -1098,8 +1090,8 @@ class ImageDistGitRepo(DistGitRepo):
                     # `targets` is defined as an array just because we want to keep consistency with RPM build.
                     raise DoozerFatalError("Building images against multiple targets is not currently supported.")
 
-                if self.image_build_method != "osbs2":
-                    raise DoozerFatalError(f"Do not understand image build method {self.image_build_method}. Only osbs2 exists")
+                if self.metadata.image_build_method != "osbs2":
+                    raise DoozerFatalError(f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists")
                 osbs2 = OSBS2Builder(self.runtime, scratch=scratch, dry_run=dry_run)
                 try:
                     task_id, task_url, build_info = asyncio.run(osbs2.build(self.metadata, profile, retries=retries))
@@ -1175,7 +1167,7 @@ class ImageDistGitRepo(DistGitRepo):
         separated for clarity. Local build version.
         """
 
-        if self.image_build_method == 'imagebuilder':
+        if self.metadata.image_build_method == 'imagebuilder':
             builder = 'imagebuilder -mount '
         else:
             builder = 'podman build -v '
@@ -1538,7 +1530,7 @@ class ImageDistGitRepo(DistGitRepo):
                 base_meta = self.runtime.late_resolve_image(base)
                 _, v, r = base_meta.get_latest_build_info()
                 if util.isolate_pflag_in_release(r) == 'p1':  # latest parent is embargoed
-                    self.private_fix = True  # this image should also be embargoed
+                    self.metadata.private_fix = True  # this image should also be embargoed
                 return "{}:{}-{}".format(base_meta.config.name, v, r)
             # Otherwise, the user is not expecting the FROM field to be updated in this Dockerfile.
             else:
@@ -1547,14 +1539,14 @@ class ImageDistGitRepo(DistGitRepo):
             if self.runtime.local:
                 return '{}:latest'.format(from_image_metadata.config.name)
             else:
-                from_image_distgit = from_image_metadata.k_distgit_repo() if self.is_konflux else from_image_metadata.distgit_repo()
-                if from_image_distgit.private_fix is None:  # This shouldn't happen.
+                if from_image_metadata.private_fix is None:  # This shouldn't happen.
                     raise ValueError(
                         f"Parent image {base} doesn't have .p0/.p1 flag determined. "
                         f"This indicates a bug in Doozer."
                     )
                 # If the parent we are going to build is embargoed, this image should also be embargoed
-                self.private_fix = from_image_distgit.private_fix
+                if from_image_metadata.private_fix:
+                    self.metadata.private_fix = from_image_metadata.private_fix
 
                 # Everything in the group is going to be built with the uuid tag, so we must
                 # assume that it will exist for our parent.
@@ -1620,16 +1612,6 @@ class ImageDistGitRepo(DistGitRepo):
         # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.15.7-202103191923.el8'
         unique_pullspec += f':{parent_build_nvr["version"]}-{parent_build_nvr["release"]}'
         return unique_pullspec
-
-    def _canonical_builders_enabled(self) -> bool:
-        # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
-        if self.config.canonical_builders_from_upstream is not Missing:
-            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
-        else:
-            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
-
-        return build_util.canonical_builders_enabled(
-            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
@@ -1787,9 +1769,6 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
 
-        if self.is_konflux:
-            mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
-
         # Write rebased from directives
         dfp.parent_images = mapped_images
 
@@ -1913,9 +1892,9 @@ class ImageDistGitRepo(DistGitRepo):
                     if not release.endswith(".p?"):
                         raise ValueError(
                             f"'release' must end with '.p?' for an image with a public upstream but its actual value is {release}")
-                    if self.private_fix is None:
-                        raise ValueError("self.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream")
-                    pval = ".p1" if self.private_fix else ".p0"
+                    if self.metadata.private_fix is None:
+                        raise ValueError("metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream")
+                    pval = ".p1" if self.metadata.private_fix else ".p0"
 
                 if release.endswith(".p?"):
                     release = release[:-3]  # strip .p?
@@ -2486,8 +2465,8 @@ class ImageDistGitRepo(DistGitRepo):
             self.actual_source_url = source_resolution.url  # This may differ from the URL we report to the public
             self.public_facing_source_url = source_resolution.public_upstream_url  # Point to public upstream if there are private components to the URL
             # If private_fix has not already been set (e.g. by --embargoed), determine if the source contains private fixes by checking if the private org branch commit exists in the public org
-            if self.private_fix is None:
-                self.private_fix = source_resolution.has_public_upstream \
+            if self.metadata.private_fix is None:
+                self.metadata.private_fix = source_resolution.has_public_upstream \
                     and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch) \
                     and not util.is_commit_in_public_upstream(source_resolution.commit_hash, source_resolution.public_upstream_branch, source_dir)
 
@@ -2716,7 +2695,7 @@ class ImageDistGitRepo(DistGitRepo):
                         dfp = DockerfileParser(str(df_path))
                         version = dfp.labels["version"]
                 else:
-                    self.private_fix = bool(prev_private_fix)  # preserve private_fix boolean for distgit-only repo
+                    self.metadata.private_fix = bool(prev_private_fix)  # preserve private_fix boolean for distgit-only repo
 
                 # Source or not, we should find a Dockerfile in the root at this point or something is wrong
                 assertion.isfile(df_path, "Unable to find Dockerfile in distgit root")
@@ -2724,7 +2703,7 @@ class ImageDistGitRepo(DistGitRepo):
                 if self.config.content.source.modifications is not Missing:
                     self._run_modifications()
 
-            if self.private_fix:
+            if self.metadata.private_fix:
                 self.logger.warning("The source of this image contains embargoed fixes.")
 
             real_version, real_release = self.update_distgit_dir(version, release, prev_release, force_yum_updates)

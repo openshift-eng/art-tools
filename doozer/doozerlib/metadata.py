@@ -24,7 +24,6 @@ from artcommonlib.pushd import Dir
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.k_distgit import KonfluxImageDistGitRepo
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
@@ -43,11 +42,6 @@ class CgitAtomFeedEntry(NamedTuple):
 DISTGIT_TYPES = {
     'image': ImageDistGitRepo,
     'rpm': RPMDistGitRepo
-}
-
-K_DISTGIT_TYPES = {
-    'image': KonfluxImageDistGitRepo,
-    'rpm': None  # For now
 }
 
 CONFIG_MODES = [
@@ -102,7 +96,6 @@ class Metadata(object):
         self.config_filename = data_obj.filename
         self.full_config_path = data_obj.path
         self.commitish = commitish
-        self.is_konflux = False
 
         # For efficiency, we want to prevent some verbs from introducing changes that
         # trigger distgit or upstream cloning. Setting this flag to True will cause
@@ -126,6 +119,9 @@ class Metadata(object):
 
         self.raw_config = Model(data_obj.data)  # Config straight from ocp-build-data
         assert (self.raw_config.name is not Missing)
+
+        self.private_fix: Optional[bool] = None
+        """ True if the source contains embargoed (private) CVE fixes. Defaulting to None means this should be auto-determined. """
 
         self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, self.raw_config)
         self.namespace, self._component_name = Metadata.extract_component_info(meta_type, self.name, self.config)
@@ -235,11 +231,6 @@ class Metadata(object):
     def distgit_repo(self, autoclone=True) -> DistGitRepo:
         if self._distgit_repo is None:
             self._distgit_repo = DISTGIT_TYPES[self.meta_type](self, autoclone=autoclone)
-        return self._distgit_repo
-
-    def k_distgit_repo(self, autoclone=True) -> DistGitRepo:
-        if self._distgit_repo is None:
-            self._distgit_repo = K_DISTGIT_TYPES[self.meta_type](self, autoclone=autoclone)
         return self._distgit_repo
 
     def branch(self) -> str:

@@ -470,7 +470,7 @@ class TestGenericDistGit(TestDistgit):
 
         (flexmock(metadata.runtime)
          .should_receive("add_distgits_diff")
-         .with_args("my-distgit-key", "stdout", konflux=False)
+         .with_args("my-distgit-key", "stdout")
          .once()
          .and_return(None))
 

@@ -137,7 +137,6 @@ class Runtime(GroupRuntime):
         self.sources_dir = None
 
         self.distgits_dir = None
-        self.k_distgits_dir = None
 
         # A record logger writes record.log file
         self.record_logger = None
@@ -317,9 +316,7 @@ class Runtime(GroupRuntime):
                 os.makedirs(self.working_dir)
 
         self.distgits_dir = os.path.join(self.working_dir, "distgits")
-        self.k_distgits_dir = os.path.join(self.working_dir, "k_distgits")
         self.distgits_diff_dir = os.path.join(self.working_dir, "distgits-diffs")
-        self.k_distgits_diff_dir = os.path.join(self.working_dir, "k_distgits-diffs")
         self.sources_dir = os.path.join(self.working_dir, "sources")
         self.record_log_path = os.path.join(self.working_dir, "record.log")
         self.brew_logs_dir = os.path.join(self.working_dir, "brew-logs")
@@ -341,9 +338,6 @@ class Runtime(GroupRuntime):
 
         if not os.path.isdir(self.distgits_diff_dir):
             os.mkdir(self.distgits_diff_dir)
-
-        if not os.path.isdir(self.k_distgits_diff_dir):
-            os.mkdir(self.k_distgits_diff_dir)
 
         if not os.path.isdir(self.sources_dir):
             os.mkdir(self.sources_dir)
@@ -915,14 +909,11 @@ class Runtime(GroupRuntime):
         with self.log_lock:
             self._remove_tmp_working_dir = remove
 
-    def add_distgits_diff(self, distgit, diff, konflux=False):
+    def add_distgits_diff(self, distgit, diff):
         """
         Records the diff of changes applied to a distgit repo.
         """
-        if konflux:
-            distgit_path = self.k_distgits_diff_dir
-        else:
-            distgit_path = self.distgits_diff_dir
+        distgit_path = self.distgits_diff_dir
 
         with io.open(os.path.join(distgit_path, distgit + '.patch'), 'w', encoding='utf-8') as f:
             f.write(diff)
