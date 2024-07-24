@@ -5,7 +5,6 @@ import yaml
 import json
 import hashlib
 import time
-from pathlib import Path
 import random
 import re
 from typing import Dict, Set
@@ -21,8 +20,10 @@ from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime
 from doozerlib import constants, util
+from artcommonlib.git_helper import git_clone
 from doozerlib.image import ImageMetadata
 from doozerlib.util import get_docker_config_json, what_is_in_master, extract_version_fields
+from doozerlib.source_resolver import SourceResolver
 from artcommonlib.util import convert_remote_git_to_https, split_git_url, remove_prefix, convert_remote_git_to_ssh
 from pyartcd import jenkins
 
@@ -962,7 +963,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
             logger.info('Skipping PR check since there is no configured github source URL')
             continue
 
-        public_repo_url, public_branch = runtime.get_public_upstream(source_repo_url)
+        public_repo_url, public_branch, _ = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
         if not public_branch:
             public_branch = source_repo_branch
 
@@ -1024,7 +1025,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
         public_repo_url = convert_remote_git_to_ssh(public_repo_url)
         clone_dir = os.path.join(runtime.working_dir, 'clones', dgk)
         # Clone the private url to make the best possible use of our doozer_cache
-        runtime.git_clone(source_repo_url, clone_dir)
+        git_clone(source_repo_url, clone_dir, git_cache_dir=runtime.git_cache_dir)
 
         with Dir(clone_dir):
             exectools.cmd_assert(f'git remote add public {public_repo_url}')

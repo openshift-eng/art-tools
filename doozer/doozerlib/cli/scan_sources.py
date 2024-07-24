@@ -17,6 +17,7 @@ from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
+from doozerlib.source_resolver import SourceResolver
 
 
 class ConfigScanSources:
@@ -168,9 +169,8 @@ class ConfigScanSources:
 
     def rebase_into_priv(self):
         self.runtime.logger.info('Rebasing public upstream contents into openshift-priv')
-
         upstream_mappings = exectools.parallel_exec(
-            lambda meta, _: (meta, self.runtime.get_public_upstream(meta.config.content.source.git.url)),
+            lambda meta, _: (meta, SourceResolver.get_public_upstream(meta.config.content.source.git.url, self.runtime.group_config.public_upstreams)),
             self.all_metas,
             n_threads=20,
         ).get()
@@ -186,7 +186,14 @@ class ConfigScanSources:
                                             metadata.meta_type, metadata.name)
                 continue
 
-            public_url, public_branch_name = public_upstream
+            public_url, public_branch_name, has_public_upstream = public_upstream
+
+            # If no public upstream exists, skip the rebase
+            if not has_public_upstream:
+                self.runtime.logger.warning('%s %s does not have a public upstream: skipping openshift-priv rebase',
+                                            metadata.meta_type, metadata.name)
+                continue
+
             priv_url = artcommonlib.util.convert_remote_git_to_https(metadata.config.content.source.git.url)
             priv_branch_name = metadata.config.content.source.git.branch.target
 
@@ -220,7 +227,7 @@ class ConfigScanSources:
                 continue
 
             # If they don't, clone source repo
-            path = self.runtime.resolve_source(metadata)
+            path = self.runtime.source_resolver.resolve_source(metadata).source_path
 
             # SHAs might differ because of previous rebase; let's check the actual content across upstreams
             if self._is_pub_ancestor_of_priv(path, public_branch_name, priv_branch_name, priv_repo_name):
