@@ -267,6 +267,7 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "change-state",
             "-s", "QE",
+            "--from", "NEW_FILES",
             "--use-default-advisory", "microshift"
         ]
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)

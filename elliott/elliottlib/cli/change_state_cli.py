@@ -8,6 +8,8 @@ import click
 @click.option("--state", '-s', required=True,
               type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
               help="New state for the Advisory. NEW_FILES, QE, REL_PREP")
+@click.option("--from", "from_state", type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
+              help="(Optional) Only change state if the advisory is in this state")
 @click.option("--advisory", "-a", metavar='ADVISORY', type=int,
               help="Change state of ADVISORY")
 @click.option("--default-advisories",
@@ -19,7 +21,7 @@ import click
               default=False,
               help="Do not actually change anything")
 @click.pass_obj
-def change_state_cli(runtime, state, advisory, default_advisories, default_advisory_type, noop):
+def change_state_cli(runtime, state, from_state, advisory, default_advisories, default_advisory_type, noop):
     """Change the state of an ADVISORY. Additional permissions may be
 required to change an advisory to certain states.
 
@@ -45,6 +47,10 @@ unless Bugzilla Bugs or JIRA Issues have been attached.
     Do not actually change state, just check the command could run
 
     $ elliott change-state -s NEW_FILES -a 123456 --noop
+
+    Only move to QE if the advisory is in NEW_FILES state
+
+    $ elliott change-state -s QE -a 123456 --from NEW_FILES
 """
     count_flags = sum(map(bool, [advisory, default_advisory_type, default_advisories]))
     if count_flags > 1:
@@ -71,6 +77,9 @@ unless Bugzilla Bugs or JIRA Issues have been attached.
             if e.errata_state == state:
                 green_prefix(f"No Change ({advisory}): ")
                 click.echo(f"Target state is same as current state: {state}")
+            elif e.errata_state != from_state:
+                green_prefix(f"No Change ({advisory}): ")
+                click.echo(f"Current state is not {from_state}: {e.errata_state}")
             else:
                 if noop:
                     green_prefix(f"NOOP ({advisory}): ")

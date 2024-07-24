@@ -213,7 +213,7 @@ class PromotePipeline:
                         continue
                     logger.info("Moving advisory %s to QE...", advisory)
                     tasks_with_args.append(
-                        {"args": (impetus, advisory), "task": self.change_advisory_state(advisory, "QE")})
+                        {"args": (impetus, advisory), "task": self.change_advisory_state_qe(advisory)})
 
                 results = await asyncio.gather(*[t["task"] for t in tasks_with_args], return_exceptions=True)
                 for i in range(len(results)):
@@ -938,14 +938,13 @@ class PromotePipeline:
         if log_shasum:
             util.log_file_content(f"{path_to_dir}/sha256sum.txt")  # print sha256sum.txt
 
-    async def change_advisory_state(self, advisory: int, state: str):
+    async def change_advisory_state_qe(self, advisory: int):
         cmd = [
             "elliott",
             "change-state",
-            "-s",
-            state,
-            "-a",
-            str(advisory),
+            "-s", "QE",
+            "--from", "NEW_FILES",
+            "-a", str(advisory),
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
