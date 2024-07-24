@@ -219,7 +219,8 @@ class OLMBundle(object):
         if refs.exists():
             with open(refs, 'r') as f:
                 image_refs_yml = yaml.safe_load(f.read())
-                self.image_references = image_refs_yml["spec"]["tags"]
+            for entry in image_refs_yml.get('spec', {}).get('tags', []):
+                self.image_references[entry["name"]] = entry
             refs.unlink()
 
     def replace_image_references_by_sha_on_bundle_manifests(self):
@@ -243,12 +244,10 @@ class OLMBundle(object):
                     f.write(contents)
 
         if len(self.found_image_references) != len(self.image_references):
-            message = ("Mismatch between found image references and image references. "
-                       f"Found {len(self.found_image_references)} images:"
-                       f" {self.found_image_references}, Expected"
-                       f" {len(self.image_references)} "
-                       f"images: {self.image_references}. Operator build "
-                       f"{self.operator_nvr} is likely broken and contains invalid references")
+            message = ("Mismatch between number of found image references and image-references file. "
+                       f"Found {len(self.found_image_references)}: {sorted(self.found_image_references.keys())}, "
+                       f"Expected {len(self.image_references)}: {sorted(self.image_references.keys())}. "
+                       "Operator build metadata is invalid, please investigate.")
             self.runtime.logger.error(message)
             raise ValueError(message)
 
