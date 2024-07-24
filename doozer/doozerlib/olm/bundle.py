@@ -384,7 +384,7 @@ class OLMBundle(object):
             found_images[key] = image
             return image
 
-        pattern = rf'{self.operator_csv_config['registry']}\/([^:]+):([^\'"\\\s]+)'
+        pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(self.operator_csv_config['registry'])
         new_contents = re.sub(
             pattern,
             collect_replaced_image,
