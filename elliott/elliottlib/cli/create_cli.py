@@ -149,7 +149,7 @@ advisory.
         await errata_api.close()
 
 
-def print_advisory(advisory_id: int, errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str, release_date: Optional[datetime], batch_id: Optional[int] = None):
+def print_advisory(advisory_id: int, errata_name: str, synopsis: str, package_owner: str, assigned_to: str, qe_group: str, release_date: Optional[str], batch_id: Optional[int] = None):
     click.echo(f"""{errata_name}: {synopsis}
   package owner: {package_owner}  qe: {assigned_to} qe_group: {qe_group}
   url:   https://errata.devel.redhat.com/advisory/{advisory_id}
