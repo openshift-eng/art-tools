@@ -297,7 +297,11 @@ class AsyncErrataAPI:
         if not batch_id and not batch_name:
             advisory_info = next(iter(advisory["errata"].values()))
             advisory_id = advisory_info["id"]
-            await self.change_batch_for_advisory(advisory_id)
+            # clearing batch requires special permissions, so don't raise exception if it fails
+            try:
+                await self.change_batch_for_advisory(advisory_id)
+            except Exception as e:
+                _LOGGER.warning(f"Failed to clear batch association for advisory {advisory_id}: {e}")
 
         return advisory
 
