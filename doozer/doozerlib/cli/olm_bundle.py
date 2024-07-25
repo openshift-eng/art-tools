@@ -1,13 +1,18 @@
 import click
 import sys
 import traceback
+import koji
+from urllib.parse import urlparse
 
-from artcommonlib import exectools
+from artcommonlib import exectools, logutil
 from artcommonlib.model import Missing
-from doozerlib import Runtime
+from artcommonlib.constants import BREW_HUB
+from doozerlib import Runtime, brew
 from doozerlib.cli import cli, pass_runtime
 from typing import Optional, Tuple
 from doozerlib.olm.bundle import OLMBundle
+
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command('olm-bundle:list-olm-operators', short_help='List all images that are OLM operators')
@@ -140,18 +145,37 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
         cluster-logging-operator-container-v4.2.30-202004240858
     """
 
-    runtime.initialize(config_only=True)
-    clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
-    runtime.initialize(clone_distgits=clone_distgits)
+    if runtime.images and operator_nvrs:
+        raise click.BadParameter("Do not specify operator NVRs when --images is specified")
 
-    if not operator_nvrs:
-        # If this verb is run without operator NVRs, query Brew for all operator builds
+    operator_builds = []
+    if operator_nvrs:
+        LOGGER.info("Fetching given nvrs from brew...")
+        brew_session = koji.ClientSession(BREW_HUB)
+        images = []
+        for index, build in enumerate(brew.get_build_objects(operator_nvrs, brew_session)):
+            if not build:
+                raise IOError(f"Build {operator_nvrs[index]} doesn't exist in Brew.")
+            source_url = urlparse(build['source'])
+            image_name = source_url.path.rstrip('/').rsplit('/')[-1]
+            images.append(image_name)
+            operator_builds.append(build)
+        runtime.images = images
+        runtime.initialize(clone_distgits=False)
+    else:
+        # We initialize with config_only first to check if we need to clone distgits or not
+        # Cloning distgits is necessary for meta.get_latest_build() to work correctly
+        runtime.initialize(config_only=True)
+        clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
+        runtime.initialize(clone_distgits=clone_distgits)
+
+        # Since no operator nvs are explicitly given
+        # fetch all latest operator builds from Brew
+        # This will respect --images if specified
         operator_metas = [meta for meta in runtime.ordered_image_metas() if
                           meta.enabled and meta.config['update-csv'] is not Missing]
         results = exectools.parallel_exec(lambda meta, _: meta.get_latest_build(), operator_metas)
         operator_builds = results.get()
-    else:
-        operator_builds = list(operator_nvrs)
 
     def rebase_and_build(olm_bundle: OLMBundle):
         record = {
