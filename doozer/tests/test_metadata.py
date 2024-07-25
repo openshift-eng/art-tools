@@ -270,8 +270,8 @@ class TestMetadata(TestCase):
             self.build_record(now - datetime.timedelta(hours=1), assembly='stream', el_target=8, is_rpm=True)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # Latest is el7 by one hour
-        self.assertEqual(meta.get_latest_build(default=None, el_target=7), builds[1])
-        self.assertEqual(meta.get_latest_build(default=None, el_target=8), builds[2])
+        self.assertEqual(meta.get_latest_build(default=None, el_target='7'), builds[1])
+        self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[2])
 
     def test_needs_rebuild_disgit_only(self):
         runtime = self.runtime
