@@ -70,9 +70,9 @@ class TestMetadata(TestCase):
         meta.config = Model(dict_to_model={'scan_sources': {'exempt_rpms': ['*']}})
         self.assertTrue(meta.is_rpm_exempt('anything_goes')[0])
 
-    def build_record(self, creation_dt: datetime.datetime, assembly, name='foo-container',
+    def build_record(self, creation_dt: datetime.datetime, assembly, el_target, name='foo-container',
                      version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-                     release_prefix=None, el_target=8,
+                     release_prefix=None,
                      build_state: BuildStates = BuildStates.COMPLETE,
                      is_rpm: bool = False):
         """
@@ -153,83 +153,82 @@ class TestMetadata(TestCase):
         # If listBuilds returns a build from an assembly that is not ours
         # get_latest_builds should not return it.
         builds = [
-            self.build_record(now, assembly='not_ours')
+            self.build_record(now, assembly='not_ours', el_target=8)
         ]
         self.assertIsNone(meta.get_latest_build(default=None))
 
         # If there is a build from the 'stream' assembly, it should be
         # returned.
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly='stream')
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly='stream', el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # If there is a build for our assembly, it should be returned
         builds = [
-            self.build_record(now, assembly=runtime.assembly)
+            self.build_record(now, assembly=runtime.assembly, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[0])
 
         # If there is a build for our assembly and stream, our assembly
         # should be preferred even if stream is more recent.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=runtime.assembly)
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=runtime.assembly, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[2])
 
         # The most recent assembly build should be preferred.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=runtime.assembly)
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=runtime.assembly, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[3])
 
         # Make sure that just matching the prefix of an assembly is not sufficient.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=f'{runtime.assembly}b')
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=f'{runtime.assembly}b', el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # el7 should not match.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly=f'{runtime.assembly}', el_target=7)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly='stream', build_state=BuildStates.FAILED),
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly='stream', el_target=8, build_state=BuildStates.FAILED),
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[0])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly=None, build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly=None, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=None, build_state=BuildStates.COMPLETE),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
         ]
         self.assertEqual(meta.get_latest_build(default=None, assembly=''), builds[2])
 
         # Check whether extra pattern matching works
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', release_prefix='99999.g1234567',
-                              el_target=8),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}')
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}', el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None, extra_pattern='*.g1234567.*'), builds[1])
 
@@ -252,23 +251,23 @@ class TestMetadata(TestCase):
 
         # Make sure basic RPM search works (no 'v' prefix for version)
         builds = [
-            self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True)
+            self.build_record(now, assembly='not_ours', el_target=8, is_rpm=True),
+            self.build_record(now, assembly='stream', el_target=8, is_rpm=True)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         builds = [
-            self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8, is_rpm=True),
+            self.build_record(now, assembly='stream', el_target=8, is_rpm=True),
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # No target should find el7 or el8
         self.assertIsNone(meta.get_latest_build(default=None, el_target='7'))
         self.assertEqual(meta.get_latest_build(default=None, el_target='8'), builds[1])
 
         builds = [
-            self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True, el_target=7),
-            self.build_record(now - datetime.timedelta(hours=1), assembly='stream', is_rpm=True, el_target=8)
+            self.build_record(now, assembly='not_ours', el_target=8, is_rpm=True),
+            self.build_record(now, assembly='stream', el_target=7, is_rpm=True),
+            self.build_record(now - datetime.timedelta(hours=1), assembly='stream', el_target=8, is_rpm=True)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # Latest is el7 by one hour
         self.assertEqual(meta.get_latest_build(default=None, el_target=7), builds[1])
@@ -300,7 +299,7 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=now, id='1234567')
         ]
         builds = [
-            self.build_record(then, assembly=runtime.assembly, git_commit=None)
+            self.build_record(then, assembly=runtime.assembly, el_target=8, git_commit=None)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
@@ -311,9 +310,9 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=now, id='1234567')
         ]
         builds = [
-            self.build_record(now - datetime.timedelta(minutes=5), assembly=runtime.assembly,
+            self.build_record(now - datetime.timedelta(minutes=5), assembly=runtime.assembly, el_target=8,
                               git_commit=None, build_state=BuildStates.FAILED),
-            self.build_record(then, assembly=runtime.assembly,
+            self.build_record(then, assembly=runtime.assembly, el_target=8,
                               git_commit=None)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
@@ -324,7 +323,7 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=then, id='1234567')
         ]
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None)
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=None)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER)
 
@@ -333,8 +332,8 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=then, id='1234567')
         ]
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly='not_ours', git_commit=None)
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=None, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly='not_ours', el_target=8, git_commit=None)
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
@@ -439,10 +438,10 @@ class TestMetadata(TestCase):
 
         # Make sure irrelevant builds are ignored
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=runtime.assembly, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=f'{runtime.assembly}extra', git_commit=ls_remote_commit)  # Close but not quite our assembly
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=f'{runtime.assembly}extra', el_target=8, git_commit=ls_remote_commit)  # Close but not quite our assembly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
@@ -455,68 +454,68 @@ class TestMetadata(TestCase):
         # component does not match the current upstream ls-remote commit. This means there is
         # a new build required.
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit='abcdefg')
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='abcdefg')
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NEW_UPSTREAM_COMMIT)
 
         # In this scenario, we have a build newer than distgit's commit. It's git.<> release
         # component matches the ls-remote value. No new build required.
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly='not_ours', git_commit=ls_remote_commit),
-            self.build_record(now, assembly=runtime.assembly, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, git_commit=ls_remote_commit)  # This one should match perfectly
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8, git_commit=ls_remote_commit),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit)  # This one should match perfectly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
         # We should also accept the 'stream' assembly
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=runtime.assembly, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly='stream', git_commit=ls_remote_commit)  # This one should match perfectly
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly='stream', el_target=8, git_commit=ls_remote_commit)  # This one should match perfectly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
         # If we tried the upstream commit recently and failed, there should be a delay before the next attempt
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly=runtime.assembly, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
         # If the failed build attempt is old, try again
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.LAST_BUILD_FAILED)
 
         # Scenario where the latest build has a commit that does not agree with current upstream commit
         # but there is an old build that does. Indicates some type of revert. Rebuild.
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, git_commit='1234567', assembly=runtime.assembly, build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, git_commit=ls_remote_commit),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
 
         # The preceding revert scenario only applies if the assemblies match
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, git_commit='1234567', assembly='stream', build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, git_commit=ls_remote_commit),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, git_commit='1234567', assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
         # If both builds are 'stream' assembly, the upstream commit revert DOES affect our assembly
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, git_commit='1234567', assembly='stream', build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly='stream', git_commit=ls_remote_commit),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, git_commit='1234567', assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now - datetime.timedelta(days=5), assembly='stream', el_target=8, git_commit=ls_remote_commit),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
 
@@ -524,8 +523,8 @@ class TestMetadata(TestCase):
         # one specific to our assembly. In this case, our last assembly specific build does not have the
         # right upstream commit.
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now - datetime.timedelta(days=5), git_commit=ls_remote_commit, assembly='stream', build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly=runtime.assembly, git_commit='123457'),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now - datetime.timedelta(days=5), git_commit=ls_remote_commit, assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='123457'),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)

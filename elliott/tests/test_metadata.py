@@ -42,11 +42,9 @@ class TestMetadata(unittest.TestCase):
         self.meta = image_meta
         self.koji_mock = koji_mock
 
-    def build_record(self, creation_dt: datetime.datetime, assembly, name='foo-container',
+    def build_record(self, creation_dt: datetime.datetime, assembly, el_target, name='foo-container',
                      version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-                     release_prefix=None, el_target=8,
-                     build_state: BuildStates = BuildStates.COMPLETE,
-                     is_rpm: bool = False):
+                     release_prefix=None, build_state: BuildStates = BuildStates.COMPLETE, is_rpm: bool = False):
         """
         :return: Returns an artificial brew build record.
         """
@@ -124,15 +122,15 @@ class TestMetadata(unittest.TestCase):
         # If listBuilds returns a build from an assembly that is not ours
         # get_latest_builds should not return it.
         builds = [
-            self.build_record(now, assembly='not_ours')
+            self.build_record(now, assembly='not_ours', el_target=8)
         ]
         self.assertIsNone(meta.get_latest_build(default=None))
 
         # If there is a build from the 'stream' assembly, it should be
         # returned.
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly='stream')
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly='stream', el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
@@ -140,77 +138,76 @@ class TestMetadata(unittest.TestCase):
         # if there is no match for our elX, at the very least, it should filter out
         # the wrong elY.
         builds = [
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly='stream'),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly='stream', el_target=8),
             self.build_record(now, assembly='stream', el_target=9)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # If there is a build for our assembly, it should be returned
         builds = [
-            self.build_record(now, assembly=runtime.assembly)
+            self.build_record(now, assembly=runtime.assembly, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[0])
 
         # If there is a build for our assembly and stream, our assembly
         # should be preferred even if stream is more recent.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=runtime.assembly)
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=runtime.assembly, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[2])
 
         # The most recent assembly build should be preferred.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=runtime.assembly)
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=runtime.assembly, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[3])
 
         # Make sure that just matching the prefix of an assembly is not sufficient.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now, assembly=f'{runtime.assembly}b')
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now, assembly=f'{runtime.assembly}b', el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # el7 should not match.
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly=f'{runtime.assembly}', el_target=7)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly='stream', build_state=BuildStates.FAILED),
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly='stream', el_target=8, build_state=BuildStates.FAILED),
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[0])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly=None, build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly=None, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=None, build_state=BuildStates.COMPLETE),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.FAILED),
+            self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
         ]
         self.assertEqual(meta.get_latest_build(default=None, assembly=''), builds[2])
 
         # Check whether extra pattern matching works
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream'),
-            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', release_prefix='99999.g1234567',
-                              el_target=8),
-            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly),
-            self.build_record(now, assembly='not_ours'),
-            self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}')
+            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'),
+            self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
+            self.build_record(now, assembly='not_ours', el_target=8),
+            self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}', el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None, extra_pattern='*.g1234567.*'), builds[1])
 
@@ -232,19 +229,19 @@ class TestMetadata(unittest.TestCase):
 
         # Make sure basic RPM search works (no 'v' prefix for version)
         builds = [
-            self.build_record(now, assembly='not_ours', is_rpm=True),
-            self.build_record(now, assembly='stream', is_rpm=True)
+            self.build_record(now, assembly='not_ours', is_rpm=True, el_target=8),
+            self.build_record(now, assembly='stream', is_rpm=True, el_target=8)
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])
 
         builds = [
-            self.build_record(now, assembly='not_ours', is_rpm=True),
+            self.build_record(now, assembly='not_ours', is_rpm=True, el_target=8),
             self.build_record(now, assembly='stream', is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.get_latest_build(default=None), builds[1])  # No target should find el7 or el8
 
         builds = [
-            self.build_record(now, assembly='not_ours', is_rpm=True),
+            self.build_record(now, assembly='not_ours', is_rpm=True, el_target=8),
             self.build_record(now, assembly='stream', is_rpm=True, el_target=7),
             self.build_record(now - datetime.timedelta(hours=1), assembly='stream', is_rpm=True, el_target=8)
         ]
