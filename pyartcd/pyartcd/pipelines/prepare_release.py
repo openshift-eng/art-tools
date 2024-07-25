@@ -206,7 +206,7 @@ class PrepareReleasePipeline:
                                                               art_advisory_key=ad,
                                                               release_date=release_date)
                         await self._slack_client.say_in_thread(
-                            f"Advance advisory created with release date {one_week_before_text}")
+                            f"{ad} advisory created with release date {release_date}")
                         continue
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
