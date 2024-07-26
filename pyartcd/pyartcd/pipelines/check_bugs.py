@@ -31,7 +31,9 @@ class CheckBugsPipeline:
             return None
 
         # Find issues
-        await asyncio.gather(*[self._find_blockers(), self._find_regressions()])
+        # Note: don't run them concurrently since their working dir is the same and they can conflict
+        await self._find_blockers()
+        await self._find_regressions()
 
         # Return report
         if not self.issues:
