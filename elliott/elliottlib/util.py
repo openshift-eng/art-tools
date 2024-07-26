@@ -46,6 +46,8 @@ def ensure_erratatool_auth():
 
 def validate_release_date(ctx, param, value):
     """Ensures dates are provided in the correct format"""
+    if value is None:
+        return None
     try:
         release_date = datetime.datetime.strptime(value, YMD)
         if release_date == default_release_date:

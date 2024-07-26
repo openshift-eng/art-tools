@@ -248,7 +248,7 @@ class AsyncErrataAPI:
         :param advisory_topic: Topic
         :param advisory_description: Description
         :param advisory_solution: Solution
-        :param advisory_publish_date_override: Publish date override in "YYYY-MM-DD" format
+        :param advisory_publish_date_override: Publish date override in "YYYY-MM-DD" format. This will only be set if batch is not provided
         :param advisory_text_only: Whether the advisory is text only
         :param advisory_quality_responsibility_name: Quality responsibility name
         :param advisory_security_impact: Security impact
@@ -277,15 +277,34 @@ class AsyncErrataAPI:
                 "manager_email": advisory_manager_email,
                 "assigned_to_email": advisory_assigned_to_email,
                 "text_only": 1 if advisory_text_only else 0,
-                "publish_date_override": advisory_publish_date_override,
             },
             "batch": {},
         }
-        if batch_id:
-            data["batch"]["id"] = batch_id
-        if batch_name:
-            data["batch"]["name"] = batch_name
-        return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
+        if batch_id or batch_name:
+            if batch_id:
+                data["batch"]["id"] = batch_id
+            if batch_name:
+                data["batch"]["name"] = batch_name
+        else:
+            if not advisory_publish_date_override:
+                raise ValueError("Either batch or advisory_publish_date_override must be provided")
+            data["advisory"]["publish_date_override"] = advisory_publish_date_override
+        advisory = cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
+
+        # if no batch is provided, make sure to clear the batch association of advisory after it is created
+        # this is because ErrataTool will automatically associate the advisory with the latest unlocked batch
+        # if it is present for the Errata release
+        if not batch_id and not batch_name:
+            advisory_info = next(iter(advisory["errata"].values()))
+            advisory_id = advisory_info["id"]
+            _LOGGER.info(f"Clearing batch association for advisory {advisory_id}")
+            # clearing batch requires special permissions, so don't raise exception if it fails
+            try:
+                await self.change_batch_for_advisory(advisory_id)
+            except Exception as e:
+                _LOGGER.warning(f"Failed to clear batch association for advisory {advisory_id}: {e}")
+
+        return advisory
 
     async def request_liveid(self, advisory_id: int):
         """ Request a Live ID for an advisory.
