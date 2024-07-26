@@ -3,6 +3,7 @@ import click
 from opentelemetry import trace
 
 from doozerlib.backend.rebaser import KonfluxRebaser
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.runtime import Runtime
 from doozerlib.cli import pass_runtime, cli, click_coroutine, validate_semver_major_minor_patch, option_commit_message, option_push
 from doozerlib.telemetry import start_as_current_span_async
@@ -80,4 +81,56 @@ async def images_konflux_rebase(runtime: Runtime, version: str, release: str, em
         message=message,
         push=push,
     )
+    await cli.run()
+
+
+class KonfluxBuildCli:
+    def __init__(
+            self,
+            runtime: Runtime,
+            push_to_defaults: bool,
+            push_to: list,
+            scratch: bool,
+            threads: int,
+            filter_by_os: Optional[str],
+            dry_run: bool,
+            build_retries: int):
+        self.runtime = runtime
+        self.push_to_defaults = push_to_defaults
+        self.push_to = push_to
+        self.scratch = scratch
+        self.threads = threads
+        self.filter_by_os = filter_by_os
+        self.dry_run = dry_run
+        self.build_retries = build_retries
+
+    @start_as_current_span_async(TRACER, "images:konflux:build")
+    async def run(self):
+        runtime = self.runtime
+        runtime.initialize(mode='images', clone_distgits=False)
+        assert runtime.source_resolver is not None, "source_resolver is required for this command"
+        metas = runtime.ordered_image_metas()
+        builder = KonfluxImageBuilder(runtime=runtime, source_resolver=runtime.source_resolver)
+
+        for image_meta in metas:
+            await builder.build(image_meta)
+        print("test konflux build: Done")
+
+
+@cli.command("beta:images:konflux:build", short_help="Build images for the group.")
+@click.option('--push-to-defaults', default=False, is_flag=True,
+              help='Push to default registries when build completes.')
+@click.option("--push-to", default=[], metavar="REGISTRY", multiple=True,
+              help="Specific registries to push to when image build completes.  [multiple]")
+@click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
+@click.option("--threads", default=1, metavar="NUM_THREADS",
+              help="Number of concurrent builds to execute. Only valid for --local builds.")
+@click.option("--filter-by-os", default=None, metavar="ARCH",
+              help="Specify an exact arch to push (golang name e.g. 'amd64').")
+@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option('--build-retries', type=int, default=1, help='Number of build attempts for an osbs build')
+@pass_runtime
+@click_coroutine
+async def images_konflux_build(runtime: Runtime, push_to_defaults: bool, push_to: list, scratch: bool, threads: int, filter_by_os: Optional[str], dry_run: bool, build_retries: int):
+    cli = KonfluxBuildCli(runtime=runtime, push_to_defaults=push_to_defaults, push_to=push_to, scratch=scratch, threads=threads, filter_by_os=filter_by_os, dry_run=dry_run, build_retries=build_retries)
     await cli.run()
