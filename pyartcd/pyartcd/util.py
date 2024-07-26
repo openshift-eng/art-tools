@@ -608,6 +608,15 @@ The following logs are just the container build portion of the OSBS build:
         )
 
 
+async def invalidate_cloudfront_cache(invalidation_path):
+    """
+    Invalidate s3 Cloudfront cache
+    """
+    cmd = f"aws cloudfront create-invalidation --distribution-id E3RAW1IMLSZJW3 --paths {invalidation_path}"
+
+    await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
+
+
 async def mirror_to_s3(source: Union[str, Path], dest: str, exclude: Optional[str] = None, include: Optional[str] = None, dry_run=False):
     """
     Copy to AWS S3
