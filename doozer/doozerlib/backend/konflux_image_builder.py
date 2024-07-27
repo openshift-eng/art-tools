@@ -1,10 +1,13 @@
 import logging
 from pathlib import Path
 import shutil
-from typing import cast
+from typing import Dict, Optional, cast
 
-from kubernetes import client, config, dynamic, utils
-from openshift.dynamic import DynamicClient, exceptions
+# from kubernetes import client, config, dynamic, utils
+from kubernetes_asyncio import client, config
+from kubernetes_asyncio.dynamic import exceptions, resource, DynamicClient
+from kubernetes_asyncio.client.configuration import Configuration
+# from openshift.dynamic import DynamicClient, exceptions
 from ruamel.yaml import YAML
 
 from doozerlib.backend.build_repo import BuildRepo
@@ -14,6 +17,13 @@ from doozerlib.source_resolver import SourceResolution, SourceResolver
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
+
+
+class KonfluxImageBuildError(Exception):
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun: Optional[Dict]) -> None:
+        super().__init__(message)
+        self.pipelinerun_name = pipelinerun_name
+        self.pipelinerun = pipelinerun
 
 
 class KonfluxImageBuilder:
@@ -29,100 +39,63 @@ class KonfluxImageBuilder:
         self._logger = LOGGER
         pass
 
-    async def build(self, metadata: ImageMetadata) -> None:
-        # api_client = client.ApiClient()
-        api_client = config.new_client_from_config()
-        dyn_client = dynamic.DynamicClient(
-            api_client
-        )
-        # v1 = client.CoreV1Api(api_client)
+    async def build(self, metadata: ImageMetadata):
+        """ Build a container image with Konflux. """
+        cfg = Configuration()
+        await config.load_kube_config(client_configuration=cfg)
+        async with client.ApiClient(configuration=cfg) as api_client:
+            dyn_client = await DynamicClient(api_client)
 
-        # Ensure the Application resource exists
+            # Ensure the Application resource exists
+            app_manifest = self._new_application("test-ocp-4-17", "Test OCP 4.17 App")
+            app = await self._create_or_patch(dyn_client, app_manifest)
+            LOGGER.info(f"Created application: {app}")
 
-        apps_api = dyn_client.resources.get(
-            api_version="appstudio.redhat.com/v1alpha1",
-            kind="Application",
-        )
-        app_manifest = self._new_application("test-ocp-4-17", "Test OCP 4.17 App")
-        try:
-            app = apps_api.get(name="test-ocp-4-17", namespace=self._konflux_namespace)
-            app = apps_api.patch(
-                body=app_manifest,
-                namespace=self._konflux_namespace,
-                content_type="application/merge-patch+json",
-            )
-        except exceptions.NotFoundError as e:
-            LOGGER.info(f"Application not found: {e}")
-            app = apps_api.create(
-                namespace=self._konflux_namespace,
-                body=app_manifest
-            )
-        # app = utils.create_from_dict(dyn_client, app_manifest)
-        LOGGER.info(f"Created application: {app}")
+            # Ensure the component resource exists
+            # source = cast(SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata))
+            dest_dir = self._base_dir.joinpath(metadata.qualified_key)
+            dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
+                "group": self._runtime.group,
+                "assembly_name": self._runtime.assembly,
+                "distgit_key": metadata.distgit_key
+            })
+            source = self._source_resolver.resolve_source(metadata)
+            build_repo = await self.setup_build_repo(source.url, dest_branch, dest_dir)
 
-        # Ensure the component resource exists
-        # source = cast(SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata))
-        dest_dir = self._base_dir.joinpath(metadata.qualified_key)
-        dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
-            "group": self._runtime.group,
-            "assembly_name": self._runtime.assembly,
-            "distgit_key": metadata.distgit_key
-        })
-        source = self._source_resolver.resolve_source(metadata)
-        build_repo = await self.setup_build_repo(source.url, dest_branch, dest_dir)
+            component_manifest = self._new_component(
+                f"test-4-17-{metadata.distgit_key}",
+                "test-ocp-4-17",
+                f"test-4-17-{metadata.distgit_key}",
+                source.public_upstream_url
+            )
+            component = await self._create_or_patch(dyn_client, component_manifest)
+            LOGGER.info(f"Created component: {component}")
 
-        components_api = dyn_client.resources.get(
-            api_version="appstudio.redhat.com/v1alpha1",
-            kind="Component",
-        )
-        component_manifest = self._new_component(
-            f"test-4-17-{metadata.distgit_key}",
-            "test-ocp-4-17",
-            f"test-4-17-{metadata.distgit_key}",
-            source.public_upstream_url
-        )
-        try:
-            component = components_api.get(name=f"test-4-17-{metadata.distgit_key}", namespace=self._konflux_namespace)
-            component = components_api.patch(
-                body=component_manifest,
-                namespace=self._konflux_namespace,
-                content_type="application/merge-patch+json",
+            # Ensure the PipelineRun resource exists
+            pipeline_runs_api = await dyn_client.resources.get(
+                api_version="tekton.dev/v1",
+                kind="PipelineRun",
             )
-        except exceptions.NotFoundError as e:
-            LOGGER.info(f"Component not found: {e}")
-            component = components_api.create(
-                namespace=self._konflux_namespace,
-                body=component_manifest
+            pipeline_run_manifest = self._new_pipeline_run(
+                f"test-4-17-{metadata.distgit_key}-build-",
+                "test-ocp-4-17",
+                f"test-4-17-{metadata.distgit_key}",
+                source.public_upstream_url,
+                dest_branch,
+                "quay.io/redhat-user-workloads/crt-nshift-art-pipeli-tenant/test-app/test-ocp-build-data:test"
             )
-        LOGGER.info(f"Created component: {component}")
-
-        # Ensure the PipelineRun resource exists
-        pipeline_runs_api = dyn_client.resources.get(
-            api_version="tekton.dev/v1",
-            kind="PipelineRun",
-        )
-        pipeline_run_manifest = self._new_pipeline_run(
-            f"test-4-17-{metadata.distgit_key}-build-1",
-            source.public_upstream_url,
-            dest_branch,
-            "quay.io/redhat-user-workloads/crt-nshift-art-pipeli-tenant/test-app/test-ocp-build-data:test"
-        )
-        try:
-            pipeline_run = pipeline_runs_api.get(name=f"test-4-17-{metadata.distgit_key}-build-1", namespace=self._konflux_namespace)
-            pipeline_run = pipeline_runs_api.patch(
-                body=pipeline_run_manifest,
-                namespace=self._konflux_namespace,
-                content_type="application/merge-patch+json",
-            )
-        except exceptions.NotFoundError as e:
-            LOGGER.info(f"PipelineRun not found: {e}")
-            pipeline_run = pipeline_runs_api.create(
+            pipeline_run = await pipeline_runs_api.create(
                 namespace=self._konflux_namespace,
                 body=pipeline_run_manifest
             )
-        LOGGER.info(f"Created PipelineRun: {pipeline_run}")
+            pipeline_run_name = pipeline_run['metadata']['name']
+            LOGGER.info(f"Created PipelineRun: {pipeline_run_name}")
+            LOGGER.info("Waiting for PipelineRun %s to complete...", pipeline_run_name)
+            pipeline_run = await self._wait_for_pipelinerun(pipeline_runs_api, pipeline_run_name)
+            if pipeline_run.status.conditions[0].status != "True":
+                raise KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed", pipeline_run_name, pipeline_run)
 
-        pass
+        return pipeline_run_name, pipeline_run
 
     @staticmethod
     def _new_application(name: str, display_name: str) -> dict:
@@ -160,12 +133,17 @@ class KonfluxImageBuilder:
         }
         return obj
 
-    def _new_pipeline_run(self, name: str, git_url: str, revision: str, output_image: str) -> dict:
+    def _new_pipeline_run(self, generate_name: str, application_name: str, component_name: str,
+                          git_url: str, revision: str, output_image: str) -> dict:
         obj = {
             "apiVersion": "tekton.dev/v1",
             "kind": "PipelineRun",
             "metadata": {
-                "name": name
+                "generateName": generate_name,
+                "labels": {
+                    "appstudio.openshift.io/application": application_name,
+                    "appstudio.openshift.io/component": component_name,
+                }
             },
             "spec": {
                 "params": [
@@ -241,3 +219,39 @@ class KonfluxImageBuilder:
             self._logger.info("Cloning build source repository %s on branch %s into %s...", build_repo.url, build_repo.branch, build_repo.local_dir)
             await build_repo.clone()
         return build_repo
+
+    async def _create_or_patch(self, dyn_client: DynamicClient, manifest: dict):
+        name = manifest["metadata"]["name"]
+        namespace = manifest["metadata"].get("namespace", self._konflux_namespace)
+        api_version = manifest["apiVersion"]
+        kind = manifest["kind"]
+        api = await dyn_client.resources.get(
+            api_version=api_version,
+            kind=kind,
+        )
+        found = False
+        try:
+            await api.get(name=name, namespace=namespace)
+            found = True
+        except exceptions.NotFoundError as e:
+            pass
+        if found:
+            new = await api.patch(
+                body=manifest,
+                namespace=namespace,
+                content_type="application/merge-patch+json",
+            )
+        else:
+            new = await api.create(
+                namespace=namespace,
+                body=manifest
+            )
+        return new
+
+    async def _wait_for_pipelinerun(self, api, pipeline_run_name: str):
+        async for event in api.watch(namespace=self._konflux_namespace, name=pipeline_run_name):
+            obj = cast(resource.ResourceInstance, event["object"])
+            status = obj.status.conditions[0].status
+            LOGGER.info("PipelineRun %s status: %s", pipeline_run_name, status)
+            if status != "Unknown":
+                return obj

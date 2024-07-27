@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 import click
 from opentelemetry import trace
@@ -46,14 +47,16 @@ class KonfluxRebaseCli:
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
         )
+        tasks = []
         for image_meta in metas:
-            await rebaser.rebase_to(
+            tasks.append(asyncio.create_task(rebaser.rebase_to(
                 image_meta,
                 self.version,
                 self.release,
                 force_yum_updates=self.force_yum_updates,
                 commit_message=self.message,
-                push=self.push)
+                push=self.push)))
+        await asyncio.gather(*tasks)
         print("test konflux: Done")
 
 
@@ -111,9 +114,10 @@ class KonfluxBuildCli:
         assert runtime.source_resolver is not None, "source_resolver is required for this command"
         metas = runtime.ordered_image_metas()
         builder = KonfluxImageBuilder(runtime=runtime, source_resolver=runtime.source_resolver)
-
+        tasks = []
         for image_meta in metas:
-            await builder.build(image_meta)
+            tasks.append(asyncio.create_task(builder.build(image_meta)))
+        await asyncio.gather(*tasks)
         print("test konflux build: Done")
 
 
