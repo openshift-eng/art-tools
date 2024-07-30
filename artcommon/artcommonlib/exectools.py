@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import errno
 import functools
 import os
@@ -11,25 +12,28 @@ import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime
-
-from fcntl import fcntl, F_GETFL, F_SETFL
+from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
 from pathlib import Path
-from typing import Optional, Tuple, Union, List, Dict
+from typing import Dict, List, Optional, Tuple, Union
 from urllib.request import urlopen
 
-import contextvars
-
 from future.utils import as_native_str
+from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import \
+    TraceContextTextMapPropagator
 
-from artcommonlib import logutil, assertion
-from artcommonlib.format_util import yellow_print, green_print
+from artcommonlib import assertion, logutil
+from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.pushd import Dir
+from artcommonlib.telemetry import start_as_current_span_async
 
 SUCCESS = 0
 
 logger = logutil.get_logger(__name__)
+TRACER = trace.get_tracer(__name__)
+
 cmd_counter_lock = threading.Lock()
 cmd_counter = 0  # Increments atomically to help search logs for command start/stop
 
@@ -541,3 +545,89 @@ async def manifest_tool(options, dry_run=False, retries=3):
         return
 
     await cmd_assert_async(cmd, retries=retries)
+
+
+@start_as_current_span_async(TRACER, "cmd_gather_async2")
+async def cmd_gather_async2(cmd: Union[List[str], str], check: bool = True, **kwargs) -> Tuple[Optional[int], str, str]:
+    """ Runs a command asynchronously and returns rc,stdout,stderr as a tuple
+    :param cmd <string|list>: A shell command
+    :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
+    :return: rc, stdout, stderr
+    """
+
+    if isinstance(cmd, str):
+        cmd_list = shlex.split(cmd)
+    else:
+        cmd_list = cmd
+
+    span = trace.get_current_span()
+    span.set_attribute("pyartcd.param.cmd", cmd_list)
+
+    logger.info("Executing:cmd_gather_async %s", cmd_list)
+    # capture stdout and stderr if they are not set in kwargs
+    if "stdout" not in kwargs:
+        kwargs["stdout"] = asyncio.subprocess.PIPE
+    if "stderr" not in kwargs:
+        kwargs["stderr"] = asyncio.subprocess.PIPE
+
+    # Propagate trace context to subprocess
+    env = kwargs.get("env", {})
+    carrier = {}
+    TraceContextTextMapPropagator().inject(carrier)
+    if "traceparent" in carrier:
+        env["TRACEPARENT"] = carrier["traceparent"]
+        kwargs["env"] = env
+
+    proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
+    stdout, stderr = await proc.communicate()
+    stdout = stdout.decode() if stdout else ""
+    stderr = stderr.decode() if stderr else ""
+    span.set_attribute("pyartcd.result.exit_code", str(proc.returncode))
+    if proc.returncode != 0:
+        msg = f"Process {cmd_list!r} exited with code {proc.returncode}.\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
+        if check:
+            raise ChildProcessError(msg)
+        else:
+            logger.warning(msg)
+    span.set_status(trace.StatusCode.OK)
+    return proc.returncode, stdout, stderr
+
+
+@start_as_current_span_async(TRACER, "cmd_assert_async2")
+async def cmd_assert_async2(cmd: Union[List[str], str], check: bool = True, **kwargs) -> int:
+    """ Runs a command and optionally raises an exception if the return code of the command indicates failure.
+    :param cmd <string|list>: A shell command
+    :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
+    :return: return code of the command
+    """
+    if isinstance(cmd, str):
+        cmd_list = shlex.split(cmd)
+    else:
+        cmd_list = cmd
+
+    span = trace.get_current_span()
+    span.set_attribute("pyartcd.param.cmd", cmd_list)
+
+    # Propagate trace context to subprocess
+    env = kwargs.get("env", {})
+    carrier = {}
+    TraceContextTextMapPropagator().inject(carrier)
+    if "traceparent" in carrier:
+        env["TRACEPARENT"] = carrier["traceparent"]
+        logger.warning("Pass TRACEPARENT %s", env["TRACEPARENT"])
+        kwargs["env"] = env
+
+    logger.info("Executing:cmd_assert_async %s", cmd_list)
+    proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
+    returncode = await proc.wait()
+    span.set_attribute("pyartcd.result.exit_code", str(returncode))
+    if returncode != 0:
+        msg = f"Process {cmd_list!r} exited with code {returncode}."
+        if check:
+            raise ChildProcessError(msg)
+        else:
+            logger.warning(msg)
+    span.set_status(trace.StatusCode.OK)
+    return returncode

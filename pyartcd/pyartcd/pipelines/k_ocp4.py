@@ -44,7 +44,7 @@ class KonfluxPipeline:
     async def rebase(self):
         cmd = self._doozer_base_command.copy()
         cmd.extend([
-            '--latest-parent-version', f'--images={self.image_list}', 'k:images:rebase',
+            '--latest-parent-version', f'--images={self.image_list}', 'beta:images:konflux:rebase',
             f'--version=v{self.version.stream}', f'--release={self.version.release}', '--push',
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
         ])

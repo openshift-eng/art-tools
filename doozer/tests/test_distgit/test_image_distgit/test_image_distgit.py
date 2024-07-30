@@ -75,64 +75,6 @@ class TestImageDistGit(TestDistgit):
             .clone("distgits_root_dir", "distgit_branch"))
 
     @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_image_build_method_default(self, _):
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method=distgit.Missing,
-                                            get=lambda *_: {}),
-                            name="_irrelevant_",
-                            logger="_irrelevant_")
-
-        repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
-        self.assertEqual("default-method", repo.image_build_method)
-
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_image_build_method_imagebuilder(self, _):
-        get = lambda key, default: dict({"builder": "..."}) if key == "from" else default
-
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method=distgit.Missing)),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method=distgit.Missing,
-                                            get=get),
-                            name="_irrelevant_",
-                            logger="_irrelevant_")
-
-        repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
-        self.assertEqual("osbs2", repo.image_build_method)
-
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="osbs2")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method=distgit.Missing,
-                                            get=get),
-                            name="_irrelevant_",
-                            logger="_irrelevant_")
-
-        repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
-        self.assertEqual("osbs2", repo.image_build_method)
-
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="osbs2")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method="imagebuilder",
-                                            get=get),
-                            name="_irrelevant_",
-                            logger="_irrelevant_")
-
-        repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
-        self.assertEqual("imagebuilder", repo.image_build_method)
-
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_image_build_method_from_config(self, _):
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method="config-method",
-                                            get=lambda _, d: d),
-                            name="_irrelevant_",
-                            logger="_irrelevant_")
-
-        repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
-        self.assertEqual("config-method", repo.image_build_method)
-
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
     def test_wait_for_build_with_build_status_true(self, _):
         logger = flexmock()
 
@@ -607,21 +549,6 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["ref"], "deadbeef")
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
-
-    def test_canonical_builders_enabled(self):
-        # canonical_builders_from_upstream not defined
-        self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
-
-        # canonical_builders_from_upstream = True in group.yml
-        self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(True, self.img_dg._canonical_builders_enabled())
-
-        # canonical_builders_from_upstream = False in image config (override)
-        self.img_dg.config.canonical_builders_from_upstream = False
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 
     def test_update_image_config(self):
         self.img_dg.metadata = MagicMock()
