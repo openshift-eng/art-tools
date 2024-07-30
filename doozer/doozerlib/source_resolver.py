@@ -160,6 +160,7 @@ class SourceResolver:
             clone_branch, _ = self.detect_remote_source_branch(source_details, self.stage, use_source_fallback_branch)
 
             url = str(source_details["url"])
+            has_public_upstream = False
             if self._group_config.public_upstreams:
                 meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
 

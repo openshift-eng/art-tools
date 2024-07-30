@@ -371,7 +371,7 @@ class UpdateGolangPipeline:
 
         api = GhApi(owner=owner, repo=repo, token=self.github_token)
         blob = api.repos.get_content(filename, ref=branch)
-        group_config = yaml.safe_load(base64.b64decode(blob['content']))
+        group_config = yaml.load(base64.b64decode(blob['content']))
         content_repo_url = self.get_content_repo_url(el_v)
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
