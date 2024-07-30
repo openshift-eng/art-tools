@@ -17,7 +17,7 @@ from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssu
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Model
-from doozerlib import rpm_utils
+from artcommonlib.rpm_utils import parse_nvr
 import yaml
 from artcommonlib import rhcos, exectools
 from artcommonlib.rhcos import RhcosMissingContainerException
@@ -26,7 +26,6 @@ from opentelemetry import trace
 from enum import Enum
 
 
-from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.cli import cli, pass_runtime, click_coroutine
@@ -544,7 +543,7 @@ class GenPayloadCli:
                     # It could also mean that images are pinning content, which may be expected, so allow permits.
                     for installed_nevra, newest_nevra, repo in non_latest_rpms:
                         nevr, _ = installed_nevra.rsplit(".", maxsplit=1)
-                        rpm_name = rpm_utils.parse_nvr(nevr)['name']
+                        rpm_name = parse_nvr(nevr)['name']
                         is_exempt, pattern = image_meta.is_rpm_exempt(rpm_name)
                         if is_exempt:
                             self.logger.warning("%s is exempt from rpm change detection by '%s'",

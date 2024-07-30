@@ -1,7 +1,8 @@
 import base64
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, Mock, patch
-from elliottlib.rpm_utils import parse_nvr
+
+from artcommonlib.rpm_utils import parse_nvr
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib import constants
 

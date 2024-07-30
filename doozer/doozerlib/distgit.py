@@ -30,6 +30,7 @@ from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model, ListModel
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
 from doozerlib import constants, state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
@@ -38,7 +39,6 @@ from doozerlib.brew_info import BrewBuildImageInspector
 from artcommonlib.git_helper import git_clone
 from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
-from doozerlib.rpm_utils import parse_nvr
 from doozerlib.source_modifications import SourceModifierFactory
 from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
 from doozerlib.comment_on_pr import CommentOnPr

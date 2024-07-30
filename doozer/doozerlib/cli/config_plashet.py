@@ -17,7 +17,7 @@ from artcommonlib.build_util import find_latest_builds
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib import exectools
-from doozerlib.rpm_utils import compare_nvr, parse_nvr
+from artcommonlib.rpm_utils import parse_nvr, compare_nvr
 from requests_kerberos import HTTPKerberosAuth
 
 from doozerlib.cli import cli

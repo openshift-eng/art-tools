@@ -8,10 +8,10 @@ import logging
 from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
+from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
-from elliottlib.rpm_utils import parse_nvr
 from elliottlib.runtime import Runtime
 from elliottlib.util import minor_version_tuple
 from elliottlib.bzutil import Bug

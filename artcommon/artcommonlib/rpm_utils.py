@@ -1,6 +1,5 @@
 from typing import Dict, Optional, Tuple
 
-
 NVR = Dict[str, Optional[str]]
 
 
@@ -120,13 +119,13 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
     if nvr2["epoch"] is None:
         nvr2["epoch"] = ""
 
-    return labelCompare((str(nvr1["epoch"]), str(nvr1["version"]), str(nvr1["release"])), (str(nvr2["epoch"]), str(nvr2["version"]), str(nvr2["release"])))
+    return label_compare((str(nvr1["epoch"]), str(nvr1["version"]), str(nvr1["release"])), (str(nvr2["epoch"]), str(nvr2["version"]), str(nvr2["release"])))
 
 
 EVR = Tuple[Optional[str], str, str]
 
 
-def labelCompare(a: EVR, b: EVR):
+def label_compare(a: EVR, b: EVR):
     """ This function is backported from C function `rpmverCmp`.
     https://github.com/rpm-software-management/rpm/blob/9e4caf0fc536d1244b298abd9dc4c535b6560d69/rpmio/rpmver.c#L115
 

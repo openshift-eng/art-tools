@@ -8,11 +8,11 @@ from ghapi.all import GhApi
 from specfile import Specfile
 
 from artcommonlib.constants import BREW_HUB
+from artcommonlib.rpm_utils import parse_nvr
 from pyartcd import exectools
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
-from doozerlib.rpm_utils import parse_nvr
 from elliottlib import util as elliottutil
 from pyartcd.pipelines.update_golang import (is_latest_and_available,
                                              extract_and_validate_golang_nvrs)

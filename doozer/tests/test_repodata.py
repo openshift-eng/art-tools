@@ -7,8 +7,6 @@ from doozerlib.repodata import OutdatedRPMFinder, Repodata, RepodataLoader, Rpm,
 import defusedxml.ElementTree as ET
 from ruamel.yaml import YAML
 
-from doozerlib.rpm_utils import parse_nvr
-
 
 class TestRpm(TestCase):
     def test_nevra(self):

@@ -11,13 +11,13 @@ from ruamel.yaml import YAML
 
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.release_util import split_el_suffix_in_release
+from artcommonlib.rpm_utils import parse_nvr
 from pyartcd import exectools
 from pyartcd import jenkins
 from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.git import GitRepository
-from doozerlib.rpm_utils import parse_nvr
 from doozerlib.brew import BuildStates
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from elliottlib import util as elliottutil

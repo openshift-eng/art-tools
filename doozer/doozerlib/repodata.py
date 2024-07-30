@@ -15,7 +15,7 @@ from ruamel.yaml import YAML
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from artcommonlib import logutil
-from doozerlib import rpm_utils
+from artcommonlib.rpm_utils import parse_nvr, label_compare
 
 LOGGER = logutil.get_logger(__name__)
 NAMESPACES = {
@@ -44,7 +44,7 @@ class Rpm:
     def compare(self, another: "Rpm"):
         evr1 = (str(self.epoch), self.version, self.release)
         evr2 = (str(another.epoch), another.version, another.release)
-        return rpm_utils.labelCompare(evr1, evr2)
+        return label_compare(evr1, evr2)
 
     def __repr__(self) -> str:
         return self.nevra
@@ -63,7 +63,7 @@ class Rpm:
     @staticmethod
     def from_nevra(nevra: str):
         nevr, arch = nevra.rsplit(".", maxsplit=1)  # foo-0:1.2.3-1.x86_64 => (foo-0:1.2.3-1, x86_64)
-        nvrea_dict = rpm_utils.parse_nvr(nevr)
+        nvrea_dict = parse_nvr(nevr)
         nvrea_dict["arch"] = arch
         return Rpm.from_dict(nvrea_dict)
 
