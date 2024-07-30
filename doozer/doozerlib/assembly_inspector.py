@@ -3,13 +3,13 @@ from typing import Any, List, Dict, Optional, cast
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_permits, assembly_rhcos_config, \
     AssemblyIssueCode, AssemblyIssue
+from artcommonlib.rpm_utils import parse_nvr, compare_nvr
 from doozerlib.plashet import PlashetBuilder
 
 from koji import ClientSession
 
 import artcommonlib.util as artutil
 from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
-from doozerlib.rpm_utils import compare_nvr, parse_nvr
 
 from doozerlib import brew, util, Runtime
 from doozerlib.brew_info import BrewBuildImageInspector

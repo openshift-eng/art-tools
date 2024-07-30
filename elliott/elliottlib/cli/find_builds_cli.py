@@ -17,6 +17,7 @@ from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_confi
 from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
 from artcommonlib.rhcos import get_container_configs, get_build_id_from_rhcos_pullspec
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (cli, find_default_advisory,
@@ -27,7 +28,6 @@ from elliottlib.util import (ensure_erratatool_auth,
                              get_release_version,
                              isolate_el_version_in_brew_tag,
                              parallel_results_with_progress, pbar_header, progress_func)
-from doozerlib.rpm_utils import parse_nvr
 
 LOGGER = logutil.get_logger(__name__)
 

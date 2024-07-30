@@ -8,6 +8,7 @@ from typing import Dict, List, Union, Set
 from prettytable import PrettyTable
 from semver.version import Version
 
+from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import Runtime, constants
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.cli.find_builds_cli import _fetch_builds_by_kind_rpm
@@ -16,7 +17,6 @@ from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug
 from artcommonlib.rhcos import get_container_configs
 from elliottlib.util import get_nvrs_from_payload, get_golang_container_nvrs, get_golang_rpm_nvrs
-from elliottlib.rpm_utils import parse_nvr
 from elliottlib import errata
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from pyartcd.util import get_release_name_for_assembly, load_releases_config

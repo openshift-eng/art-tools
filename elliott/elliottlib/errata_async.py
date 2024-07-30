@@ -9,8 +9,8 @@ import gssapi
 
 from artcommonlib import logutil
 from artcommonlib.exectools import limit_concurrency
+from artcommonlib.rpm_utils import parse_nvr
 
-from elliottlib.rpm_utils import parse_nvr
 from elliottlib import constants, util
 
 _LOGGER = logutil.get_logger(__name__)

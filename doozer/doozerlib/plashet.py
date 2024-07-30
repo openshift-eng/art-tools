@@ -6,9 +6,9 @@ from artcommonlib import logutil
 from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
 from artcommonlib.build_util import find_latest_builds
 from artcommonlib.model import Model
-from doozerlib.rpm_utils import parse_nvr
 from koji import ClientSession
 
+from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.brew import get_build_objects, list_archives_by_builds
 from doozerlib.image import ImageMetadata
 from doozerlib.rpmcfg import RPMMetadata
