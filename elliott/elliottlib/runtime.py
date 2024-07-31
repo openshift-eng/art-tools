@@ -13,12 +13,12 @@ import warnings
 import click
 import yaml
 
-from artcommonlib import logutil
+from artcommonlib import logutil, gitdata
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
-from elliottlib import brew, constants, gitdata, util
+from elliottlib import brew, constants
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.rpmcfg import RPMMetadata
@@ -363,7 +363,7 @@ class Runtime(GroupRuntime):
 
         try:
             self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                           branch=self.group, logger=self._logger)
+                                           commitish=self.group, logger=self._logger)
             self.data_dir = self.gitdata.data_dir
 
         except gitdata.GitDataException as ex:

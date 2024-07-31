@@ -4,8 +4,9 @@ from pathlib import Path
 
 from unittest import IsolatedAsyncioTestCase, mock
 
+from artcommonlib import gitdata
 from artcommonlib.exectools import RetryException
-from doozerlib import distgit, gitdata, rpmcfg
+from doozerlib import distgit, rpmcfg
 from doozerlib.rpm_builder import RPMBuilder
 
 

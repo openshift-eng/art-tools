@@ -1,11 +1,5 @@
 RC_BASE_URL = "https://{arch}.ocp.releases.ci.openshift.org"
 
-# Environment variables to disable Git stdin prompts for username, password, etc
-GIT_NO_PROMPTS = {
-    "GIT_SSH_COMMAND": "ssh -oBatchMode=yes",
-    "GIT_TERMINAL_PROMPT": "0",
-}
-
 GITHUB_TOKEN = "GITHUB_TOKEN"
 BREWWEB_URL = "https://brewweb.engineering.redhat.com/brew"
 DISTGIT_GIT_URL = "git+https://pkgs.devel.redhat.com/git"

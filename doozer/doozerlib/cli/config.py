@@ -5,12 +5,12 @@ import yaml
 import sys
 import io
 import pathlib
-import re
 from typing import Dict
 from ghapi.core import GhApi
 
+from artcommonlib import gitdata
 from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
-from doozerlib import metadata, gitdata, Runtime
+from doozerlib import metadata, Runtime
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.config import MetaDataConfig as mdc
 from doozerlib.rhcos import RHCOSBuildInspector
