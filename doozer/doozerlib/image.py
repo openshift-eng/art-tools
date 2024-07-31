@@ -500,3 +500,7 @@ class ImageMetadata(Metadata):
         """ Returns derived brew target name from the distgit branch name
         """
         return f"{self.branch()}-containers-candidate"
+
+    @property
+    def image_build_method(self):
+        return self.config.image_build_method or self.runtime.group_config.default_image_build_method or "osbs2"

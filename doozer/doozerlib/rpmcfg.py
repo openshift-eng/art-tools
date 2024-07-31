@@ -34,8 +34,6 @@ class RPMMetadata(Metadata):
         self.tag = None
         self.build_status = False
         self.pre_init_sha = None
-        # This will be set to True if the source contains embargoed (private) CVE fixes. Defaulting to None means this should be auto-determined.
-        self.private_fix = None
 
         # If populated, extra variables that will added as os_git_vars
         self.extra_os_git_vars = {}

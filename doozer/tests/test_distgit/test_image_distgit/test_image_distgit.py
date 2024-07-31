@@ -80,6 +80,7 @@ class TestImageDistGit(TestDistgit):
                             config=flexmock(distgit=flexmock(branch=distgit.Missing),
                                             image_build_method=distgit.Missing,
                                             get=lambda *_: {}),
+                            image_build_method="default-method",
                             name="_irrelevant_",
                             logger="_irrelevant_")
 
@@ -95,6 +96,7 @@ class TestImageDistGit(TestDistgit):
                                             image_build_method=distgit.Missing,
                                             get=get),
                             name="_irrelevant_",
+                            image_build_method="osbs2",
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -105,6 +107,7 @@ class TestImageDistGit(TestDistgit):
                                             image_build_method=distgit.Missing,
                                             get=get),
                             name="_irrelevant_",
+                            image_build_method="osbs2",
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -115,6 +118,7 @@ class TestImageDistGit(TestDistgit):
                                             image_build_method="imagebuilder",
                                             get=get),
                             name="_irrelevant_",
+                            image_build_method="imagebuilder",
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -127,6 +131,7 @@ class TestImageDistGit(TestDistgit):
                                             image_build_method="config-method",
                                             get=lambda _, d: d),
                             name="_irrelevant_",
+                            image_build_method="config-method",
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
