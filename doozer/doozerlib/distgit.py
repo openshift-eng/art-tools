@@ -26,6 +26,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
 import doozerlib
 from artcommonlib import assertion, logutil, build_util, exectools
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.constants import GIT_NO_PROMPTS
 from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model, ListModel
 from artcommonlib.pushd import Dir
@@ -219,7 +220,7 @@ class DistGitRepo(object):
 
                         try:
                             git_clone(self.metadata.distgit_remote_url(), self.distgit_dir, gitargs=gitargs,
-                                      set_env=constants.GIT_NO_PROMPTS, timeout=timeout,
+                                      set_env=GIT_NO_PROMPTS, timeout=timeout,
                                       git_cache_dir=self.runtime.git_cache_dir)
                         except ChildProcessError as err:
                             # Create branch on demand
@@ -248,7 +249,7 @@ class DistGitRepo(object):
                             cmd_list.extend(["--depth", str(rhpkg_clone_depth)])
 
                         # Clone the distgit repository. Occasional flakes in clone, so use retry.
-                        exectools.cmd_assert(cmd_list, retries=3, set_env=constants.GIT_NO_PROMPTS)
+                        exectools.cmd_assert(cmd_list, retries=3, set_env=GIT_NO_PROMPTS)
 
                     if distgit_commitish:
                         with Dir(self.distgit_dir):

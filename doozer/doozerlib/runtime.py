@@ -1,6 +1,6 @@
 import warnings
 
-from artcommonlib import logutil, exectools
+from artcommonlib import logutil, exectools, gitdata
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
 from artcommonlib.model import Model, Missing
@@ -9,7 +9,6 @@ from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolver
 
 from contextlib import contextmanager
-from collections import namedtuple
 
 import os
 import tempfile
@@ -31,7 +30,6 @@ import re
 from jira import JIRA
 
 from artcommonlib.runtime import GroupRuntime
-from doozerlib import gitdata
 from doozerlib import dblib
 
 from doozerlib.image import ImageMetadata

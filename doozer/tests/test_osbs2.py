@@ -1,9 +1,9 @@
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
+from artcommonlib.gitdata import DataObj
 from doozerlib import constants
 from doozerlib.distgit import ImageDistGitRepo
-from doozerlib.gitdata import DataObj
 from doozerlib.image import ImageMetadata
 from doozerlib.osbs2_builder import OSBS2Builder
 

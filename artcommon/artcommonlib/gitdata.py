@@ -1,21 +1,18 @@
-# This file is part of gitdata project <https://github.com/adammhaile/gitdata>
-# and released under LGPL v3 <https://www.gnu.org/licenses/lgpl-3.0.en.html>
-
-from future import standard_library
-
-from artcommonlib import exectools
-from artcommonlib.logutil import get_logger
-from artcommonlib.pushd import Dir
-
-standard_library.install_aliases()
-import yaml
-import logging
-import urllib.parse
+import io
 import os
 import shutil
-import io
-from doozerlib import constants
+import urllib.parse
 
+import ruamel.yaml
+import ruamel.yaml.util
+import yaml
+
+from future.utils import as_native_str
+
+from artcommonlib import exectools
+from artcommonlib.constants import GIT_NO_PROMPTS
+from artcommonlib.logutil import get_logger
+from artcommonlib.pushd import Dir
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]
 
@@ -40,7 +37,10 @@ class DataObj(object):
         self.base_dir = os.path.dirname(self.path)
         self.filename = self.path.replace(self.base_dir, '').strip('/')
         self.data = data
+        self.indent = 2
+        self.block_seq_indent = None
 
+    @as_native_str()
     def __repr__(self):
         result = {
             'key': self.key,
@@ -50,12 +50,16 @@ class DataObj(object):
         return str(result)
 
     def reload(self):
-        with io.open(self.path, 'r', encoding="utf-8") as f:
-            self.data = yaml.full_load(f)
+        with open(self.path, 'r') as f:
+            # Reload with ruamel.yaml and guess the indent.
+            self.data, self.indent, self.block_seq_indent = ruamel.yaml.util.load_yaml_guess_indent(
+                f, preserve_quotes=True)
 
     def save(self):
-        with io.open(self.path, 'w', encoding="utf-8") as f:
-            yaml.safe_dump(self.data, f, default_flow_style=False)
+        with open(self.path, 'w') as f:
+            # pyyaml doesn't preserve the order of keys or comments when loading and saving yamls.
+            # Save with ruamel.yaml instead to keep the format as much as possible.
+            ruamel.yaml.round_trip_dump(self.data, f, indent=self.indent, block_seq_indent=self.block_seq_indent)
 
 
 class GitData(object):
@@ -74,7 +78,6 @@ class GitData(object):
         """
         self.logger = logger
         if logger is None:
-            logging.basicConfig(level=logging.INFO)
             self.logger = get_logger(__name__)
 
         self.clone_dir = clone_dir
@@ -155,8 +158,9 @@ class GitData(object):
                 if not os.path.isdir(data_destination):
                     # Clone all branches as we must sometimes reference master /OWNERS for maintainer information
                     cmd = "git clone --no-single-branch {} {}".format(self.data_path, data_destination)
-                    exectools.cmd_assert(cmd, set_env=constants.GIT_NO_PROMPTS)
-                    exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}', set_env=constants.GIT_NO_PROMPTS)
+                    exectools.cmd_assert(cmd, set_env=GIT_NO_PROMPTS)
+                    exectools.cmd_assert(f'git -C {data_destination} checkout {self.branch}',
+                                         set_env=GIT_NO_PROMPTS)
 
             self.remote_path = self.data_path
             self.data_path = data_destination
@@ -183,7 +187,7 @@ class GitData(object):
         if not os.path.isdir(self.data_dir):
             raise GitDataPathException('{} is not a valid sub-directory in the data'.format(self.sub_dir))
 
-    def load_data(self, path='', key=None, keys=None, exclude=None, filter_funcs=None, replace_vars={}):
+    def load_data(self, path='', key=None, keys=None, exclude=None, filter_funcs=None, replace_vars=None):
         full_path = os.path.join(self.data_dir, path.replace('\\', '/'))
         if path and not os.path.isdir(full_path):
             raise GitDataPathException('Cannot find "{}" under "{}"'.format(path, self.data_dir))
