@@ -4,6 +4,7 @@ Test the Repo class
 """
 import unittest
 from unittest.mock import ANY, Mock, patch
+from flexmock import flexmock
 from doozerlib.repos import Repo
 
 EXPECTED_BASIC_REPO = """[rhaos-4.4-rhel-8-build]
@@ -182,3 +183,35 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
 
         # Implicitly assert that this does _not_ raise an exception
         Repo('no-config-set-arches', self.no_config_set_arches_repo, self.arches)
+
+    async def test_get_repodata_includepkgs(self):
+        """ensure includepkgs are correctly filtered"""
+
+        repo_data = {
+            'conf': {
+                'extra_options': {
+                    'excludepkgs': '*debuginfo*',
+                    'includepkgs': 'kernel* kernel-debuginfo*',
+                },
+                'baseurl': {
+                    'x86_64': 'http://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.4-rhel-8-build/latest/x86_64/',
+                },
+            },
+            'content_set': {
+                'optional': True,
+            }
+        }
+
+        repo = Repo('kernel-repo', repo_data, ['x86_64'])
+        self.assertEqual(repo.includepkgs, ['kernel*', 'kernel-debuginfo*'])
+        self.assertEqual(repo.excludepkgs, ['*debuginfo*'])
+
+        mock_repo = Mock(primary_rpms=[Mock(nevra='kernel-devel-1'), Mock(nevra='kernel-2'),
+                                       Mock(nevra='foo-kernel-3'), Mock(nevra='bar-4'),
+                                       Mock(nevra='kernel-debuginfo-5'), Mock(nevra='foo-debuginfo-6')])
+
+        with patch('doozerlib.repos.RepodataLoader.load', return_value=mock_repo):
+            expected = {'kernel-devel-1', 'kernel-2'}
+            repodata = await repo.get_repodata('x86_64')
+            actual = {r.nevra for r in repodata.primary_rpms}
+            self.assertEqual(expected, actual)
