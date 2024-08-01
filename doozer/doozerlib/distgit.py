@@ -1022,6 +1022,7 @@ class ImageDistGitRepo(DistGitRepo):
         owners = list(self.config.owners) if self.config.owners and self.config.owners is not Missing else []
         action = "build"
         release = self.org_release if self.org_release is not None else '?'
+        dependents = list(self.config.dependents) if self.config.dependents is not Missing else []
         record = {
             "dir": self.distgit_dir,
             "dockerfile": "%s/Dockerfile" % self.distgit_dir,
@@ -1036,6 +1037,7 @@ class ImageDistGitRepo(DistGitRepo):
             "status": -1,
             "push_status": -1,
             "has_olm_bundle": 1 if self.config['update-csv'] is not Missing else 0,
+            "dependents": ",".join(dependents),
             # Status defaults to failure until explicitly set by success. This handles raised exceptions.
         }
 
