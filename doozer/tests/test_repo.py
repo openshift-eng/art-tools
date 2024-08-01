@@ -3,8 +3,7 @@
 Test the Repo class
 """
 import unittest
-from unittest.mock import ANY, Mock, patch
-from flexmock import flexmock
+from unittest.mock import Mock, patch
 from doozerlib.repos import Repo
 
 EXPECTED_BASIC_REPO = """[rhaos-4.4-rhel-8-build]
