@@ -1,0 +1,7 @@
+google-api-core
+google-cloud-bigquery
+google-cloud-core
+google-crc32c
+google-resumable-media
+grpcio-status
+proto-plus
