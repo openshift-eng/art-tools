@@ -205,12 +205,16 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repo.includepkgs, ['kernel*', 'kernel-debuginfo*'])
         self.assertEqual(repo.excludepkgs, ['*debuginfo*'])
 
-        mock_repo = Mock(primary_rpms=[Mock(nevra='kernel-devel-1'), Mock(nevra='kernel-2'),
-                                       Mock(nevra='foo-kernel-3'), Mock(nevra='bar-4'),
-                                       Mock(nevra='kernel-debuginfo-5'), Mock(nevra='foo-debuginfo-6')])
+        # name is a special property of Mock, so it cannot be set in init e.g Mock(name='kernel')
+        primary_rpms = []
+        for pkg_name in ['kernel-devel', 'kernel', 'foo-kernel', 'bar', 'kernel-debuginfo', 'foo-debuginfo']:
+            pkg = Mock()
+            pkg.name = pkg_name
+            primary_rpms.append(pkg)
+        mock_repo = Mock(primary_rpms=primary_rpms)
 
         with patch('doozerlib.repos.RepodataLoader.load', return_value=mock_repo):
-            expected = {'kernel-devel-1', 'kernel-2'}
+            expected = {'kernel-devel', 'kernel'}
             repodata = await repo.get_repodata('x86_64')
-            actual = {r.nevra for r in repodata.primary_rpms}
+            actual = {r.name for r in repodata.primary_rpms}
             self.assertEqual(expected, actual)

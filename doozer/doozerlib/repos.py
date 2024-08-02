@@ -235,7 +235,7 @@ class Repo(object):
                 # rpm should not match any exclude pattern to be included
                 matches_exclude = False
                 for exclude_pattern in self.excludepkgs:
-                    if fnmatch.fnmatch(rpm.nevra, exclude_pattern):
+                    if fnmatch.fnmatch(rpm.name, exclude_pattern):
                         matches_exclude = True
                         break
                 if not matches_exclude:
@@ -251,7 +251,7 @@ class Repo(object):
             for rpm in repodata.primary_rpms:
                 # rpm should match at least one include pattern to be included
                 for include_pattern in self.includepkgs:
-                    if fnmatch.fnmatch(rpm.nevra, include_pattern):
+                    if fnmatch.fnmatch(rpm.name, include_pattern):
                         filtered_rpms.append(rpm)
                         break
             repodata.primary_rpms = filtered_rpms
