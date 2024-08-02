@@ -59,7 +59,8 @@ class Repo(object):
         includepkgs_str = conf.get('extra_options', {}).get('includepkgs', "")
         self.includepkgs = pkgs_to_list(includepkgs_str)
 
-        excludepkgs_str = conf.get('extra_options', {}).get('excludepkgs', "")
+        excludepkgs_str = (conf.get('extra_options', {}).get('exclude', "")
+                           or conf.get('extra_options', {}).get('excludepkgs', ""))
         self.excludepkgs = pkgs_to_list(excludepkgs_str)
 
         self.cs_optional = self._data.content_set.get('optional', False)

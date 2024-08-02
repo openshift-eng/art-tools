@@ -189,7 +189,7 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         repo_data = {
             'conf': {
                 'extra_options': {
-                    'excludepkgs': '*debuginfo*',
+                    'exclude': '*debuginfo*',
                     'includepkgs': 'kernel* kernel-debuginfo*',
                 },
                 'baseurl': {
