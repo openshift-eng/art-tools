@@ -13,42 +13,45 @@ from pyartcd import exectools
 
 
 class ScanFips:
-    def __init__(self, runtime: Runtime, version: str, nvrs: Optional[list]):
+    def __init__(self, runtime: Runtime, nvrs: Optional[list]):
         self.runtime = runtime
-        self.version = version
         self.nvrs = nvrs
+        self.active_ocp_versions = [4.12, 4.13, 4.14, 4.15, 4.16, 4.17]
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()
         self.slack_client.bind_channel("#art-release")
 
     async def run(self):
-        cmd = [
-            "doozer",
-            "--group",
-            f"openshift-{self.version}",
-            "--data-path",
-            "https://github.com/openshift-eng/ocp-build-data",
-            "images:scan-fips",
-            "--nvrs",
-            f"{','.join(self.nvrs)}"
-        ]
+        results = {}
 
-        _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
+        for version in self.active_ocp_versions:
+            cmd = [
+                "doozer",
+                "--group",
+                f"openshift-{version}",
+                "--data-path",
+                "https://github.com/openshift-eng/ocp-build-data",
+                "images:scan-fips",
+                "--all-images",
+            ]
 
-        result_json = json.loads(result)
+            _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
+            result_json = json.loads(result)
 
-        self.runtime.logger.info(f"Result: {result_json}")
+            results.update(result_json)
 
-        if result_json:
+        self.runtime.logger.info(f"Result: {results}")
+
+        if results:
             # alert release artists
             if not self.runtime.dry_run:
-                message = ":warning: @ashwin FIPS scan has failed for some builds. Please verify. (Triage <https://art-docs.engineering.redhat.com/sop/triage-fips/|docs>)"
+                message = ":warning: FIPS scan has failed for some builds. Please verify. (Triage <https://art-docs.engineering.redhat.com/sop/triage-fips/|docs>)"
                 slack_response = await self.slack_client.say(message=message)
                 slack_thread = slack_response["message"]["ts"]
 
                 await self.slack_client.upload_content(
-                    content=result,
+                    content=json.dumps(results),
                     filename="report.json",
                     thread_ts=slack_thread
                 )
@@ -64,13 +67,11 @@ class ScanFips:
 
 
 @cli.command("scan-fips", help="Trigger FIPS check for specified NVRs")
-@click.option("--version", required=True, help="openshift version eg: 4.15")
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans for")
 @pass_runtime
 @click_coroutine
-async def scan_osh(runtime: Runtime, version: str, nvrs: str):
+async def scan_osh(runtime: Runtime, nvrs: str):
     pipeline = ScanFips(runtime=runtime,
-                        version=version,
                         nvrs=nvrs.split(",") if nvrs else None
                         )
     await pipeline.run()
