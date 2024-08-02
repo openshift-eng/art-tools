@@ -3,7 +3,7 @@
 Test the Repo class
 """
 import unittest
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 from doozerlib.repos import Repo
 
 EXPECTED_BASIC_REPO = """[rhaos-4.4-rhel-8-build]
@@ -182,3 +182,39 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
 
         # Implicitly assert that this does _not_ raise an exception
         Repo('no-config-set-arches', self.no_config_set_arches_repo, self.arches)
+
+    async def test_get_repodata_includepkgs(self):
+        """ensure includepkgs are correctly filtered"""
+
+        repo_data = {
+            'conf': {
+                'extra_options': {
+                    'exclude': '*debuginfo*',
+                    'includepkgs': 'kernel* kernel-debuginfo*',
+                },
+                'baseurl': {
+                    'x86_64': 'http://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.4-rhel-8-build/latest/x86_64/',
+                },
+            },
+            'content_set': {
+                'optional': True,
+            }
+        }
+
+        repo = Repo('kernel-repo', repo_data, ['x86_64'])
+        self.assertEqual(repo.includepkgs, ['kernel*', 'kernel-debuginfo*'])
+        self.assertEqual(repo.excludepkgs, ['*debuginfo*'])
+
+        # name is a special property of Mock, so it cannot be set in init e.g Mock(name='kernel')
+        primary_rpms = []
+        for pkg_name in ['kernel-devel', 'kernel', 'foo-kernel', 'bar', 'kernel-debuginfo', 'foo-debuginfo']:
+            pkg = Mock()
+            pkg.name = pkg_name
+            primary_rpms.append(pkg)
+        mock_repo = Mock(primary_rpms=primary_rpms)
+
+        with patch('doozerlib.repos.RepodataLoader.load', return_value=mock_repo):
+            expected = {'kernel-devel', 'kernel'}
+            repodata = await repo.get_repodata('x86_64')
+            actual = {r.name for r in repodata.primary_rpms}
+            self.assertEqual(expected, actual)

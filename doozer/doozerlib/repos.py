@@ -1,15 +1,14 @@
 import asyncio
 import json
 import os
-import tempfile
 import threading
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, cast
-
+import fnmatch
 import requests
 import yaml
+from typing import Dict, List, cast
 
+from artcommonlib import logutil
 from artcommonlib.model import Missing, Model
 from doozerlib.repodata import Repodata, RepodataLoader
 from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_TMP_PATH, KONFLUX_REPO_CA_BUNDLE_FILENAME
@@ -19,6 +18,8 @@ DEFAULT_REPOTYPES = ['unsigned', 'signed']
 
 # This architecture is handled differently in some cases for legacy reasons
 ARCH_X86_64 = "x86_64"
+
+LOGGER = logutil.get_logger(__name__)
 
 
 class Repo(object):
@@ -41,6 +42,26 @@ class Repo(object):
         conf.enabled = conf.get('enabled', None)
         self.enabled = conf.enabled == 1
         self.gpgcheck = gpgcheck
+
+        def pkgs_to_list(pkgs_str):
+            pkgs_str = pkgs_str.strip()
+            if "," in pkgs_str and " " in pkgs_str:
+                raise ValueError('pkgs string cannot contain both commas and spaces')
+            elif "," in pkgs_str:
+                return pkgs_str.split(",")
+            elif " " in pkgs_str:
+                return pkgs_str.split(" ")
+            elif pkgs_str:
+                return [pkgs_str]
+            return []
+
+        # these will be used to filter the packages
+        includepkgs_str = conf.get('extra_options', {}).get('includepkgs', "")
+        self.includepkgs = pkgs_to_list(includepkgs_str)
+
+        excludepkgs_str = (conf.get('extra_options', {}).get('exclude', "")
+                           or conf.get('extra_options', {}).get('excludepkgs', ""))
+        self.excludepkgs = pkgs_to_list(excludepkgs_str)
 
         self.cs_optional = self._data.content_set.get('optional', False)
 
@@ -206,6 +227,35 @@ class Repo(object):
         name = f"{self.name}-{arch}"
         repourl = cast(str, self.baseurl("unsigned", arch))
         repodata = self._repodatas[arch] = await RepodataLoader().load(name, repourl)
+
+        if self.excludepkgs:
+            LOGGER.info(f"Excluding packages from {name} based on following patterns: {self.excludepkgs}")
+            filtered_rpms = []
+            for rpm in repodata.primary_rpms:
+                # rpm should not match any exclude pattern to be included
+                matches_exclude = False
+                for exclude_pattern in self.excludepkgs:
+                    if fnmatch.fnmatch(rpm.name, exclude_pattern):
+                        matches_exclude = True
+                        break
+                if not matches_exclude:
+                    filtered_rpms.append(rpm)
+            repodata.primary_rpms = filtered_rpms
+
+        # includepkgs does not override excludepkgs
+        # so apply it after excludepkgs
+        if self.includepkgs:
+            LOGGER.info(f"Only including packages from {name} based on following patterns: {self.includepkgs}. "
+                        "All other packages will be excluded.")
+            filtered_rpms = []
+            for rpm in repodata.primary_rpms:
+                # rpm should match at least one include pattern to be included
+                for include_pattern in self.includepkgs:
+                    if fnmatch.fnmatch(rpm.name, include_pattern):
+                        filtered_rpms.append(rpm)
+                        break
+            repodata.primary_rpms = filtered_rpms
+
         return repodata
 
     async def get_repodata_threadsafe(self, arch: str):

@@ -917,11 +917,6 @@ class Metadata(object):
         :return: Tuple of (is_exempt, pattern)
         """
         exempt_rpms = self.config.scan_sources.exempt_rpms or []
-
-        # TODO: Remove this after scan_sources.exempted_packages is deprecated
-        exempt_packages = self.config.scan_sources.exempted_packages or []
-        exempt_rpms += exempt_packages
-
         if not exempt_rpms:
             return False, None
 
