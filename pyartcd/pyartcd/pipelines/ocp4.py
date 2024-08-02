@@ -935,27 +935,6 @@ class Ocp4Pipeline:
             version_queue_name=queue
         )
 
-    async def _trigger_fips_pipeline(self):
-        """
-        Check if the successfully built images are FIPS client. This function will trigger a pipeline on ART cluster
-
-        :param version: Eg. 4.15
-        :param doozer_path: Eg. https://github.com/openshift-eng/ocp-build-data
-        :param nvrs: Eg. NVRs of successful builds
-        """
-        pipeline_name = "fips-pipeline"
-        cmd = f"tkn pipeline start {pipeline_name} " \
-              f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} " \
-              f"--param version={self.version.stream} " \
-              f"--param nvrs={','.join(self.success_nvrs)} "
-
-        rc, _, _ = await exectools.cmd_gather_async(cmd)
-
-        if rc == 0:
-            self.runtime.logger.info("Successfully triggered FIPS pipline on cluster")
-        else:
-            self.runtime.logger.error("Error while triggering FIPS pipline on cluster")
-
     async def run(self):
         await self._initialize()
 
@@ -1003,12 +982,6 @@ class Ocp4Pipeline:
 
         # All good
         self._report_success()
-
-        # Run FIPS scan on successfully built images
-        if self.assembly != 'test' and self.success_nvrs:
-            # Skip scanning test builds
-            # Also skip if there are no successful builds
-            await self._trigger_fips_pipeline()
 
 
 @cli.command("ocp4",
