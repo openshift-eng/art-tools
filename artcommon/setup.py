@@ -4,6 +4,9 @@ import sys
 if sys.version_info < (3, 8):
     sys.exit('Sorry, Python < 3.8 is not supported.')
 
+with open('./requirements.txt') as f:
+    INSTALL_REQUIRES = f.read().splitlines()
+
 setup(
     name="artcommon",
     author="AOS ART Team",
@@ -12,6 +15,7 @@ setup(
     url="https://github.com/openshift-eng/art-tools/tree/main/artcommon",
     license="Apache License, Version 2.0",
     packages=find_packages(exclude=["tests", "tests.*"]),
+    install_requirements=INSTALL_REQUIRES,
     dependency_links=[],
     python_requires='>=3.8',
     classifiers=[
