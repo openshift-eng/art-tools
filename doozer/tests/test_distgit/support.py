@@ -73,6 +73,13 @@ class MockMetadata(object):
     def get_component_name(self):
         pass
 
+    @property
+    def canonical_builders_enabled(self):
+        return False
+
+    def has_source(self):
+        return True
+
 
 class MockScanner(object):
 
