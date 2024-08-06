@@ -191,43 +191,27 @@ class TestGather(IsolatedAsyncioTestCase):
         fake_cwd = "/foo/bar"
         fake_stdout = b"fake_stdout"
         fake_stderr = b"fake_stderr"
-        with mock.patch("asyncio.create_subprocess_exec") as create_subprocess_exec, \
-                mock.patch("artcommonlib.pushd.Dir.getcwd", return_value=fake_cwd):
+        with mock.patch("asyncio.subprocess.create_subprocess_exec") as create_subprocess_exec:
             proc = create_subprocess_exec.return_value
             proc.returncode = 0
             proc.communicate.return_value = (fake_stdout, fake_stderr)
 
-            rc, out, err = await exectools.cmd_gather_async(cmd, text_mode=True)
-            create_subprocess_exec.assert_called_once_with(*cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL)
+            rc, out, err = await exectools.cmd_gather_async(cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL)
+            create_subprocess_exec.assert_awaited_once_with(*cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL)
             self.assertEqual(rc, 0)
             self.assertEqual(out, fake_stdout.decode("utf-8"))
             self.assertEqual(err, fake_stderr.decode("utf-8"))
 
-            create_subprocess_exec.reset_mock()
-            rc, out, err = await exectools.cmd_gather_async(cmd, text_mode=False)
-            create_subprocess_exec.assert_called_once_with(*cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL)
-            self.assertEqual(rc, 0)
-            self.assertEqual(out, fake_stdout)
-            self.assertEqual(err, fake_stderr)
-
     async def test_cmd_assert_async(self):
         cmd = ["uname", "-a"]
         fake_cwd = "/foo/bar"
-        with mock.patch("artcommonlib.exectools.cmd_gather_async") as cmd_gather_async:
-            cmd_gather_async.return_value = (0, "fake_stdout", "fake_stderr")
+        with mock.patch("asyncio.subprocess.create_subprocess_exec") as create_subprocess_exec:
+            proc = create_subprocess_exec.return_value
+            proc.wait.return_value = 0
 
-            out, err = await exectools.cmd_assert_async(cmd, cwd=fake_cwd, text_mode=True)
-            cmd_gather_async.assert_called_once_with(cmd, text_mode=True, cwd=fake_cwd, set_env=None, strip=False, log_stdout=False, log_stderr=True)
-            self.assertEqual(out, "fake_stdout")
-            self.assertEqual(err, "fake_stderr")
-
-        with mock.patch("artcommonlib.exectools.cmd_gather_async") as cmd_gather_async:
-            cmd_gather_async.return_value = (1, "fake_stdout", "fake_stderr")
-            with self.assertRaises(ChildProcessError):
-                out, err = await exectools.cmd_assert_async(cmd, cwd=fake_cwd, text_mode=True)
-            cmd_gather_async.assert_called_once_with(cmd, text_mode=True, cwd=fake_cwd, set_env=None, strip=False, log_stdout=False, log_stderr=True)
-            self.assertEqual(out, "fake_stdout")
-            self.assertEqual(err, "fake_stderr")
+            rc = await exectools.cmd_assert_async(cmd, cwd=fake_cwd)
+            create_subprocess_exec.assert_awaited_once_with(*cmd, cwd=fake_cwd)
+            self.assertEqual(rc, 0)
 
     def test_parallel_exec(self):
         items = [1, 2, 3]

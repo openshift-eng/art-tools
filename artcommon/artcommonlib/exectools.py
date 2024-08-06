@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import errno
 import functools
 import os
@@ -11,25 +12,28 @@ import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime
-
-from fcntl import fcntl, F_GETFL, F_SETFL
+from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
 from pathlib import Path
-from typing import Optional, Tuple, Union, List, Dict
+from typing import Dict, List, Optional, Tuple, Union
 from urllib.request import urlopen
 
-import contextvars
-
 from future.utils import as_native_str
+from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import \
+    TraceContextTextMapPropagator
 
-from artcommonlib import logutil, assertion
-from artcommonlib.format_util import yellow_print, green_print
+from artcommonlib import logutil
+from artcommonlib.format_util import green_print, yellow_print
 from artcommonlib.pushd import Dir
+from artcommonlib.telemetry import start_as_current_span_async
 
 SUCCESS = 0
 
 logger = logutil.get_logger(__name__)
+TRACER = trace.get_tracer(__name__)
+
 cmd_counter_lock = threading.Lock()
 cmd_counter = 0  # Increments atomically to help search logs for command start/stop
 
@@ -290,110 +294,6 @@ def timer(out_method, msg):
         out_method(entry)
 
 
-async def cmd_assert_async(cmd: Union[str, List[str]], text_mode=True, retries=1, pollrate=60,
-                           on_retry: Optional[Union[str, List[str]]] = None, cwd: Optional[str] = None,
-                           set_env: Optional[Dict[str, str]] = None, strip=False, log_stdout: bool = False,
-                           log_stderr: bool = True) -> Union[Tuple[str, str], Tuple[bytes, bytes]]:
-    """
-    Similar to cmd_assert, but run asynchronously
-
-    :param cmd: A shell command
-    :param text_mode: True to decode stdout to string
-    :param retries: The number of times to try before declaring failure
-    :param pollrate: How long to sleep between tries
-    :param on_retry: A shell command to run before retrying a failure
-    :param cwd: Set current working directory
-    :param set_env: Dict of env vars to set for command (overriding existing)
-    :param strip: Strip extra whitespace from stdout/err before returning.
-    :param log_stdout: Whether stdout should be logged into the DEBUG log.
-    :param log_stderr: Whether stderr should be logged into the DEBUG log
-    :return: (stdout,stderr) if exit code is zero
-    """
-
-    if retries <= 0:
-        raise ValueError("`retries` must be greater than 0.")
-    cmd_list = [str(c) for c in cmd] if isinstance(cmd, list) else shlex.split(cmd)
-    if not cwd:
-        cwd = Dir.getcwd()
-
-    for try_num in range(0, retries):
-        if try_num > 0:
-            logger.debug(
-                "cmd_assert: Failed %s times. Retrying in %s seconds: %s",
-                try_num, pollrate, cmd_list)
-            await asyncio.sleep(pollrate)
-            if on_retry is not None:
-                # Run the recovery command between retries. Nothing to collect or assert -- just try it.
-                await cmd_gather_async(cmd_list, cwd=cwd, set_env=set_env)
-        result, out, err = await cmd_gather_async(cmd_list, text_mode=text_mode, cwd=cwd, set_env=set_env, strip=strip,
-                                                  log_stdout=log_stdout, log_stderr=log_stderr)
-        if result == SUCCESS:
-            break
-
-    logger.debug("cmd_assert: Final result = %s in %s tries.", result, try_num)
-    assertion.success(result, "Error running [{}] {}. See debug log.".format(cwd, cmd_list))
-    return out, err
-
-
-async def cmd_gather_async(cmd: Union[str, List[str]], text_mode=True, cwd: Optional[str] = None,
-                           set_env: Optional[Dict[str, str]] = None, strip=False, log_stdout=False,
-                           log_stderr=True) -> Union[Tuple[int, str, str], Tuple[int, bytes, bytes]]:
-    """Similar to cmd_gather, but run asynchronously
-
-    :param cmd: The command and arguments to execute
-    :param text_mode: True to decode stdout to string
-    :param cwd: Set current working directory
-    :param set_env: Dict of env vars to override in the current doozer environment.
-    :param strip: Strip extra whitespace from stdout/err before returning. Requires text_mode = True.
-    :param log_stdout: Whether stdout should be logged into the DEBUG log.
-    :param log_stderr: Whether stderr should be logged into the DEBUG log
-    :return: (rc, stdout, stderr)
-    """
-
-    if strip and not text_mode:
-        raise ValueError("Can't strip if text_mode is False.")
-
-    if not isinstance(cmd, list):
-        cmd_list = shlex.split(cmd)
-    else:
-        cmd_list = [str(c) for c in cmd]
-    if not cwd:
-        cwd = Dir.getcwd()
-    cmd_info = f"[cwd={cwd}]: {cmd_list}"
-
-    logger.debug("Executing:cmd_gather %s", cmd_info)
-    proc = await asyncio.create_subprocess_exec(
-        *cmd_list,
-        cwd=cwd,
-        env=set_env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        stdin=subprocess.DEVNULL)
-
-    out, err = await proc.communicate()
-    rc = proc.returncode
-
-    out_str = out.decode(encoding="utf-8") if text_mode else out.hex()
-    err_str = err.decode(encoding="utf-8")
-
-    log_output_stdout = out_str if log_stdout else f'{out_str[:200]}\n..truncated..'
-    log_output_stderr = err_str if log_stderr else f'{err_str[:200]}\n..truncated..'
-
-    if rc:
-        logger.debug(
-            "%s: Exited with error: %s\nstdout>>%s<<\nstderr>>%s<<\n",
-            cmd_info, rc, log_output_stdout, log_output_stderr)
-    else:
-        logger.debug(
-            "{}: Exited with: {}\nstdout>>{}<<\nstderr>>{}<<\n".
-            format(cmd_info, rc, log_output_stdout, log_output_stderr))
-
-    if text_mode:
-        return (rc, out_str, err_str) if not strip else (rc, out_str.strip(), err_str.strip())
-    else:
-        return rc, out, err
-
-
 async def to_thread(func, *args, **kwargs):
     """Asynchronously run function *func* in a separate thread.
 
@@ -541,3 +441,89 @@ async def manifest_tool(options, dry_run=False, retries=3):
         return
 
     await cmd_assert_async(cmd, retries=retries)
+
+
+@start_as_current_span_async(TRACER, "cmd_gather_async")
+async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> Tuple[Optional[int], str, str]:
+    """ Runs a command asynchronously and returns rc,stdout,stderr as a tuple
+    :param cmd <string|list>: A shell command
+    :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
+    :return: rc, stdout, stderr
+    """
+
+    if isinstance(cmd, str):
+        cmd_list = shlex.split(cmd)
+    else:
+        cmd_list = cmd
+
+    span = trace.get_current_span()
+    span.set_attribute("pyartcd.param.cmd", cmd_list)
+
+    logger.info("Executing:cmd_gather_async %s", cmd_list)
+    # capture stdout and stderr if they are not set in kwargs
+    if "stdout" not in kwargs:
+        kwargs["stdout"] = asyncio.subprocess.PIPE
+    if "stderr" not in kwargs:
+        kwargs["stderr"] = asyncio.subprocess.PIPE
+
+    # Propagate trace context to subprocess
+    env = kwargs.get("env", {})
+    carrier = {}
+    TraceContextTextMapPropagator().inject(carrier)
+    if "traceparent" in carrier:
+        env["TRACEPARENT"] = carrier["traceparent"]
+        kwargs["env"] = env
+
+    proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
+    stdout, stderr = await proc.communicate()
+    stdout = stdout.decode() if stdout else ""
+    stderr = stderr.decode() if stderr else ""
+    span.set_attribute("pyartcd.result.exit_code", str(proc.returncode))
+    if proc.returncode != 0:
+        msg = f"Process {cmd_list!r} exited with code {proc.returncode}.\nstdout>>{stdout}<<\nstderr>>{stderr}<<\n"
+        if check:
+            raise ChildProcessError(msg)
+        else:
+            logger.warning(msg)
+    span.set_status(trace.StatusCode.OK)
+    return proc.returncode, stdout, stderr
+
+
+@start_as_current_span_async(TRACER, "cmd_assert_async")
+async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> int:
+    """ Runs a command and optionally raises an exception if the return code of the command indicates failure.
+    :param cmd <string|list>: A shell command
+    :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
+    :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
+    :return: return code of the command
+    """
+    if isinstance(cmd, str):
+        cmd_list = shlex.split(cmd)
+    else:
+        cmd_list = cmd
+
+    span = trace.get_current_span()
+    span.set_attribute("pyartcd.param.cmd", cmd_list)
+
+    # Propagate trace context to subprocess
+    env = kwargs.get("env", {})
+    carrier = {}
+    TraceContextTextMapPropagator().inject(carrier)
+    if "traceparent" in carrier:
+        env["TRACEPARENT"] = carrier["traceparent"]
+        logger.warning("Pass TRACEPARENT %s", env["TRACEPARENT"])
+        kwargs["env"] = env
+
+    logger.info("Executing:cmd_assert_async %s", cmd_list)
+    proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
+    returncode = await proc.wait()
+    span.set_attribute("pyartcd.result.exit_code", str(returncode))
+    if returncode != 0:
+        msg = f"Process {cmd_list!r} exited with code {returncode}."
+        if check:
+            raise ChildProcessError(msg)
+        else:
+            logger.warning(msg)
+    span.set_status(trace.StatusCode.OK)
+    return returncode

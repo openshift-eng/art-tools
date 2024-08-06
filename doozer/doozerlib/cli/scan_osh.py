@@ -102,7 +102,7 @@ class ScanOshCli:
 
         @exectools.limit_concurrency(16)
         async def run_get_untriggered_nvrs(nvr):
-            rc, _, _ = await exectools.cmd_gather_async(f"osh-cli find-tasks --nvr {nvr}")
+            rc, _, _ = await exectools.cmd_gather_async(f"osh-cli find-tasks --nvr {nvr}", check=False)
 
             return None if rc == 0 else nvr
 

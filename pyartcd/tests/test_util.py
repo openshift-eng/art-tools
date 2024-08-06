@@ -32,7 +32,7 @@ class TestUtil(IsolatedAsyncioTestCase):
 
     @patch("tempfile.mkdtemp")
     @patch("shutil.rmtree")
-    @patch("pyartcd.exectools.cmd_gather_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     async def test_load_group_config(self, cmd_gather_async: AsyncMock, *_):
         group_config_content = """
         key: "value"
@@ -90,7 +90,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         )
         self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/')
 
-    @patch("pyartcd.exectools.cmd_gather_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     async def test_get_freeze_automation(self, cmd_gather_async: AsyncMock):
         cmd_gather_async.return_value = (0, '', '')
 

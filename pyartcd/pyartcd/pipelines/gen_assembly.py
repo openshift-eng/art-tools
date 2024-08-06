@@ -13,8 +13,9 @@ from ghapi.all import GhApi
 from ruamel.yaml import YAML
 
 from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group
+from artcommonlib import exectools
 from doozerlib.cli.get_nightlies import rc_api_url
-from pyartcd import exectools, constants, jenkins
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.jenkins import start_build_sync

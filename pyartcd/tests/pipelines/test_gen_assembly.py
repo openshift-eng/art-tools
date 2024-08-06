@@ -8,7 +8,7 @@ from pyartcd.pipelines.gen_assembly import GenAssemblyPipeline
 
 
 class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
-    @patch("pyartcd.exectools.cmd_gather_async", autospec=True, return_value=(0, "a b c", ""))
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "a b c", ""))
     def test_get_nightlies(self, cmd_gather_async: AsyncMock):
         runtime = MagicMock()
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
@@ -42,7 +42,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
              'get-nightlies', '--allow-pending', '--allow-rejected', '--allow-inconsistency', '--matching=n1',
              '--matching=n2'], stderr=None, env=ANY)
 
-    @patch("pyartcd.exectools.cmd_gather_async", autospec=True)
+    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True)
     def test_gen_assembly_from_releases(self, cmd_gather_async: AsyncMock):
         runtime = MagicMock()
         pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",

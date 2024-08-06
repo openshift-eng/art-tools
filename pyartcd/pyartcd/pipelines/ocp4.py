@@ -9,7 +9,7 @@ import yaml
 from pyartcd import locks
 from pyartcd import util
 from pyartcd import plashets
-from pyartcd import exectools
+from artcommonlib import exectools
 from pyartcd import constants
 from pyartcd import jenkins
 from pyartcd import record as record_util

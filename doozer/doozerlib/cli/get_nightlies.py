@@ -284,7 +284,7 @@ class Nightly:
         """
         retrieve release_image_info from output of `oc adm release info -o json` for the nightly pullspec.
         """
-        release_json_str, _ = await exectools.cmd_assert_async(f"oc adm release info {self.pullspec} -o=json", retries=3)
+        _, release_json_str, _ = await exectools.cmd_gather_async(f"oc adm release info {self.pullspec} -o=json")
         self.release_image_info = json.loads(release_json_str)
         self._process_nightly_release_data()
 
@@ -338,9 +338,8 @@ class Nightly:
     async def retrieve_image_info_async(self, pullspec: str) -> Model:
         """pull/cache/return json info for a container pullspec (enable concurrency)"""
         if pullspec not in image_info_cache:
-            image_json_str, _ = await exectools.cmd_assert_async(
+            _, image_json_str, _ = await exectools.cmd_gather_async(
                 f"oc image info {pullspec} -o=json --filter-by-os=amd64",
-                retries=3
             )
             image_info_cache[pullspec] = Model(json.loads(image_json_str))
         return image_info_cache[pullspec]
