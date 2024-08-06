@@ -7,7 +7,8 @@ from typing import Dict
 
 import click
 from ghapi.all import GhApi
-from pyartcd import exectools, jenkins, constants
+from artcommonlib import exectools
+from pyartcd import jenkins, constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime

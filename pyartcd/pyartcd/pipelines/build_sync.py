@@ -12,12 +12,14 @@ from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import split_git_url
+from artcommonlib import exectools
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
 from artcommonlib.redis import RedisError
 from pyartcd.runtime import Runtime, GroupRuntime
-from pyartcd import exectools, constants, locks
 from artcommonlib.telemetry import start_as_current_span_async
+from pyartcd import constants, locks
+from artcommonlib import exectools
 from pyartcd.util import branch_arches
 from pyartcd.jenkins import get_build_url
 from ghapi.all import GhApi

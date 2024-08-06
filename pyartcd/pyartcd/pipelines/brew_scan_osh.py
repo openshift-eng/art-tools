@@ -3,7 +3,7 @@ This job scans the candidate tags for a particular version, and triggers scans f
 """
 import click
 from typing import Optional
-from pyartcd import exectools
+from artcommonlib import exectools
 from artcommonlib import redis
 from pyartcd.runtime import Runtime
 from pyartcd.cli import cli, pass_runtime, click_coroutine

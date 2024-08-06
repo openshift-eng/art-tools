@@ -9,8 +9,8 @@ import click
 from typing import Optional
 from pyartcd.runtime import Runtime
 from pyartcd.cli import cli, pass_runtime, click_coroutine
-from pyartcd import exectools
 from artcommonlib.constants import ACTIVE_OCP_VERSIONS
+from artcommonlib import exectools
 
 
 class ScanFips:

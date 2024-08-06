@@ -16,13 +16,14 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
 from artcommonlib.release_util import isolate_assembly_in_release
+from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from pyartcd import constants, exectools, oc, util, jenkins
+from pyartcd import constants, oc, util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log

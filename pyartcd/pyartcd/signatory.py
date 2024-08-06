@@ -17,7 +17,7 @@ import aiofiles
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 
-from pyartcd import exectools
+from artcommonlib import exectools
 from pyartcd.exceptions import SignatoryServerError
 from pyartcd.umb_client import AsyncUMBClient
 from pyartcd.oc import get_release_image_info, get_image_info

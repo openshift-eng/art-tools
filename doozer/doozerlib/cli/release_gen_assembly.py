@@ -234,7 +234,7 @@ class GenAssemblyCli:
     async def _process_release(self, brew_cpu_arch, pullspec, rhcos_tag_names):
         self.runtime.logger.info(f'Processing release: {pullspec}')
 
-        release_json_str, _ = await exectools.cmd_assert_async(f'oc adm release info {pullspec} -o=json', retries=3)
+        _, release_json_str, _ = await exectools.cmd_gather_async(f'oc adm release info {pullspec} -o=json')
         release_info = Model(dict_to_model=json.loads(release_json_str))
 
         if not release_info.references.spec.tags:

@@ -408,7 +408,7 @@ class DistGitRepo(object):
         # time, a single push invocation can take hours to complete -- making the
         # timeout value counterproductive. Limit to 5 simultaneous pushes.
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
-        await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir, retries=3)
+        await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir)
 
     def get_branch_el(self) -> Optional[int]:
         """
@@ -2748,8 +2748,8 @@ class RPMDistGitRepo(DistGitRepo):
 
         async def _get_nvr():
             cmd = ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}", "--srpm", "--undefine", "dist", "--", spec_path]
-            out, _ = await exectools.cmd_assert_async(cmd, strip=True)
-            return out.rsplit("-", 2)
+            _, out, _ = await exectools.cmd_gather_async(cmd)
+            return out.strip().rsplit("-", 2)
 
         async def _get_commit():
             async with aiofiles.open(spec_path, "r") as f:

@@ -24,7 +24,7 @@ from artcommonlib.util import get_assembly_release_date
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
-from pyartcd import exectools
+from artcommonlib import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
 from pyartcd.slack import SlackClient

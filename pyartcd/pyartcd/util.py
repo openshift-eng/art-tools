@@ -11,6 +11,7 @@ from typing import Dict, Optional, Union, Iterable
 import yaml
 
 import artcommonlib
+from artcommonlib import exectools
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import assembly_type
 from artcommonlib.model import Model
@@ -18,7 +19,7 @@ from artcommonlib.release_util import SoftwareLifecyclePhase
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 
-from pyartcd import exectools, constants, jenkins, record
+from pyartcd import constants, jenkins, record
 from pyartcd.mail import MailService
 
 logger = logging.getLogger(__name__)

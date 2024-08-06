@@ -8,7 +8,8 @@ import click
 
 from artcommonlib import redis
 from artcommonlib.util import isolate_major_minor_in_group
-from pyartcd import constants, exectools
+from artcommonlib import exectools
+from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jenkins import get_build_url
 from pyartcd.runtime import Runtime
