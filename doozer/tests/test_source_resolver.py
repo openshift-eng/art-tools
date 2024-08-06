@@ -1,8 +1,12 @@
 
+from pathlib import Path
 from unittest import TestCase
-from flexmock import flexmock
+from unittest.mock import Mock
+
 from artcommonlib import exectools
-from artcommonlib.model import Model
+from artcommonlib.model import Missing, Model
+from flexmock import flexmock
+
 from doozerlib.source_resolver import SourceResolver
 
 
@@ -62,3 +66,12 @@ class SourceResolverTestCase(TestCase):
         flexmock(SourceResolver).should_receive("_get_remote_branch_ref").once().and_return(None)
         with self.assertRaises(IOError):
             sr.detect_remote_source_branch(source_details, stage=True)
+
+    def test_get_source_dir(self):
+        source = Mock(source_path="/path/to/sources/foo")
+        metadata = Mock()
+        metadata.config.content.source.path = Missing
+        self.assertEqual(Path("/path/to/sources/foo"), SourceResolver.get_source_dir(source, metadata, check=False))
+
+        metadata.config.content.source.path = "subdir"
+        self.assertEqual(Path("/path/to/sources/foo/subdir"), SourceResolver.get_source_dir(source, metadata, check=False))

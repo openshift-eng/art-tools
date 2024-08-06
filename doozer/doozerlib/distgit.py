@@ -291,16 +291,10 @@ class DistGitRepo(object):
         :return: Returns the directory containing the source which should be used to populate distgit. This includes
                 the source.path subdirectory if the metadata includes one.
         """
-
-        source_root = self.runtime.source_resolver.resolve_source(self.metadata).source_path
-        sub_path = self.config.content.source.path
-
-        path = source_root
-        if sub_path is not Missing:
-            path = os.path.join(source_root, sub_path)
-
-        assertion.isdir(path, "Unable to find path for source [%s] for config: %s" % (path, self.metadata.config_filename))
-        return path
+        assert self.runtime.source_resolver is not None, "Runtime must be initialized with a source resolver"
+        source = self.runtime.source_resolver.resolve_source(self.metadata)
+        source_dir = SourceResolver.get_source_dir(source, self.metadata)
+        return source_dir
 
     def _get_diff(self):
         return None  # to actually record a diff, child classes must override this function
