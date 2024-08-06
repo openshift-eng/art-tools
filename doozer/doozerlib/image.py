@@ -1,5 +1,6 @@
 import hashlib
 import json
+from multiprocessing import Event
 from typing import (Any, Dict, List, Optional, Set, Tuple)
 from copy import deepcopy
 
@@ -29,6 +30,10 @@ class ImageMetadata(Metadata):
                 continue
             dependent.dependencies.add(self.distgit_key)
             self.children.append(dependent)
+        self.rebase_event = Event()
+        """ Event that is set when this image is being rebased. """
+        self.rebase_status = False
+        """ True if this image has been successfully rebased. """
         if clone_source:
             runtime.source_resolver.resolve_source(self)
 
@@ -509,6 +514,7 @@ class ImageMetadata(Metadata):
             self.logger.warning('Invalid value provided for "canonical_builders_from_upstream": %s, defaulting to False', canonical_builders_from_upstream)
             return False
         return canonical_builders_from_upstream
+
     def _default_brew_target(self):
         """ Returns derived brew target name from the distgit branch name
         """

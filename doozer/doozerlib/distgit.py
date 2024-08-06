@@ -449,19 +449,17 @@ class ImageDistGitRepo(DistGitRepo):
         ),
     )
 
-    def __init__(self, metadata, autoclone=True,
+    def __init__(self, metadata: "ImageMetadata", autoclone=True,
                  source_modifier_factory=SourceModifierFactory()):
         self.org_image_name = None
         self.org_version = None
         self.org_release = None
         super(ImageDistGitRepo, self).__init__(metadata, autoclone=False)
+        self.metadata = metadata
         self.build_lock = Lock()
         self.build_lock.acquire()
-        self.rebase_event = Event()
-        self.rebase_status = False
         self.logger: logging.Logger = metadata.logger
         self.source_modifier_factory = source_modifier_factory
-        self.is_konflux = False
 
         # If there's an upstream source, there can be a mismatch between
         # how upstream wants to build their sources and ART's configuration
@@ -987,8 +985,8 @@ class ImageDistGitRepo(DistGitRepo):
         dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
 
         self.logger.info("Waiting for image rebase: %s" % image_name)
-        dgr.rebase_event.wait()
-        if not dgr.rebase_status:  # failed to rebase
+        image.rebase_event.wait()
+        if not image.rebase_status:  # failed to rebase
             raise IOError(f"Error rebasing image: {self.metadata.qualified_name} ({image_name} was waiting)")
         self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
         if terminate_event.is_set():
@@ -2715,13 +2713,13 @@ class ImageDistGitRepo(DistGitRepo):
                 self.logger.warning("The source of this image contains embargoed fixes.")
 
             real_version, real_release = self.update_distgit_dir(version, release, prev_release, force_yum_updates)
-            self.rebase_status = True
+            self.metadata.rebase_status = True
             return real_version, real_release
         except Exception:
-            self.rebase_status = False
+            self.metadata.rebase_status = False
             raise
         finally:
-            self.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
+            self.metadata.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
 
 
 class RPMDistGitRepo(DistGitRepo):
