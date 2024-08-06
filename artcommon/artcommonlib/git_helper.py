@@ -2,9 +2,9 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional, Sequence
 
-from artcommonlib import exectools
+from artcommonlib import constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.lock import get_named_semaphore
 
@@ -63,3 +63,35 @@ def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=
     cmd.extend(gitargs)
     cmd.append(target_dir)
     exectools.cmd_assert(cmd, retries=3, on_retry=["rm", "-rf", target_dir], set_env=set_env)
+
+
+async def run_git(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):
+    """ Run a git command and optionally raises an exception if the return code of the command indicates failure.
+    :param args: List of arguments to pass to git
+    :param env: Optional environment variables to set
+    :param check: If True, raise an exception if the git command fails
+    :param kwargs: Additional arguments to pass to exectools.cmd_assert_async
+    :return: exit code of the git command
+    """
+    # set up env vars for git
+    set_env = os.environ.copy()
+    set_env.update(constants.GIT_NO_PROMPTS)
+    if env:
+        set_env.update(env)
+    return await exectools.cmd_assert_async(['git'] + list(args), check=check, env=constants.GIT_NO_PROMPTS, **kwargs)
+
+
+async def gather_git(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):
+    """ Run a git command asynchronously and returns rc,stdout,stderr as a tuple
+    :param args: List of arguments to pass to git
+    :param env: Optional environment variables to set
+    :param check: If True, raise an exception if the git command fails
+    :param kwargs: Additional arguments to pass to exectools.cmd_gather_async
+    :return: exit code of the git command
+    """
+    # set up env vars for git
+    set_env = os.environ.copy()
+    set_env.update(constants.GIT_NO_PROMPTS)
+    if env:
+        set_env.update(env)
+    return await exectools.cmd_gather_async(['git'] + list(args), check=check, env=constants.GIT_NO_PROMPTS, **kwargs)
