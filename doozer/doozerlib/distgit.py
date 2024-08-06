@@ -306,7 +306,7 @@ class DistGitRepo(object):
         return None  # to actually record a diff, child classes must override this function
 
     def add_distgits_diff(self, diff):
-        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=False)
+        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
 
     def commit(self, cmdline_commit_msg: str, commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None, log_diff=False):
         if self.runtime.local:
@@ -745,7 +745,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         for t in repos.repotypes:
             with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
-                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=self.is_konflux)
+                content = repos.repo_file(t, enabled_repos=enabled_repos)
                 rc.write(content)
 
         with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
@@ -970,7 +970,7 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image build since it is not included: %s" % image_name)
             return
-        parent_dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
+        parent_dgr = image.distgit_repo()
         parent_dgr.wait_for_build(self.metadata.qualified_name)
         if terminate_event.is_set():
             raise KeyboardInterrupt()
@@ -981,8 +981,6 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
             return
-
-        dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
 
         self.logger.info("Waiting for image rebase: %s" % image_name)
         image.rebase_event.wait()
@@ -1771,9 +1769,6 @@ class ImageDistGitRepo(DistGitRepo):
 
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
-
-        if self.is_konflux:
-            mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
 
         # Write rebased from directives
         dfp.parent_images = mapped_images
