@@ -32,13 +32,22 @@ yaml.width = 4096
 
 def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
-    _LOGGER.info(f'Checking build root {build_tag} for latest build')
     parsed_nvr = parse_nvr(nvr)
     latest_build = koji_session.getLatestBuilds(build_tag, package=parsed_nvr['name'])
     if not latest_build:  # if this happens, investigate
         raise ValueError(f'Cannot find latest {parsed_nvr["name"]} build in {build_tag}. Please investigate.')
     if nvr == latest_build[0]['nvr']:
+        _LOGGER.info(f'{nvr} is the latest build in {build_tag}')
         return True
+
+    if el_v == 8 and 'module' in nvr:
+        _LOGGER.info(f'{nvr} is not the latest build in build tag {build_tag}. Since it is a module build, '
+                     f'we need to update tag inheritance. Use the flag --create-tagging-ticket to create a jira '
+                     'ticket to do that.')
+    else:
+        override_tag = f'rhaos-{ocp_version}-rhel-{el_v}-override'
+        _LOGGER.info(f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
+                     f'build and then run `brew regen-repo {build_tag}` to make it available.')
     return False
 
 
@@ -56,10 +65,14 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     # If regen repo has been run this would take a few seconds
     # sadly --timeout cannot be less than 1 minute, so we wait for 1 minute
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
-    _LOGGER.info(f'Checking build root {build_tag} if latest build is available')
     cmd = f'brew wait-repo {build_tag} --build {nvr} --timeout=1'
-    rc, _, _ = await exectools.cmd_gather_async(cmd)
-    return rc == 0
+    rc, _, _ = await exectools.cmd_gather_async(cmd, check=False)
+    if rc != 0:
+        _LOGGER.info(f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to '
+                     'make the build available.')
+        return False
+    _LOGGER.info(f'{nvr} is available in {build_tag}')
+    return True
 
 
 def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
@@ -165,16 +178,13 @@ class UpdateGolangPipeline:
             self.create_jira_ticket_for_el8(el_nvr_map, go_version)
             return
 
+        cannot_proceed = False
         for el_v, nvr in el_nvr_map.items():
             if not await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
-                if el_v == 8 and 'module' in nvr:
-                    raise ValueError(f'{nvr} is not the latest build in buildroot, get it tagged via '
-                                     '--create-tagging-ticket')
-                else:
-                    tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-override'
-                    _LOGGER.error(f'{nvr} is not the latest build in buildroot. To tag build run `brew tag-build {nvr}'
-                                  f' {tag}`. To regen repo run `brew regen-repo {tag}`')
-                    raise ValueError(f'{nvr} is not the latest build in buildroot')
+                cannot_proceed = True
+        if cannot_proceed:
+            raise ValueError('Cannot proceed until all builds are tagged and available')
+
         _LOGGER.info('All builds are tagged and available!')
 
         # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
