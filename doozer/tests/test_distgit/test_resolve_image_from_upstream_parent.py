@@ -6,7 +6,7 @@ from .support import TestDistgit
 
 
 class TestResolveImageFromUpstreamParent(TestDistgit):
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled')
+    @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled')
     def setUp(self, canonical_mock):
         super().setUp()
         canonical_mock.return_value = False

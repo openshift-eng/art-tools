@@ -472,7 +472,7 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self._canonical_builders_enabled():
+        if self.metadata.canonical_builders_enabled:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
@@ -629,8 +629,8 @@ class ImageDistGitRepo(DistGitRepo):
                 ]
             })
 
-        if self.image_build_method is not Missing and self.image_build_method != "osbs2":
-            config_overrides['image_build_method'] = self.image_build_method
+        if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
+            config_overrides['image_build_method'] = self.metadata.image_build_method
 
         if arches:
             config_overrides.setdefault('platforms', {})['only'] = arches
@@ -1094,8 +1094,8 @@ class ImageDistGitRepo(DistGitRepo):
                     # `targets` is defined as an array just because we want to keep consistency with RPM build.
                     raise DoozerFatalError("Building images against multiple targets is not currently supported.")
 
-                if self.image_build_method != "osbs2":
-                    raise DoozerFatalError(f"Do not understand image build method {self.image_build_method}. Only osbs2 exists")
+                if self.metadata.image_build_method != "osbs2":
+                    raise DoozerFatalError(f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists")
                 osbs2 = OSBS2Builder(self.runtime, scratch=scratch, dry_run=dry_run)
                 try:
                     task_id, task_url, build_info = asyncio.run(osbs2.build(self.metadata, profile, retries=retries))
@@ -1171,7 +1171,7 @@ class ImageDistGitRepo(DistGitRepo):
         separated for clarity. Local build version.
         """
 
-        if self.image_build_method == 'imagebuilder':
+        if self.metadata.image_build_method == 'imagebuilder':
             builder = 'imagebuilder -mount '
         else:
             builder = 'podman build -v '
@@ -1616,16 +1616,6 @@ class ImageDistGitRepo(DistGitRepo):
         # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.15.7-202103191923.el8'
         unique_pullspec += f':{parent_build_nvr["version"]}-{parent_build_nvr["release"]}'
         return unique_pullspec
-
-    def _canonical_builders_enabled(self) -> bool:
-        # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
-        if self.config.canonical_builders_from_upstream is not Missing:
-            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
-        else:
-            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
-
-        return build_util.canonical_builders_enabled(
-            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)

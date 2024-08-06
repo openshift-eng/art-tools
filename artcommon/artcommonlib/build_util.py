@@ -46,26 +46,3 @@ def find_latest_builds(brew_builds: Iterable[Dict], assembly: Optional[str]) -> 
         chosen_build = find_latest_build(builds, assembly)
         if chosen_build:
             yield chosen_build
-
-
-def canonical_builders_enabled(canonical_builders_from_upstream, runtime) -> bool:
-    """
-    canonical_builders_from_upstream can be set globally, or overridden by single components; this function will take
-    either a global or a local flag, and check if canonical builders apply within this context
-    """
-
-    if canonical_builders_from_upstream is Missing:
-        # Default case: override using ART's config
-        return False
-
-    elif canonical_builders_from_upstream is True:
-        return True
-
-    elif canonical_builders_from_upstream is False:
-        return False
-
-    else:
-        # Invalid value: fallback to default
-        LOGGER.warning(
-            'Invalid value provided for "canonical_builders_from_upstream": %s', canonical_builders_from_upstream)
-        return False

@@ -496,6 +496,19 @@ class ImageMetadata(Metadata):
         digest = hashlib.sha256(json.dumps(message, sort_keys=True, default=default).encode("utf-8")).hexdigest()
         return "sha256:" + digest
 
+    @property
+    def canonical_builders_enabled(self) -> bool:
+        """ Returns whether canonical_builders is enabled for this image."""
+        # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
+        if self.config.canonical_builders_from_upstream is not Missing:
+            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
+        else:
+            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
+
+        if not isinstance(canonical_builders_from_upstream, bool):
+            self.logger.warning('Invalid value provided for "canonical_builders_from_upstream": %s, defaulting to False', canonical_builders_from_upstream)
+            return False
+        return canonical_builders_from_upstream
     def _default_brew_target(self):
         """ Returns derived brew target name from the distgit branch name
         """
