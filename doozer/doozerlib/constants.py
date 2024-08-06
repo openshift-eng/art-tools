@@ -29,6 +29,7 @@ BREW_BUILD_TIMEOUT = 100 * 60 * 60  # how long we wait before canceling a task
 KONFLUX_REPO_CA_BUNDLE_TMP_PATH = "/tmp"
 KONFLUX_REPO_CA_BUNDLE_FILENAME = "Current-IT-Root-CAs.pem"
 KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
+WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"
 
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"

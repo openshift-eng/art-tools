@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, Union
 
-from artcommonlib import git_helper
+from artcommonlib import git_helper, exectools
 from artcommonlib import util as art_util
 
 LOGGER = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class BuildRepo:
         if self.exists():
             if upcycle:
                 self._logger.info("Upcycling existing build source repository at %s", local_dir)
-                shutil.rmtree(local_dir)
+                await exectools.to_thread(shutil.rmtree, local_dir)
             else:
                 self._logger.info("Reusing existing build source repository at %s", local_dir)
                 needs_clone = False
