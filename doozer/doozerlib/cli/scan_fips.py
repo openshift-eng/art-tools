@@ -11,13 +11,14 @@ import koji
 
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.runtime import Runtime
-from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather
+from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather, cmd_assert_async
 
 
 class ScanFipsCli:
-    def __init__(self, runtime: Runtime, nvrs: Optional[list], clean: Optional[bool]):
+    def __init__(self, runtime: Runtime, nvrs: Optional[list], all_images: bool, clean: Optional[bool]):
         self.runtime = runtime
-        self.nvrs = nvrs
+        self.nvrs = nvrs if nvrs else []
+        self.all_images = all_images
         self.clean = clean
         self.could_not_clean = []
         self.is_root = False
@@ -26,11 +27,18 @@ class ScanFipsCli:
         self.runtime.initialize(clone_distgits=False)
         self.koji_session = koji.ClientSession(self.runtime.group_config.urls.brewhub)
 
+        if self.nvrs and self.all_images:
+            raise Exception("Cannot specify both --nvrs and --all-images")
+
     async def execute_and_handle_cmd(self, cmd, nvr):
         rc, out, _ = cmd_gather(cmd)
         if rc != 0:
             self.could_not_clean.append(nvr)
         return rc, out
+
+    @staticmethod
+    async def clean_all_images():
+        await cmd_assert_async("podman image prune --all --force")
 
     async def clean_image(self, nvr, pull_spec):
         if not self.clean:
@@ -72,7 +80,32 @@ class ScanFipsCli:
         self.runtime.logger.info(f"Running as user {out}")
         return rc == 0 and "root" in out
 
+    def get_tagged_latest(self, tag):
+        """
+        Returns the latest RPMs and builds, triggered by the automation, tagged in to the brew tag received as input
+        """
+        latest_tagged = self.koji_session.listTagged(tag=tag, latest=True, owner="exd-ocp-buildvm-bot-prod")
+        return latest_tagged or []
+
+    def get_all_latest_builds(self):
+        # Setup brew tags
+        brew_tags = self.runtime.gitdata.load_data(key='erratatool', replace_vars=self.runtime.group_config.vars).data.get('brew_tag_product_version_mapping', {}).keys()
+        self.runtime.logger.info(f"Retrieved candidate tags: {brew_tags}")
+
+        builds = []
+        for tag in brew_tags:
+            builds += self.get_tagged_latest(tag=tag)
+
+        nvrs = []
+        for build in builds:
+            nvrs.append(build["nvr"])
+
+        return nvrs
+
     async def run(self):
+        if self.all_images:
+            self.nvrs = self.get_all_latest_builds()
+
         self.is_root = await self.am_i_root()
         # Get the list of NVRs to scan for
         # (nvr, pull-spec) list of tuples
@@ -112,18 +145,27 @@ class ScanFipsCli:
         self.runtime.logger.info("Found FIPS issues for these components:")
         click.echo(json.dumps(problem_images))
 
+        if self.all_images:
+            # Clean all the images, if we are checking for all images since this mode is used on prod only
+            # Since this command will be run for all versions, clean after each run will be more efficient. Otherwise
+            # the pod storage limit will be reached quite quickly.
+            # If on local, and do not want to clean, feel free to comment this function out
+            self.clean_all_images()
+
         if self.clean and self.could_not_clean:
             raise Exception(f"Could not clean images: {self.could_not_clean}")
 
 
 @cli.command("images:scan-fips", help="Trigger FIPS check for specified NVRs")
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans for")
+@click.option("--all-images", is_flag=True, default=False, help="Scan all latest images in our tags")
 @click.option("--clean", is_flag=True, default=False, help="Clean images after scanning")
 @pass_runtime
 @click_coroutine
-async def scan_fips(runtime: Runtime, nvrs: str, clean: bool):
+async def scan_fips(runtime: Runtime, nvrs: str, all_images: bool, clean: bool):
     fips_pipeline = ScanFipsCli(runtime=runtime,
                                 nvrs=nvrs.split(",") if nvrs else None,
+                                all_images=all_images,
                                 clean=clean
                                 )
     await fips_pipeline.run()

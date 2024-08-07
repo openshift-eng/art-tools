@@ -10,3 +10,5 @@ GIT_NO_PROMPTS = {
     "GIT_SSH_COMMAND": "ssh -oBatchMode=yes",
     "GIT_TERMINAL_PROMPT": "0",
 }
+
+ACTIVE_OCP_VERSIONS = [4.12, 4.13, 4.14, 4.15, 4.16, 4.17]

@@ -4,17 +4,18 @@ metadata:
   name: fips-pipeline
 spec:
   params:
-    - description: 'OCP major version, eg: 4.15'
-      name: version
+    - description: 'Doozer data path i.e. ocp build data url'
+      name: data_path
       type: string
+      default: 'https://github.com/openshift-eng/ocp-build-data'
     - description: 'Space separated NVRs'
       name: nvrs
       type: string
   tasks:
     - name: run-script
       params:
-        - name: version
-          value: $(params.version)
+        - name: data_path
+          value: $(params.data_path)
         - name: nvrs
           value: $(params.nvrs)
       taskRef:
