@@ -26,11 +26,12 @@ LOGGER = logging.getLogger(__name__)
 
 
 class FindBugsGolangCli:
-    def __init__(self, runtime: Runtime, pullspec: str, cve_ids: Tuple[str], analyze: bool,
+    def __init__(self, runtime: Runtime, pullspec: str, cve_ids: Tuple[str], tracker_ids: Tuple[str], analyze: bool,
                  fixed_in_nvrs: Tuple[str], update_tracker: bool, art_jira: str, dry_run: bool):
         self._runtime = runtime
         self._logger = LOGGER
         self.cve_ids = cve_ids
+        self.tracker_ids = tracker_ids
         self.analyze = analyze
         self.fixed_in_nvrs = fixed_in_nvrs
         self.update_tracker = update_tracker
@@ -299,7 +300,7 @@ class FindBugsGolangCli:
                                           f' {go_build_string}: {len(self.go_nvr_map[builder_nvr])}')
 
             vuln_builds = total_builds - fixed_builds
-            self._logger.info(f"Images found *not* built with desired golang: {vuln_builds}")
+            self._logger.info(f"Images found not built with desired golang: {vuln_builds}")
             # if vulnerable builds make up for less than 10% of total builds, consider it fixed
             # this is due to etcd and a few payload images lagging behind due to special reasons
             if vuln_builds / total_builds < 0.1:
@@ -324,21 +325,25 @@ class FindBugsGolangCli:
         golang_report: List[Dict] = golang_report_for_version(self._runtime, ocp_version, ignore_rhel=True)
         logger.info(f"Current golang versions being used in {ocp_version}: {golang_report}")
 
-        target_release = self.jira_tracker.target_release()
-        tr = ','.join(target_release)
-        logger.info(f"Searching for open golang security trackers with target version {tr}")
+        if self.tracker_ids:
+            logger.info(f"Fetching {len(self.tracker_ids)} given tracker(s)")
+            bugs: List[JIRABug] = self.jira_tracker.get_bugs(self.tracker_ids)
+        else:
+            target_release = self.jira_tracker.target_release()
+            tr = ','.join(target_release)
+            logger.info(f"Searching for open golang security trackers with target version {tr}")
 
-        query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
-                 'and status not in (ON_QA, Verified) and labels = "SecurityTracking" '
-                 f'and "Target Version" in ({tr})')
+            query = ('project = "OCPBUGS" and summary ~ "golang" and statusCategory != done '
+                     'and status not in (ON_QA, Verified) and labels = "SecurityTracking" '
+                     f'and "Target Version" in ({tr})')
 
-        bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
+            bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
 
         def is_valid(b: JIRABug):
             if self.cve_ids and b.cve_id not in self.cve_ids:
                 return False
 
-            # Do not touch embargoed bugs
+            # Do not operate on embargoed bugs
             if b.bug.fields.security.name == "Embargoed Security Issue":
                 return False
 
@@ -503,9 +508,11 @@ class FindBugsGolangCli:
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
 @click.option("--pullspec", default=None,
-              help="Pullspec of release payload to check against. If not provided, latest accepted nightly will be used")
+              help="Pullspec of release payload to check against. If not provided, latest nightly will be used")
 @click.option("--cve-id", "cve_ids", multiple=True,
               help="CVE ID(s) (example: CVE-2024-1394) that trackers should be fetched for")
+@click.option("--tracker-id", "tracker_ids", multiple=True,
+              help="Only fetch and analyze these tracker(s) e.g. OCPBUGS-2024")
 @click.option("--analyze", is_flag=True,
               help="Analyze if found bugs are fixed")
 @click.option("--fixed-in-nvr", "fixed_in_nvrs", multiple=True,
@@ -521,8 +528,8 @@ class FindBugsGolangCli:
               help="Don't change anything")
 @click.pass_obj
 @click_coroutine
-async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, analyze: bool,
-                               fixed_in_nvrs, update_tracker: bool,
+async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker_ids,
+                               analyze: bool, fixed_in_nvrs, update_tracker: bool,
                                art_jira: str, dry_run: bool):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
@@ -584,6 +591,7 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, analyze
         runtime=runtime,
         pullspec=pullspec,
         cve_ids=cve_ids,
+        tracker_ids=tracker_ids,
         analyze=analyze,
         fixed_in_nvrs=fixed_in_nvrs,
         update_tracker=update_tracker,
