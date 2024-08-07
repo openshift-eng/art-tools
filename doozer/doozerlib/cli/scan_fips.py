@@ -148,9 +148,10 @@ class ScanFipsCli:
 
         if problem_images:
             self.runtime.logger.info("Found FIPS issues for these components:")
-            click.echo(json.dumps(problem_images))
         else:
             self.runtime.logger.info("No FIPS issues found!")
+
+        click.echo(json.dumps(problem_images))
 
         if self.all_images:
             # Clean all the images, if we are checking for all images since this mode is used on prod only
