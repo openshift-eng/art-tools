@@ -157,7 +157,7 @@ class FindBugsGolangCli:
             fixed = True
 
         if bug.whiteboard_component == constants.GOLANG_BUILDER_CVE_COMPONENT:
-            build_artifacts = f"Images in release payload {self.pullspec}"
+            build_artifacts = f"Images in {self.pullspec}"
         else:
             nvrs = []
             for nvr_group in go_nvr_map.values():
@@ -279,10 +279,35 @@ class FindBugsGolangCli:
             self.go_nvr_map = get_golang_container_nvrs(nvrs, self._logger)
 
         if self.fixed_in_nvrs:
-            for go_build_string in self.go_nvr_map.keys():
-                for nvr_string in self.fixed_in_nvrs:
+            builder_nvrs = [(p['name'], p['version'], p['release']) for p in [parse_nvr(n) for n in
+                                                                              self.go_nvr_map.keys()]]
+            go_builder_nvr_map = get_golang_container_nvrs(builder_nvrs, self._logger)
+            go_builder_nvr_map = {k: v.pop() for k, v in go_builder_nvr_map.items()}
+            total_builds = sum([len(v) for v in self.go_nvr_map.values()])
+            self._logger.info(f"Total images in payload: {total_builds}")
+            self._logger.info(f"Found parent golang builder nvrs: {sorted(self.go_nvr_map.keys())}")
+            self._logger.info(f"Found parent go builds: {sorted(go_builder_nvr_map.keys())}")
+            fixed_builds = 0
+            fixed_in_builds = []
+            for nvr_string in self.fixed_in_nvrs:
+                for go_build_string in go_builder_nvr_map.keys():
                     if go_build_string in nvr_string:
-                        return True, ''
+                        builder_nvr = "-".join(go_builder_nvr_map[go_build_string])
+                        fixed_builds += len(self.go_nvr_map[builder_nvr])
+                        fixed_in_builds.append((builder_nvr, go_build_string))
+                        self._logger.info(f'Images in payload found to be built with the desired golang'
+                                          f' {go_build_string}: {len(self.go_nvr_map[builder_nvr])}')
+
+            vuln_builds = total_builds - fixed_builds
+            self._logger.info(f"Images found *not* built with desired golang: {vuln_builds}")
+            # if vulnerable builds make up for less than 10% of total builds, consider it fixed
+            # this is due to etcd and a few payload images lagging behind due to special reasons
+            if vuln_builds / total_builds < 0.1:
+                self._logger.info("Vulnerable images make up for less than 10% of total images, considering it fixed")
+                comment = (f"{bug.cve_id} is fixed in golang builder(s) {fixed_in_builds} which are found to be "
+                           f"the parent images in {self.pullspec}. Bug is considered fixed.")
+                return True, comment
+
             return False, ''
         else:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
