@@ -263,11 +263,11 @@ class FindBugsGolangCli:
 
     async def is_fixed_golang_builder(self, bug: JIRABug, tracker_fixed_in: Set[Version] = None) -> (bool, str):
         if not self.pullspec:
-            self._logger.info('Fetching latest nightly...')
+            self._logger.info('Fetching latest accepted nightly...')
             # we fetch pending and rejected nightlies as well since
             # we only need to determine if image builds are complete and have the fix
-            nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=True,
-                                                allow_rejected=True)
+            nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=False,
+                                                allow_rejected=False)
             if len(nightlies['x86_64']) < 1:
                 raise ElliottFatalError("Could not find any accepted nightlies. Please investigate")
             self.pullspec = nightlies['x86_64'][0]['pullSpec']
@@ -508,7 +508,8 @@ class FindBugsGolangCli:
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
 @click.option("--pullspec", default=None,
-              help="Pullspec of release payload to check against. If not provided, latest nightly will be used")
+              help="Pullspec of release payload to check against. If not provided, latest accepted nightly will be "
+                   "used")
 @click.option("--cve-id", "cve_ids", multiple=True,
               help="CVE ID(s) (example: CVE-2024-1394) that trackers should be fetched for")
 @click.option("--tracker-id", "tracker_ids", multiple=True,
