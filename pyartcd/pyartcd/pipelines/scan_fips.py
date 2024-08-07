@@ -10,13 +10,15 @@ from typing import Optional
 from pyartcd.runtime import Runtime
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd import exectools
+from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 
 
 class ScanFips:
-    def __init__(self, runtime: Runtime, nvrs: Optional[list]):
+    def __init__(self, runtime: Runtime, data_path: str, all_images: bool, nvrs: Optional[list]):
         self.runtime = runtime
+        self.data_path = data_path
         self.nvrs = nvrs
-        self.active_ocp_versions = [4.12, 4.13, 4.14, 4.15, 4.16, 4.17]
+        self.all_images = all_images
 
         # Setup slack client
         self.slack_client = self.runtime.new_slack_client()
@@ -25,16 +27,24 @@ class ScanFips:
     async def run(self):
         results = {}
 
-        for version in self.active_ocp_versions:
+        for version in ACTIVE_OCP_VERSIONS:
             cmd = [
                 "doozer",
                 "--group",
                 f"openshift-{version}",
                 "--data-path",
-                "https://github.com/openshift-eng/ocp-build-data",
+                self.data_path,
                 "images:scan-fips",
-                "--all-images",
             ]
+
+            if self.nvrs and self.all_images:
+                raise Exception("Cannot specify both --nvrs and --all-images")
+
+            if self.nvrs:
+                cmd.extend(["--nvrs", ",".join(self.nvrs)])
+
+            if self.all_images:
+                cmd.append("--all-images")
 
             _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
             result_json = json.loads(result)
@@ -67,11 +77,15 @@ class ScanFips:
 
 
 @cli.command("scan-fips", help="Trigger FIPS check for specified NVRs")
+@click.option("--data-path", required=True, help="OCP build data url")
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans for")
+@click.option("--all-images", is_flag=True, default=False, help="Scan all latest images in our tags")
 @pass_runtime
 @click_coroutine
-async def scan_osh(runtime: Runtime, nvrs: str):
+async def scan_osh(runtime: Runtime, data_path: str, all_images: bool, nvrs: str):
     pipeline = ScanFips(runtime=runtime,
+                        data_path=data_path,
+                        all_images=all_images,
                         nvrs=nvrs.split(",") if nvrs else None
                         )
     await pipeline.run()

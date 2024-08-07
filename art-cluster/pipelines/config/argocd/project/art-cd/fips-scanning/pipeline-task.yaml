@@ -4,9 +4,10 @@ metadata:
   name: fips-pipeline-task
 spec:
   params:
-    - description: 'OCP major version, eg: 4.15'
-      name: version
+    - description: 'Doozer data path i.e. ocp build data url'
+      name: data_path
       type: string
+      default: 'https://github.com/openshift-eng/ocp-build-data'
     - description: 'Space separated NVRs'
       name: nvrs
       type: string
@@ -26,7 +27,7 @@ spec:
         pip install stomp.py==8.1.0
         pip install setuptools==70.0.0
 
-        artcd -vv --dry-run scan-fips --all-images
+        artcd -vv --dry-run scan-fips --data-path $(params.data_path) --all-images
 
       securityContext:
         runAsGroup: 0

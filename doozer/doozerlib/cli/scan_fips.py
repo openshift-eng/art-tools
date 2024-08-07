@@ -4,7 +4,6 @@ For this command to work, https://github.com/openshift/check-payload binary has 
 import asyncio
 import json
 import os
-import re
 from typing import Optional
 
 import click
@@ -12,11 +11,11 @@ import koji
 
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.runtime import Runtime
-from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather
+from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather, cmd_assert_async
 
 
 class ScanFipsCli:
-    def __init__(self, runtime: Runtime, nvrs: Optional[list], all_images: Optional[bool], clean: Optional[bool]):
+    def __init__(self, runtime: Runtime, nvrs: Optional[list], all_images: bool, clean: Optional[bool]):
         self.runtime = runtime
         self.nvrs = nvrs if nvrs else []
         self.all_images = all_images
@@ -39,9 +38,7 @@ class ScanFipsCli:
 
     @staticmethod
     async def clean_all_images():
-        rc, _, _ = cmd_gather("podman image prune --all --force")
-        if rc != 0:
-            raise Exception("Could not clean all images")
+        await cmd_assert_async("podman image prune --all --force")
 
     async def clean_image(self, nvr, pull_spec):
         if not self.clean:
@@ -88,33 +85,12 @@ class ScanFipsCli:
         Returns the latest RPMs and builds, triggered by the automation, tagged in to the brew tag received as input
         """
         latest_tagged = self.koji_session.listTagged(tag=tag, latest=True, owner="exd-ocp-buildvm-bot-prod")
-        if latest_tagged:
-            return latest_tagged
-        else:
-            return []
+        return latest_tagged or []
 
     def get_all_latest_builds(self):
-        brew_tags = []
         # Setup brew tags
-        tags = self.runtime.get_errata_config()["brew_tag_product_version_mapping"].keys()
-        for tag in tags:
-            major, minor = self.runtime.get_major_minor_fields()
-            brew_tags.append(tag.format(MAJOR=major, MINOR=minor))
+        brew_tags = self.runtime.gitdata.load_data(key='erratatool', replace_vars=self.runtime.group_config.vars).data.get('brew_tag_product_version_mapping', {}).keys()
         self.runtime.logger.info(f"Retrieved candidate tags: {brew_tags}")
-
-        tag_rhel_mapping = {}
-        # Create rhel mapping
-        for tag in brew_tags:
-            pattern = r"rhaos-\d.\d+(-ironic){0,1}-(?P<rhel_version>rhel-\d+)-(candidate|hotfix)"
-            match = re.search(pattern=pattern, string=tag)
-            rhel_version = None
-            if match:
-                rhel_version = match.group("rhel_version")
-
-            assert rhel_version is not None
-
-            tag_rhel_mapping[tag] = rhel_version
-        self.runtime.logger.info(f"Created RHEL-brew-tag mapping: {tag_rhel_mapping}")
 
         builds = []
         for tag in brew_tags:
