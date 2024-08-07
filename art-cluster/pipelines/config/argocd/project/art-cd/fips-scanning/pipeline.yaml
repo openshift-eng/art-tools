@@ -11,6 +11,7 @@ spec:
     - description: 'Space separated NVRs'
       name: nvrs
       type: string
+      default: ''
   tasks:
     - name: run-script
       params:

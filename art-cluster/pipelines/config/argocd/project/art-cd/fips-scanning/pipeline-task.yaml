@@ -11,6 +11,7 @@ spec:
     - description: 'Space separated NVRs'
       name: nvrs
       type: string
+      default: ''
   steps:
     - image: image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest
       name: run-script
