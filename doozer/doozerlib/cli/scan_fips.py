@@ -134,7 +134,11 @@ class ScanFipsCli:
 
             # Eg registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator@sha256:da95750d31cb1b9539f664d2d6255727fa8d648e93150ae92ed84a9e993753be
             # from https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=2777601
-            pull_spec = build_info["extra"]["image"]["index"]["pull"][0]
+            try:
+                pull_spec = build_info["extra"]["image"]["index"]["pull"][0]
+            except KeyError:
+                self.runtime.logger.warning(f"Skipping {nvr} since it doesn't have an image pull spec, probably cause its an RPM")
+                continue
             image_pullspec_mapping.append((nvr, pull_spec))
 
         tasks = [self.run_get_problem_nvrs(build) for build in image_pullspec_mapping]
