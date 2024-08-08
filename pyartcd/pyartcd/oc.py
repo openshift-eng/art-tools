@@ -2,7 +2,7 @@ import json
 import os
 import logging
 
-from pyartcd import exectools
+from artcommonlib import exectools
 from pyartcd.runtime import Runtime
 import openshift_client as octool
 from typing import List, Optional

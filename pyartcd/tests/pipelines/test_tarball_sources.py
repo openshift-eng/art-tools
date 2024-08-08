@@ -5,7 +5,7 @@ from pyartcd.pipelines.tarball_sources import TarballSourcesPipeline
 
 
 class TestTarballSourcesPipeline(IsolatedAsyncioTestCase):
-    @patch("pyartcd.exectools.cmd_gather_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     async def test_create_tarball_sources(self, cmd_gather_async: Mock):
         cmd_gather_async.return_value = (0, """
 Created tarball source /mnt/nfs/home/jenkins/yuxzhu/OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf73a1dd.assembly.stream.tar.gz.
@@ -26,7 +26,7 @@ OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf
         actual = await pipeline._create_tarball_sources([10000, 10001], "fake-working/sources")
         self.assertEqual(actual, expected)
 
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_copy_to_rcm_guest(self, cmd_assert_async: AsyncMock):
         cmd_assert_async.return_value = (0, "whatever", "whatever")
         pipeline = TarballSourcesPipeline(MagicMock(dry_run=False), "fake-group-4.10", "fake-assembly", ["fake-component"], [])

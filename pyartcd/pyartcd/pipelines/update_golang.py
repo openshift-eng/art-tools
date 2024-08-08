@@ -12,7 +12,7 @@ from ruamel.yaml import YAML
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
-from pyartcd import exectools
+from artcommonlib import exectools
 from pyartcd import jenkins
 from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime

@@ -384,39 +384,6 @@ class TestGenericDistGit(TestDistgit):
                             "Use --allow-overwrite to force.")
             self.assertEqual(expected_msg, str(e))
 
-    def test_source_path(self):
-        # preventing tests from interacting with the real filesystem
-        flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
-        flexmock(distgit.os.path).should_receive("isdir").and_return(True)
-        source_resolver = flexmock(resolve_source=flexmock(source_path="source-root"))
-        metadata = flexmock(runtime=self.mock_runtime(source_resolver=source_resolver,
-                                                      branch="_irrelevant_"),
-                            config=flexmock(content=flexmock(source=flexmock(path="sub-path")),
-                                            distgit=flexmock(branch="_irrelevant_")),
-                            logger=flexmock(info=lambda _: None),
-                            config_filename="_irrelevant_",
-                            name="_irrelevant_")
-        repo = distgit.DistGitRepo(metadata, autoclone=False)
-
-        self.assertEqual("source-root/sub-path", repo.source_path())
-
-    def test_source_path_without_sub_path(self):
-        # preventing tests from interacting with the real filesystem
-        flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
-        flexmock(distgit.os.path).should_receive("isdir").and_return(True)
-
-        source_resolver = flexmock(resolve_source=flexmock(source_path="source-root"))
-        metadata = flexmock(runtime=self.mock_runtime(source_resolver=source_resolver,
-                                                      branch="_irrelevant_"),
-                            config=flexmock(content=flexmock(source=flexmock(path=distgit.Missing)),
-                                            distgit=flexmock(branch="_irrelevant_")),
-                            logger=flexmock(info=lambda _: None),
-                            config_filename="_irrelevant_",
-                            name="_irrelevant_")
-        repo = distgit.DistGitRepo(metadata, autoclone=False)
-
-        self.assertEqual("source-root", repo.source_path())
-
     def test_commit_local(self):
         flexmock(distgit.exectools).should_receive("cmd_assert").times(0)
 
@@ -470,7 +437,7 @@ class TestGenericDistGit(TestDistgit):
 
         (flexmock(metadata.runtime)
          .should_receive("add_distgits_diff")
-         .with_args("my-distgit-key", "stdout", konflux=False)
+         .with_args("my-distgit-key", "stdout")
          .once()
          .and_return(None))
 
@@ -663,7 +630,7 @@ class TestGenericDistGit(TestDistgit):
 
         self.assertIn(msg, actual)
 
-    @mock.patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    @mock.patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
     def test_add_missing_pkgs_succeed(self, _):
         md = MockMetadata(MockRuntime(self.logger))
         d = distgit.ImageDistGitRepo(md, autoclone=False)
@@ -672,7 +639,7 @@ class TestGenericDistGit(TestDistgit):
         self.assertEqual(1, len(d.runtime.missing_pkgs))
         self.assertIn("distgit_key image is missing package haproxy", d.runtime.missing_pkgs)
 
-    @mock.patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
+    @mock.patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)
     @mock.patch("requests.head")
     def test_cgit_file_available(self, mocked_head, _):
         meta = MockMetadata(MockRuntime(self.logger))

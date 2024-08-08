@@ -291,22 +291,16 @@ class DistGitRepo(object):
         :return: Returns the directory containing the source which should be used to populate distgit. This includes
                 the source.path subdirectory if the metadata includes one.
         """
-
-        source_root = self.runtime.source_resolver.resolve_source(self.metadata).source_path
-        sub_path = self.config.content.source.path
-
-        path = source_root
-        if sub_path is not Missing:
-            path = os.path.join(source_root, sub_path)
-
-        assertion.isdir(path, "Unable to find path for source [%s] for config: %s" % (path, self.metadata.config_filename))
-        return path
+        assert self.runtime.source_resolver is not None, "Runtime must be initialized with a source resolver"
+        source = self.runtime.source_resolver.resolve_source(self.metadata)
+        source_dir = SourceResolver.get_source_dir(source, self.metadata)
+        return source_dir
 
     def _get_diff(self):
         return None  # to actually record a diff, child classes must override this function
 
     def add_distgits_diff(self, diff):
-        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff, konflux=False)
+        return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
 
     def commit(self, cmdline_commit_msg: str, commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None, log_diff=False):
         if self.runtime.local:
@@ -408,7 +402,7 @@ class DistGitRepo(object):
         # time, a single push invocation can take hours to complete -- making the
         # timeout value counterproductive. Limit to 5 simultaneous pushes.
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
-        await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir, retries=3)
+        await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir)
 
     def get_branch_el(self) -> Optional[int]:
         """
@@ -449,19 +443,17 @@ class ImageDistGitRepo(DistGitRepo):
         ),
     )
 
-    def __init__(self, metadata, autoclone=True,
+    def __init__(self, metadata: "ImageMetadata", autoclone=True,
                  source_modifier_factory=SourceModifierFactory()):
         self.org_image_name = None
         self.org_version = None
         self.org_release = None
         super(ImageDistGitRepo, self).__init__(metadata, autoclone=False)
+        self.metadata = metadata
         self.build_lock = Lock()
         self.build_lock.acquire()
-        self.rebase_event = Event()
-        self.rebase_status = False
         self.logger: logging.Logger = metadata.logger
         self.source_modifier_factory = source_modifier_factory
-        self.is_konflux = False
 
         # If there's an upstream source, there can be a mismatch between
         # how upstream wants to build their sources and ART's configuration
@@ -473,7 +465,7 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self._canonical_builders_enabled():
+        if self.metadata.canonical_builders_enabled:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
@@ -630,8 +622,8 @@ class ImageDistGitRepo(DistGitRepo):
                 ]
             })
 
-        if self.image_build_method is not Missing and self.image_build_method != "osbs2":
-            config_overrides['image_build_method'] = self.image_build_method
+        if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
+            config_overrides['image_build_method'] = self.metadata.image_build_method
 
         if arches:
             config_overrides.setdefault('platforms', {})['only'] = arches
@@ -747,7 +739,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         for t in repos.repotypes:
             with self.dg_path.joinpath('.oit', f'{t}.repo').open('w', encoding="utf-8") as rc:
-                content = repos.repo_file(t, enabled_repos=enabled_repos, konflux=self.is_konflux)
+                content = repos.repo_file(t, enabled_repos=enabled_repos)
                 rc.write(content)
 
         with self.dg_path.joinpath('content_sets.yml').open('w', encoding="utf-8") as rc:
@@ -972,7 +964,7 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image build since it is not included: %s" % image_name)
             return
-        parent_dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
+        parent_dgr = image.distgit_repo()
         parent_dgr.wait_for_build(self.metadata.qualified_name)
         if terminate_event.is_set():
             raise KeyboardInterrupt()
@@ -984,11 +976,9 @@ class ImageDistGitRepo(DistGitRepo):
             self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
             return
 
-        dgr = image.k_distgit_repo() if self.is_konflux else image.distgit_repo()
-
         self.logger.info("Waiting for image rebase: %s" % image_name)
-        dgr.rebase_event.wait()
-        if not dgr.rebase_status:  # failed to rebase
+        image.rebase_event.wait()
+        if not image.rebase_status:  # failed to rebase
             raise IOError(f"Error rebasing image: {self.metadata.qualified_name} ({image_name} was waiting)")
         self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
         if terminate_event.is_set():
@@ -1095,8 +1085,8 @@ class ImageDistGitRepo(DistGitRepo):
                     # `targets` is defined as an array just because we want to keep consistency with RPM build.
                     raise DoozerFatalError("Building images against multiple targets is not currently supported.")
 
-                if self.image_build_method != "osbs2":
-                    raise DoozerFatalError(f"Do not understand image build method {self.image_build_method}. Only osbs2 exists")
+                if self.metadata.image_build_method != "osbs2":
+                    raise DoozerFatalError(f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists")
                 osbs2 = OSBS2Builder(self.runtime, scratch=scratch, dry_run=dry_run)
                 try:
                     task_id, task_url, build_info = asyncio.run(osbs2.build(self.metadata, profile, retries=retries))
@@ -1172,7 +1162,7 @@ class ImageDistGitRepo(DistGitRepo):
         separated for clarity. Local build version.
         """
 
-        if self.image_build_method == 'imagebuilder':
+        if self.metadata.image_build_method == 'imagebuilder':
             builder = 'imagebuilder -mount '
         else:
             builder = 'podman build -v '
@@ -1618,16 +1608,6 @@ class ImageDistGitRepo(DistGitRepo):
         unique_pullspec += f':{parent_build_nvr["version"]}-{parent_build_nvr["release"]}'
         return unique_pullspec
 
-    def _canonical_builders_enabled(self) -> bool:
-        # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
-        if self.config.canonical_builders_from_upstream is not Missing:
-            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
-        else:
-            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
-
-        return build_util.canonical_builders_enabled(
-            canonical_builders_from_upstream, self.runtime)
-
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
 
@@ -1783,9 +1763,6 @@ class ImageDistGitRepo(DistGitRepo):
 
             else:
                 raise IOError("Image in 'from' for [%s] is missing its definition." % image.name)
-
-        if self.is_konflux:
-            mapped_images = [image.replace(constants.REGISTRY_PROXY_BASE_URL, constants.BREW_REGISTRY_BASE_URL) for image in mapped_images]
 
         # Write rebased from directives
         dfp.parent_images = mapped_images
@@ -2725,13 +2702,13 @@ class ImageDistGitRepo(DistGitRepo):
                 self.logger.warning("The source of this image contains embargoed fixes.")
 
             real_version, real_release = self.update_distgit_dir(version, release, prev_release, force_yum_updates)
-            self.rebase_status = True
+            self.metadata.rebase_status = True
             return real_version, real_release
         except Exception:
-            self.rebase_status = False
+            self.metadata.rebase_status = False
             raise
         finally:
-            self.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
+            self.metadata.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
 
 
 class RPMDistGitRepo(DistGitRepo):
@@ -2752,8 +2729,8 @@ class RPMDistGitRepo(DistGitRepo):
 
         async def _get_nvr():
             cmd = ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}", "--srpm", "--undefine", "dist", "--", spec_path]
-            out, _ = await exectools.cmd_assert_async(cmd, strip=True)
-            return out.rsplit("-", 2)
+            _, out, _ = await exectools.cmd_gather_async(cmd)
+            return out.strip().rsplit("-", 2)
 
         async def _get_commit():
             async with aiofiles.open(spec_path, "r") as f:

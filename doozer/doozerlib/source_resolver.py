@@ -423,3 +423,15 @@ class SourceResolver:
             exectools.cmd_assert(["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url])
         exectools.cmd_assert(["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch], retries=3,
                              set_env=constants.GIT_NO_PROMPTS)
+
+    @staticmethod
+    def get_source_dir(source: SourceResolution, metadata: 'Metadata', check=True) -> Path:
+        if not metadata.has_source():
+            raise ValueError("Metadata does not have a source")
+        source_dir = Path(source.source_path)
+        sub_path = metadata.config.content.source.path
+        if sub_path is not Missing:
+            source_dir = source_dir.joinpath(str(sub_path))
+        if check and not source_dir.is_dir():
+            raise FileNotFoundError(f"Source directory {source_dir} doesn't exist")
+        return source_dir

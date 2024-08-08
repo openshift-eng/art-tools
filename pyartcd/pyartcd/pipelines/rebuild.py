@@ -15,7 +15,8 @@ import yaml
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group
-from pyartcd import constants, exectools, locks, jenkins
+from pyartcd import constants, locks, jenkins
+from artcommonlib import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime

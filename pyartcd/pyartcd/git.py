@@ -3,14 +3,15 @@
 from logging import getLogger
 from pathlib import Path
 import os
+from typing import Union
 
-from pyartcd import StrOrBytesPath, exectools
+from artcommonlib import exectools
 
 LOGGER = getLogger(__name__)
 
 
 class GitRepository:
-    def __init__(self, directory: StrOrBytesPath, dry_run: bool = False) -> None:
+    def __init__(self, directory: Union[str, Path], dry_run: bool = False) -> None:
         self._directory = Path(directory)
         self._dry_run = dry_run
 

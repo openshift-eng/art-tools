@@ -16,7 +16,7 @@ class TestRPMDistGit(TestDistgit):
         self.rpm_dg.runtime.group_config = Model()
 
     @patch("aiofiles.open")
-    @patch("doozerlib.distgit.exectools.cmd_assert_async", return_value=("foo-1.2.3-1", ""))
+    @patch("doozerlib.distgit.exectools.cmd_gather_async", return_value=(0, "foo-1.2.3-1", ""))
     @patch("glob.glob", return_value=["/path/to/distgit/foo.spec"])
     async def test_resolve_specfile_async(self, mocked_glob: Mock, mocked_cmd_assert_async: Mock, mocked_open: Mock):
         self.rpm_dg.distgit_dir = "/path/to/distgit"
@@ -29,7 +29,7 @@ class TestRPMDistGit(TestDistgit):
         mocked_glob.assert_called_once_with(self.rpm_dg.distgit_dir + "/*.spec")
         mocked_cmd_assert_async.assert_called_once_with(
             ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}",
-                "--srpm", "--undefine", "dist", "--", Path("/path/to/distgit/foo.spec")], strip=True)
+                "--srpm", "--undefine", "dist", "--", Path("/path/to/distgit/foo.spec")])
 
 
 if __name__ == "__main__":
