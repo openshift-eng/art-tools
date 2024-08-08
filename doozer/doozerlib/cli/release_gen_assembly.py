@@ -504,6 +504,7 @@ class GenAssemblyCli:
     def _get_advisories_release_jira(self) -> Tuple[Dict[str, int], str]:
         # Add placeholder advisory numbers and JIRA key.
         # Those values will be replaced with real values by pyartcd when preparing a release.
+        releases_config = self.runtime.get_releases_config()
         advisories = {
             'image': -1,
             'rpm': -1,
@@ -524,6 +525,10 @@ class GenAssemblyCli:
         release_jira = "ART-0"
 
         if self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            # For standalone assembly, if the advisorirs and jira already exist, reuse them
+            if self.gen_assembly_name in releases_config.releases:
+                advisories = releases_config.releases[self.gen_assembly_name].assembly.group.advisories.primitive()
+                release_jira = releases_config.releases[self.gen_assembly_name].assembly.group.release_jira
             return advisories, release_jira
 
         # if this assembly is (e|r)c.X, then check if there is a previously defined (e|r)c.X-1
@@ -537,9 +542,6 @@ class GenAssemblyCli:
             return advisories, release_jira
 
         # For RCs
-
-        releases_config = self.runtime.get_releases_config()
-
         if current_v == 0 and self.assembly_type == AssemblyTypes.CANDIDATE:
             ec_assemblies = sorted([a for a in releases_config.releases if a.startswith("ec.")])
             if not ec_assemblies:
