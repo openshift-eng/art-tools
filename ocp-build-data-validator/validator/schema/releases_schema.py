@@ -54,4 +54,4 @@ def validate(_, data):
         validator.validate(demerged_data)
     except ValidationError:
         errors = validator.iter_errors(demerged_data)
-        return '\n'.join([str(e.message) for e in errors])
+        return '\n'.join([f"{e.json_path}: {e.message}" for e in errors])
