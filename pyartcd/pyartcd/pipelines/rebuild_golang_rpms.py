@@ -21,11 +21,14 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RebuildGolangRPMsPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, go_nvrs: List[str], art_jira: str):
+    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, force: bool, rpms: List[str],
+                 go_nvrs: List[str]):
         self.runtime = runtime
         self.ocp_version = ocp_version
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
+        self.force = force
+        self.rpms = rpms
         self.koji_session = koji.ClientSession(BREW_HUB)
 
     async def run(self):
@@ -53,12 +56,16 @@ class RebuildGolangRPMsPipeline:
 
         # fetch art_built_rpms
         art_built_rpms = self.get_art_built_rpms()
+        if self.rpms:
+            art_built_rpms = [r for r in art_built_rpms if r in self.rpms]
 
         non_art_rpms_for_rebuild = dict()
         art_rpms_for_rebuild = set()
         for el_v, nvr in el_nvr_map.items():
             _LOGGER.info(f'Fetching all rhel{el_v} rpms in our candidate tag')
             rpms = [parse_nvr(n) for n in self.get_rpms(el_v) if 'microshift' not in n]
+            if self.rpms:
+                rpms = [r for r in rpms if r['name'] in self.rpms]
             _LOGGER.info('Determining golang rpms and their build versions')
             go_nvr_map = elliottutil.get_golang_rpm_nvrs(
                 [(n['name'], n['version'], n['release']) for n in rpms],
@@ -66,10 +73,13 @@ class RebuildGolangRPMsPipeline:
             )
             for go_v, nvrs in go_nvr_map.items():
                 nvr_s = [f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs]
-                if go_v in nvr:
-                    _LOGGER.info(f'Builds on latest go version {go_v}: {nvr_s}')
-                    continue
-                _LOGGER.info(f'Builds on previous go version {go_v}: {nvr_s}')
+                if not self.force:
+                    if go_v in nvr:
+                        _LOGGER.info(f'Builds on latest go version {go_v}: {nvr_s}')
+                        continue
+                    _LOGGER.info(f'Builds on previous go version {go_v}: {nvr_s}')
+                else:
+                    _LOGGER.info('Forcing rebuild since --force flag is set')
                 art_rpms_for_rebuild.update([n[0] for n in nvrs if n[0] in art_built_rpms])
                 if el_v not in non_art_rpms_for_rebuild:
                     non_art_rpms_for_rebuild[el_v] = []
@@ -220,8 +230,13 @@ class RebuildGolangRPMsPipeline:
 @cli.command('rebuild-golang-rpms')
 @click.option('--ocp-version', required=True, help='OCP version to rebuild golang rpms for')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
+@click.option('--force', help='Force rebuild rpms even if they are on given golang', is_flag=True)
+@click.option('--rpms', help='Only consider these rpm(s) for rebuild')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, go_nvrs: List[str], art_jira: str):
-    await RebuildGolangRPMsPipeline(runtime, ocp_version, go_nvrs, art_jira).run()
+async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str, force: bool, rpms: str,
+                              go_nvrs: List[str]):
+    if rpms:
+        rpms = [r for r in rpms.split(',')]
+    await RebuildGolangRPMsPipeline(runtime, ocp_version, art_jira, force, rpms, go_nvrs).run()
