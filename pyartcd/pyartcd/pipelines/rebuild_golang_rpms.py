@@ -21,8 +21,8 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RebuildGolangRPMsPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, force: bool, rpms: List[str],
-                 go_nvrs: List[str]):
+    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, go_nvrs: List[str], force: bool = False,
+                 rpms: List[str] = None):
         self.runtime = runtime
         self.ocp_version = ocp_version
         self.go_nvrs = go_nvrs
@@ -239,4 +239,5 @@ async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str,
                               go_nvrs: List[str]):
     if rpms:
         rpms = [r for r in rpms.split(',')]
-    await RebuildGolangRPMsPipeline(runtime, ocp_version, art_jira, force, rpms, go_nvrs).run()
+    await RebuildGolangRPMsPipeline(runtime, ocp_version=ocp_version, art_jira=art_jira, force=force, rpms=rpms,
+                                    go_nvrs=go_nvrs).run()
