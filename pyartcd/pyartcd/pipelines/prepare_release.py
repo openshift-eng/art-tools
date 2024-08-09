@@ -323,47 +323,47 @@ class PrepareReleasePipeline:
                 _LOGGER.info(f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle "
                              "advisory to 'metadata'")
 
-        _LOGGER.info("Sweep builds into the the advisories...")
-        for impetus, advisory in advisories.items():
-            if not advisory:
-                continue
-            elif impetus == "rpm" and "prerelease" in advisories.keys():
-                # Skip populating RPM advisory if prerelease is detected, for ECs and RCs
-                _LOGGER.info("Skipping populating rpm advisory, since prerelease detected")
-                continue
-            elif impetus == "metadata":
-                # Do not populate the metadata advisory if advance advisory is present
-                if self.advance_release or self.pre_release:
-                    _LOGGER.info("Skipping populating metadata advisory since advance/pre-release detected")
-                    continue
-                await self.build_and_attach_bundles(advisory)
-            elif impetus in ["advance", "prerelease"]:
-                await self.build_and_attach_bundles(advisory)
-            else:
-                await self.sweep_builds_async(impetus, advisory)
-
-        # Verify attached operators - and gather builds if needed
-        if any(x in advisories for x in ("metadata", "prerelease", "advance")):
-            gather_dependencies = self.advance_release or self.pre_release
-            advisory_args = []
-            if self.advance_release:
-                advisory_args = [advisories['advance']]
-            elif self.pre_release:
-                advisory_args = [advisories['prerelease']]
-            elif 'metadata' in advisories:
-                advisory_args = [advisories["metadata"], advisories["extras"], advisories["image"]]
-
-            try:
-                await self.verify_attached_operators(*advisory_args, gather_dependencies=gather_dependencies)
-            except Exception as ex:
-                _LOGGER.error(f"Unable to verify attached operators: {ex}")
-                message = "`elliott verify-attached-operators` failed, details in log."
-                if self.advance_release:
-                    message += " Could not prepare advance advisory for release."
-                elif self.pre_release:
-                    message += " Could not prepare prerelease advisory for release."
-                await self._slack_client.say_in_thread(message, reaction="art-attention")
-                raise ex
+        # _LOGGER.info("Sweep builds into the the advisories...")
+        # for impetus, advisory in advisories.items():
+        #     if not advisory:
+        #         continue
+        #     elif impetus == "rpm" and "prerelease" in advisories.keys():
+        #         # Skip populating RPM advisory if prerelease is detected, for ECs and RCs
+        #         _LOGGER.info("Skipping populating rpm advisory, since prerelease detected")
+        #         continue
+        #     elif impetus == "metadata":
+        #         # Do not populate the metadata advisory if advance advisory is present
+        #         if self.advance_release or self.pre_release:
+        #             _LOGGER.info("Skipping populating metadata advisory since advance/pre-release detected")
+        #             continue
+        #         await self.build_and_attach_bundles(advisory)
+        #     elif impetus in ["advance", "prerelease"]:
+        #         await self.build_and_attach_bundles(advisory)
+        #     else:
+        #         await self.sweep_builds_async(impetus, advisory)
+        #
+        # # Verify attached operators - and gather builds if needed
+        # if any(x in advisories for x in ("metadata", "prerelease", "advance")):
+        #     gather_dependencies = self.advance_release or self.pre_release
+        #     advisory_args = []
+        #     if self.advance_release:
+        #         advisory_args = [advisories['advance']]
+        #     elif self.pre_release:
+        #         advisory_args = [advisories['prerelease']]
+        #     elif 'metadata' in advisories:
+        #         advisory_args = [advisories["metadata"], advisories["extras"], advisories["image"]]
+        #
+        #     try:
+        #         await self.verify_attached_operators(*advisory_args, gather_dependencies=gather_dependencies)
+        #     except Exception as ex:
+        #         _LOGGER.error(f"Unable to verify attached operators: {ex}")
+        #         message = "`elliott verify-attached-operators` failed, details in log."
+        #         if self.advance_release:
+        #             message += " Could not prepare advance advisory for release."
+        #         elif self.pre_release:
+        #             message += " Could not prepare prerelease advisory for release."
+        #         await self._slack_client.say_in_thread(message, reaction="art-attention")
+        #         raise ex
 
         # bugs should be attached after builds to validate tracker bugs against builds
         _LOGGER.info("Sweep bugs into the the advisories...")
