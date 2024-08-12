@@ -308,16 +308,6 @@ class JIRABug(Bug):
         return [x.name for x in self.bug.fields.versions]
 
     @property
-    def blocked_by_bz(self):
-        url = getattr(self.bug.fields, JIRABugTracker.field_blocked_by_bz)
-        if not url:
-            return None
-        bug_id = re.search(r"id=(\d+)", url)
-        if not bug_id:
-            return None
-        return int(bug_id.groups()[0])
-
-    @property
     def target_release(self):
         tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
         if not tr_field:
@@ -338,11 +328,7 @@ class JIRABug(Bug):
 
     @property
     def depends_on(self):
-        depends_on = self._get_depends()
-        depends_on_bz = self.blocked_by_bz
-        if depends_on_bz:
-            depends_on.append(depends_on_bz)
-        return depends_on
+        return self._get_depends()
 
     @property
     def release_blocker(self):
@@ -615,7 +601,6 @@ class JIRABugTracker(BugTracker):
 
     # There are several @property function defined, which requires the values to be available at compile time
     # We later override them at runtime, so that if the field name changes, we'll still get the updated one
-    field_blocked_by_bz = 'customfield_12322152'  # "Blocked by Bugzilla Bug"
     field_target_version = 'customfield_12319940'  # "Target Version"
     field_release_blocker = 'customfield_12319743'  # "Release Blocker"
     field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
@@ -648,8 +633,6 @@ class JIRABugTracker(BugTracker):
         self._project = self.config.get('project', '')
         self._client: JIRA = self.login()
         for f in self._client.fields():
-            if f['name'] == 'Blocked by Bugzilla Bug':
-                self.field_blocked_by_bz = f['id']
             if f['name'] == 'Target Version':
                 self.field_target_version = f['id']
             if f['name'] == 'Release Blocker':
