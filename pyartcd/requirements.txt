@@ -24,6 +24,6 @@ stomp.py ~= 8.1.0
 tenacity ~= 8.4, != 8.4.0 # https://github.com/jd/tenacity/issues/471
 tomli ~= 2.0.1
 specfile
-aiohttp>=3.9.4 # not directly required, pinned by Snyk to avoid a vulnerability
+aiohttp>=3.10.2 # not directly required, pinned by Snyk to avoid a vulnerability
 requests>=2.32.0 # not directly required, pinned by Snyk to avoid a vulnerability
 setuptools>=70.0.0 # not directly required, pinned by Snyk to avoid a vulnerability
