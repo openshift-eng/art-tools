@@ -259,6 +259,9 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("get_bugs") \
             .with_args({b.id for b in depend_on_jira_bugs}) \
             .and_return(depend_on_jira_bugs)
+        flexmock(JIRABugTracker).should_receive("get_bugs") \
+            .with_args({b.id for b in bugs}) \
+            .and_return(bugs)
         flexmock(JIRABugTracker).should_receive("component_filter").and_return(['not_managed_by_art'])
         flexmock(BugzillaBugTracker).should_receive("get_bugs") \
             .with_args({b.id for b in depend_on_bz_bugs}) \
