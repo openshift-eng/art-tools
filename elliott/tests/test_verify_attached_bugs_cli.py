@@ -136,10 +136,11 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(BugValidator).should_receive("verify_bugs_advisory_type")
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'verify-attached-bugs', str(advisory_id)])
-        # if result.exit_code != 0:
-        #     exc_type, exc_value, exc_traceback = result.exc_info
-        #     t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-        #     self.fail(t)
+        import traceback
+        if result.exit_code != 0:
+            exc_type, exc_value, exc_traceback = result.exc_info
+            t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            self.fail(t)
         self.assertEqual(result.exit_code, 1)
         self.assertIn('Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status '
                       'MODIFIED', result.output)

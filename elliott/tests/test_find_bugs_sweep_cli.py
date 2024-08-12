@@ -9,6 +9,7 @@ import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
 from elliottlib import errata
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.verify_issue import VerifyIssueCode
 from elliottlib.cli.common import cli, Runtime
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
 from elliottlib.cli.find_bugs_sweep_cli import extras_bugs, get_assembly_bug_ids, categorize_bugs_by_type
@@ -310,8 +311,18 @@ class TestCategorizeBugsByType(unittest.TestCase):
         bugs = [flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: True, component='')]
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
-        with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
+        with self.assertRaisesRegex(ElliottFatalError, 'Found issues with bugs which need to be fixed'):
             categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+
+    def test_raise_fake_trackers_permissive(self):
+        bugs = [flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: True, component='')]
+        advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
+        bugs, issues = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata",
+                                               permissive=True)
+        message, code = issues[0].message, issues[0].code
+        self.assertEqual(code, VerifyIssueCode.INVALID_TRACKER_BUGS)
+        self.assertEqual(message, 'Bugs look like CVE trackers but do not have proper metadata: [OCPBUGS-5]')
 
 
 class TestGenAssemblyBugIDs(unittest.TestCase):
