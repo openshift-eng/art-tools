@@ -398,7 +398,7 @@ class BugValidator:
     def _get_blocking_bugs_for(self, bugs):
         # get blocker bugs in the next version for all bugs we are examining
         candidate_blockers = []
-        bugs = self.runtime.get_bug_tracker('jira').get_bugs(b.id for b in bugs)
+        bugs = self.runtime.get_bug_tracker('jira').get_bugs([b.id for b in bugs])
         for b in bugs:
             if b.depends_on:
                 candidate_blockers.extend(b.depends_on)
