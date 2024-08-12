@@ -309,6 +309,9 @@ class JIRABug(Bug):
 
     @property
     def blocked_by_bz(self):
+        if self.bug.fields.issuetype.name == 'Vulnerability':
+            return None
+
         url = getattr(self.bug.fields, JIRABugTracker.field_blocked_by_bz)
         if not url:
             return None
