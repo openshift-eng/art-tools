@@ -116,7 +116,10 @@ async def verify_attached_bugs(runtime: Runtime, verify_bug_status: bool, adviso
         if verify_flaws:
             await validator.verify_attached_flaws(advisory_bug_map)
     except Exception as e:
-        validator._complain(f"Error validating attached bugs: {e}")
+        validator._complain(VerifyIssue(
+            code=VerifyIssueCode.VALIDATION_ERROR,
+            message=f"Error validating attached bugs: {type(e)}: {e}"
+        ))
     finally:
         await validator.close()
         validator.report()
@@ -163,7 +166,10 @@ async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bug
     try:
         validator.validate(ocp_bugs, verify_bug_status, no_verify_blocking_bugs)
     except Exception as e:
-        validator._complain(f"Error validating bugs: {e}")
+        validator._complain(VerifyIssue(
+            code=VerifyIssueCode.VALIDATION_ERROR,
+            message=f"Error validating bugs: {type(e)}: {e}"
+        ))
     finally:
         await validator.close()
         validator.report()
@@ -187,7 +193,7 @@ class BugValidator:
             self.problems = [p.to_dict() for p in self.problems]
             if self.output == 'text':
                 print("Found the following problems, please investigate")
-                print(yaml.dump(self.problems, indent=2, sort_keys=False))
+                print(yaml.dump(self.problems, indent=2, sort_keys=False, width=float("inf")))
             elif self.output == 'json':
                 print(json.dumps(self.problems, indent=2, sort_keys=False))
             elif self.output == 'slack':
@@ -413,7 +419,7 @@ class BugValidator:
         except ValueError as e:
             issues.append(VerifyIssue(
                 code=VerifyIssueCode.VALIDATION_ERROR,
-                message=f"Error validating cve exclusions on advisory {advisory_id}: {e}"
+                message=f"Error validating cve exclusions on advisory {advisory_id}: {type(e)}: {e}"
             ))
 
         # Validate `CVE Names` field of the advisory

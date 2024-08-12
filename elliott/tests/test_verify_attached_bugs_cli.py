@@ -89,7 +89,8 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
         self.assertEqual(result.exit_code, 1)
-        self.assertIn('Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status MODIFIED',
+        self.assertIn('The parent bugs of these bugs have invalid status: [(OCPBUGS-2, OCPBUGS-2 status=ON_QA is a '
+                      'backport of bug OCPBUGS-3 status=MODIFIED)]',
                       result.output)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
@@ -136,14 +137,14 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(BugValidator).should_receive("verify_bugs_advisory_type")
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'verify-attached-bugs', str(advisory_id)])
-        import traceback
-        if result.exit_code != 0:
-            exc_type, exc_value, exc_traceback = result.exc_info
-            t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-            self.fail(t)
+        # import traceback
+        # if result.exit_code != 0:
+        #     exc_type, exc_value, exc_traceback = result.exc_info
+        #     t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        #     self.fail(t)
         self.assertEqual(result.exit_code, 1)
-        self.assertIn('Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status '
-                      'MODIFIED', result.output)
+        self.assertIn('The parent bugs of these bugs have invalid status: '
+                      '[(OCPBUGS-2, OCPBUGS-2 status=ON_QA is a backport of bug OCPBUGS-3 status=MODIFIED)]', result.output)
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.assembly_issues_config')
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
@@ -171,11 +172,11 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
             flexmock(id="OCPBUGS-3", is_ocp_bug=lambda: True)
         ]
         flexmock(BugValidator).should_receive("get_attached_bugs").and_return(
-            {1: {bugs[0]}, 2: {bugs[1]}, 3: {bugs[2]}}
+            {1: {bugs[0]}, 2: {bugs[1]}, 3: {bugs[2]}, 4: set()}
         )
         flexmock(BugValidator).should_receive("validate").and_return()
         flexmock(verify_attached_bugs_cli).should_receive("categorize_bugs_by_type").and_return(
-            {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}}, []
+            {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}, 'metadata': {}}, []
         )
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly', '4.6.50', 'verify-attached-bugs'])
@@ -184,13 +185,13 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         #     t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
         #     self.fail(t)
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("Expected Bugs not found in image advisory (1): ['OCPBUGS-3']",
+        self.assertIn("Expected Bugs not found in image advisory (1): [OCPBUGS-3]",
                       result.output)
-        self.assertIn("Unexpected Bugs found in image advisory (1): ['OCPBUGS-1']",
+        self.assertIn("Unexpected Bugs found in image advisory (1): [OCPBUGS-1]",
                       result.output)
-        self.assertIn("Expected Bugs not found in extras advisory (3): ['OCPBUGS-1']",
+        self.assertIn("Expected Bugs not found in extras advisory (3): [OCPBUGS-1]",
                       result.output)
-        self.assertIn("Unexpected Bugs found in extras advisory (3): ['OCPBUGS-3']",
+        self.assertIn("Unexpected Bugs found in extras advisory (3): [OCPBUGS-3]",
                       result.output)
 
 
