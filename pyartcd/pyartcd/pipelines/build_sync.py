@@ -260,7 +260,7 @@ class BuildSyncPipeline:
         self.logger.info('Tagging ocp%s/%s:%s with %s',
                          arch_suffix, self.version, tag, tag_pullspec)
         cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} ' \
-              f'tag {tag_pullspec} {self.version}:{tag}'
+              f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
 
         if self.runtime.dry_run:
             self.logger.info('Would have executed: "%s"', ' '.join(cmd))
@@ -272,7 +272,7 @@ class BuildSyncPipeline:
             self.logger.info('Tagging ocp-private/%s-priv:%s with %s',
                              self.version, tag, tag_pullspec)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-private ' \
-                  f'tag {tag_pullspec} {self.version}-priv:{tag}'
+                  f'tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal'
 
             if self.runtime.dry_run:
                 self.logger.info('Would have executed: "%s"', ' '.join(cmd))
