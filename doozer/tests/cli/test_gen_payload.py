@@ -533,6 +533,7 @@ spec:
                 "annotations": {},
                 "from": dict(kind="DockerImage", name="quay.io/org/repo@sha256:abcdef"),
                 "name": "spam",
+                "importPolicy": {"importMode": "PreserveOriginal"},
             }
         )
         gpcli.create_multi_manifest_list.assert_not_awaited()
@@ -547,6 +548,7 @@ spec:
                 "annotations": {},
                 "from": dict(kind="DockerImage", name="new-manifest-list-pullspec"),
                 "name": "spam",
+                "importPolicy": {"importMode": "PreserveOriginal"},
             }
         )
         gpcli.create_multi_manifest_list.assert_awaited_once_with("spam", arch_to_payload_entry, "ocp")
