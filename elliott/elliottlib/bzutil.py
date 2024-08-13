@@ -87,9 +87,6 @@ class Bug:
     def is_ocp_bug(self):
         raise NotImplementedError
 
-    def is_vnlnerability_cve(self):
-        raise NotImplementedError
-
     @property
     def component(self):
         raise NotImplementedError
@@ -220,9 +217,6 @@ class BugzillaBug(Bug):
     def is_ocp_bug(self):
         return self.product == constants.BUGZILLA_PRODUCT_OCP
 
-    def is_vnlnerability_cve(self):
-        return False
-
     def creation_time_parsed(self):
         return datetime.strptime(str(self.bug.creation_time), '%Y%m%dT%H:%M:%S').replace(tzinfo=timezone.utc)
 
@@ -265,7 +259,7 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
-        if self.is_vnlnerability_cve():
+        if self.is_type_vulnerability():
             return True
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
@@ -366,7 +360,7 @@ class JIRABug(Bug):
 
     @property
     def cve_id(self):
-        if self.is_vnlnerability_cve():
+        if self.is_type_vulnerability():
             return getattr(self.bug.fields, JIRABugTracker.field_cve_id)
         if not (self.is_tracker_bug() or self.is_flaw_bug()):
             return None
@@ -393,7 +387,7 @@ class JIRABug(Bug):
         :returns: a string if a value is found, otherwise None
         """
         if self.is_vnlnerability_cve():
-            return getattr(self.bug.fields, JIRABugTracker.field_cve_upstream_component)
+            return getattr(self.bug.fields, JIRABugTracker.field_cve_component)
         markers = [r'^art:pscomponent:\s*(\S+)', r'^pscomponent:\s*(\S+)']
         for label in self.bug.fields.labels:
             for marker in markers:
@@ -438,7 +432,7 @@ class JIRABug(Bug):
     def is_ocp_bug(self):
         return self.bug.fields.project.key == "OCPBUGS" and not self.is_placeholder_bug()
 
-    def is_vnlnerability_cve(self):
+    def is_type_vulnerability(self):
         return self.bug.fields.issuetype.name == "Vulnerability"
 
     def is_placeholder_bug(self):
@@ -645,7 +639,7 @@ class JIRABugTracker(BugTracker):
     field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
     field_severity = 'customfield_12316142'  # "Severity"
     field_cve_id = 'customfield_12324749'  # "CVE ID"
-    field_cve_upstream_component = 'customfield_12324751'  # "Upstream Affected Component"
+    field_cve_component = 'customfield_12324752'  # "Downstream Component Name"
     field_cve_is_embargo = 'customfield_12324750'  # "Embargo Status"
 
     @staticmethod
