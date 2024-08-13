@@ -386,7 +386,7 @@ class JIRABug(Bug):
 
         :returns: a string if a value is found, otherwise None
         """
-        if self.is_vnlnerability_cve():
+        if self.is_type_vulnerability():
             return getattr(self.bug.fields, JIRABugTracker.field_cve_component)
         markers = [r'^art:pscomponent:\s*(\S+)', r'^pscomponent:\s*(\S+)']
         for label in self.bug.fields.labels:
