@@ -991,7 +991,7 @@ class GenPayloadCli:
         The release payload images referenced in the multi-release payload manifest list are
         themselves somewhat standard release payloads (i.e. they are based on CVO images for their
         arch) BUT, each component image they reference is a manifest list. For example, the `cli`
-        image in the s390x release payload will point to a a manifest list composed of cli image
+        image in the s390x release payload will point to a manifest list composed of cli image
         manifests for each architecture.
 
         So the top-level release payload pullspec is a manifest list, referencing release payload
@@ -1308,6 +1308,9 @@ class GenPayloadCli:
                 },
                 "referencePolicy": {
                     "type": "Source"
+                },
+                "importPolicy": {
+                    "importMode": "PreserveOriginal"
                 },
                 "name": multi_release_istag,
                 "annotations": dict(**{
@@ -1655,6 +1658,9 @@ class PayloadGenerator:
             "from": {
                 "kind": "DockerImage",
                 "name": payload_entry.dest_pullspec,
+            },
+            "importPolicy": {
+                "importMode": "PreserveOriginal"
             }
         }
 
