@@ -1119,7 +1119,8 @@
         ],
         "additionalProperties": false
       }
-    }
+    },
+    "delivery": {}
   },
   "additionalProperties": false
 }
