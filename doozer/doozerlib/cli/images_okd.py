@@ -543,10 +543,13 @@ def images_okg_check(runtime):
 @click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
 @click.option('--add-auto-labels', default=False, is_flag=True, help='Add auto_labels to PRs; unless running as openshift-bot, you probably lack the privilege to do so')
 @click.option('--add-label', default=[], multiple=True, help='Add a label to all open PRs (new and existing) - Requires being openshift-bot')
+@click.option('--non-master', default=False, is_flag=True, help='Acknowledge that this is a non-master branch and proceed anyway')
 @pass_runtime
 def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_version,
-                   draft_prs, moist_run, add_auto_labels, add_label):
-    runtime.initialize(clone_distgits=False, clone_source=False)
+                   draft_prs, moist_run, add_auto_labels, add_label, non_master):
+    # OKD images are marked as disabled: true in their metadata. So make sure to load
+    # disabled images.
+    runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
     g = Github(login_or_token=github_access_token)
     github_user = g.get_user()
 
@@ -555,9 +558,12 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
 
     master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
     if major != master_major or minor != master_minor:
-        # These verbs should only be run against the version in master.
-        runtime.logger.warning(f'Target {major}.{minor} is not in master (it is tracking {master_major}.{master_minor}); skipping PRs')
-        exit(0)
+        if not non_master:
+            # These verbs should normally only be run against the version in master.
+            runtime.logger.warning(f'Target {major}.{minor} is not in master (it is tracking {master_major}.{master_minor}); skipping PRs')
+            exit(0)
+    else:
+        non_master = False
 
     # Most OKD specific configuration is housed on github.com/openshift/release . It boils down
     # to generated ci-operator configuration files. We generate those configuration files
@@ -654,7 +660,7 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
             # ci-operator configuration, even if it is not building anything, fails if there is no
             # build root. Just get the default golang.
             default_build_root = resolve_okd_from_entry(runtime, image_meta, Model({
-                'stream': 'golang'
+                'stream': 'rhel-9-golang'
             }), okd_version=okd_version)
             desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(default_build_root)
 
@@ -685,15 +691,24 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
             priv_branches, _ = exectools.cmd_assert(f'git ls-remote --heads {source_repo_url}', strip=True)
             priv_branches = priv_branches.splitlines()
 
-            if [bl for bl in public_branches if bl.endswith('/main')] and \
-               [bl for bl in priv_branches if bl.endswith('/main')]:
-                public_branch = 'main'
-            elif [bl for bl in public_branches if bl.endswith('/master')] and \
-                 [bl for bl in priv_branches if bl.endswith('/master')]:
-                public_branch = 'master'
+            if non_master:
+
+                if [bl for bl in public_branches if bl.endswith(f'/release-{major}.{minor}')]:
+                    public_branch = f'release-{major}.{minor}'
+                elif [bl for bl in public_branches if bl.endswith(f'/openshift-{major}.{minor}')]:
+                    public_branch = f'openshift-{major}.{minor}'
+                else:
+                    raise IOError(f'Did not find release branch among: {public_branches}')
             else:
-                # There are ways of determining default branch without using naming conventions, but as of today, we don't need it.
-                raise IOError(f'Did not find master or main branch; unable to detect default branch: {public_branches}')
+                if [bl for bl in public_branches if bl.endswith('/main')] and \
+                   [bl for bl in priv_branches if bl.endswith('/main')]:
+                    public_branch = 'main'
+                elif [bl for bl in public_branches if bl.endswith('/master')] and \
+                     [bl for bl in priv_branches if bl.endswith('/master')]:
+                    public_branch = 'master'
+                else:
+                    # There are ways of determining default branch without using naming conventions, but as of today, we don't need it.
+                    raise IOError(f'Did not find master or main branch; unable to detect default branch: {public_branches}')
 
         _, org, repo_name = split_git_url(public_repo_url)
 
@@ -747,6 +762,9 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
 
         stage_names = extract_stage_names(dfp)
         for index, stage_name in enumerate(stage_names[:-1]):  # For all stages except the last (i.e. except for the base image)
+            if image_meta.config['from']['builder'][index].image is not Missing:
+                # An explicit image was specified. Don't try to create a coordinate.
+                continue
             replace = list()
             if stage_name:
                 replace.append(stage_name)
