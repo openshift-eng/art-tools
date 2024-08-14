@@ -455,7 +455,7 @@ class ImageMetadata(Metadata):
 
     def calculate_config_digest(self, group_config, streams):
         ignore_keys = ["owners", "scan_sources", "content.source.ci_alignment",
-                       "content.source.git", "external_scanners"]  # list of keys that shouldn't be involved in config digest calculation
+                       "content.source.git", "external_scanners", "delivery"]  # list of keys that shouldn't be involved in config digest calculation
         image_config: Dict[str, Any] = deepcopy(self.config.primitive())
         group_config: Dict[str, Any] = group_config.primitive()
         streams: Dict[str, Any] = streams.primitive()
