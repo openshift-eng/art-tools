@@ -1,11 +1,12 @@
 import json
 import os
 import logging
+import openshift_client as octool
+from typing import List, Optional
+from tenacity import retry, stop_after_attempt
 
 from pyartcd import exectools
 from pyartcd.runtime import Runtime
-import openshift_client as octool
-from typing import List, Optional
 
 
 logger = logging.getLogger(__name__)
