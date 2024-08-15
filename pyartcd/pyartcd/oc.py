@@ -11,6 +11,7 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3))
 async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
     cmd = ["oc", "image", "info", "--show-multiarch", "-o", "json", "--", pullspec]
     env = os.environ.copy()
@@ -32,6 +33,7 @@ async def get_image_info(pullspec: str, raise_if_not_found: bool = False):
     return info
 
 
+@retry(reraise=True, stop=stop_after_attempt(3))
 async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False):
     cmd = ["oc", "adm", "release", "info", "-o", "json", "--", pullspec]
     env = os.environ.copy()
@@ -64,6 +66,7 @@ async def registry_login(runtime: Runtime):
         raise
 
 
+@retry(reraise=True, stop=stop_after_attempt(3))
 def common_oc_wrapper(cmd_result_name: str, cli_verb: str, oc_args: List[str], check_status: bool = True, return_value: bool = False) -> (int, str):
     # cmd_result_name: Result obj name in log
     # cli_verb: first command group
