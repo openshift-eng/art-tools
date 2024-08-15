@@ -1050,7 +1050,8 @@ class PromotePipeline:
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"]. Don't use "multi" in this parameter.
-        :param previous_list: Previous list.
+        :param previous_list: upgrade edges that are used in `oc adm release new --previous`
+        :param next_list: upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
@@ -1058,7 +1059,9 @@ class PromotePipeline:
         """
         tasks = OrderedDict()
         if not self.no_multi and self._multi_enabled:
-            tasks["heterogeneous"] = self._promote_heterogeneous_payload(assembly_type, release_name, arches, previous_list, metadata, tag_stable)
+            tasks["heterogeneous"] = self._promote_heterogeneous_payload(assembly_type, release_name, arches,
+                                                                         previous_list, next_list,
+                                                                         metadata, tag_stable)
         else:
             self._logger.warning("Multi/heterogeneous payload is disabled.")
         if not self.multi_only:
@@ -1200,7 +1203,9 @@ class PromotePipeline:
         self._logger.info("Release image %s has been tagged into %s.", dest_image_pullspec, namespace_image_stream_tag)
         return dest_image_info
 
-    async def _promote_heterogeneous_payload(self, assembly_type: AssemblyTypes, release_name: str, include_arches: List[str], previous_list: List[str], metadata: Optional[Dict], tag_stable: bool):
+    async def _promote_heterogeneous_payload(self, assembly_type: AssemblyTypes, release_name: str,
+                                             include_arches: List[str], previous_list: List[str], next_list: List[str],
+                                             metadata: Optional[Dict], tag_stable: bool):
         """ Promote heterogeneous payload.
         The heterogeneous payload itself is a manifest list, which include references to arch-specific heterogeneous payloads.
         :param assembly_type: Assembly type
