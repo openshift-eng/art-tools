@@ -31,6 +31,9 @@ class ScanFipsCli:
         if self.nvrs and self.all_images:
             raise Exception("Cannot specify both --nvrs and --all-images")
 
+        if not (self.nvrs or self.all_images):
+            raise Exception("Please specify either --nvrs or --all-images")
+
     async def execute_and_handle_cmd(self, cmd, nvr):
         rc, out, _ = cmd_gather(cmd)
         if rc != 0:
