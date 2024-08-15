@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 from typing import Optional
+from datetime import datetime
 
 import click
 import koji
@@ -96,9 +97,18 @@ class ScanFipsCli:
         for tag in brew_tags:
             builds += self.get_tagged_latest(tag=tag)
 
-        nvrs = []
+        # Find the latest build nvr per image across all tags
+        latest_build_map = {}
         for build in builds:
-            nvrs.append(build["nvr"])
+            image_name = build["package_name"]
+            completion_time = datetime.strptime(build["completion_time"], "%Y-%m-%d %H:%M:%S.%f")
+
+            if image_name not in latest_build_map or completion_time > latest_build_map[image_name]["time"]:
+                latest_build_map[image_name] = {"nvr": build["nvr"], "time": completion_time}
+
+        nvrs = []
+        for latest_build in latest_build_map.values():
+            nvrs.append(latest_build["nvr"])
 
         return nvrs
 
