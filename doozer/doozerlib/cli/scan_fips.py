@@ -145,6 +145,11 @@ class ScanFipsCli:
                 self.runtime.logger.info(f"Skipping {nvr} since its an RPM")
                 continue
 
+            # Component has moved to RHEL9
+            if build_info["package_name"] == "openshift-kubernetes-nmstate-handler-rhel-8-container":
+                self.runtime.logger.info(f"Skipping {nvr} since its migrated to RHEL 9")
+                continue
+
             # Eg registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-network-operator@sha256:da95750d31cb1b9539f664d2d6255727fa8d648e93150ae92ed84a9e993753be
             # from https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=2777601
             try:
