@@ -1278,7 +1278,9 @@ class PromotePipeline:
                 # Add task to build arch-specific heterogeneous payload
                 metadata = metadata.copy() if metadata else {}
                 metadata['release.openshift.io/architecture'] = 'multi'
-                build_tasks.append(self.build_release_image(release_name, brew_arch, previous_list, metadata, arch_payload_dest, arch_payload_source, None, keep_manifest_list=True))
+                build_tasks.append(self.build_release_image(release_name, brew_arch, previous_list, next_list,
+                                                            metadata, arch_payload_dest, arch_payload_source,
+                                                            None, keep_manifest_list=True))
 
             # Build and push all arch-specific heterogeneous payloads
             self._logger.info("Building arch-specific heterogeneous payloads for %s...", include_arches)
