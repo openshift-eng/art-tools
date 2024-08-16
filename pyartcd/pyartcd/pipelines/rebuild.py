@@ -57,7 +57,7 @@ class RebuildPipeline:
 
         # sets environment variables for Doozer
         self._doozer_env_vars = os.environ.copy()
-        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self.runtime.working_dir / "doozer-working")
+        self._doozer_working_dir = str(self.runtime.working_dir / "doozer-working")
 
         if not ocp_build_data_url:
             ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url",
@@ -385,7 +385,7 @@ class RebuildPipeline:
 
     def _generate_repo_file_for_image(self, file: TextIOWrapper, plashets: Iterable[PlashetBuildResult], arches):
         # Copy content of .oit/signed.repo in the distgit repo
-        source_path = Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / f"distgits/containers/{self.dg_key}/.oit/signed.repo"
+        source_path = Path(self._doozer_working_dir) / f"distgits/containers/{self.dg_key}/.oit/signed.repo"
         repo_content = source_path.read_text()
 
         yum_repos = ConfigParser()
@@ -500,7 +500,7 @@ class RebuildPipeline:
         if self.runtime.dry_run:
             return []
         # parse record.log
-        with open(Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / "record.log", "r") as file:
+        with open(Path(self._doozer_working_dir) / "record.log", "r") as file:
             record_log = parse_record_log(file)
             return record_log["build"][-1]["nvrs"].split(",")
 
@@ -528,7 +528,7 @@ class RebuildPipeline:
             return []
 
         # parse record.log
-        with open(Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / "record.log", "r") as file:
+        with open(Path(self._doozer_working_dir) / "record.log", "r") as file:
             record_log = parse_record_log(file)
             return record_log["build_rpm"][-1]["nvrs"].split(",")
 
