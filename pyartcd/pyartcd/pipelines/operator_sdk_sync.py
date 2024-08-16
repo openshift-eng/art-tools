@@ -86,10 +86,16 @@ class OperatorSDKPipeline:
         rarch = brew_arch_for_go_arch(arch)
         tarballFilename = f"{self.sdk}-{sdkVersion}-linux-{rarch}.tar.gz"
 
-        cmd = f"rm -rf ./{rarch} && mkdir ./{rarch}" + \
-              f" && oc image extract {pullspec} --path /usr/local/bin/{self.sdk}:./{rarch}/ --confirm" + \
-              f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}" + \
-              f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
+        cmd = [
+            f"rm -rf ./{rarch} &&",
+            f"mkdir ./{rarch} &&",
+            f"oc image extract {pullspec} --path /usr/local/bin/{self.sdk}:./{rarch}/ --confirm &&",
+            f"chmod +x ./{rarch}/{self.sdk} &&",
+            f"tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk} &&",
+            f"ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz &&",
+            f"rm -f ./{rarch}/{self.sdk}"
+        ]
+
         self.exec_cmd(cmd)
         if arch == 'amd64' or arch == 'arm64':
             tarballFilename = f"{self.sdk}-{sdkVersion}-darwin-{rarch}.tar.gz"
