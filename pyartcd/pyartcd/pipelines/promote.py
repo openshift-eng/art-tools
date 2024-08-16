@@ -184,10 +184,16 @@ class PromotePipeline:
             if upgrades_str is None and assembly_type not in [AssemblyTypes.CUSTOM]:
                 raise ValueError(f"Group config for assembly {self.assembly} is missing the required `upgrades` field. If no upgrade edges are expected, please explicitly set the `upgrades` field to empty string.")
             previous_list = list(map(lambda s: s.strip(), upgrades_str.split(","))) if upgrades_str else []
-            next_list = list(map(lambda s: s.strip(), group_config.get("upgrades_next", "").split(",")))
             # Ensure all versions in previous list are valid semvers.
             if any(map(lambda version: not VersionInfo.is_valid(version), previous_list)):
                 raise ValueError("Previous list (`upgrades` field in group config) has an invalid semver.")
+
+            # Get next list
+            upgrades_next_str: Optional[str] = group_config.get("upgrades_next")
+            next_list = list(map(lambda s: s.strip(), upgrades_next_str.split(","))) if upgrades_next_str else []
+            # Ensure all versions in next list are valid semvers.
+            if next_list and any(map(lambda version: not VersionInfo.is_valid(version), next_list)):
+                raise ValueError("Next list (`upgrades_next` field in group config) has an invalid semver.")
 
             impetus_advisories = group_config.get("advisories", {})
 
@@ -307,7 +313,7 @@ class PromotePipeline:
             reference_releases = util.get_assembly_basis(releases_config, self.assembly).get("reference_releases", {})
             tag_stable = assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]
             release_infos = await self.promote(assembly_type, release_name, arches, previous_list, next_list,
-                                               metadata, reference_releases, tag_stable)
+                                               metadata, reference_releases, tag_stable=tag_stable)
             pullspecs = {arch: release_info["image"] for arch, release_info in release_infos.items()}
             pullspecs_repr = ", ".join(f"{arch}: {pullspecs[arch]}" for arch in sorted(pullspecs.keys()))
             self._logger.info("All release images for %s have been promoted. Pullspecs: %s", release_name, pullspecs_repr)
@@ -1051,7 +1057,7 @@ class PromotePipeline:
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"]. Don't use "multi" in this parameter.
         :param previous_list: upgrade edges that are used in `oc adm release new --previous`
-        :param next_list: upgrade edges that are used in `oc adm release new --next`
+        :param next_list: (Optional) upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
@@ -1061,13 +1067,13 @@ class PromotePipeline:
         if not self.no_multi and self._multi_enabled:
             tasks["heterogeneous"] = self._promote_heterogeneous_payload(assembly_type, release_name, arches,
                                                                          previous_list, next_list,
-                                                                         metadata, tag_stable)
+                                                                         metadata, tag_stable=tag_stable)
         else:
             self._logger.warning("Multi/heterogeneous payload is disabled.")
         if not self.multi_only:
             tasks["homogeneous"] = self._promote_homogeneous_payloads(assembly_type, release_name, arches,
-                                                                      previous_list, next_list,
-                                                                      metadata, reference_releases, tag_stable)
+                                                                      previous_list, next_list, metadata,
+                                                                      reference_releases, tag_stable=tag_stable)
         else:
             self._logger.warning("Arch-specific homogeneous release payloads will not be promoted because --multi-only is set.")
         try:
@@ -1083,14 +1089,14 @@ class PromotePipeline:
         return return_value
 
     async def _promote_homogeneous_payloads(self, assembly_type: AssemblyTypes, release_name: str, arches: List[str],
-                                            previous_list: List[str], next_list: List[str],
-                                            metadata: Optional[Dict],
-                                            reference_releases: Dict[str, str], tag_stable: bool):
+                                            previous_list: List[str], next_list: List[str], metadata: Optional[Dict],
+                                            reference_releases: Dict[str, str], tag_stable: bool,):
         """ Promote homogeneous payloads for specified architectures
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"].
-        :param previous_list: Previous list.
+        :param previous_list: upgrade edges that are used in `oc adm release new --previous`
+        :param next_list: (Optional) upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
@@ -1098,8 +1104,8 @@ class PromotePipeline:
         """
         tasks = []
         for arch in arches:
-            tasks.append(self._promote_arch(assembly_type, release_name, arch, previous_list, next_list,
-                                            metadata, reference_releases.get(arch), tag_stable))
+            tasks.append(self._promote_arch(assembly_type, release_name, arch, previous_list, next_list, metadata,
+                                            reference_releases.get(arch), tag_stable=tag_stable))
         release_infos = await asyncio.gather(*tasks)
         return dict(zip(arches, release_infos))
 
@@ -1110,7 +1116,8 @@ class PromotePipeline:
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arch: Architecture name.
-        :param previous_list: Previous list.
+        :param previous_list: upgrade edges that are used in `oc adm release new --previous`
+        :param next_list: upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
@@ -1211,7 +1218,8 @@ class PromotePipeline:
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param include_arches: List of architecture names.
-        :param previous_list: Previous list.
+        :param previous_list: upgrade edges that are used in `oc adm release new --previous`
+        :param next_list: upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name, values are release_info dicts.
@@ -1363,8 +1371,8 @@ class PromotePipeline:
 
     async def build_release_image(self, release_name: str, arch: str, previous_list: List[str], next_list: List[str],
                                   metadata: Optional[Dict], dest_image_pullspec: str,
-                                  source_image_pullspec: Optional[str],
-                                  source_image_stream: Optional[str], keep_manifest_list: bool):
+                                  source_image_pullspec: Optional[str], source_image_stream: Optional[str],
+                                  keep_manifest_list: bool):
         if bool(source_image_pullspec) + bool(source_image_stream) != 1:
             raise ValueError("Specify one of source_image_pullspec or source_image_stream")
         go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
