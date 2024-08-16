@@ -1057,7 +1057,7 @@ class PromotePipeline:
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"]. Don't use "multi" in this parameter.
         :param previous_list: upgrade edges that are used in `oc adm release new --previous`
-        :param next_list: (Optional) upgrade edges that are used in `oc adm release new --next`
+        :param next_list: upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
@@ -1096,7 +1096,7 @@ class PromotePipeline:
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"].
         :param previous_list: upgrade edges that are used in `oc adm release new --previous`
-        :param next_list: (Optional) upgrade edges that are used in `oc adm release new --next`
+        :param next_list: upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
         :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
