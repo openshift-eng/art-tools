@@ -17,6 +17,7 @@ from typing import BinaryIO, Callable, Dict, Iterable, List, Optional, Tuple
 import koji
 import koji_cli.lib
 import requests
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib.model import Missing
 from artcommonlib import logutil, exectools
@@ -806,6 +807,7 @@ class KojiWrapper(koji.ClientSession):
                 if retries == 0:
                     raise
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     def gssapi_login(self, principal=None, keytab=None, ccache=None, proxyuser=None):
         # Prevent redundant logins for shared sessions.
         if self._gss_logged_in:
