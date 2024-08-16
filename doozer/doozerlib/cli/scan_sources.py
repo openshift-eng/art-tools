@@ -415,12 +415,28 @@ class ConfigScanSources:
         # because we are about to rebuild it.
 
         def _thread_does_image_need_change(image_meta):
-            return asyncio.run(image_meta.does_image_need_change(
-                changing_rpm_packages=self.changing_rpm_packages,
-                buildroot_tag=image_meta.build_root_tag(),
-                newest_image_event_ts=self.newest_image_event_ts,
-                oldest_image_event_ts=self.oldest_image_event_ts)
-            )
+            # Check if there's already an event loop running
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                future = asyncio.ensure_future(image_meta.does_image_need_change(
+                    changing_rpm_packages=self.changing_rpm_packages,
+                    buildroot_tag=image_meta.build_root_tag(),
+                    newest_image_event_ts=self.newest_image_event_ts,
+                    oldest_image_event_ts=self.oldest_image_event_ts)
+                )
+                return loop.run_until_complete(future)
+
+            else:
+                return asyncio.run(image_meta.does_image_need_change(
+                    changing_rpm_packages=self.changing_rpm_packages,
+                    buildroot_tag=image_meta.build_root_tag(),
+                    newest_image_event_ts=self.newest_image_event_ts,
+                    oldest_image_event_ts=self.oldest_image_event_ts)
+                )
 
         change_results = exectools.parallel_exec(
             f=lambda image_meta, terminate_event: _thread_does_image_need_change(image_meta),
