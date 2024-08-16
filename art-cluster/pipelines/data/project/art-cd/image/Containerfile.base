@@ -25,8 +25,13 @@ ARG OC_VERSION=latest
 RUN wget -O "openshift-client-linux-${OC_VERSION}.tar.gz" "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz" \
   && tar -C /usr/local/bin -xzvf "openshift-client-linux-$OC_VERSION.tar.gz" oc kubectl
 
+# Install AWS client
 RUN wget -O "awscliv2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
   && unzip awscliv2.zip &&  ./aws/install
+
+# Install tkn client
+RUN curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_x86_64.tar.gz &&  \
+    tar xvzf tkn_0.37.0_Linux_x86_64.tar.gz -C /usr/local/bin/ tkn
 
 # Set workspace
 WORKDIR /home/dev
