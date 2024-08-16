@@ -82,7 +82,7 @@ def main():
                         action='store_true',
                         help='Only run schema validations')
     args = parser.parse_args()
-    sanitized_args = {k: shlex.quote(v) if isinstance(v, str) else v for k, v in vars(args).items()}
+    args = {k: shlex.quote(v) if isinstance(v, str) else v for k, v in vars(args).items()}
     print(f"Validating {len(args.files)} file(s)...")
     if args.single_thread:
         for f in args.files:
