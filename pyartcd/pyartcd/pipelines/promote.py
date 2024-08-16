@@ -189,6 +189,13 @@ class PromotePipeline:
                 raise ValueError("Previous list (`upgrades` field in group config) has an invalid semver.")
 
             # Get next list
+            # We do not in our normal process require populating "next" edges
+            # In normal flow, each release's "next" edges are the following release's "previous" edges
+            # But in case we miss adding an edge in "previous" list, we can add it in a "next" list
+            # Example: 4.13.a and 4.14.b are shipping together in a week. 4.14.b has 4.13.a in its "previous" list.
+            # Due to new requirements we re-promote 4.13 which becomes 4.13.(a+1)
+            # 4.14.b does not have 4.13.(a+1) in its "previous" list.
+            # So we need to add 4.14.b in 4.13.(a+1)'s "next" list
             upgrades_next_str: Optional[str] = group_config.get("upgrades_next")
             next_list = list(map(lambda s: s.strip(), upgrades_next_str.split(","))) if upgrades_next_str else []
             # Ensure all versions in next list are valid semvers.
