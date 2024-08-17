@@ -112,10 +112,8 @@ class FindBugsGolangCli:
             for existing_version in versions_to_build_map.keys():
                 if fixed_version.major > existing_version.major:
                     fixed_in_is_ahead = True
-                    self._logger.info(f"{str(fixed_version)} is ahead of {str(existing_version)}")
                 elif fixed_version.major == existing_version.major and fixed_version.minor > existing_version.minor:
                     fixed_in_is_ahead = True
-                    self._logger.info(f"{str(fixed_version)} is ahead of {str(existing_version)}")
                 elif (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor
                       and existing_version.patch >= fixed_version.patch):
                     self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {str(existing_version)}")
