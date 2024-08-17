@@ -339,26 +339,29 @@ class FindBugsGolangCli:
 
         cves = sorted(set([b.cve_id for b in bugs]), reverse=True)
         cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
+        pkg_go_dev_search_url = "https://pkg.go.dev/search?q={cve_id}"
+        go_vuln_db_api_url = "https://vuln.go.dev/ID/{go_vuln_id}.json"
         cve_table = PrettyTable()
         cve_table.align = "l"
         cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Compatible"]
         cves_fixed_in = {}
-        api_url = "https://vuln.go.dev"
         for cve_id in cves:
-            res = requests.get(f"https://pkg.go.dev/search?q={cve_id}")
-            go_id = res.url.split("/")[-1]
+            res = requests.get(pkg_go_dev_search_url.format(cve_id=cve_id))
+            go_vuln_id = res.url.split("/")[-1]
             fixed_in_version_go_db = set()
-            if go_id.startswith("GO-"):
-                logger.info(f"Found {cve_id} in go vulnerability database: {go_id}")
-                res = requests.get(f"{api_url}/ID/{go_id}.json")
+            if go_vuln_id.startswith("GO-"):
+                logger.info(f"Found {cve_id} in go vulnerability database: {go_vuln_id}")
+                res = requests.get(go_vuln_db_api_url.format(go_vuln_id=go_vuln_id))
                 for entry in res.json()['affected']:
-                    if entry['package']['ecosystem'] != "Go":
+                    if entry['package']['ecosystem'] != "Go" or entry['package']['name'] != "stdlib":
                         continue
                     for r in entry['ranges']:
                         if r['type'] == "SEMVER":
                             fixed_in_version_go_db = {Version.parse(e['fixed']) for e in r['events'] if e.get('fixed')}
                             cves_fixed_in[cve_id] = fixed_in_version_go_db
                             break
+                if not fixed_in_version_go_db:
+                    logger.warning(f"Could not find stdlib fixed in versions for {cve_id} in go vulnerability database")
             else:
                 logger.warning(f"Could not find {cve_id} in go vulnerability database")
 
@@ -380,6 +383,9 @@ class FindBugsGolangCli:
                 logger.warning(f"Could not extract component from title {title}: {e}")
                 comp_in_title = 'Unknown'
 
+            def _fmt(version_list):
+                return ", ".join(sorted(str(v) for v in version_list)) if version_list else ""
+
             # Check rough compatibility of fixed-in versions with in-use golang versions
             # example, if fixed-in is 1.21.x and in-use are [1.20.y, 1.19.z] then they are incompatible
             # this is a rough check to exit early if there is no compatible version found
@@ -390,29 +396,26 @@ class FindBugsGolangCli:
                 compatible = True
             else:
                 if fixed_in_version_go_db != flaw_fixed_in:
-                    flaw_fixed_in_fmt = sorted(str(v) for v in flaw_fixed_in) if flaw_fixed_in else ""
-                    fixed_in_version_go_db_fmt = sorted(str(v) for v in fixed_in_version_go_db) if fixed_in_version_go_db else ""
                     if not fixed_in_version_go_db and not flaw_fixed_in:
                         self._logger.error(f"{flaw_id} - Could not find fixed in versions in go vulnerability "
-                                           "database and bugzilla")
-                        cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", "NOT FOUND"])
+                                           "database and bugzilla. Skipping, please investigate")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", False])
                         continue
                     elif not fixed_in_version_go_db and flaw_fixed_in:
                         self._logger.error(f"{flaw_id} - Could not find fixed in versions in go vulnerability database, "
-                                           f"but found in bugzilla: {flaw_fixed_in_fmt}. Not proceeding, "
-                                           "please investigate")
-                        cve_table.add_row([flaw_id, cve_id, comp_in_title, "CONFLICT", "CONFLICT"])
+                                           f"but found in bugzilla: {_fmt(flaw_fixed_in)}. Skipping, "
+                                           f"please investigate")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
                         continue
                     elif fixed_in_version_go_db and flaw_fixed_in:
                         self._logger.warning(f"{flaw_id} - Fixed in versions in go vulnerability database and bugzilla do not "
-                                             f"match. Go vulnerability database: {fixed_in_version_go_db_fmt}, "
-                                             f"Bugzilla: {flaw_fixed_in_fmt}. Using go vulnerability database as the "
-                                             "source of truth.")
-                        cve_table.add_row([flaw_id, cve_id, comp_in_title, "CONFLICT", "CONFLICT"])
+                                             f"match. Go vulnerability database: {_fmt(fixed_in_version_go_db)}, "
+                                             f"Bugzilla: {_fmt(flaw_fixed_in)}. Skipping, please investigate")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
                         continue
                     else:
                         self._logger.warning(f"{flaw_id} - Could not find fixed in versions in bugzilla, but found in go "
-                                             f"vulnerability database: {fixed_in_version_go_db_fmt}. Using go "
+                                             f"vulnerability database: {_fmt(fixed_in_version_go_db)}. Using go "
                                              "vulnerability database as the source of truth.")
                         flaw_fixed_in = fixed_in_version_go_db
 
@@ -429,7 +432,7 @@ class FindBugsGolangCli:
             else:
                 logger.warning(f"{cve_id} is not compatible with in-use golang versions for {ocp_version}.")
 
-            cve_table.add_row([flaw_id, cve_id, comp_in_title, sorted(str(v) for v in flaw_fixed_in), compatible])
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), compatible])
         self._logger.info(f"Found trackers for {len(cves)} CVEs")
         self._logger.info(f"\n{cve_table}")
 
