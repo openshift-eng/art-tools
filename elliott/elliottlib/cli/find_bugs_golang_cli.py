@@ -106,12 +106,27 @@ class FindBugsGolangCli:
         self._logger.info(f'Found parent go build versions {[str(v) for v in sorted(versions_to_build_map.keys())]}')
 
         fixed_in_versions = set()
-        for existing_version in versions_to_build_map.keys():
-            for fixed_version in tracker_fixed_in:
-                if (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor
-                   and existing_version.patch >= fixed_version.patch):
+        older_fixed_in_versions = set()
+        for fixed_version in tracker_fixed_in:
+            fixed_in_is_ahead = False
+            for existing_version in versions_to_build_map.keys():
+                if fixed_version.major > existing_version.major:
+                    fixed_in_is_ahead = True
+                    self._logger.info(f"{str(fixed_version)} is ahead of {str(existing_version)}")
+                elif fixed_version.major == existing_version.major and fixed_version.minor > existing_version.minor:
+                    fixed_in_is_ahead = True
+                    self._logger.info(f"{str(fixed_version)} is ahead of {str(existing_version)}")
+                elif (existing_version.major == fixed_version.major and existing_version.minor == fixed_version.minor
+                      and existing_version.patch >= fixed_version.patch):
                     self._logger.info(f"{bug.id} for {bug.whiteboard_component} is fixed in {str(existing_version)}")
                     fixed_in_versions.add(existing_version)
+            if not fixed_in_is_ahead:
+                older_fixed_in_versions.add(fixed_version)
+
+        if not fixed_in_versions and len(older_fixed_in_versions) == len(tracker_fixed_in):
+            self._logger.info("All fixed in versions are older than parent go build versions, therefore considered "
+                              "fixed.")
+            fixed_in_versions = set(versions_to_build_map.keys())
 
         fixed = False
         if fixed_in_versions:
@@ -401,16 +416,15 @@ class FindBugsGolangCli:
                                            "database and bugzilla. Skipping, please investigate")
                         cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", False])
                         continue
-                    elif not fixed_in_version_go_db and flaw_fixed_in:
-                        self._logger.error(f"{flaw_id} - Could not find fixed in versions in go vulnerability database, "
-                                           f"but found in bugzilla: {_fmt(flaw_fixed_in)}. Skipping, "
-                                           f"please investigate")
-                        cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
-                        continue
                     elif fixed_in_version_go_db and flaw_fixed_in:
                         self._logger.warning(f"{flaw_id} - Fixed in versions in go vulnerability database and bugzilla do not "
                                              f"match. Go vulnerability database: {_fmt(fixed_in_version_go_db)}, "
                                              f"Bugzilla: {_fmt(flaw_fixed_in)}. Skipping, please investigate")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
+                        continue
+                    elif not fixed_in_version_go_db and flaw_fixed_in:
+                        self._logger.warning(f"{flaw_id} - Could not find fixed in versions in go vulnerability "
+                                             f"database. Assuming CVE isn't fixed in stdlib. Skipping")
                         cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
                         continue
                     else:
@@ -419,14 +433,25 @@ class FindBugsGolangCli:
                                              "vulnerability database as the source of truth.")
                         flaw_fixed_in = fixed_in_version_go_db
 
+                older_fixed_in = set()
                 for fixed_in_version in flaw_fixed_in:
+                    is_fixed_in_ahead = False
                     for go_version in [entry['go_version'] for entry in golang_report]:
                         go_v = Version.parse(go_version)
                         if fixed_in_version.major == go_v.major and fixed_in_version.minor == go_v.minor:
                             compatible = True
-                            break
+                        if fixed_in_version.major > go_v.major:
+                            is_fixed_in_ahead = True
+                        elif fixed_in_version.major == go_v.major and fixed_in_version.minor > go_v.minor:
+                            is_fixed_in_ahead = True
                     if compatible:
                         break
+                    if not is_fixed_in_ahead:
+                        older_fixed_in.add(fixed_in_version)
+
+                if len(older_fixed_in) == len(flaw_fixed_in):
+                    compatible = True
+
             if compatible:
                 self.compatible_cves.add(cve_id)
             else:
