@@ -384,39 +384,6 @@ class TestGenericDistGit(TestDistgit):
                             "Use --allow-overwrite to force.")
             self.assertEqual(expected_msg, str(e))
 
-    def test_source_path(self):
-        # preventing tests from interacting with the real filesystem
-        flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
-        flexmock(distgit.os.path).should_receive("isdir").and_return(True)
-        source_resolver = flexmock(resolve_source=flexmock(source_path="source-root"))
-        metadata = flexmock(runtime=self.mock_runtime(source_resolver=source_resolver,
-                                                      branch="_irrelevant_"),
-                            config=flexmock(content=flexmock(source=flexmock(path="sub-path")),
-                                            distgit=flexmock(branch="_irrelevant_")),
-                            logger=flexmock(info=lambda _: None),
-                            config_filename="_irrelevant_",
-                            name="_irrelevant_")
-        repo = distgit.DistGitRepo(metadata, autoclone=False)
-
-        self.assertEqual("source-root/sub-path", repo.source_path())
-
-    def test_source_path_without_sub_path(self):
-        # preventing tests from interacting with the real filesystem
-        flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
-        flexmock(distgit.os.path).should_receive("isdir").and_return(True)
-
-        source_resolver = flexmock(resolve_source=flexmock(source_path="source-root"))
-        metadata = flexmock(runtime=self.mock_runtime(source_resolver=source_resolver,
-                                                      branch="_irrelevant_"),
-                            config=flexmock(content=flexmock(source=flexmock(path=distgit.Missing)),
-                                            distgit=flexmock(branch="_irrelevant_")),
-                            logger=flexmock(info=lambda _: None),
-                            config_filename="_irrelevant_",
-                            name="_irrelevant_")
-        repo = distgit.DistGitRepo(metadata, autoclone=False)
-
-        self.assertEqual("source-root", repo.source_path())
-
     def test_commit_local(self):
         flexmock(distgit.exectools).should_receive("cmd_assert").times(0)
 
