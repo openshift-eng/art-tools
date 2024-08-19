@@ -52,6 +52,13 @@ class ScanFips:
                 result_json = json.loads(result)
                 results.update(result_json)
 
+            if self.all_images:
+                # Clean all the images, if we are checking for all images since this mode is used on prod only
+                # Since this command will be run for all versions, clean after each run will be more efficient. Otherwise
+                # the pod storage limit will be reached quite quickly.
+                # If on local, and do not want to clean, feel free to comment this function out
+                await exectools.cmd_assert_async("podman image prune --all --force")
+
         self.runtime.logger.info(f"Result: {results}")
 
         if results:

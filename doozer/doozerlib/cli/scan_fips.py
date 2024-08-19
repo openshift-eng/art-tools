@@ -40,10 +40,6 @@ class ScanFipsCli:
             self.could_not_clean.append(nvr)
         return rc, out
 
-    async def clean_all_images(self):
-        cmd = self.make_command("podman image prune --all --force")
-        await cmd_assert_async(cmd)
-
     async def clean_image(self, nvr, pull_spec):
         if not self.clean:
             return
@@ -170,13 +166,6 @@ class ScanFipsCli:
             self.runtime.logger.info("No FIPS issues found!")
 
         click.echo(json.dumps(problem_images))
-
-        if self.all_images:
-            # Clean all the images, if we are checking for all images since this mode is used on prod only
-            # Since this command will be run for all versions, clean after each run will be more efficient. Otherwise
-            # the pod storage limit will be reached quite quickly.
-            # If on local, and do not want to clean, feel free to comment this function out
-            await self.clean_all_images()
 
         if self.clean and self.could_not_clean:
             raise Exception(f"Could not clean images: {self.could_not_clean}")
