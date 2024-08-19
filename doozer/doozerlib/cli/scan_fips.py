@@ -40,9 +40,9 @@ class ScanFipsCli:
             self.could_not_clean.append(nvr)
         return rc, out
 
-    @staticmethod
-    async def clean_all_images():
-        await cmd_assert_async("podman image prune --all --force")
+    async def clean_all_images(self):
+        cmd = self.make_command("podman image prune --all --force")
+        await cmd_assert_async(cmd)
 
     async def clean_image(self, nvr, pull_spec):
         if not self.clean:
