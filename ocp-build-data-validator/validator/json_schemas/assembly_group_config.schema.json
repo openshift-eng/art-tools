@@ -151,6 +151,16 @@
       "$ref": "#/properties/upgrades"
     },
     "upgrades-": {},
+    "upgrades_next": {
+      "type": "string"
+    },
+    "upgrades_next!": {
+      "$ref": "#/properties/upgrades_next"
+    },
+    "upgrades_next?": {
+      "$ref": "#/properties/upgrades_next"
+    },
+    "upgrades_next-": {},
     "check_golang_versions": {
       "type": "boolean"
     },

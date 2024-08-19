@@ -253,11 +253,11 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_release_image_info.assert_any_await(
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-s390x", raise_if_not_found=ANY)
         build_release_image.assert_any_await(
-            "4.10.99-assembly.art0001", "x86_64", [], {},
+            "4.10.99-assembly.art0001", "x86_64", [], [], {},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-x86_64", None,
             '4.10-art-assembly-art0001', keep_manifest_list=False)
         build_release_image.assert_any_await(
-            "4.10.99-assembly.art0001", "s390x", [], {},
+            "4.10.99-assembly.art0001", "s390x", [], [], {},
             "quay.io/openshift-release-dev/ocp-release:4.10.99-assembly.art0001-s390x", None,
             '4.10-art-assembly-art0001-s390x', keep_manifest_list=False)
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99-assembly.art0001")
@@ -440,6 +440,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     })
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=Model({
         "upgrades": "4.10.98,4.9.99",
+        "upgrades_next": "4.11.45",
         "advisories": {"rpm": 1, "image": 2, "extras": 3, "metadata": 4},
         "description": "whatever",
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
@@ -493,10 +494,14 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                                                                verify_flaws=True)
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", raise_if_not_found=ANY)
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", raise_if_not_found=ANY)
-        build_release_image.assert_any_await("4.10.99", "x86_64", ["4.10.98", "4.9.99"], {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", "registry.ci.openshift.org/ocp/release:nightly-x86_64", None, keep_manifest_list=False)
-        build_release_image.assert_any_await("4.10.99", "s390x", ["4.10.98", "4.9.99"], {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", "registry.ci.openshift.org/ocp-s390x/release-s390x:nightly-s390x", None, keep_manifest_list=False)
-        build_release_image.assert_any_await("4.10.99", "ppc64le", ["4.10.98", "4.9.99"], {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-ppc64le", "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:nightly-ppc64le", None, keep_manifest_list=False)
-        build_release_image.assert_any_await("4.10.99", "aarch64", ["4.10.98", "4.9.99"], {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", "registry.ci.openshift.org/ocp-arm64/release-arm64:nightly-aarch64", None, keep_manifest_list=False)
+        build_release_image.assert_any_await("4.10.99", "x86_64", ["4.10.98", "4.9.99"], ["4.11.45"],
+                                             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", "registry.ci.openshift.org/ocp/release:nightly-x86_64", None, keep_manifest_list=False)
+        build_release_image.assert_any_await("4.10.99", "s390x", ["4.10.98", "4.9.99"], ["4.11.45"],
+                                             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", "registry.ci.openshift.org/ocp-s390x/release-s390x:nightly-s390x", None, keep_manifest_list=False)
+        build_release_image.assert_any_await("4.10.99", "ppc64le", ["4.10.98", "4.9.99"], ["4.11.45"],
+                                             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-ppc64le", "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:nightly-ppc64le", None, keep_manifest_list=False)
+        build_release_image.assert_any_await("4.10.99", "aarch64", ["4.10.98", "4.9.99"], ["4.11.45"],
+                                             {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", "registry.ci.openshift.org/ocp-arm64/release-arm64:nightly-aarch64", None, keep_manifest_list=False)
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99")
         pipeline.get_image_stream_tag.assert_any_await("ocp", "release:4.10.99")
         pipeline.tag_release.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", "ocp/release:4.10.99")
@@ -557,13 +562,15 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             arch="x86_64",
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             reference_release=reference_release,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
         )
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64")
-        build_release_image.assert_awaited_once_with("4.10.99", "x86_64", previous_list, metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", f'registry.ci.openshift.org/ocp/release:{reference_release}', None, keep_manifest_list=False)
+        build_release_image.assert_awaited_once_with("4.10.99", "x86_64", previous_list, [],
+                                                     metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", f'registry.ci.openshift.org/ocp/release:{reference_release}', None, keep_manifest_list=False)
         get_image_stream_tag.assert_awaited_once_with("ocp", "release:4.10.99")
         tag_release.assert_awaited_once_with("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", "ocp/release:4.10.99")
         self.assertEqual(actual["image"], "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64")
@@ -578,13 +585,15 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             arch="aarch64",
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             reference_release=reference_release,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
         )
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64")
-        build_release_image.assert_awaited_once_with("4.10.99", "aarch64", previous_list, metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", f'registry.ci.openshift.org/ocp-arm64/release-arm64:{reference_release}', None, keep_manifest_list=False)
+        build_release_image.assert_awaited_once_with("4.10.99", "aarch64", previous_list, [],
+                                                     metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", f'registry.ci.openshift.org/ocp-arm64/release-arm64:{reference_release}', None, keep_manifest_list=False)
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
         tag_release.assert_awaited_once_with("quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", "ocp-arm64/release-arm64:4.10.99")
         self.assertEqual(actual["image"], "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64")
@@ -605,13 +614,15 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 release_name="4.10.99",
                 arch="aarch64",
                 previous_list=previous_list,
+                next_list=[],
                 metadata=metadata,
                 reference_release=reference_release,
                 tag_stable=True,
                 assembly_type=AssemblyTypes.CUSTOM
             )
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64")
-        build_release_image.assert_awaited_once_with("4.10.99", "aarch64", previous_list, metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", f'registry.ci.openshift.org/ocp-arm64/release-arm64:{reference_release}', None, keep_manifest_list=False)
+        build_release_image.assert_awaited_once_with("4.10.99", "aarch64", previous_list, [],
+                                                     metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", f'registry.ci.openshift.org/ocp-arm64/release-arm64:{reference_release}', None, keep_manifest_list=False)
         get_image_stream_tag.assert_awaited_once_with("ocp-arm64", "release-arm64:4.10.99")
         tag_release.assert_not_awaited()
 
@@ -637,7 +648,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         # test x86_64
         reference_release = "registry.ci.openshift.org/ocp/release:whatever-x86_64"
         dest_pullspec = "example.com/foo/release:4.10.99-x86_64"
-        await pipeline.build_release_image("4.10.99", "x86_64", previous_list, metadata, dest_pullspec, reference_release, None, keep_manifest_list=False)
+        await pipeline.build_release_image("4.10.99", "x86_64", previous_list, [],
+                                           metadata, dest_pullspec, reference_release, None, keep_manifest_list=False)
         expected_cmd = ["oc", "adm", "release", "new", "-n", "ocp", "--name=4.10.99", "--to-image=example.com/foo/release:4.10.99-x86_64", f"--from-release={reference_release}", "--previous=4.10.98,4.10.97,4.9.99", "--metadata", "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}"]
         cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
 
@@ -645,7 +657,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         reference_release = "registry.ci.openshift.org/ocp-arm64/release-arm64:whatever-aarch64"
         dest_pullspec = "example.com/foo/release:4.10.99-aarch64"
         cmd_assert_async.reset_mock()
-        await pipeline.build_release_image("4.10.99", "aarch64", previous_list, metadata, dest_pullspec, reference_release, None, keep_manifest_list=False)
+        await pipeline.build_release_image("4.10.99", "aarch64", previous_list, [],
+                                           metadata, dest_pullspec, reference_release, None, keep_manifest_list=False)
         expected_cmd = ["oc", "adm", "release", "new", "-n", "ocp-arm64", "--name=4.10.99", "--to-image=example.com/foo/release:4.10.99-aarch64", f"--from-release={reference_release}", "--previous=4.10.98,4.10.97,4.9.99", "--metadata", "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}"]
         cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
 
@@ -653,7 +666,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         reference_release = "registry.ci.openshift.org/ocp-arm64/release-arm64:whatever-multi-aarch64"
         dest_pullspec = "example.com/foo/release:4.10.99-multi-aarch64"
         cmd_assert_async.reset_mock()
-        await pipeline.build_release_image("4.10.99", "aarch64", previous_list, metadata, dest_pullspec, reference_release, None, keep_manifest_list=True)
+        await pipeline.build_release_image("4.10.99", "aarch64", previous_list, [],
+                                           metadata, dest_pullspec, reference_release, None, keep_manifest_list=True)
         expected_cmd = ["oc", "adm", "release", "new", "-n", "ocp-arm64", "--name=4.10.99", "--to-image=example.com/foo/release:4.10.99-multi-aarch64", f"--from-release={reference_release}", "--keep-manifest-list", "--previous=4.10.98,4.10.97,4.9.99", "--metadata", "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}"]
         cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
 
@@ -671,7 +685,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         reference_release = None
         dest_pullspec = "example.com/foo/release:4.10.99-x86_64"
         from_image_stream = "4.10-art-assembly-4.10.99"
-        await pipeline.build_release_image("4.10.99", "x86_64", previous_list, metadata, dest_pullspec, reference_release, from_image_stream, keep_manifest_list=False)
+        await pipeline.build_release_image("4.10.99", "x86_64", previous_list, [],
+                                           metadata, dest_pullspec, reference_release, from_image_stream, keep_manifest_list=False)
         expected_cmd = ['oc', 'adm', 'release', 'new', '-n', 'ocp', '--name=4.10.99', '--to-image=example.com/foo/release:4.10.99-x86_64', '--reference-mode=source', '--from-image-stream=4.10-art-assembly-4.10.99', '--previous=4.10.98,4.10.97,4.9.99', '--metadata', '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}']
         cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
 
@@ -680,7 +695,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         dest_pullspec = "example.com/foo/release:4.10.99-aarch64"
         from_image_stream = "4.10-art-assembly-4.10.99-arm64"
         cmd_assert_async.reset_mock()
-        await pipeline.build_release_image("4.10.99", "aarch64", previous_list, metadata, dest_pullspec, reference_release, from_image_stream, keep_manifest_list=False)
+        await pipeline.build_release_image("4.10.99", "aarch64", previous_list, [],
+                                           metadata, dest_pullspec, reference_release, from_image_stream, keep_manifest_list=False)
         expected_cmd = ['oc', 'adm', 'release', 'new', '-n', 'ocp-arm64', '--name=4.10.99', '--to-image=example.com/foo/release:4.10.99-aarch64', '--reference-mode=source', '--from-image-stream=4.10-art-assembly-4.10.99-arm64', '--previous=4.10.98,4.10.97,4.9.99', '--metadata', '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}']
         cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
 
@@ -732,6 +748,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             include_arches=["x86_64", "aarch64"],
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
@@ -806,6 +823,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             include_arches=["x86_64", "aarch64"],
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
@@ -818,8 +836,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_image_stream_tag.assert_awaited_once_with("ocp-multi", "release-multi:4.10.99")
         dest_metadata = metadata.copy()
         dest_metadata["release.openshift.io/architecture"] = "multi"
-        build_release_image.assert_any_await("4.10.99", "aarch64", previous_list, dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
-        build_release_image.assert_any_await("4.10.99", "x86_64", previous_list, dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99", "aarch64", previous_list, [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99", "x86_64", previous_list, [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
         dest_manifest_list = {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi', 'manifests': [{'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64', 'platform': {'os': 'linux', 'architecture': 'amd64'}}, {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64', 'platform': {'os': 'linux', 'architecture': 'arm64'}}]}
         push_manifest_list.assert_awaited_once_with("4.10.99", dest_manifest_list)
         tag_release.assert_awaited_once_with("quay.io/openshift-release-dev/ocp-release:4.10.99-multi", "ocp-multi/release-multi:4.10.99")
@@ -848,6 +868,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             include_arches=["x86_64", "aarch64"],
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
@@ -860,8 +881,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_image_stream_tag.assert_awaited_once_with("ocp-multi", "release-multi:4.10.99")
         dest_metadata = metadata.copy()
         dest_metadata["release.openshift.io/architecture"] = "multi"
-        build_release_image.assert_any_await("4.10.99", "aarch64", previous_list, dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
-        build_release_image.assert_any_await("4.10.99", "x86_64", previous_list, dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99", "aarch64", previous_list, [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99", "x86_64", previous_list, [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
         dest_manifest_list = {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi', 'manifests': [{'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64', 'platform': {'os': 'linux', 'architecture': 'amd64'}}, {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64', 'platform': {'os': 'linux', 'architecture': 'arm64'}}]}
         push_manifest_list.assert_awaited_once_with("4.10.99", dest_manifest_list)
         tag_release.assert_awaited_once_with("quay.io/openshift-release-dev/ocp-release:4.10.99-multi", "ocp-multi/release-multi:4.10.99")
@@ -917,6 +940,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             include_arches=["x86_64", "aarch64"],
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
@@ -948,6 +972,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             include_arches=["x86_64", "aarch64"],
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
@@ -959,8 +984,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_image_stream_tag.assert_awaited_once_with("ocp-multi", "release-multi:4.10.99-multi")
         dest_metadata = metadata.copy()
         dest_metadata["release.openshift.io/architecture"] = "multi"
-        build_release_image.assert_any_await("4.10.99-multi", "aarch64", [], dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
-        build_release_image.assert_any_await("4.10.99-multi", "x86_64", [], dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99-multi", "aarch64", [], [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99-multi", "x86_64", [], [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
         dest_manifest_list = {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi', 'manifests': [{'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64', 'platform': {'os': 'linux', 'architecture': 'amd64'}}, {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64', 'platform': {'os': 'linux', 'architecture': 'arm64'}}]}
         push_manifest_list.assert_awaited_once_with("4.10.99-multi", dest_manifest_list)
         tag_release.assert_awaited_once_with("quay.io/openshift-release-dev/ocp-release:4.10.99-multi", "ocp-multi/release-multi:4.10.99-multi")
@@ -988,6 +1015,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             release_name="4.10.99",
             include_arches=["x86_64", "aarch64"],
             previous_list=previous_list,
+            next_list=[],
             metadata=metadata,
             tag_stable=True,
             assembly_type=AssemblyTypes.CUSTOM
@@ -999,8 +1027,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         get_image_stream_tag.assert_awaited_once_with("ocp-multi", "release-multi:4.10.99-multi")
         dest_metadata = metadata.copy()
         dest_metadata["release.openshift.io/architecture"] = "multi"
-        build_release_image.assert_any_await("4.10.99-multi", "aarch64", [], dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
-        build_release_image.assert_any_await("4.10.99-multi", "x86_64", [], dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99-multi", "aarch64", [], [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64", 'example.com/ocp-release@fake:deadbeef-source-multi-arm64', None, keep_manifest_list=True)
+        build_release_image.assert_any_await("4.10.99-multi", "x86_64", [], [],
+                                             dest_metadata, "quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64", 'example.com/ocp-release@fake:deadbeef-source-multi-amd64', None, keep_manifest_list=True)
         dest_manifest_list = {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi', 'manifests': [{'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-x86_64', 'platform': {'os': 'linux', 'architecture': 'amd64'}}, {'image': 'quay.io/openshift-release-dev/ocp-release:4.10.99-multi-aarch64', 'platform': {'os': 'linux', 'architecture': 'arm64'}}]}
         push_manifest_list.assert_awaited_once_with("4.10.99-multi", dest_manifest_list)
         tag_release.assert_awaited_once_with("quay.io/openshift-release-dev/ocp-release:4.10.99-multi", "ocp-multi/release-multi:4.10.99-multi")
