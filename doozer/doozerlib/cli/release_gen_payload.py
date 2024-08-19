@@ -820,7 +820,7 @@ class GenPayloadCli:
         if self.apply or self.apply_multi_arch:
             self.logger.info(f"Mirroring images from {str(src_dest_path)}")
             await asyncio.wait_for(exectools.cmd_assert_async(
-                f"oc image mirror --keep-manifest-list --filename={str(src_dest_path)}", retries=3), timeout=7200)
+                f"oc image mirror --keep-manifest-list --filename={str(src_dest_path)}"), timeout=7200)
 
     async def generate_specific_payload_imagestreams(self, arch: str, private_mode: bool,
                                                      payload_entries: Dict[str, PayloadEntry],
@@ -1162,7 +1162,7 @@ class GenPayloadCli:
             auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
             if Path(auth_file).is_file():
                 auth_opt = f"--docker-cfg={auth_file}"
-        await exectools.cmd_assert_async(f"manifest-tool {auth_opt} push from-spec {str(component_manifest_path)}", retries=3)
+        await exectools.cmd_assert_async(f"manifest-tool {auth_opt} push from-spec {str(component_manifest_path)}")
 
         # we are pushing a new manifest list, so return its sha256 based pullspec
         sha = await find_manifest_list_sha(output_pullspec)
@@ -1824,7 +1824,7 @@ class PayloadGenerator:
         rc = -1
         pullspec = f"registry.ci.openshift.org/ocp{rc_suffix}/release{rc_suffix}:{nightly}"
         while retries > 0:
-            rc, release_json_str, err = await exectools.cmd_gather_async(f"oc adm release info {pullspec} -o=json")
+            rc, release_json_str, err = await exectools.cmd_gather_async(f"oc adm release info {pullspec} -o=json", check=False)
             if rc == 0:
                 break
             runtime.logger.warn(f"Error accessing nightly release info for {pullspec}:  {err}")

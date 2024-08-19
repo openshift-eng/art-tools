@@ -70,7 +70,7 @@ class ScanFipsCli:
         cmd = self.make_command(f"check-payload -V {self.runtime.group.split('-')[-1]} scan image --spec {pull_spec}")
 
         self.runtime.logger.info(f"Running check-payload command: {cmd}")
-        rc_scan, out_scan, _ = await cmd_gather_async(cmd)
+        rc_scan, out_scan, _ = await cmd_gather_async(cmd, check=False)
 
         await self.clean_image(nvr, pull_spec)
 
@@ -80,7 +80,7 @@ class ScanFipsCli:
         return "sudo " + cmd if not self.is_root else cmd
 
     async def am_i_root(self):
-        rc, out, _ = await cmd_gather_async("whoami")
+        rc, out, _ = await cmd_gather_async("whoami", check=False)
         self.runtime.logger.info(f"Running as user {out}")
         return rc == 0 and "root" in out
 

@@ -31,7 +31,8 @@ from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd.locks import Lock
 from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 from pyartcd.util import nightlies_with_pullspecs
-from pyartcd import constants, exectools, locks, util, jenkins
+from pyartcd import constants, locks, util, jenkins
+from artcommonlib import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from artcommonlib.exceptions import VerificationError
 from pyartcd.jira import JIRAClient

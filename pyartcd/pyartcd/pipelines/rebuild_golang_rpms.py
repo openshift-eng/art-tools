@@ -9,7 +9,7 @@ from specfile import Specfile
 
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
-from pyartcd import exectools
+from artcommonlib import exectools
 from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime

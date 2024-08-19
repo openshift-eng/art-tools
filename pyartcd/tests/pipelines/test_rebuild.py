@@ -9,7 +9,7 @@ from pyartcd.pipelines.rebuild import (PlashetBuildResult, RebuildPipeline, Rebu
 
 
 class TestRebuildPipeline(IsolatedAsyncioTestCase):
-    @patch("pyartcd.exectools.cmd_gather_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     def test_ocp_build_data_url(self, cmd_gather_async: Mock):
         runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, dry_run=False)
         fork_url = 'https://fork.com/ocp-build-data-fork.git'
@@ -22,7 +22,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     @patch("pathlib.Path.mkdir")
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_plashet_from_tags(self, cmd_assert_async: AsyncMock, rmtree: Mock, path_exists: Mock, path_mkdir: Mock):
         runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, working_dir=Path("/path/to/working"), dry_run=False)
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -40,7 +40,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     @patch("pathlib.Path.mkdir")
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_plashet_for_assembly_rhcos(self, cmd_assert_async: AsyncMock, rmtree: Mock, path_exists: Mock, path_mkdir: Mock):
         runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, working_dir=Path("/path/to/working"), dry_run=False)
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -56,7 +56,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     @patch("pathlib.Path.mkdir")
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_plashet_for_assembly_image(self, cmd_assert_async: AsyncMock, rmtree: Mock, path_exists: Mock, path_mkdir: Mock):
         runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, working_dir=Path("/path/to/working"), dry_run=False)
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -69,7 +69,7 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
         rmtree.assert_called_once_with(expected_local_dir)
         path_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_copy_plashet_out_to_remote(self, cmd_assert_async: AsyncMock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -218,7 +218,7 @@ priority = 1
         """.strip()
         self.assertEqual(out_file.getvalue().strip(), expected)
 
-    @patch("pyartcd.exectools.cmd_gather_async")
+    @patch("artcommonlib.exectools.cmd_gather_async")
     async def test_get_meta_config(self, cmd_gather_async: Mock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -231,7 +231,7 @@ images:
         actual = await pipeline._get_meta_config()
         self.assertEqual(actual, {"some_key": "some_value"})
 
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_rebase_image(self, cmd_assert_async: Mock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -243,7 +243,7 @@ images:
         await pipeline._rebase_image("202107160000.p?")
 
     @patch("builtins.open")
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_image(self, cmd_assert_async: Mock, open: Mock):
         runtime = MagicMock(dry_run=False, working_dir=Path("/path/to/working"))
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
@@ -260,7 +260,7 @@ images:
         self.assertEqual(nvrs, [])
 
     @patch("builtins.open")
-    @patch("pyartcd.exectools.cmd_assert_async")
+    @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_rebase_and_build_rpm(self, cmd_assert_async: Mock, open: Mock):
         runtime = MagicMock(dry_run=False, working_dir=Path("/path/to/working"))
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],

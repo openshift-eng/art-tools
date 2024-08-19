@@ -130,7 +130,7 @@ class RPMBuilder:
         if self._push:
             if not self._dry_run:
                 await exectools.cmd_assert_async(
-                    ["rhpkg", "new-sources", tarball_name], cwd=dg.dg_path, retries=3
+                    ["rhpkg", "new-sources", tarball_name], cwd=dg.dg_path
                 )
             else:
                 async with aiofiles.open(dg.dg_path / "sources", "w") as f:
@@ -140,7 +140,7 @@ class RPMBuilder:
 
         # copy Source1, Source2,... and Patch0, Patch1,...
         logger.info("Determining additional sources and patches...")
-        out, _ = await exectools.cmd_assert_async(
+        _, out, _ = await exectools.cmd_gather_async(
             ["spectool", "--", dg_specfile_path], cwd=dg.dg_path
         )
         for line in out.splitlines():
@@ -242,7 +242,7 @@ class RPMBuilder:
                 )
                 cmd = ["brew", "download-logs", "--recurse", "-d", logs_dir, task_id]
                 if not self._dry_run:
-                    logs_rc, _, logs_err = await exectools.cmd_gather_async(cmd)
+                    logs_rc, _, logs_err = await exectools.cmd_gather_async(cmd, check=False)
                     if logs_rc != exectools.SUCCESS:
                         logger.warning(
                             "Error downloading build logs from brew for task %s: %s"
@@ -293,7 +293,7 @@ class RPMBuilder:
 
     async def _golang_required(self, specfile: PathLike):
         """Returns True if this RPM requires a golang compiler"""
-        out, _ = await exectools.cmd_assert_async(
+        _, out, _ = await exectools.cmd_gather_async(
             ["rpmspec", "-q", "--buildrequires", "--", specfile]
         )
         return any(dep.strip().startswith("golang") for dep in out.splitlines())
@@ -411,7 +411,7 @@ fi
         if self._scratch:
             cmd.append("--skip-tag")
         if not self._dry_run:
-            out, _ = await exectools.cmd_assert_async(cmd, cwd=dg.dg_path)
+            _, out, _ = await exectools.cmd_gather_async(cmd, cwd=dg.dg_path)
         else:
             logger.warning("DRY RUN - Would have created Brew task with %s", cmd)
             out = f"Created task: 0\nTask info: {BREWWEB_URL}/taskinfo?taskID=0\n"
