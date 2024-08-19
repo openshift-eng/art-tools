@@ -33,7 +33,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.brew_info import BrewBuildImageInspector, ArchiveImageInspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
-from doozerlib.telemetry import start_as_current_span_async
+from artcommonlib.telemetry import start_as_current_span_async
 from doozerlib.util import isolate_nightly_name_components
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.exceptions import DoozerFatalError

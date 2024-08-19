@@ -17,7 +17,7 @@ from pyartcd.oc import registry_login
 from artcommonlib.redis import RedisError
 from pyartcd.runtime import Runtime, GroupRuntime
 from pyartcd import exectools, constants, locks
-from pyartcd.telemetry import start_as_current_span_async
+from artcommonlib.telemetry import start_as_current_span_async
 from pyartcd.util import branch_arches
 from pyartcd.jenkins import get_build_url
 from ghapi.all import GhApi

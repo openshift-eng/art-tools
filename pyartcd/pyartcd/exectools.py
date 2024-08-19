@@ -5,7 +5,7 @@ from typing import List, Tuple, Union
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from pyartcd.telemetry import start_as_current_span_async
+from artcommonlib.telemetry import start_as_current_span_async
 
 
 logger = logging.getLogger(__name__)
