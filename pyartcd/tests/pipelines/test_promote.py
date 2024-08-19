@@ -440,6 +440,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     })
     @patch("pyartcd.pipelines.promote.util.load_group_config", return_value=Model({
         "upgrades": "4.10.98,4.9.99",
+        "upgrades_next": "4.11.45",
         "advisories": {"rpm": 1, "image": 2, "extras": 3, "metadata": 4},
         "description": "whatever",
         "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
@@ -493,13 +494,13 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                                                                verify_flaws=True)
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", raise_if_not_found=ANY)
         get_release_image_info.assert_any_await("quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", raise_if_not_found=ANY)
-        build_release_image.assert_any_await("4.10.99", "x86_64", ["4.10.98", "4.9.99"], [],
+        build_release_image.assert_any_await("4.10.99", "x86_64", ["4.10.98", "4.9.99"], ["4.11.45"],
                                              {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-x86_64", "registry.ci.openshift.org/ocp/release:nightly-x86_64", None, keep_manifest_list=False)
-        build_release_image.assert_any_await("4.10.99", "s390x", ["4.10.98", "4.9.99"], [],
+        build_release_image.assert_any_await("4.10.99", "s390x", ["4.10.98", "4.9.99"], ["4.11.45"],
                                              {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-s390x", "registry.ci.openshift.org/ocp-s390x/release-s390x:nightly-s390x", None, keep_manifest_list=False)
-        build_release_image.assert_any_await("4.10.99", "ppc64le", ["4.10.98", "4.9.99"], [],
+        build_release_image.assert_any_await("4.10.99", "ppc64le", ["4.10.98", "4.9.99"], ["4.11.45"],
                                              {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-ppc64le", "registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:nightly-ppc64le", None, keep_manifest_list=False)
-        build_release_image.assert_any_await("4.10.99", "aarch64", ["4.10.98", "4.9.99"], [],
+        build_release_image.assert_any_await("4.10.99", "aarch64", ["4.10.98", "4.9.99"], ["4.11.45"],
                                              {"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}, "quay.io/openshift-release-dev/ocp-release:4.10.99-aarch64", "registry.ci.openshift.org/ocp-arm64/release-arm64:nightly-aarch64", None, keep_manifest_list=False)
         pipeline._slack_client.bind_channel.assert_called_once_with("4.10.99")
         pipeline.get_image_stream_tag.assert_any_await("ocp", "release:4.10.99")
