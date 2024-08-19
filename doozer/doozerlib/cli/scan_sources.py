@@ -431,12 +431,17 @@ class ConfigScanSources:
                 return loop.run_until_complete(future)
 
             else:
-                return asyncio.run(image_meta.does_image_need_change(
-                    changing_rpm_packages=self.changing_rpm_packages,
-                    buildroot_tag=image_meta.build_root_tag(),
-                    newest_image_event_ts=self.newest_image_event_ts,
-                    oldest_image_event_ts=self.oldest_image_event_ts)
-                )
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return asyncio.run(image_meta.does_image_need_change(
+                        changing_rpm_packages=self.changing_rpm_packages,
+                        buildroot_tag=image_meta.build_root_tag(),
+                        newest_image_event_ts=self.newest_image_event_ts,
+                        oldest_image_event_ts=self.oldest_image_event_ts)
+                    )
+                finally:
+                    loop.close()
 
         change_results = exectools.parallel_exec(
             f=lambda image_meta, terminate_event: _thread_does_image_need_change(image_meta),
