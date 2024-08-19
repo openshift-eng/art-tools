@@ -47,9 +47,10 @@ class ScanFips:
                 cmd.append("--all-images")
 
             _, result, _ = await exectools.cmd_gather_async(cmd, stderr=True)
-            result_json = json.loads(result)
 
-            results.update(result_json)
+            if result:
+                result_json = json.loads(result)
+                results.update(result_json)
 
         self.runtime.logger.info(f"Result: {results}")
 
