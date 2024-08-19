@@ -628,10 +628,8 @@ class JIRABugTracker(BugTracker):
         client = JIRA(self._server, token_auth=token_auth)
         return client
 
-    def __init__(self, config):
-        super().__init__(config, 'jira')
-        self._project = self.config.get('project', '')
-        self._client: JIRA = self.login()
+    @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
+    def _init_fields(self):
         for f in self._client.fields():
             if f['name'] == 'Target Version':
                 self.field_target_version = f['id']
@@ -641,6 +639,12 @@ class JIRABugTracker(BugTracker):
                 self.field_blocked_reason = f['id']
             if f['name'] == 'Severity':
                 self.field_severity = f['id']
+
+    def __init__(self, config):
+        super().__init__(config, 'jira')
+        self._project = self.config.get('project', '')
+        self._client: JIRA = self.login()
+        self._init_fields()
 
     @property
     def product(self):
