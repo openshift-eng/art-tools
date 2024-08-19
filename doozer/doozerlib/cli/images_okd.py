@@ -734,18 +734,26 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
         elif image_meta.config.content.source.path:
             dockerfile_path = os.path.join(image_meta.config.content.source.path, dockerfile_path)
 
-        dockerfile_abs_path = component_source_path.joinpath('Dockerfile')
-        download_file_from_github(public_repo_url, public_branch, dockerfile_path, token=github_access_token, destination=dockerfile_abs_path)
+        while True:  # Allows symlinks to be followed
+            dockerfile_abs_path = component_source_path.joinpath(os.path.basename(dockerfile_path))
+            download_file_from_github(public_repo_url, public_branch, dockerfile_path, token=github_access_token, destination=dockerfile_abs_path)
 
-        with dockerfile_abs_path.open(mode='r') as handle:
+            content = dockerfile_abs_path.read_text()
+            if len(content.strip().splitlines()) == 1:
+                # This seems to be a symlink file which just contains
+                # a single line like "./Dockerfile", pointing to another
+                # file which is the real destination. Follow it.
+                dockerfile_path = os.path.join(os.path.dirname(dockerfile_path), content.strip())
+                continue
             dfp = DockerfileParser(cache_content=True, fileobj=io.BytesIO())
-            dfp.content = handle.read()
+            dfp.content = content
+            break
 
         if len(desired_parents) != len(dfp.parent_images):
             # The number of FROM statements in the ART metadata does not match the number
             # of FROM statements in the upstream Dockerfile. ART's normal build process will alert
             # artists on this condition, so assume it will be handled and skip for now.
-            yellow_print(f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.')
+            yellow_print(f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]')
             continue
 
         # reconcile_url = f'{convert_remote_git_to_https(runtime.gitdata.origin_url)}/tree/{runtime.gitdata.commit_hash}/images/{os.path.basename(image_meta.config_filename)}'
@@ -796,23 +804,37 @@ def images_okd_prs_optional(runtime, release_dir):
         print(f'Path does not exist: {str(release_path.absolute())}')
         exit(1)
 
-    with exectools.Dir(str(release_path)):
-        rc, out, err = exectools.cmd_gather('git diff --name-only')
-        if rc != 0:
-            print(f'Error listing changed files: {err}')
-            exit(1)
+    print('Finding presubmit YAMLs..')
+    config_path = release_path.joinpath('ci-operator/config')
+    jobs_path = release_path.joinpath('ci-operator/jobs')
+    okd_scos_paths = config_path.rglob('**/*__okd-scos.yaml')  # for any config with okd-scos
+    # If a config has an okd-scos variant, it is worth scanning its presubmit jobs
 
-        filenames = list(filter(lambda f: f.endswith('presubmits.yaml'), out.strip().splitlines()))
-        print(f'Found {len(filenames)} presubmit files')
-        for target_file in filenames:
-            target_path = release_path.joinpath(target_file)
+    okd_repos = set()
+    for okd_scos_path in okd_scos_paths:
+        github_repo = okd_scos_path.parent.name
+        gitub_org = okd_scos_path.parent.parent.name
+        okd_repos.add(f'{gitub_org}/{github_repo}')
+
+    for target_repo in okd_repos:
+        target_repo_path = jobs_path.joinpath(target_repo)
+        presubmit_paths = target_repo_path.glob('*-presubmits.yaml')
+        for target_path in presubmit_paths:
+            print(f'Checking: {str(target_path)}')
+            file_changed = False
             with open(str(target_path), mode='r') as file:
                 data = yaml.safe_load(file)
                 presubmits = data['presubmits']
                 for repo, entries in presubmits.items():
                     for entry in entries:
                         if entry['context'] == 'ci/prow/okd-scos-images':
-                            entry['optional'] = True
-                            entry['always_run'] = False
-            with open(f'{str(target_path)}', mode='w+') as nfile:
-                yaml.dump(data, nfile)
+                            if not entry.get('optional', False):
+                                entry['optional'] = True
+                                file_changed = True
+                            if entry.get('always_run', True):
+                                entry['always_run'] = False
+                                file_changed = True
+
+            if file_changed:
+                with open(f'{str(target_path)}', mode='w+') as nfile:
+                    yaml.dump(data, nfile)
