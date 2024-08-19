@@ -21,8 +21,7 @@ from ..support import MockScanner, TestDistgit
 
 class TestImageDistGit(TestDistgit):
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def setUp(self, _):
+    def setUp(self):
         super(TestImageDistGit, self).setUp()
         self.img_dg = distgit.ImageDistGitRepo(self.md, autoclone=False)
         self.img_dg.runtime.group_config = Model()
@@ -52,8 +51,7 @@ class TestImageDistGit(TestDistgit):
             get_major_minor_fields=lambda *_, **__: (4, 14)
         )
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_clone_invokes_read_master_data(self, _):
+    def test_clone_invokes_read_master_data(self):
         """
         Mocking `clone` method of parent class, since we are only interested
         in validating that `_read_master_data` is called in the child class.
@@ -69,26 +67,26 @@ class TestImageDistGit(TestDistgit):
         metadata = flexmock(runtime=self.mock_runtime(),
                             config=flexmock(distgit=flexmock(branch=distgit.Missing)),
                             name="_irrelevant_",
+                            canonical_builders_enabled=False,
                             logger="_irrelevant_")
 
         (distgit.ImageDistGitRepo(metadata, autoclone=False)
             .clone("distgits_root_dir", "distgit_branch"))
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_image_build_method_default(self, _):
+    def test_image_build_method_default(self):
         metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
                             config=flexmock(distgit=flexmock(branch=distgit.Missing),
                                             image_build_method=distgit.Missing,
                                             get=lambda *_: {}),
                             image_build_method="default-method",
+                            canonical_builders_enabled=False,
                             name="_irrelevant_",
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("default-method", repo.image_build_method)
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_image_build_method_imagebuilder(self, _):
+    def test_image_build_method_imagebuilder(self):
         get = lambda key, default: dict({"builder": "..."}) if key == "from" else default
 
         metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method=distgit.Missing)),
@@ -97,6 +95,7 @@ class TestImageDistGit(TestDistgit):
                                             get=get),
                             name="_irrelevant_",
                             image_build_method="osbs2",
+                            canonical_builders_enabled=False,
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -108,6 +107,7 @@ class TestImageDistGit(TestDistgit):
                                             get=get),
                             name="_irrelevant_",
                             image_build_method="osbs2",
+                            canonical_builders_enabled=False,
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -119,26 +119,26 @@ class TestImageDistGit(TestDistgit):
                                             get=get),
                             name="_irrelevant_",
                             image_build_method="imagebuilder",
+                            canonical_builders_enabled=False,
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("imagebuilder", repo.image_build_method)
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_image_build_method_from_config(self, _):
+    def test_image_build_method_from_config(self):
         metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
                             config=flexmock(distgit=flexmock(branch=distgit.Missing),
                                             image_build_method="config-method",
                                             get=lambda _, d: d),
                             name="_irrelevant_",
                             image_build_method="config-method",
+                            canonical_builders_enabled=False,
                             logger="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("config-method", repo.image_build_method)
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_wait_for_build_with_build_status_true(self, _):
+    def test_wait_for_build_with_build_status_true(self):
         logger = flexmock()
 
         (logger
@@ -156,6 +156,7 @@ class TestImageDistGit(TestDistgit):
         metadata = flexmock(logger=logger,
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             runtime=self.mock_runtime(),
+                            canonical_builders_enabled=False,
                             name="_irrelevant_")
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -164,12 +165,12 @@ class TestImageDistGit(TestDistgit):
 
         repo.wait_for_build("i-am-waiting")
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_wait_for_build_with_build_status_false(self, _):
+    def test_wait_for_build_with_build_status_false(self):
         metadata = flexmock(qualified_name="my-qualified-name",
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             runtime=self.mock_runtime(),
                             name="_irrelevant_",
+                            canonical_builders_enabled=False,
                             logger=flexmock(info=lambda *_: None))
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
@@ -184,8 +185,7 @@ class TestImageDistGit(TestDistgit):
             actual = str(e)
             self.assertEqual(expected, actual)
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_push(self, _):
+    def test_push(self):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
@@ -202,6 +202,7 @@ class TestImageDistGit(TestDistgit):
         metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": 999}),
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             name="_irrelevant_",
+                            canonical_builders_enabled=False,
                             logger=flexmock(info=lambda *_: None))
 
         expected = (metadata, True)
@@ -209,8 +210,7 @@ class TestImageDistGit(TestDistgit):
 
         self.assertEqual(expected, actual)
 
-    @patch('doozerlib.distgit.ImageDistGitRepo._canonical_builders_enabled', return_value=False)
-    def test_push_with_io_error(self, _):
+    def test_push_with_io_error(self):
         # preventing tests from interacting with the real filesystem
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
@@ -223,6 +223,7 @@ class TestImageDistGit(TestDistgit):
         metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": "_irrelevant_"}),
                             config=flexmock(distgit=flexmock(branch="_irrelevant_")),
                             name="_irrelevant_",
+                            canonical_builders_enabled=False,
                             logger=flexmock(info=lambda *_: None))
 
         expected = (metadata, repr(IOError("io-error")))
@@ -612,21 +613,6 @@ COPY --from=builder /some/path/a /some/path/b
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["ref"], "deadbeef")
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["pkg_managers"], ["gomod"])
         self.assertEqual(actual["remote_sources"][0]["remote_source"]["flags"], ["gomod-vendor-check"])
-
-    def test_canonical_builders_enabled(self):
-        # canonical_builders_from_upstream not defined
-        self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
-
-        # canonical_builders_from_upstream = True in group.yml
-        self.img_dg.config.canonical_builders_from_upstream = Missing
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(True, self.img_dg._canonical_builders_enabled())
-
-        # canonical_builders_from_upstream = False in image config (override)
-        self.img_dg.config.canonical_builders_from_upstream = False
-        self.img_dg.runtime.group_config.canonical_builders_from_upstream = True
-        self.assertEqual(False, self.img_dg._canonical_builders_enabled())
 
     def test_update_image_config(self):
         self.img_dg.metadata = MagicMock()

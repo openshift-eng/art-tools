@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 import traceback
-from multiprocessing import Event, Lock
+from multiprocessing import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, Set, cast
 
 import aiofiles
@@ -25,7 +25,6 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
 
 import doozerlib
 from artcommonlib import assertion, logutil, build_util, exectools
-from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.constants import GIT_NO_PROMPTS
 from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model, ListModel
@@ -443,16 +442,15 @@ class ImageDistGitRepo(DistGitRepo):
         ),
     )
 
-    def __init__(self, metadata, autoclone=True,
+    def __init__(self, metadata: "ImageMetadata", autoclone=True,
                  source_modifier_factory=SourceModifierFactory()):
         self.org_image_name = None
         self.org_version = None
         self.org_release = None
         super(ImageDistGitRepo, self).__init__(metadata, autoclone=False)
+        self.metadata = metadata
         self.build_lock = Lock()
         self.build_lock.acquire()
-        self.rebase_event = Event()
-        self.rebase_status = False
         self.logger: logging.Logger = metadata.logger
         self.source_modifier_factory = source_modifier_factory
 
@@ -466,7 +464,7 @@ class ImageDistGitRepo(DistGitRepo):
         self.upstream_intended_el_version = None
         self.should_match_upstream = False
 
-        if self._canonical_builders_enabled():
+        if self.metadata.canonical_builders_enabled:
             # If the image is distgit-only, this logic does not apply
             if self.has_source():
                 source_path = self.runtime.source_resolver.resolve_source(self.metadata).source_path
@@ -623,8 +621,8 @@ class ImageDistGitRepo(DistGitRepo):
                 ]
             })
 
-        if self.image_build_method is not Missing and self.image_build_method != "osbs2":
-            config_overrides['image_build_method'] = self.image_build_method
+        if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
+            config_overrides['image_build_method'] = self.metadata.image_build_method
 
         if arches:
             config_overrides.setdefault('platforms', {})['only'] = arches
@@ -976,12 +974,9 @@ class ImageDistGitRepo(DistGitRepo):
         if image is None:
             self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
             return
-
-        dgr = image.distgit_repo()
-
         self.logger.info("Waiting for image rebase: %s" % image_name)
-        dgr.rebase_event.wait()
-        if not dgr.rebase_status:  # failed to rebase
+        image.rebase_event.wait()
+        if not image.rebase_status:  # failed to rebase
             raise IOError(f"Error rebasing image: {self.metadata.qualified_name} ({image_name} was waiting)")
         self.logger.info("Image rebase for %s completed. Stop waiting." % image_name)
         if terminate_event.is_set():
@@ -1088,8 +1083,8 @@ class ImageDistGitRepo(DistGitRepo):
                     # `targets` is defined as an array just because we want to keep consistency with RPM build.
                     raise DoozerFatalError("Building images against multiple targets is not currently supported.")
 
-                if self.image_build_method != "osbs2":
-                    raise DoozerFatalError(f"Do not understand image build method {self.image_build_method}. Only osbs2 exists")
+                if self.metadata.image_build_method != "osbs2":
+                    raise DoozerFatalError(f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists")
                 osbs2 = OSBS2Builder(self.runtime, scratch=scratch, dry_run=dry_run)
                 try:
                     task_id, task_url, build_info = asyncio.run(osbs2.build(self.metadata, profile, retries=retries))
@@ -1165,7 +1160,7 @@ class ImageDistGitRepo(DistGitRepo):
         separated for clarity. Local build version.
         """
 
-        if self.image_build_method == 'imagebuilder':
+        if self.metadata.image_build_method == 'imagebuilder':
             builder = 'imagebuilder -mount '
         else:
             builder = 'podman build -v '
@@ -1610,16 +1605,6 @@ class ImageDistGitRepo(DistGitRepo):
         # registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:v1.15.7-202103191923.el8'
         unique_pullspec += f':{parent_build_nvr["version"]}-{parent_build_nvr["release"]}'
         return unique_pullspec
-
-    def _canonical_builders_enabled(self) -> bool:
-        # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
-        if self.config.canonical_builders_from_upstream is not Missing:
-            canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
-        else:
-            canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
-
-        return build_util.canonical_builders_enabled(
-            canonical_builders_from_upstream, self.runtime)
 
     def _mapped_image_from_stream(self, image, original_parent, dfp):
         stream = self.runtime.resolve_stream(image.stream)
@@ -2715,13 +2700,13 @@ class ImageDistGitRepo(DistGitRepo):
                 self.logger.warning("The source of this image contains embargoed fixes.")
 
             real_version, real_release = self.update_distgit_dir(version, release, prev_release, force_yum_updates)
-            self.rebase_status = True
+            self.metadata.rebase_status = True
             return real_version, real_release
         except Exception:
-            self.rebase_status = False
+            self.metadata.rebase_status = False
             raise
         finally:
-            self.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
+            self.metadata.rebase_event.set()  # awake all threads that are waiting for this image to be rebased
 
 
 class RPMDistGitRepo(DistGitRepo):
