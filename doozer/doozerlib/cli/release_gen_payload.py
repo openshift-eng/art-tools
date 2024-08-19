@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import aiofiles
 import click
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue, assembly_basis
@@ -788,6 +789,7 @@ class GenPayloadCli:
                                  "not have group.multi_arch.enabled==true")
 
     @exectools.limit_concurrency(500)
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry],
                                      private: bool = False):
         """
@@ -1168,6 +1170,7 @@ class GenPayloadCli:
         sha = await find_manifest_list_sha(output_pullspec)
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def create_multi_release_image(self, imagestream_name: str, multi_release_is: Dict, multi_release_dest: str,
                                          multi_release_name: str,
                                          multi_specs: Dict[bool, Dict[str, Dict[str, PayloadEntry]]],
