@@ -12,6 +12,8 @@ import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime
+
+import tenacity
 from fcntl import F_GETFL, F_SETFL, fcntl
 from inspect import getframeinfo, stack
 from multiprocessing.pool import MapResult, ThreadPool
@@ -23,6 +25,7 @@ from future.utils import as_native_str
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import \
     TraceContextTextMapPropagator
+from tenacity import stop_after_attempt, wait_fixed
 
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print, yellow_print
@@ -419,7 +422,8 @@ def unpack_tuple_args(func):
     return wrapper
 
 
-async def manifest_tool(options, dry_run=False, retries=3):
+@tenacity.retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+async def manifest_tool(options, dry_run=False):
     auth_opt = ""
     if os.environ.get("XDG_RUNTIME_DIR"):
         auth_file = os.path.expandvars("${XDG_RUNTIME_DIR}/containers/auth.json")
@@ -440,7 +444,7 @@ async def manifest_tool(options, dry_run=False, retries=3):
         logger.warning("[DRY RUN] Would have run %s", cmd)
         return
 
-    await cmd_assert_async(cmd, retries=retries)
+    await cmd_assert_async(cmd)
 
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
