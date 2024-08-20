@@ -116,7 +116,7 @@ class RPMBuilder:
             [
                 "tar",
                 "-czf",
-                tarball_path,
+                str(tarball_path),
                 "--exclude=.git",
                 fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
                 ".",
@@ -141,7 +141,7 @@ class RPMBuilder:
         # copy Source1, Source2,... and Patch0, Patch1,...
         logger.info("Determining additional sources and patches...")
         _, out, _ = await exectools.cmd_gather_async(
-            ["spectool", "--", dg_specfile_path], cwd=dg.dg_path
+            ["spectool", "--", str(dg_specfile_path)], cwd=dg.dg_path
         )
         for line in out.splitlines():
             line_split = line.split(": ")
@@ -237,10 +237,8 @@ class RPMBuilder:
             # Gather brew-logs
             logger.info("Gathering brew-logs")
             for target, task_id in zip(rpm.targets, task_ids):
-                logs_dir = (
-                    Path(self._runtime.brew_logs_dir) / rpm.name / f"{target}-{task_id}"
-                )
-                cmd = ["brew", "download-logs", "--recurse", "-d", logs_dir, task_id]
+                logs_dir = Path(self._runtime.brew_logs_dir, rpm.name, f"{target}-{task_id}")
+                cmd = ["brew", "download-logs", "--recurse", "-d", str(logs_dir), str(task_id)]
                 if not self._dry_run:
                     logs_rc, _, logs_err = await exectools.cmd_gather_async(cmd, check=False)
                     if logs_rc != exectools.SUCCESS:
@@ -294,7 +292,7 @@ class RPMBuilder:
     async def _golang_required(self, specfile: PathLike):
         """Returns True if this RPM requires a golang compiler"""
         _, out, _ = await exectools.cmd_gather_async(
-            ["rpmspec", "-q", "--buildrequires", "--", specfile]
+            ["rpmspec", "-q", "--buildrequires", "--", str(specfile)]
         )
         return any(dep.strip().startswith("golang") for dep in out.splitlines())
 
