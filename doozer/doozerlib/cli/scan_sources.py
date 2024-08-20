@@ -434,7 +434,7 @@ class ConfigScanSources:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    return asyncio.run(image_meta.does_image_need_change(
+                    return loop.run_until_complete(image_meta.does_image_need_change(
                         changing_rpm_packages=self.changing_rpm_packages,
                         buildroot_tag=image_meta.build_root_tag(),
                         newest_image_event_ts=self.newest_image_event_ts,
