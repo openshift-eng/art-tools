@@ -2726,7 +2726,7 @@ class RPMDistGitRepo(DistGitRepo):
         spec_path = pathlib.Path(specs[0])
 
         async def _get_nvr():
-            cmd = ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}", "--srpm", "--undefine", "dist", "--", spec_path]
+            cmd = ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}", "--srpm", "--undefine", "dist", "--", str(spec_path)]
             _, out, _ = await exectools.cmd_gather_async(cmd)
             return out.strip().rsplit("-", 2)
 

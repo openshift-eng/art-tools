@@ -12,7 +12,7 @@ import koji
 
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.runtime import Runtime
-from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather, cmd_assert_async
+from artcommonlib.exectools import cmd_gather_async, limit_concurrency, cmd_gather
 
 
 class ScanFipsCli:
