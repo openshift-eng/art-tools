@@ -259,6 +259,8 @@ class JIRABug(Bug):
             return None
 
     def is_tracker_bug(self):
+        if self.is_type_vulnerability():
+            return True
         has_keywords = set(constants.TRACKER_BUG_KEYWORDS).issubset(set(self.keywords))
         has_whiteboard_component = bool(self.whiteboard_component)
         has_linked_flaw = bool(self.corresponding_flaw_bug_ids)
@@ -343,6 +345,17 @@ class JIRABug(Bug):
         return self.bug.fields.project.key
 
     @property
+    def cve_id(self):
+        if self.is_type_vulnerability():
+            return getattr(self.bug.fields, JIRABugTracker.field_cve_id)
+        if not (self.is_tracker_bug() or self.is_flaw_bug()):
+            return None
+        cve_id = re.search(r'CVE-\d+-\d+', self.summary)
+        if cve_id:
+            return cve_id.group()
+        return None
+
+    @property
     def alias(self):
         # TODO: See usage. this can be correct or incorrect based in usage.
         return self.bug.fields.labels
@@ -359,6 +372,8 @@ class JIRABug(Bug):
 
         :returns: a string if a value is found, otherwise None
         """
+        if self.is_type_vulnerability():
+            return getattr(self.bug.fields, JIRABugTracker.field_cve_component)
         markers = [r'^art:pscomponent:\s*(\S+)', r'^pscomponent:\s*(\S+)']
         for label in self.bug.fields.labels:
             for marker in markers:
@@ -402,6 +417,9 @@ class JIRABug(Bug):
 
     def is_ocp_bug(self):
         return self.bug.fields.project.key == "OCPBUGS" and not self.is_placeholder_bug()
+
+    def is_type_vulnerability(self):
+        return self.bug.fields.issuetype.name == "Vulnerability"
 
     def is_placeholder_bug(self):
         return ('Placeholder' in self.summary) and (self.component == 'Release') and ('Automation' in self.keywords)
@@ -605,6 +623,9 @@ class JIRABugTracker(BugTracker):
     field_release_blocker = 'customfield_12319743'  # "Release Blocker"
     field_blocked_reason = 'customfield_12316544'  # "Blocked Reason"
     field_severity = 'customfield_12316142'  # "Severity"
+    field_cve_id = 'customfield_12324749'  # "CVE ID"
+    field_cve_component = 'customfield_12324752'  # "Downstream Component Name"
+    field_cve_is_embargo = 'customfield_12324750'  # "Embargo Status"
 
     @staticmethod
     def get_config(runtime) -> Dict:

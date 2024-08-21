@@ -134,7 +134,7 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123']))
+            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')))
         expected = True
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -142,7 +142,7 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug_missing_keywords(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=['somethingelse', 'pscomponent:my-image', 'flaw:bz#123']))
+            fields=flexmock(labels=['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')))
         expected = False
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -150,7 +150,7 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug_missing_pscomponent(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'flaw:bz#123']))
+            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'flaw:bz#123'], issuetype=flexmock(name='Bug')))
         expected = False
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -158,7 +158,7 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug_missing_flaw(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image']))
+            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image'], issuetype=flexmock(name='Bug')))
         expected = False
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -191,14 +191,14 @@ class TestJIRABug(unittest.TestCase):
         self.assertEqual(actual, expected)
 
     def test_whiteboard_component(self):
-        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["foo"])))
+        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["foo"], issuetype=flexmock(name='Bug'))))
         self.assertIsNone(bug.whiteboard_component)
 
-        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["pscomponent: "])))
+        bug = JIRABug(flexmock(key=1, fields=flexmock(labels=["pscomponent: "], issuetype=flexmock(name='Bug'))))
         self.assertIsNone(bug.whiteboard_component)
 
         for expected in ["something", "openvswitch2.15", "trailing_blank 	"]:
-            bug = JIRABug(flexmock(key=1, fields=flexmock(labels=[f"pscomponent: {expected}"])))
+            bug = JIRABug(flexmock(key=1, fields=flexmock(labels=[f"pscomponent: {expected}"], issuetype=flexmock(name='Bug'))))
             actual = bug.whiteboard_component
             self.assertEqual(actual, expected.strip())
 
