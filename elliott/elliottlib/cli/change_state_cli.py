@@ -77,7 +77,7 @@ unless Bugzilla Bugs or JIRA Issues have been attached.
             if e.errata_state == state:
                 green_prefix(f"No Change ({advisory}): ")
                 click.echo(f"Target state is same as current state: {state}")
-            elif e.errata_state != from_state:
+            elif from_state and e.errata_state != from_state:
                 green_prefix(f"No Change ({advisory}): ")
                 click.echo(f"Current state is not {from_state}: {e.errata_state}")
             else:
