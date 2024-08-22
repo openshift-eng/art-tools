@@ -8,6 +8,7 @@ import re
 # external
 import click
 import yaml
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # doozerlib
 from doozerlib.cli import cli, pass_runtime
@@ -130,6 +131,7 @@ def get_concerns(image, runtime, limit, url_markup):
     return image_concerns
 
 
+@retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
 def query(name, runtime, limit=100):
     """
     For 'stream' assembly only, query 'log_build' table  for component 'name'. MariaDB output will look like this:
