@@ -15,6 +15,8 @@ import click
 import requests
 from functools import lru_cache
 
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print
 from elliottlib import exceptions, constants, brew
@@ -319,6 +321,7 @@ def add_comment(advisory_id, comment):
                          json=data)
 
 
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
 def get_builds(advisory_id, session=None):
     """5.2.2.6. GET /api/v1/erratum/{id}/builds
      Fetch the Brew builds associated with an advisory.
