@@ -15,6 +15,8 @@ import click
 import requests
 from functools import lru_cache
 
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print
 from elliottlib import exceptions, constants, brew
@@ -383,6 +385,7 @@ def get_brew_builds(errata_id, session=None):
             msg=res.text))
 
 
+@retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
 def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
     """5.2.2.1. GET /api/v1/build/{id_or_nvr}
 
