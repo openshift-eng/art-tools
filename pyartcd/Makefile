@@ -1,7 +1,7 @@
 .PHONY: venv tox lint test
 
 venv:
-	python3.8 -m venv venv
+	python3.11 -m venv venv
 	./venv/bin/pip install --upgrade pip
 	./venv/bin/pip install -e ../doozer/
 	./venv/bin/pip install -e ../elliott/

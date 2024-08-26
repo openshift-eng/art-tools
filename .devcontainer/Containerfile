@@ -13,7 +13,7 @@ RUN curl -fLo /etc/pki/ca-trust/source/anchors/IT-Root-CAs.pem \
 RUN dnf install -y \
     # runtime dependencies
     krb5-workstation git tig rsync koji skopeo podman docker rpmdevtools \
-    python3.8 python3-certifi python-bugzilla-cli \
+    python3.11 python3-certifi python-bugzilla-cli \
     # required by microshift
     jq golang \
     # provides en_US.UTF-8 locale
