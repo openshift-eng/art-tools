@@ -170,6 +170,8 @@ advisory with the --add option.
 
 async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracker):
     bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
+    if not bugs:
+        return []
 
     sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime, cli_brew_event=brew_event)
     if sweep_cutoff_timestamp:
@@ -222,6 +224,9 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
         green_prefix(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
     bugs = await get_bugs_sweep(runtime, find_bugs_obj, brew_event, bug_tracker)
+    if not bugs:
+        logger.info(f"No {bug_tracker.type} bugs found")
+        return []
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
@@ -376,25 +381,22 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                 logger.info(f"{kind} build found for #{bug.id}, {package_name} ")
                 found.add(bug)
                 bugs_by_type[kind].add(bug)
+            elif bug.id in permitted_bug_ids:
+                logger.info(f'Including tracker bug #{bug.id} since it is explicitly included in the assembly config')
+                found.add(bug)
+                bugs_by_type['image'].add(bug)
 
     not_found = set(tracker_bugs) - found
     if not_found:
-        still_not_found = not_found
-        if permitted_bug_ids:
-            logger.info('The following bugs will be attached because they are '
-                        f'explicitly included in the assembly config: {permitted_bug_ids}')
-            still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
-
-        if still_not_found:
-            still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
-            message = ('No attached builds found in advisories for tracker bugs (bug, package): '
-                       f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
-                       f'ids in the assembly definition')
-            if permissive:
-                logger.warning(f"{message} Ignoring them because --permissive.")
-                issues.append(message)
-            else:
-                raise ValueError(message)
+        not_found_with_component = [(b.id, b.whiteboard_component) for b in not_found]
+        message = ('No attached builds found in advisories for tracker bugs (bug, package): '
+                   f'{not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
+                   f'ids in the assembly definition')
+        if permissive:
+            logger.warning(f"{message} Ignoring them because --permissive.")
+            issues.append(message)
+        else:
+            raise ValueError(message)
 
     return bugs_by_type, issues
 

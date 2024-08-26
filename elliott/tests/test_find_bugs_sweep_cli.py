@@ -259,7 +259,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
-        flexmock(JIRABugTracker).should_receive("search").and_return([])
+        flexmock(JIRABugTracker).should_receive("search").and_return(image_bugs + rpm_bugs + extras_bugs)
         flexmock(JIRABugTracker).should_receive("attach_bugs").times(3).and_return()
         jira_filter_mock.return_value = []
 
@@ -274,32 +274,48 @@ class TestCategorizeBugsByType(unittest.TestCase):
     def test_categorize_bugs_by_type(self):
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         bugs = [
-            flexmock(id='OCPBUGS-0', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False, whiteboard_component='foo', component=''),
-            flexmock(id='OCPBUGS-1', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False, whiteboard_component='bar', component=''),
-            flexmock(id='OCPBUGS-2', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False, whiteboard_component='buzz', component=''),
-            flexmock(id='OCPBUGS-3', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component=''),
-            flexmock(id='OCPBUGS-4', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component='MicroShift'),
+            # tracker whose build will be found in image advisory
+            flexmock(id='OCPBUGS-1', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False,
+                     whiteboard_component='image-comp', component=''),
+            # tracker whose build will be found in rpm advisory
+            flexmock(id='OCPBUGS-2', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False,
+                     whiteboard_component='rpm-comp', component=''),
+            # tracker whose build will be found in extras advisory
+            flexmock(id='OCPBUGS-3', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False,
+                     whiteboard_component='extras-image-comp', component=''),
+            # tracker whose build will be not be found but is included in assembly definition, should go in image adv
+            flexmock(id='OCPBUGS-4', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False,
+                     whiteboard_component='foo', component=''),
+            # non-tracker which should go to image advisory
+            flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component=''),
+            # non-tracker which should go to extras advisory
+            flexmock(id='OCPBUGS-6', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
+            # non-tracker which should go to microshift advisory
+            flexmock(id='OCPBUGS-7', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False,
+                     component='MicroShift'),
         ]
         builds_map = {
-            'image': {bugs[2].whiteboard_component: None},
+            'image': {bugs[0].whiteboard_component: None},
             'rpm': {bugs[1].whiteboard_component: None},
-            'extras': {bugs[0].whiteboard_component: None},
+            'extras': {bugs[2].whiteboard_component: None},
             'microshift': dict(),
         }
 
-        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
+        flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[5]})
         for kind in advisory_id_map.keys():
             flexmock(errata).should_receive("get_advisory_nvrs").with_args(advisory_id_map[kind]).and_return(
                 builds_map[kind])
         expected = {
+            'image': {bugs[0].id, bugs[3].id, bugs[4].id},
             'rpm': {bugs[1].id},
-            'image': {bugs[2].id},
-            'extras': {bugs[0].id, bugs[3].id},
+            'extras': {bugs[2].id, bugs[5].id},
             'metadata': set(),
-            'microshift': {bugs[4].id},
+            'microshift': {bugs[6].id},
         }
 
-        queried, issues = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+        assembly_included_bug_ids = {bugs[3].id}
+        queried, issues = categorize_bugs_by_type(bugs, advisory_id_map, assembly_included_bug_ids,
+                                                  operator_bundle_advisory="metadata")
         self.assertEqual(issues, [])
         for adv in queried:
             actual = set()

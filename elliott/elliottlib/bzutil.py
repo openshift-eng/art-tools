@@ -828,7 +828,7 @@ class JIRABugTracker(BugTracker):
 
     def filter_bugs_by_cutoff_event(self, bugs: Iterable, desired_statuses: Iterable[str],
                                     sweep_cutoff_timestamp: float, verbose=False) -> List:
-        dt = datetime.utcfromtimestamp(sweep_cutoff_timestamp).strftime("%Y/%m/%d %H:%M")
+        dt = datetime.fromtimestamp(sweep_cutoff_timestamp, timezone.utc).strftime("%Y/%m/%d %H:%M")
         val = ','.join(f'"{s}"' for s in desired_statuses)
         query = f"issue in ({','.join([b.id for b in bugs])}) " \
                 f"and status was in ({val}) " \
