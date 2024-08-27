@@ -206,7 +206,7 @@ PRESENT advisory. Here are some examples:
             advisory_build_nvrs.extend(build_list)
 
         if not builds:
-            green_print("No eligible builds found. To include shipped builds, use --include-shipped")
+            green_print("No new builds found for attaching to advisory")
         elif dry_run:
             yellow_print("[dry-run] Would've moved advisory to NEW_FILES state")
             yellow_print(f"[dry-run] Would've attached {len(builds)} builds to advisory {advisory_id}")
@@ -469,6 +469,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
 
     builds: List[Dict] = []
 
+    pinned_nvrs = set()
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
             tasks = [exectools.to_thread(progress_func, functools.partial(rpm.get_latest_build, default=None, el_target=tag)) for rpm in runtime.rpm_metas()]
@@ -489,6 +490,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
                 # Honors pinned NVRs by "is"
                 pinned_by_is = builder.from_pinned_by_is(el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map)
                 _ensure_accepted_tags(pinned_by_is.values(), brew_session, tag_pv_map)
+                pinned_nvrs.update([b['nvr'] for b in pinned_by_is.values()])
 
                 # Builds pinned by "is" should take precedence over every build from tag
                 for component, pinned_build in pinned_by_is.items():
@@ -504,6 +506,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
                     if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
                         LOGGER.warning("Swapping stream nvr %s for group dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"])
                 component_builds.update(group_deps)
+                pinned_nvrs.update([b['nvr'] for b in group_deps.values()])
             builds.extend(component_builds.values())
 
     _ensure_accepted_tags(builds, brew_session, tag_pv_map, raise_exception=False)
@@ -516,12 +519,12 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
 
     shipped = set()
     if include_shipped:
-        LOGGER.debug("Do not filter out shipped builds, all builds will be attached")
+        LOGGER.info("Including all builds that may have been shipped previously")
     else:
-        LOGGER.debug("Filtering out shipped builds...")
-        shipped = _find_shipped_builds([b["id"] for b in qualified_builds], brew_session)
+        LOGGER.info("Filtering out shipped builds - except the ones that have been pinned in the assembly")
+        shipped = _find_shipped_builds([b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs], brew_session)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
-    LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
+    LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are qualified.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     nvrps = sorted(set(nvrps))  # remove duplicates
     return nvrps
