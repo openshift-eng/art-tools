@@ -168,7 +168,7 @@ class Ocp4ScanPipeline:
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
-    lock = Lock.BUILD
+    lock = Lock.SCAN
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:

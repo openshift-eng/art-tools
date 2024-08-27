@@ -10,7 +10,7 @@ from pyartcd.runtime import Runtime
 
 async def run_for(version: str, runtime: Runtime):
     # Skip if locked
-    lock = Lock.BUILD
+    lock = Lock.SCAN
     lock_name = lock.value.format(version=version)
     lock_manager = LockManager.from_lock(lock)
     try:

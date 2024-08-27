@@ -17,6 +17,7 @@ class Lock(enum.Enum):
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
+    SCAN = 'lock:scan:{version}'
 
 
 class Keys(enum.Enum):
