@@ -78,7 +78,7 @@ async def run_git(args: Sequence[str], env: Optional[Dict[str, str]] = None, che
     set_env.update(constants.GIT_NO_PROMPTS)
     if env:
         set_env.update(env)
-    return await exectools.cmd_assert_async(['git'] + list(args), check=check, env=constants.GIT_NO_PROMPTS, **kwargs)
+    return await exectools.cmd_assert_async(['git'] + list(args), check=check, env=set_env, **kwargs)
 
 
 async def gather_git(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):
@@ -94,4 +94,4 @@ async def gather_git(args: Sequence[str], env: Optional[Dict[str, str]] = None, 
     set_env.update(constants.GIT_NO_PROMPTS)
     if env:
         set_env.update(env)
-    return await exectools.cmd_gather_async(['git'] + list(args), check=check, env=constants.GIT_NO_PROMPTS, **kwargs)
+    return await exectools.cmd_gather_async(['git'] + list(args), check=check, env=set_env, **kwargs)
