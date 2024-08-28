@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 import yaml
 from dockerfile_parse import DockerfileParser
 from koji import ClientSession
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import pushd, exectools
 from doozerlib import brew, util
@@ -281,6 +282,7 @@ class OLMBundle(object):
                 'operator_manifests': {'manifests_dir': 'manifests'},
             }))
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     def commit_and_push_bundle(self, commit_msg):
         """Try to commit and push bundle distgit repository if there were any content changes.
 
