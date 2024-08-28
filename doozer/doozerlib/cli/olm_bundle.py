@@ -57,7 +57,9 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
     "component" will be treated as "{component}"
     """
 
-    runtime.initialize(clone_distgits=False)
+    runtime.initialize(config_only=True)
+    clone_distgits = bool(runtime.group_config.canonical_builders_from_upstream)
+    runtime.initialize(clone_distgits=clone_distgits)
 
     # If user omitted braces, add them.
     if "{" not in pattern:
@@ -217,8 +219,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             return record
 
     olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
-    get_branches_results = exectools.parallel_exec(lambda bundle, _: bundle.does_bundle_branch_exist(),
-                                                   olm_bundles).get()
+    get_branches_results = [bundle.does_bundle_branch_exist() for bundle in olm_bundles]
     if not all([result[0] for result in get_branches_results]):
         runtime.logger.error('One or more bundle branches do not exist: '
                              f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.')
