@@ -134,7 +134,7 @@ def lambda_handler(event: Dict, context: Dict):
             uri = link + uri[len(prefix):]
             break
 
-    if not uri.startswith('/pub') and uri != '/favicon.ico' and uri != '/robots.txt':
+    if not uri.startswith('/pub') and uri != '/favicon.ico' and uri != '/robots.txt' and uri != '/404.html':
         # Anything not in /pub (or few exceptions) requires basic auth header
         authorization = headers.get("authorization", [])
         if not authorization:
@@ -207,7 +207,7 @@ def lambda_handler(event: Dict, context: Dict):
         return redirect(url, code=307, description='S3Redirect')
 
     # Some clients may send in URL with literal '+' and other chars that need to be escaped
-    # in order for the the URL to resolve via an S3 HTTP request. decoding and then
+    # in order for the URL to resolve via an S3 HTTP request. decoding and then
     # re-encoding should ensure that clients that do or don't encode will always
     # head toward the S3 origin encoded.
     request['uri'] = quote(unquote_plus(uri))
