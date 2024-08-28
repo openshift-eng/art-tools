@@ -25,7 +25,6 @@ class BuildPlan:
     def __init__(self):
         self.active_image_count = 1  # number of images active in this version
         self.dry_run = False  # report build plan without performing it
-        self.pin_builds = False  # build only specified rpms/images regardless of whether source has changed
         self.build_rpms = False  # should we build rpms
         self.rpms_included = []  # include list for rpms to build
         self.rpms_excluded = []  # exclude list for rpms to build
@@ -61,13 +60,12 @@ class RpmMirror:
 
 class Ocp4Pipeline:
     def __init__(self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-                 pin_builds: bool, build_rpms: str, rpm_list: str, build_images: str, image_list: str,
+                 build_rpms: str, rpm_list: str, build_images: str, image_list: str,
                  skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool = False,
                  lock_identifier: str = None):
 
         self.runtime = runtime
         self.assembly = assembly
-        self.pin_builds = pin_builds
         self.build_rpms = build_rpms
         self.rpm_list = rpm_list
         self.build_images = build_images
@@ -164,9 +162,6 @@ class Ocp4Pipeline:
         # build_plan.dry_run
         self.build_plan.dry_run = self.runtime.dry_run
 
-        # build_plan.pin_builds
-        self.build_plan.pin_builds = self.pin_builds
-
         # build_plan.build_rpms, build_plan.rpms_included, build_plan.rpms_excluded
         self.build_plan.build_rpms = True
 
@@ -244,7 +239,7 @@ class Ocp4Pipeline:
 
     def _plan_pinned_builds(self):
         """
-        When "--pin_builds" is provided, always builds what the operator selected, regardless of source changes.
+        Builds what the operator selected, regardless of source changes.
         Update build title and description accordingly.
         """
 
@@ -306,55 +301,12 @@ class Ocp4Pipeline:
         elif self.build_plan.build_images:
             jenkins.update_title(' [all images]')
 
-    async def _get_changes(self) -> dict:
-        """
-        Check for changes by calling doozer config:scan-sources
-        Changed rpms, images or rhcos are recorded in self.changes
-        """
-
-        # Scan sources
-        shutil.rmtree(self._doozer_working, ignore_errors=True)
-        cmd = self._doozer_base_command.copy()
-        cmd.extend(['config:scan-sources', '--yaml', '--ci-kubeconfig', f'{os.environ["KUBECONFIG"]}'])
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        self.runtime.logger.info('scan-sources output:\n%s', out)
-
-        # Get changes
-        yaml_data = yaml.safe_load(out)
-        changes = util.get_changes(yaml_data)
-        if changes:
-            self.runtime.logger.info('Detected source changes:\n%s', yaml.safe_dump(changes))
-        else:
-            self.runtime.logger.info('No changes detected in RPMs, images or RHCOS')
-
-        return changes
-
     def _report(self, msg: str):
         """
         Logs the message and appends it to current job description
         """
         self.runtime.logger.info(msg)
         jenkins.update_description(f'{msg}<br/>')
-
-    def _check_changed_rpms(self, changes: dict):
-        # Check changed RPMs
-        if not self.build_plan.build_rpms:
-            self._report('RPMs: not building.')
-            self._report('Will not create RPM compose if automation is frozen.')
-
-        elif changes.get('rpms', None):
-            changed_rpms = changes["rpms"]
-            self._report(f'RPMs: building {",".join(changed_rpms)}')
-            self._report('Will create RPM compose.')
-            self.build_plan.rpms_included = changed_rpms
-            self.build_plan.rpms_excluded.clear()
-            jenkins.update_title(self._display_tag_for(self.build_plan.rpms_included, 'RPM'))
-
-        else:
-            self.build_plan.build_rpms = False
-            self._report('RPMs: none changed.')
-            self._report('Will still create RPM compose.')
-            jenkins.update_title(' [no changed RPMs]')
 
     @staticmethod
     def _include_exclude(kind: str, includes: list, excludes: list) -> list:
@@ -373,89 +325,6 @@ class Ocp4Pipeline:
             return ['--latest-parent-version', f"--{kind}=", '--exclude', ','.join(excludes)]
 
         return [f'--{kind}=']
-
-    async def _check_changed_images(self, changes: dict):
-        # Check changed images
-        if not self.build_plan.build_images:
-            self._report('Images: not building.')
-            return
-
-        changed_images = changes.get('images', None)
-        if not changed_images:
-            self._report('Images: none changed.')
-            self.build_plan.build_images = False
-            jenkins.update_title(' [no changed images]')
-            return
-
-        self._report(f'Found {len(changed_images)} image(s) with changes:\n{",".join(changed_images)}')
-
-        # also determine child images of changed
-        changed_children = await self._check_changed_child_images(changes)
-
-        # Update build plan
-        self.build_plan.images_included = changed_images + [child for child in changed_children if
-                                                            child not in changed_images]
-        self.build_plan.images_excluded.clear()
-        jenkins.update_title(self._display_tag_for(self.build_plan.images_included, 'image'))
-
-    def _gather_children(self, all_images: list, data: dict, initial: list, gather: bool):
-        """
-        Scan the image tree for changed and their children using recursive closure
-
-        :param all_images: all images gathered so far while traversing tree
-        :param data: the part of the yaml image tree we're looking at
-        :param initial: all images initially found to have changed
-        :param gather: whether this is a subtree of an image with changed source
-        """
-
-        for image, children in data.items():
-            gather_this = gather or image in initial
-            if gather_this:  # this or an ancestor was a changed image
-                all_images.append(image)
-
-            # scan children recursively
-            self._gather_children(all_images, children, initial, gather_this)
-
-    async def _check_changed_child_images(self, changes: dict) -> list:
-        cmd = self._doozer_base_command.copy()
-        cmd.extend(self._include_exclude('images', self.build_plan.images_included, self.build_plan.images_excluded))
-        cmd.extend([
-            'images:show-tree',
-            '--yml'
-        ])
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        self.runtime.logger.info('images:show-tree output:\n%s', out)
-        yaml_data = yaml.safe_load(out)
-
-        children = []
-        self._gather_children(
-            all_images=children,
-            data=yaml_data,
-            initial=changes.get('images', []),
-            gather=False
-        )
-        changed_children = [image for image in children if image not in changes['images']]
-
-        if changed_children:
-            self._report(f'Images: also building {len(changed_children)} child(ren):\n {", ".join(changed_children)}')
-        else:
-            self.runtime.logger.info('No changed children found')
-
-        return changed_children
-
-    async def _plan_builds(self):
-        """
-        Plan what will be built.
-        Figure out whether we're building RPMs and/or images, and which ones, based on
-        the parameters and which sources have changed.
-        Update in the "build_plan" data structure.
-        """
-
-        jenkins.update_description('Building sources that have changed.<br/>')
-        changes = await self._get_changes()
-        self._check_changed_rpms(changes)
-        await self._check_changed_images(changes)
-        self.runtime.logger.info('Updated build plan:\n%s', self.build_plan)
 
     @staticmethod
     def _display_tag_for(items: list, kind: str, is_excluded: bool = False):
@@ -939,11 +808,7 @@ class Ocp4Pipeline:
         await self._initialize()
 
         # Plan builds
-        if self.build_plan.pin_builds:
-            self._plan_pinned_builds()
-        else:
-            self.runtime.logger.info('Building only where source has changed.')
-            await self._plan_builds()
+        self._plan_pinned_builds()
 
         # Rebase and build RPMs
         await self._rebase_and_build_rpms()
@@ -995,8 +860,6 @@ class Ocp4Pipeline:
               help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
 @click.option('--data-gitref', required=False, default='',
               help='Doozer data path git [branch / tag / sha] to use')
-@click.option('--pin-builds', is_flag=True,
-              help='Build only specified rpms/images regardless of whether source has changed')
 @click.option('--build-rpms', required=True,
               type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
               help='Which RPMs are candidates for building? "only/except" refer to --rpm-list param')
@@ -1020,7 +883,7 @@ class Ocp4Pipeline:
               help='Call rsync with --copy-links instead of --links')
 @pass_runtime
 @click_coroutine
-async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str, pin_builds: bool,
+async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
                build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
                mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool, copy_links: bool):
 
@@ -1034,7 +897,6 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         version=version,
         data_path=data_path,
         data_gitref=data_gitref,
-        pin_builds=pin_builds,
         build_rpms=build_rpms,
         rpm_list=rpm_list,
         build_images=build_images,

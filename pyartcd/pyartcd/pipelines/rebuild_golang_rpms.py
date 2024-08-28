@@ -129,7 +129,7 @@ class RebuildGolangRPMsPipeline:
     def rebuild_art_rpms(self, rpms):
         _LOGGER.info(f"Trigger job at {constants.JENKINS_UI_URL}/job/aos-cd-builds/job/build%252Focp4/build "
                      f"with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
-                     f"PIN_BUILDS=True BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}")
+                     f"BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}")
         # jenkins.start_ocp4(
         #     build_version=self.ocp_version,
         #     assembly='stream',
