@@ -26,18 +26,10 @@ class Ocp4ScanPipeline:
         self.issues = []
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.locked = True  # True by default; if not locked, run() will set it to False
-        self.frozen = False
 
     async def run(self):
         # If we get here, lock could be acquired
         self.locked = False
-
-        # Check if automation is frozen for current group
-        if not await util.is_build_permitted(self.version, doozer_working=str(self._doozer_working)):
-            self.logger.info('Skipping this build as it\'s not permitted')
-            self.frozen = True
-            return
-
         self.logger.info('Building: %s', self.version)
 
         # KUBECONFIG env var must be defined in order to scan sources
@@ -176,7 +168,7 @@ class Ocp4ScanPipeline:
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
-    lock = Lock.BUILD
+    lock = Lock.SCAN
     lock_name = lock.value.format(version=version)
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
@@ -200,10 +192,7 @@ async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
             skip_if_locked=True
         )
 
-    # A build can be skipped because it's frozen, or because there's another run ongoing in the same group
-    # Signal this by adding a [SKIPPED] tag to the build title
+    # This should not happen, as the schedule build already checked for existing locks
+    # It doesn't hurt to check once more though
     if pipeline.locked:
         jenkins.update_title(' [SKIPPED][LOCKED]')
-
-    elif pipeline.frozen:
-        jenkins.update_title(' [SKIPPED][FROZEN]')

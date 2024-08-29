@@ -26,6 +26,7 @@ class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     OCP4 = 'aos-cd-builds/build%2Focp4'
+    OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
@@ -268,6 +269,17 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
 
     return start_build(
         job=Jobs.OCP4,
+        params=params,
+        **kwargs
+    )
+
+
+def start_ocp4_scan(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.OCP4_SCAN,
         params=params,
         **kwargs
     )

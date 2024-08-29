@@ -6,6 +6,7 @@ from pyartcd.pipelines import (
     review_cvp, tarball_sources, build_sync, build_rhcos, ocp4_scan, images_health, operator_sdk_sync,
     olm_bundle, ocp4, scan_for_kernel_bugs, tag_rpms, advisory_drop, cleanup_locks, brew_scan_osh, sigstore_sign, update_golang, rebuild_golang_rpms, scan_fips
 )
+from pyartcd.pipelines.scheduled import schedule_ocp4_scan
 
 
 def main(args: Optional[Sequence[str]] = None):
