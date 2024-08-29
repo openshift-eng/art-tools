@@ -205,7 +205,10 @@ async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: st
 
     try:
         if skip_if_locked and await lock_manager.is_locked(lock_name):
-            lock_manager.logger.info('Looks like there is another task ongoing -- skipping for this run')
+            blocked_on_build_path = await lock_manager.get_lock_id(lock_name)
+            blocked_on_build_url = f'{constants.JENKINS_UI_URL}/{blocked_on_build_path}'
+            lock_manager.logger.info(f'Cannot acquire {lock_name}, which is acquired by {blocked_on_build_url} -- '
+                                     'skipping')
             coro.close()
             return
 
