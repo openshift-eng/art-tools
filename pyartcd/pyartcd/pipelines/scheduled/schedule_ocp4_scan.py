@@ -9,7 +9,7 @@ from pyartcd.runtime import Runtime
 
 
 async def run_for(version: str, runtime: Runtime):
-    # Skip if locked
+    # Skip if locked on scan
     lock = Lock.SCAN
     lock_name = lock.value.format(version=version)
     lock_manager = LockManager.from_lock(lock)
@@ -18,7 +18,19 @@ async def run_for(version: str, runtime: Runtime):
     finally:
         await lock_manager.destroy()
     if locked:
-        runtime.logger.info('[%s] Locked, skipping', version)
+        runtime.logger.info(f'[{version}] Locked on {lock_name}, skipping')
+        return
+
+    # Skip if locked on build
+    lock = Lock.BUILD
+    lock_name = lock.value.format(version=version)
+    lock_manager = LockManager.from_lock(lock)
+    try:
+        locked = await lock_manager.is_locked(lock_name)
+    finally:
+        await lock_manager.destroy()
+    if locked:
+        runtime.logger.info(f'[{version}] Locked on {lock_name}, skipping')
         return
 
     # Skip if frozen
