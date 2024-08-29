@@ -10,7 +10,7 @@ from pyartcd import constants
 
 # Defines the pipeline locks managed by Redis
 class Lock(enum.Enum):
-    OLM_BUNDLE = 'lock:olm-bundle-{version}'
+    OLM_BUNDLE = 'lock:olm-bundle:{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
     PLASHET = 'lock:compose:{assembly}:{version}'
     BUILD = 'lock:build:{version}'
