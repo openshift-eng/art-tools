@@ -70,6 +70,11 @@ LOCK_POLICY = {
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
+    Lock.SCAN: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+    },
 }
 
 
