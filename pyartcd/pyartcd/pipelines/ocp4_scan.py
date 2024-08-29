@@ -196,7 +196,7 @@ async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
             )
 
         await locks.run_with_lock(
-            coro=run_with_build_lock,
+            coro=run_with_build_lock(),
             lock=lock,
             lock_name=lock_name,
             lock_id=lock_identifier,
