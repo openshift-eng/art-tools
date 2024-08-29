@@ -24,7 +24,6 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
             version='4.14',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -40,7 +39,6 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.ocp4.build_plan.active_image_count, 219)
         self.assertEqual(self.ocp4.build_plan.dry_run, False)
-        self.assertEqual(self.ocp4.build_plan.pin_builds, False)
         self.assertEqual(self.ocp4.build_plan.build_rpms, True)
         self.assertEqual(self.ocp4.build_plan.rpms_included, [])
         self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
@@ -111,224 +109,6 @@ class TestInitialBuildPlan(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.ocp4.build_plan.images_excluded, ['image1', 'image2'])
 
 
-class TestPlannedBuilds(unittest.IsolatedAsyncioTestCase):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.ocp4: ocp4.Ocp4Pipeline = self.default_ocp4_pipeline()
-
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
-    def setUp(self, *_) -> None:
-        self.ocp4 = self.default_ocp4_pipeline()
-        asyncio.get_event_loop().run_until_complete(self.ocp4._initialize_build_plan())
-
-    @staticmethod
-    def default_ocp4_pipeline() -> ocp4.Ocp4Pipeline:
-        return ocp4.Ocp4Pipeline(
-            runtime=MagicMock(dry_run=False),
-            assembly='stream',
-            version='4.14',
-            data_path=constants.OCP_BUILD_DATA_URL,
-            data_gitref='',
-            pin_builds=False,
-            build_rpms='all',
-            rpm_list='',
-            build_images='all',
-            image_list='',
-            skip_plashets=False,
-            mail_list_failure='',
-            comment_on_pr=False
-        )
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("pyartcd.jenkins.update_title")
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._get_changes", return_value={})
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._check_changed_child_images")
-    async def test_no_changes(self, *_):
-        self.assertEqual(self.ocp4.build_plan.build_rpms, True)
-        self.assertEqual(self.ocp4.build_plan.build_images, True)
-
-        # After running _plan_builds(), build rpms/images flags shall be reset to False
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
-        self.assertEqual(self.ocp4.build_plan.build_images, False)
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("pyartcd.jenkins.update_title")
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "219 images", ""))
-    async def test_check_changed_rpms(self, *_):
-        await self.ocp4._initialize_build_plan()
-        self.assertTrue(self.ocp4.build_plan.build_rpms)
-
-        # Do not build RPMs, RPMs changed
-        self.ocp4.build_plan.build_rpms = False
-        changes = {'rpms': ['rpm1', 'rpm2']}
-        self.ocp4._check_changed_rpms(changes)
-        self.assertFalse(self.ocp4.build_plan.build_rpms)
-
-        # Build RPMs, RPMs changed
-        await self.ocp4._initialize_build_plan()
-        self.assertTrue(self.ocp4.build_plan.build_rpms)
-        changes = {'rpms': ['rpm1', 'rpm2']}
-        self.ocp4._check_changed_rpms(changes)
-        self.assertTrue(self.ocp4.build_plan.build_rpms)
-        self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
-        self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
-
-        # Build RPMs, no RPMs changed
-        changes = {'rpms': []}
-        self.ocp4._check_changed_rpms(changes)
-        self.assertFalse(self.ocp4.build_plan.build_rpms)
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("pyartcd.jenkins.update_title")
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._get_changes", return_value={'rpms': ['rpm1', 'rpm2']})
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._check_changed_child_images")
-    async def test_changed_rpms(self, *_):
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.build_rpms, True)
-        self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
-        self.assertEqual(self.ocp4.build_plan.build_images, False)
-
-        # When source changes matter, rpms included/excluded get overridden with actual changed RPMs
-        self.ocp4.build_plan.build_rpms = 'only'
-        self.ocp4.build_plan.rpm_list = ['rpmX', 'rpmY']
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
-        self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
-
-        self.ocp4.build_plan.build_rpms = 'except'
-        self.ocp4.build_plan.rpm_list = ['rpmX', 'rpmY']
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.rpms_included, ['rpm1', 'rpm2'])
-        self.assertEqual(self.ocp4.build_plan.rpms_excluded, [])
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("pyartcd.jenkins.update_title")
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._get_changes", return_value={'images': ['image1', 'image2']})
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._check_changed_child_images", return_value=[])
-    async def test_changed_images(self, *_):
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
-        self.assertEqual(self.ocp4.build_plan.build_images, True)
-        self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2'])
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("pyartcd.jenkins.update_title")
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._get_changes")
-    @patch("pyartcd.pipelines.ocp4.Ocp4Pipeline._check_changed_child_images")
-    async def test_changed_child_images(self, check_changed_child_images_mock, get_changes_mock, *_):
-        get_changes_mock.return_value = {'images': ['image1', 'image2']}
-        check_changed_child_images_mock.return_value = ['image3', 'image4']
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
-        self.assertEqual(self.ocp4.build_plan.build_images, True)
-        self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2', 'image3', 'image4'])
-
-        get_changes_mock.return_value = {'images': ['image1', 'image2']}
-        check_changed_child_images_mock.return_value = ['image1', 'image2']
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
-        self.assertEqual(self.ocp4.build_plan.build_images, True)
-        self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2'])
-
-        get_changes_mock.return_value = {}
-        check_changed_child_images_mock.return_value = ['image3', 'image4']
-        await self.ocp4._plan_builds()
-        self.assertEqual(self.ocp4.build_plan.build_rpms, False)
-        self.assertEqual(self.ocp4.build_plan.build_images, False)
-
-    async def test_gather_children(self, *_):
-        show_tree_output = {'image1': {'child1': {'child2': {}}}}
-        changed_images = ['image1', 'image2']
-        children = []
-        self.ocp4._gather_children(
-            all_images=children,
-            data=show_tree_output,
-            initial=changed_images,
-            gather=False
-        )
-        self.assertEqual(children, ['image1', 'child1', 'child2'])
-
-        show_tree_output = {'image1': {'child1': {'child2': {}}}}
-        changed_images = ['image2']
-        children = []
-        self.ocp4._gather_children(
-            all_images=children,
-            data=show_tree_output,
-            initial=changed_images,
-            gather=False
-        )
-        self.assertEqual(children, [])
-
-        show_tree_output = {}
-        changed_images = ['image2']
-        children = []
-        self.ocp4._gather_children(
-            all_images=children,
-            data=show_tree_output,
-            initial=changed_images,
-            gather=False
-        )
-        self.assertEqual(children, [])
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("artcommonlib.exectools.cmd_gather_async")
-    async def test_check_changed_child_images(self, cmd_gather_mock, _):
-        cmd_gather_mock.return_value = (0, 'image1:\n  child1:\n    child2: {}\nimage2:\n  child3: {}', '')
-        changes = {'images': ['image1']}
-        changed_children = await self.ocp4._check_changed_child_images(changes)
-        self.assertEqual(sorted(changed_children), ['child1', 'child2'])
-
-        cmd_gather_mock.return_value = (0, 'image1:\n  child1:\n    child2: {}\nimage2:\n  child3: {}', '')
-        changes = {'images': ['image2']}
-        changed_children = await self.ocp4._check_changed_child_images(changes)
-        self.assertEqual(sorted(changed_children), ['child3'])
-
-        cmd_gather_mock.return_value = (0, 'image1:\n  child1:\n    child2: {}\nimage2:\n  child3: {}', '')
-        changes = {'images': ['image1', 'image2']}
-        changed_children = await self.ocp4._check_changed_child_images(changes)
-        self.assertEqual(sorted(changed_children), ['child1', 'child2', 'child3'])
-
-        cmd_gather_mock.return_value = (0, 'image1:\n  image2:\n    child1: {}', '')
-        changes = {'images': ['image1', 'image2']}
-        changed_children = await self.ocp4._check_changed_child_images(changes)
-        self.assertEqual(sorted(changed_children), ['child1'])
-
-        cmd_gather_mock.return_value = (0, 'image1:\n  child1:\n    child2: {}\nimage2:\n  child3: {}', '')
-        changes = {'images': []}
-        changed_children = await self.ocp4._check_changed_child_images(changes)
-        self.assertEqual(sorted(changed_children), [])
-
-        cmd_gather_mock.return_value = (0, 'image1:\n  child1:\n    child2: {}\nimage2:\n  child3: {}', '')
-        changes = {}
-        changed_children = await self.ocp4._check_changed_child_images(changes)
-        self.assertEqual(sorted(changed_children), [])
-
-    @patch("pyartcd.jenkins.update_description")
-    @patch("pyartcd.jenkins.update_title")
-    @patch("artcommonlib.exectools.cmd_gather_async", autospec=True,
-           return_value=(0, 'image1:\n  child1:\n    child2: {}\nimage2:\n  child3: {}', ''))
-    async def test_check_changed_images(self, *_):
-        # Do not build images, images changed
-        self.ocp4.build_plan.build_images = False
-        changes = {'images': ['image1', 'image2']}
-        await self.ocp4._check_changed_images(changes)
-        self.assertFalse(self.ocp4.build_plan.build_images)
-
-        # Build images, no image changed
-        self.ocp4.build_plan.build_images = True
-        changes = {}
-        await self.ocp4._check_changed_images(changes)
-        self.assertFalse(self.ocp4.build_plan.build_images)
-
-        # Build images, images changed
-        self.ocp4.build_plan.build_images = True
-        changes = {'images': ['image1', 'image2']}
-        await self.ocp4._check_changed_images(changes)
-        self.assertEqual(self.ocp4.build_plan.images_excluded, [])
-        self.assertEqual(self.ocp4.build_plan.images_included, ['image1', 'image2', 'child1', 'child2', 'child3'])
-
-
 class TestInitialize(unittest.IsolatedAsyncioTestCase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -342,7 +122,6 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
             version='4.14',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -484,7 +263,6 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -681,7 +459,6 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -803,7 +580,6 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -873,7 +649,6 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -918,7 +693,6 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -970,7 +744,6 @@ class TestMirrorRpms(unittest.IsolatedAsyncioTestCase):
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
@@ -1025,7 +798,6 @@ class TestUtils(unittest.IsolatedAsyncioTestCase):
             version='4.14',
             data_path=constants.OCP_BUILD_DATA_URL,
             data_gitref='',
-            pin_builds=False,
             build_rpms='all',
             rpm_list='',
             build_images='all',
