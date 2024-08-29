@@ -184,8 +184,19 @@ async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
         await pipeline.run()
 
     else:
+        async def run_with_build_lock():
+            build_lock = Lock.BUILD
+            build_lock_name = build_lock.value.format(version=version)
+            await locks.run_with_lock(
+                coro=pipeline.run(),
+                lock=build_lock,
+                lock_name=build_lock_name,
+                lock_id=lock_identifier,
+                skip_if_locked=True
+            )
+
         await locks.run_with_lock(
-            coro=pipeline.run(),
+            coro=run_with_build_lock,
             lock=lock,
             lock_name=lock_name,
             lock_id=lock_identifier,
