@@ -202,7 +202,8 @@ class RepodataLoader:
                 modules_url = parse.urljoin(repo_url, modules_location.attrib['href'])
 
             @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
-                   retry=(retry_if_exception_type((aiohttp.ServerDisconnectedError, aiohttp.ClientResponseError, aiohttp.ClientPayloadError))),
+                   retry=(retry_if_exception_type(
+                       (aiohttp.ServerDisconnectedError, aiohttp.ClientResponseError, aiohttp.ClientPayloadError, aiohttp.ClientConnectionError))),
                    before_sleep=before_sleep_log(LOGGER, logging.WARNING))
             async def fetch_remote_compressed(url: Optional[str]):
                 return await self._fetch_remote_compressed(session, url)
