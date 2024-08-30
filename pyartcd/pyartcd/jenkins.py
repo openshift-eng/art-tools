@@ -437,7 +437,9 @@ def update_description(description: str, append: bool = True):
     )
 
     if append:
-        description = build.get_description() + description
+        current_description = build.get_description()
+        current_description = current_description if current_description else ''
+        description = current_description + description
 
     set_build_description(build, description)
 
