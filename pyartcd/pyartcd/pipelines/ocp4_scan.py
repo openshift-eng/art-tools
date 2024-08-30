@@ -45,18 +45,26 @@ class Ocp4ScanPipeline:
         # Handle source changes, if any
         if self.changes.get('rpms', None) or self.changes.get('images', None):
             self.logger.info('Detected at least one updated RPM or image')
+            rpm_list = self.changes.get('rpms', [])
+            image_list = self.changes.get('images', [])
 
             if self.runtime.dry_run:
                 self.logger.info('Would have triggered a %s ocp4 build', self.version)
                 return
+
+            # Update build description
+            if image_list:
+                jenkins.update_description(f'Changed images: {",".join(image_list)}<br/>')
+            if rpm_list:
+                jenkins.update_description(f'Changed RPMs: {",".join(rpm_list)}<br/>')
 
             # Trigger ocp4
             self.logger.info('Triggering a %s ocp4 build', self.version)
             jenkins.start_ocp4(
                 build_version=self.version,
                 assembly='stream',
-                rpm_list=self.changes.get('rpms', []),
-                image_list=self.changes.get('images', []),
+                rpm_list=rpm_list,
+                image_list=image_list,
                 comment_on_pr=True
             )
 
