@@ -94,6 +94,7 @@ class Ocp4ScanPipeline:
             )
 
         else:
+            self.logger.info('*** No changes detected')
             jenkins.update_title(' [NO CHANGES]')
 
     async def _get_changes(self):
