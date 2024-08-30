@@ -12,7 +12,7 @@ from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
 from doozerlib import brew, rhcos, util
-from doozerlib.cli import cli, pass_runtime
+from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
@@ -42,7 +42,7 @@ class ConfigScanSources:
         self.oldest_image_event_ts = None
         self.newest_image_event_ts = 0
 
-    def run(self):
+    async def run(self):
         with self.runtime.shared_koji_client_session() as koji_api:
             self.runtime.logger.info(f'scan-sources coordinate: brew_event: '
                                      f'{koji_api.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))}')
@@ -59,7 +59,7 @@ class ConfigScanSources:
             self.check_for_image_changes(koji_api)
 
         # Checks if an image needs to be rebuilt based on the packages it is dependent on
-        self.check_changing_rpms()
+        await self.check_changing_rpms()
 
         # does_image_need_change() checks whether its non-member builder images have changed
         # but cannot determine whether member builder images have changed until anticipated
@@ -408,46 +408,22 @@ class ConfigScanSources:
             self.runtime.logger.warning('config_digest not found for %s: skipping config check', image_meta.name)
             return
 
-    def check_changing_rpms(self):
+    async def check_changing_rpms(self):
         # Checks if an image needs to be rebuilt based on the packages (and therefore RPMs)
         # it is dependent on might have changed in tags relevant to the image.
         # A check is also made if the image depends on a package we know is changing
         # because we are about to rebuild it.
 
-        def _thread_does_image_need_change(image_meta):
-            # Check if there's already an event loop running
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
+        async def _thread_does_image_need_change(image_meta):
+            await image_meta.does_image_need_change(
+                changing_rpm_packages=self.changing_rpm_packages,
+                buildroot_tag=image_meta.build_root_tag(),
+                newest_image_event_ts=self.newest_image_event_ts,
+                oldest_image_event_ts=self.oldest_image_event_ts)
 
-            if loop and loop.is_running():
-                future = asyncio.ensure_future(image_meta.does_image_need_change(
-                    changing_rpm_packages=self.changing_rpm_packages,
-                    buildroot_tag=image_meta.build_root_tag(),
-                    newest_image_event_ts=self.newest_image_event_ts,
-                    oldest_image_event_ts=self.oldest_image_event_ts)
-                )
-                return loop.run_until_complete(future)
-
-            else:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    return asyncio.run(image_meta.does_image_need_change(
-                        changing_rpm_packages=self.changing_rpm_packages,
-                        buildroot_tag=image_meta.build_root_tag(),
-                        newest_image_event_ts=self.newest_image_event_ts,
-                        oldest_image_event_ts=self.oldest_image_event_ts)
-                    )
-                finally:
-                    loop.close()
-
-        change_results = exectools.parallel_exec(
-            f=lambda image_meta, terminate_event: _thread_does_image_need_change(image_meta),
-            args=self.runtime.image_metas(),
-            n_threads=20
-        ).get()
+        change_results = await asyncio.gather(
+            *[_thread_does_image_need_change(image_meta) for image_meta in self.runtime.image_metas()]
+        )
 
         for change_result in change_results:
             meta, rebuild_hint = change_result
@@ -633,8 +609,9 @@ class ConfigScanSources:
 @click.option("--rebase-priv", default=False, is_flag=True,
               help='Try to reconcile public upstream into openshift-priv')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
+@click_coroutine
 @pass_runtime
-def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
+async def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run):
     """
     Determine if any rpms / images need to be rebuilt.
 
@@ -666,7 +643,7 @@ def config_scan_source_changes(runtime: Runtime, ci_kubeconfig, as_yaml, rebase_
     else:
         runtime.initialize(mode='both', clone_distgits=False)
 
-    ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
+    await ConfigScanSources(runtime, ci_kubeconfig, as_yaml, rebase_priv, dry_run).run()
 
 
 cli.add_command(config_scan_source_changes)
