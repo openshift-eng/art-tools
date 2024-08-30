@@ -425,7 +425,7 @@ class ConfigScanSources:
             *[_thread_does_image_need_change(image_meta) for image_meta in self.runtime.image_metas()]
         )
 
-        for change_result in change_results:
+        for change_result in filter(lambda r: r, change_results):
             meta, rebuild_hint = change_result
             if rebuild_hint.rebuild:
                 self.add_image_meta_change(meta, rebuild_hint)
