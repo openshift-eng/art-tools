@@ -18,8 +18,10 @@ async def run_for(version: str, runtime: Runtime):
     finally:
         await lock_manager.destroy()
     if locked:
-        runtime.logger.info(f'[{version}] Locked on {lock_name}, skipping')
+        runtime.logger.info(f'[{version}] {lock_name} is locked, skipping')
         return
+    else:
+        runtime.logger.info(f"[{version}] {lock_name} is free")
 
     # Skip if locked on build
     lock = Lock.BUILD
@@ -30,8 +32,10 @@ async def run_for(version: str, runtime: Runtime):
     finally:
         await lock_manager.destroy()
     if locked:
-        runtime.logger.info(f'[{version}] Locked on {lock_name}, skipping')
+        runtime.logger.info(f'[{version}] {lock_name} is locked, skipping')
         return
+    else:
+        runtime.logger.info(f"[{version}] {lock_name} is free")
 
     # Skip if frozen
     if not await util.is_build_permitted(version, doozer_working=str(runtime.working_dir / "doozer_working-" / version)):
@@ -40,7 +44,7 @@ async def run_for(version: str, runtime: Runtime):
 
     # Schedule scan
     runtime.logger.info('[%s] Scheduling ocp4-scan', version)
-    jenkins.start_ocp4_scan(version=version, block_until_building=False)
+    jenkins.start_ocp4_scan(version=version)
 
 
 @cli.command('schedule-ocp4-scan')
