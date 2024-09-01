@@ -415,7 +415,7 @@ class ConfigScanSources:
         # because we are about to rebuild it.
 
         async def _thread_does_image_need_change(image_meta):
-            await image_meta.does_image_need_change(
+            return await image_meta.does_image_need_change(
                 changing_rpm_packages=self.changing_rpm_packages,
                 buildroot_tag=image_meta.build_root_tag(),
                 newest_image_event_ts=self.newest_image_event_ts,
