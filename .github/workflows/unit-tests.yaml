@@ -9,7 +9,7 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    container: fedora:38
+    container: redhat/ubi8:latest
     steps:
       - name: Install git
         run: dnf install -y git
