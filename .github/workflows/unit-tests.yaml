@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     container: redhat/ubi8:latest
     steps:
-      - name: Install git
-        run: dnf install -y git
+      - name: Install git and make
+        run: dnf install -y git make
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
