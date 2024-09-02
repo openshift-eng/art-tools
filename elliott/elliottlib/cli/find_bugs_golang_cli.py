@@ -433,7 +433,7 @@ class FindBugsGolangCli:
             else:
                 logger.warning(f"{cve_id} is not compatible with in-use golang versions for {ocp_version}.")
 
-            cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_fixed_in, compatible])
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), compatible])
         self._logger.info(f"Found trackers for {len(cves)} CVEs")
         self._logger.info(f"\n{cve_table}")
 
