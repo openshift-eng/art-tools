@@ -2153,6 +2153,9 @@ class ImageDistGitRepo(DistGitRepo):
         registry = csv_config['registry'].rstrip("/")
         image_map = csv_config.get('image-map', {})
 
+        # Record image references found
+        found_image_refs = set()
+
         for ref in image_refs:
             try:
                 name = ref['name']
@@ -2187,14 +2190,23 @@ class ImageDistGitRepo(DistGitRepo):
 
                 with io.open(csv_file, 'r+', encoding="utf-8") as f:
                     content = f.read()
-                    content = content.replace(spec + '\n', replace + '\n')
-                    content = content.replace(spec + '\"', replace + '\"')
-                    f.seek(0)
-                    f.truncate()
-                    f.write(content)
+                    if content.count(spec):
+                        content = content.replace(spec + '\n', replace + '\n')
+                        content = content.replace(spec + '\"', replace + '\"')
+                        f.seek(0)
+                        f.truncate()
+                        f.write(content)
+                        found_image_refs.add(name)
             except Exception as e:
                 self.runtime.logger.error(e)
                 raise
+
+        if len(image_refs) != len(found_image_refs):
+            message = (f"Mismatch between number of found image references in {csv_file} and image-references file. "
+                       f"Found {len(found_image_refs)}: {sorted(found_image_refs)}, "
+                       f"Expected {len(image_refs)}: {sorted([i['name'] for i in image_refs])}. "
+                       "Operator metadata is invalid, please investigate.")
+            self.runtime.logger.warning(message)
 
         if version.startswith('v'):
             version = version[1:]  # strip off leading v
