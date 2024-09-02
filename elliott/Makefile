@@ -4,7 +4,7 @@ install:
 	./venv/bin/pip install .[tests]
 
 venv:
-	python3.8 -m venv venv
+	python3.11 -m venv venv
 	./venv/bin/pip install --upgrade pip
 	./venv/bin/pip install .[tests]
 	# source venv/bin/activate

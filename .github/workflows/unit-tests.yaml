@@ -9,7 +9,7 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    container: fedora:38
+    container: fedora:latest
     steps:
       - name: Install git
         run: dnf install -y git
@@ -18,13 +18,11 @@ jobs:
           fetch-depth: 0
           set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
       - name: Install packages
-        run: dnf install -y gcc krb5-devel
-      - name: Set up Python 3.8
-        uses: actions/setup-python@v4
+        run: dnf install -y gcc krb5-devel make glibc
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
-      - name: Install packages
-        run: dnf install -y gcc krb5-devel
+          python-version: '3.11'
       - name: Create venv and install dependencies
         run: make venv
       - name: Run tests

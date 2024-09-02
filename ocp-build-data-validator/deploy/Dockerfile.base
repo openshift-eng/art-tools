@@ -3,7 +3,7 @@ LABEL name="ocp-build-data-validator" \
   description="ocp-build-data validator container image" \
   maintainer="OpenShift Automated Release Tooling (ART) Team <aos-team-art@redhat.com>"
 
-RUN yum install -y epel-release @python38 \
+RUN yum install -y epel-release @python311 \
  && yum install -y \
     gcc \
     git \
@@ -12,9 +12,9 @@ RUN yum install -y epel-release @python38 \
     libcurl-devel \
     libgit2 \
     openssl-devel \
-    python38-{devel,pip,requests} \
+    python311-{devel,pip,requests} \
  && yum clean all \
- && update-alternatives --set python3 /usr/bin/python3.8
+ && update-alternatives --set python3 /usr/bin/python3.11
 
 RUN python3 -m pip install -U pip build \
  && useradd -ms /bin/bash -u 1000 art \
