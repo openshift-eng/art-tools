@@ -12,13 +12,13 @@ jobs:
     container: redhat/ubi8:latest
     steps:
       - name: Install git and make
-        run: dnf install -y git make
+        run: dnf install -y git
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
       - name: Install packages
-        run: dnf install -y gcc krb5-devel
+        run: dnf install -y gcc krb5-devel make glibc
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
