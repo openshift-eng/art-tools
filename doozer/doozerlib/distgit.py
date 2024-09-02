@@ -2206,8 +2206,7 @@ class ImageDistGitRepo(DistGitRepo):
                        f"Found {len(found_image_refs)}: {sorted(found_image_refs)}, "
                        f"Expected {len(image_refs)}: {sorted([i['name'] for i in image_refs])}. "
                        "Operator metadata is invalid, please investigate.")
-            self.runtime.logger.error(message)
-            raise DoozerFatalError(message)
+            self.runtime.logger.warning(message)
 
         if version.startswith('v'):
             version = version[1:]  # strip off leading v

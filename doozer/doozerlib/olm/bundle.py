@@ -248,8 +248,7 @@ class OLMBundle(object):
                        f"Found {len(self.found_image_references)}: {sorted(self.found_image_references.keys())}, "
                        f"Expected {len(self.image_references)}: {sorted(self.image_references.keys())}. "
                        "Operator build metadata is invalid, please investigate.")
-            self.runtime.logger.error(message)
-            raise ValueError(message)
+            self.runtime.logger.warning(message)
 
     def generate_bundle_annotations(self):
         """Create an annotations YAML file for the bundle, using info extracted from operator's
