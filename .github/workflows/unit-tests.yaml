@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
-      - name: Install git and make
+      - name: Install git
         run: dnf install -y git
       - uses: actions/checkout@v4
         with:
