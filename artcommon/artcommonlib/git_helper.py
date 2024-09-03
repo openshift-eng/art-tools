@@ -51,7 +51,8 @@ def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=
         exectools.fire_and_forget(repo_dir, 'git fetch --all')
         gitargs.extend(['--dissociate', '--reference-if-able', repo_dir])
 
-    gitargs.append('--recurse-submodules')
+    if '--recurse-submodules' not in gitargs:
+        gitargs.append('--recurse-submodules')
 
     LOGGER.info(f'Cloning to: {target_dir}')
 
