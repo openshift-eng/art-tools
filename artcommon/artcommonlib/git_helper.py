@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import tempfile
@@ -13,6 +14,9 @@ LOGGER = logging.getLogger(__name__)
 
 def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=0,
               git_cache_dir: Optional[str] = None):
+
+    # Do not change the outer scope param list
+    gitargs = copy.copy(gitargs)
 
     if git_cache_dir:
         Path(git_cache_dir).mkdir(parents=True, exist_ok=True)
@@ -51,8 +55,7 @@ def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=
         exectools.fire_and_forget(repo_dir, 'git fetch --all')
         gitargs.extend(['--dissociate', '--reference-if-able', repo_dir])
 
-    if '--recurse-submodules' not in gitargs:
-        gitargs.append('--recurse-submodules')
+    gitargs.append('--recurse-submodules')
 
     LOGGER.info(f'Cloning to: {target_dir}')
 
