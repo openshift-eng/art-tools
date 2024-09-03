@@ -1025,7 +1025,7 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
         public_repo_url = convert_remote_git_to_ssh(public_repo_url)
         clone_dir = os.path.join(runtime.working_dir, 'clones', dgk)
         # Clone the private url to make the best possible use of our doozer_cache
-        git_clone(source_repo_url, clone_dir, git_cache_dir=runtime.git_cache_dir)
+        git_clone(source_repo_url, clone_dir, gitargs=[], git_cache_dir=runtime.git_cache_dir)
 
         with Dir(clone_dir):
             exectools.cmd_assert(f'git remote add public {public_repo_url}')
