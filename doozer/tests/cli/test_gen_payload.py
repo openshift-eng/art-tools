@@ -256,7 +256,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                                                   dest_pullspec="pullspec_1", build_inspector=bbii)
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
         payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        print(test_payload_entry.build_inspector)
         self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
@@ -275,7 +274,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                                                   dest_pullspec="pullspec_1", build_inspector=bbii)
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
         payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        print(test_payload_entry.build_inspector)
         self.assertEqual(payload_entries,
                          (dict(ppc64le=dict()), dict(ppc64le=dict(tag1=test_payload_entry))))
 
@@ -341,6 +339,55 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertFalse(permitted)
         self.assertTrue(report["spam"][0]["permitted"])
         self.assertFalse(report["eggs"][0]["permitted"])
+
+    def test_summarize_issue_permits_embargo(self):
+        """
+        If embargoed content is present, it should not be permitted
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component == "component2")
+        permitted, report = gpcli.summarize_issue_permits(ai)
+        self.assertFalse(permitted)
+        self.assertTrue(report["component2"][0]["permitted"])
+
+    def test_summarize_issue_permits_embargo_more_than_one(self):
+        """
+        If more than one embargoed content is present, the payload should not be permitted, even if one of them is permitted
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component == "component2")
+        permitted, report = gpcli.summarize_issue_permits(ai)
+        self.assertFalse(permitted)
+        self.assertTrue(report["component2"][0]["permitted"])
+
+    def test_summarize_issue_permits_embargo_unacknowledged(self):
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STANDARD))
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component == "component2")
+
+        with self.assertRaises(IOError):
+            gpcli.summarize_issue_permits(ai)
+
+    def test_summarize_issue_permits_embargo_acknowledged(self):
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STANDARD), embargo_permit_ack=True)
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component in ["component1", "component2"])
+        permitted, report = gpcli.summarize_issue_permits(ai)
+        self.assertTrue(permitted)
 
     def test_assess_assembly_viability(self):
         gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True, runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
