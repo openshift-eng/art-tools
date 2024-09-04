@@ -494,7 +494,12 @@ class PromotePipeline:
         # sync rhcos srpms
         await self.sync_rhcos_srpms(assembly_type, data)
 
-        self.create_cincinnati_prs(assembly_type, data)
+        if assembly_type == AssemblyTypes.CUSTOM:
+            self._logger.info("Skipping PR creation for custom assembly")
+        elif self.skip_cincinnati_prs or self.runtime.dry_run:
+            self._logger.info("Skipping Cincinnati PRs creation since skip param is set")
+        else:
+            self.create_cincinnati_prs(assembly_type, data)
 
         try:
             # send promote complete email
@@ -1700,21 +1705,9 @@ class PromotePipeline:
             self.runtime.config["email"][f"qe_notification_recipients_ocp{release_version[0]}"],
             subject, content, archive_dir=email_dir, dry_run=self.runtime.dry_run)
 
-    def create_cincinnati_prs(self, assembly_type, release_info):
+    async def create_cincinnati_prs(self, assembly_type, release_info):
         """ Create Cincinnati PRs for the release.
         """
-        if assembly_type == AssemblyTypes.CUSTOM:
-            self._logger.info("Skipping PR creation for custom assembly")
-            return
-
-        if self.skip_cincinnati_prs:
-            self._logger.info("Skipping Cincinnati PRs creation since skip param is set")
-            return
-
-        if self.runtime.dry_run:
-            self._logger.info("[DRY RUN] Would have created Cincinnati PRs.")
-            return
-
         candidate_pr_note = ""
         justifications = release_info["justifications"]
         if justifications:
@@ -1722,18 +1715,52 @@ class PromotePipeline:
 
         from_releases = [arch_info["from_release"].split(":")[-1]
                          for arch_info in release_info["content"].values() if "from_release" in arch_info]
-
         advisory_id = 0
         if "advisory" in release_info and release_info["advisory"]:
             advisory_id = release_info["advisory"]
 
-        jenkins.start_cincinnati_prs(
-            from_releases,
-            release_info["name"],
-            advisory_id,
-            candidate_pr_note,
-            self.skip_ota_notification
-        )
+        release_name = release_info["name"]
+        branchName = f"pr-candidate-{release_name}"
+        pr_title = f"Enable {release_name} in candidate channel"
+        extraSlackComment = ""
+        if advisory_id != 0:
+            internal_errata_url = f"https://errata.devel.redhat.com/advisory/{advisory_id}"
+            pr_messages = f"Please merge immediately. This PR does not need to wait for an advisory to ship, but the associated advisory is {internal_errata_url} ." + candidate_pr_note
+            extraSlackComment = "automatically approved"
+        elif assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            pr_messages = "This is a release candidate. There is no advisory associated. \nPlease merge immediately." + candidate_pr_note
+        else:
+            pr_messages = "Promoting a hotfix release (e.g. for a single customer). There is no advisory associated. \nPlease merge immediately."
+
+        # create a forked branch
+        github_client = Github(os.environ.get("GITHUB_TOKEN"))
+        upstream_repo = github_client.get_repo("openshift/cincinnati-graph-data")
+        for branch in upstream_repo.get_branches():
+            if branch.name == branchName:
+                upstream_repo.get_git_ref(f"heads/{branchName}").delete()
+        fork_branch = upstream_repo.create_git_ref(f"refs/heads/{branchName}", upstream_repo.get_branch("master").commit.sha)
+        self._logger.info("Created fork branch ref %s", fork_branch.ref)
+        # edit channel file
+        candidate_content = upstream_repo.get_contents("internal-channels/candidate.yaml", ref=branchName)
+        file_content = candidate_content.decoded_content.decode("utf-8") + f"\n- {release_name}"
+        upstream_repo.update_file("internal-channels/candidate.yaml", pr_title, file_content, candidate_content.sha, branch=branchName)
+        try:
+            pr = upstream_repo.create_pull(title=pr_title, body=pr_messages, base="master", head=branchName)
+            pr.add_to_labels("lgtm", "approved")
+            self._logger.info(f"Cincinnati PR {pr.html_url} created")
+        except GithubException as e:
+            self._logger.warning(f"Failed to update upstream repo: {e}")
+
+        if not self.skip_ota_notification:
+            new_slackclient = self.runtime.new_slack_client()
+            new_slackclient.bind_channel("#forum-ocp-release")
+            slack_msg = f"ART has opened Cincinnati PRs for {release_name}:\n"
+            if from_releases:
+                slack_msg += "This release was promoted using nightly\n"
+                for nightly in from_releases:
+                    slack_msg += f"registry.ci.openshift.org/ocp/release:{nightly}\n"
+            slack_msg += f"{pr.html_url}\n" + extraSlackComment
+            await new_slackclient.say_in_thread(slack_msg)
 
     async def ocp_doomsday_backup(self):
         """

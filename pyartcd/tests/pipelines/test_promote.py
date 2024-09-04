@@ -513,7 +513,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.wait_for_stable.assert_any_await("4.10.99", "ppc64le", "4-stable-ppc64le")
         pipeline.wait_for_stable.assert_any_await("4.10.99", "aarch64", "4-stable-arm64")
         pipeline.send_image_list_email.assert_awaited_once_with("4.10.99", 2, ANY)
-        start_cincinnati_prs.assert_called_once_with(['nightly', 'nightly', 'nightly', 'nightly'], "4.10.99", 2, '', False)
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
