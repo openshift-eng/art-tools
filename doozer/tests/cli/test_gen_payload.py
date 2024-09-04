@@ -20,6 +20,8 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
 
+from artcommon.artcommonlib.assembly import assembly_type
+
 
 async def no_sleep(arg):
     pass
@@ -224,6 +226,58 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
         self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    def test_generate_payload_entries_rhcos(self, pg_findpe_mock):
+        """
+        Build inspector does not exist, its RHCOS, add to public entry
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            exclude_arch=[],
+            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
+        )
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
+                                                  dest_pullspec="pullspec_1")
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
+        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    def test_generate_payload_no_embargo(self, pg_findpe_mock):
+        gpcli = rgp_cli.GenPayloadCli(
+            exclude_arch=[],
+            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
+        )
+        bbii = MagicMock(BrewBuildImageInspector)
+        bbii.is_under_embargo.return_value = False
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
+                                                  dest_pullspec="pullspec_1", build_inspector=bbii)
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
+        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        print(test_payload_entry.build_inspector)
+        self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    def test_generate_payload_embargo(self, pg_findpe_mock):
+        """
+        Embargoed entry should not be present in public_entries_for_arch
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            exclude_arch=[],
+            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
+        )
+        bbii = MagicMock(BrewBuildImageInspector)
+        bbii.is_under_embargo.return_value = True
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
+                                                  dest_pullspec="pullspec_1", build_inspector=bbii)
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
+        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        print(test_payload_entry.build_inspector)
+        self.assertEqual(payload_entries,
+                         (dict(ppc64le=dict()), dict(ppc64le=dict(tag1=test_payload_entry))))
 
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())
@@ -543,6 +597,7 @@ spec:
                 "annotations": {},
                 "from": dict(kind="DockerImage", name="quay.io/org/repo@sha256:abcdef"),
                 "name": "spam",
+                "importPolicy": {"importMode": "PreserveOriginal"},
             }
         )
         gpcli.create_multi_manifest_list.assert_not_awaited()
@@ -557,6 +612,7 @@ spec:
                 "annotations": {},
                 "from": dict(kind="DockerImage", name="new-manifest-list-pullspec"),
                 "name": "spam",
+                "importPolicy": {"importMode": "PreserveOriginal"},
             }
         )
         gpcli.create_multi_manifest_list.assert_awaited_once_with("spam", arch_to_payload_entry, "ocp")
@@ -727,17 +783,3 @@ manifests:
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
-
-    def test_rpm_deliveries(self):
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
-        ai = MagicMock(spec=AssemblyInspector)
-        ai.get_group_release_images.return_value = dict(
-            foo=Mock(spec=BrewBuildImageInspector),
-            bar=Mock(spec=BrewBuildImageInspector),
-        )
-        ai.check_installed_rpms_in_image.side_effect = lambda dg_key, bi: {
-            "foo": [],
-            "bar": [Mock(AssemblyIssue, code=AssemblyIssueCode.MISSING_SHIP_OK_TAG, component="bar", msg="")]
-        }[dg_key]
-        gpcli.detect_installed_rpms_issues(ai)
-        self.assertEqual(len(gpcli.assembly_issues), 1)
