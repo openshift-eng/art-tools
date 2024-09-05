@@ -204,7 +204,7 @@ class BuildRhcosPipeline:
         """Wait for all builds for this version to complete, and give status updates on stderr"""
         builds_seen: Dict[Tuple, str] = {}
         completed_builds: Dict[Tuple, Dict] = {}
-        for _ in range(2160):  # x 10s = about 6 hours (slower if bad/no response)
+        for _ in range(2880):  # x 10s = about 8 hours (slower if bad/no response)
             new_builds_seen: Dict[Tuple, str] = {
                 (b["job"], b["number"]): b["description"] or "[no description yet]"
                 for b in self.query_existing_builds()
