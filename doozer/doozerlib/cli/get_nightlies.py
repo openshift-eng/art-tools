@@ -4,6 +4,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 
 import aiohttp
 import click
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
@@ -335,6 +336,7 @@ class Nightly:
         return f"{self.name}: {self.commit_for_tag}"
 
     @exectools.limit_concurrency(500)
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def retrieve_image_info_async(self, pullspec: str) -> Model:
         """pull/cache/return json info for a container pullspec (enable concurrency)"""
         if pullspec not in image_info_cache:
