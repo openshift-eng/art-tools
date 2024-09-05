@@ -15,7 +15,7 @@ setup(
     url="https://github.com/openshift-eng/art-tools/tree/main/artcommon",
     license="Apache License, Version 2.0",
     packages=find_packages(exclude=["tests", "tests.*"]),
-    install_requirements=INSTALL_REQUIRES,
+    install_requires=INSTALL_REQUIRES,
     dependency_links=[],
     python_requires='>=3.8',
     classifiers=[
