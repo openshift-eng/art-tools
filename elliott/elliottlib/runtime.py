@@ -1,19 +1,17 @@
 import atexit
 from contextlib import contextmanager
-import logging
 import os
 import re
 import shutil
 import tempfile
 from multiprocessing import Lock, RLock
 import time
-from typing import Dict, Optional, Tuple
-import warnings
+from typing import Dict, Optional
 
 import click
 import yaml
 
-from artcommonlib import logutil, gitdata
+from artcommonlib import gitdata
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
@@ -51,9 +49,10 @@ class Runtime(GroupRuntime):
     log_lock = Lock()
 
     def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
         # initialize defaults in case no value is given
         self.verbose = False
-        self.quiet = False
         self.data_path = None
         self.load_wip = False
         self.load_disabled = False
@@ -87,16 +86,6 @@ class Runtime(GroupRuntime):
         self.session_pool = {}
         self.session_pool_available = {}
 
-        self.initialized = False
-
-    @property
-    def logger(self):
-        """ Get the runtime logger of Elliott.
-        Your module should generally use `logging.getLogger(__name__)` instead of using this one.
-        """
-        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`", DeprecationWarning)
-        return self._logger
-
     def get_major_minor(self):
         return self.group_config.vars.MAJOR, self.group_config.vars.MINOR
 
@@ -128,9 +117,10 @@ class Runtime(GroupRuntime):
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
     def initialize(self, mode='none', no_group=False, disabled=None):
-
         if self.initialized:
             return
+
+        super().initialize()
 
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")
@@ -154,9 +144,6 @@ class Runtime(GroupRuntime):
                 os.makedirs(self.working_dir)
 
         self.debug_log_path = os.path.join(self.working_dir, 'debug.log')
-
-        if not self._logger:
-            self.initialize_logging()
 
         if disabled is not None:
             self.load_disabled = disabled
@@ -271,25 +258,6 @@ class Runtime(GroupRuntime):
             self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
 
         self.initialized = True
-
-    def initialize_logging(self):
-        if self.initialized or self._logger:
-            return
-
-        # Three flags control the output modes of the command:
-        # --verbose prints logs to CLI as well as to files
-        # --debug increases the log level to produce more detailed internal
-        #         behavior logging
-        # --quiet opposes both verbose and debug
-        if self.debug:
-            log_level = logging.DEBUG
-        elif self.quiet:
-            log_level = logging.WARN
-        else:
-            log_level = logging.INFO
-
-        logutil.setup_logging(log_level, self.debug_log_path)
-        self._logger = logging.getLogger('elliottlib')
 
     def image_metas(self):
         return list(self.image_map.values())

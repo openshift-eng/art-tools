@@ -1,6 +1,4 @@
-import warnings
-
-from artcommonlib import logutil, exectools, gitdata
+from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
 from artcommonlib.model import Model, Missing
@@ -17,7 +15,6 @@ import atexit
 import datetime
 import yaml
 import click
-import logging
 import traceback
 import urllib.parse
 import signal
@@ -82,10 +79,10 @@ class Runtime(GroupRuntime):
     log_lock = Lock()
 
     def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
         # initialize defaults in case no value is given
         self.verbose = False
-        self.quiet = False
-        self.debug = False
         self.load_wip = False
         self.load_disabled = False
         self.data_path = None
@@ -165,8 +162,6 @@ class Runtime(GroupRuntime):
         # See registry_repo.
         self.public_upstreams = {}
 
-        self.initialized = False
-
         # Will be loaded with the streams.yml Model
         self.streams = Model(dict_to_model={})
 
@@ -201,14 +196,6 @@ class Runtime(GroupRuntime):
             self.rhpkg_config_lst = self.rhpkg_config.split()
         else:
             self.rhpkg_config = ''
-
-    @property
-    def logger(self):
-        """ Get the runtime logger of Doozer.
-        Your module should generally use `logging.getLogger(__name__)` instead of using this one.
-        """
-        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`", DeprecationWarning)
-        return self._logger
 
     def get_releases_config(self):
         if self.releases_config is not None:
@@ -285,6 +272,8 @@ class Runtime(GroupRuntime):
         if self.initialized:
             return
 
+        super().initialize()
+
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")
             exit(1)
@@ -342,8 +331,6 @@ class Runtime(GroupRuntime):
 
         if disabled is not None:
             self.load_disabled = disabled
-
-        self.initialize_logging()
 
         self.init_state()
 
@@ -651,26 +638,6 @@ class Runtime(GroupRuntime):
             self.clone_distgits()
 
         self.initialized = True
-
-    def initialize_logging(self):
-
-        if self.initialized or self._logger:
-            return
-
-        # Three flags control the output modes of the command:
-        # --verbose prints logs to CLI as well as to files
-        # --debug increases the log level to produce more detailed internal
-        #         behavior logging
-        # --quiet opposes both verbose and debug
-        if self.debug:
-            log_level = logging.DEBUG
-        elif self.quiet:
-            log_level = logging.WARN
-        else:
-            log_level = logging.INFO
-
-        logutil.setup_logging(log_level, self.debug_log_path)
-        self._logger = logging.getLogger('doozerlib')
 
     def build_jira_client(self) -> JIRA:
         """
