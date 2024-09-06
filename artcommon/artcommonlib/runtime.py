@@ -1,13 +1,75 @@
+import logging
+import os
+import traceback
+import warnings
 from abc import ABC, abstractmethod
+
+from artcommonlib import logutil
+from artcommonlib.konflux.konflux_db import KonfluxDb
+
 
 # an abstract class intended to be used by anything looking for config specific to a single
 # ocp-build-data group.
 
 
 class GroupRuntime(ABC):
+    def __init__(self, **kwargs):
+        self.debug = False
+        self.quiet = False
+        self._logger = None
+        self.debug_log_path = None
 
-    # right now we're only interested in guaranteeing this has a group_config property
+        self.working_dir = None
+
+        self.initialized = False
+
+        self.konflux_db = None
+
+        for key, val in kwargs.items():
+            self.__dict__[key] = val
+
+    def initialize(self):
+        self.initialize_logging()
+        self.initialize_konxflux_db()
+
+    def initialize_logging(self):
+        self.debug_log_path = os.path.join(self.working_dir, 'debug.log')
+
+        if self.initialized or self._logger:
+            return
+
+        # Three flags control the output modes of the command:
+        # --verbose prints logs to CLI as well as to files
+        # --debug increases the log level to produce more detailed internal
+        #         behavior logging
+        # --quiet opposes both verbose and debug
+        if self.debug:
+            log_level = logging.DEBUG
+        elif self.quiet:
+            log_level = logging.WARN
+        else:
+            log_level = logging.INFO
+
+        logutil.setup_logging(log_level, self.debug_log_path)
+        self._logger = logging.getLogger('artcommonlib')
+
+    def initialize_konxflux_db(self):
+        try:
+            self.konflux_db = KonfluxDb()
+        except Exception as err:
+            self._logger.warning('Cannot connect to the Konflux DB: %s\n%s', str(err), traceback.format_exc())
+
     @property
     @abstractmethod
     def group_config(self):
         pass
+
+    @property
+    def logger(self):
+        """ Get the runtime logger.
+        Your module should generally use `logging.getLogger(__name__)` instead of using this one.
+        """
+
+        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`",
+                      DeprecationWarning)
+        return self._logger
