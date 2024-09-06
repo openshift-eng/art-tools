@@ -77,12 +77,14 @@ class RepositoryType(Enum):
               help="Also create a release payload for multi-arch/heterogeneous clusters.")
 @click.option("--moist-run", default=False, is_flag=True,
               help="Mirror and determine tags but do not actually update imagestreams.")
+@click.option("--embargo-permit-ack", default=False, is_flag=True,
+              help="Allow embargoed builds to sync publicly in named assemblies")
 @click_coroutine
 @pass_runtime
 async def release_gen_payload(runtime: Runtime, is_name: str, is_namespace: str, organization: str,
                               repository: str, private_repository: str, release_repository: str, output_dir: str,
                               exclude_arch: Tuple[str, ...], skip_gc_tagging: bool, emergency_ignore_issues: bool,
-                              apply: bool, apply_multi_arch: bool, moist_run: bool):
+                              apply: bool, apply_multi_arch: bool, moist_run: bool, embargo_permit_ack: bool):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
 assembly. The tags may not be valid unless --apply or --moist-run triggers mirroring.
@@ -143,7 +145,7 @@ read and propagate/expose this annotation in its display of the release image.
         output_dir,
         exclude_arch,
         skip_gc_tagging, emergency_ignore_issues,
-        apply, apply_multi_arch, moist_run
+        apply, apply_multi_arch, moist_run, embargo_permit_ack
     ).run()
 
 
@@ -269,7 +271,7 @@ class GenPayloadCli:
                  repository: str = None, private_repository: str = None, release_repository: str = None,
                  output_dir: str = None, exclude_arch: Tuple[str] = None, skip_gc_tagging: bool = False,
                  emergency_ignore_issues: bool = False, apply: bool = False, apply_multi_arch: bool = False,
-                 moist_run: bool = False):
+                 moist_run: bool = False, embargo_permit_ack: bool = False):
 
         self.runtime = runtime
         self.logger = runtime.logger if runtime else MagicMock()  # in tests, blackhole logs by default
@@ -300,6 +302,8 @@ class GenPayloadCli:
         self.privacy_modes: List[bool] = [False]
         # do we proceed with this payload after weighing issues against permits?
         self.payload_permitted = False
+        # Allows embargoed builds to be released
+        self.embargo_permit_ack = embargo_permit_ack
 
     @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
@@ -595,7 +599,7 @@ class GenPayloadCli:
         Returns a dict of dicts, keyed by architecture, then by payload component name.
         """
 
-        entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
+        public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         for arch in self.runtime.arches:
             if arch in self.exclude_arch:
@@ -604,16 +608,40 @@ class GenPayloadCli:
             # No adjustment for private or public; the assembly's canonical payload content is the same.
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
-            issues: List[AssemblyIssue]
-            entries, issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
+            payload_issues: List[AssemblyIssue]
+            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
 
-            # Exclude issues for now, for private repo
-            private_entries, _ = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
-            entries_for_arch[arch] = entries
+            public_entries: Dict[str, PayloadEntry] = dict()
+            for k, v in entries.items():
+                if not v.build_inspector:
+                    # Its RHCOS, since it doesn't have a build inspector. Put it in for now, but change once RHCOS
+                    # supports private nightlies
+                    public_entries[k] = v
+                    continue
+
+                if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
+                    # It's an embargoed build. Filter it out if its stream
+                    continue
+
+                public_entries[k] = v
+
+            public_entries_for_arch[arch] = public_entries
+            self.assembly_issues.extend(payload_issues)
+
+            # Report issues for any embargoed content being made public.
+            # If releasing after embargo lift, these can be permitted using 'EMBARGOED_CONTENT' code
+            embargo_issues = PayloadGenerator.embargo_issues_for_payload(public_entries, arch)
+            self.assembly_issues.extend(embargo_issues)
+
+            private_entries, private_payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
             private_entries_for_arch[arch] = private_entries
-            self.assembly_issues.extend(issues)
 
-        return entries_for_arch, private_entries_for_arch
+            # Check to see if there are private only issues, and add them to the list of assembly issues
+            private_only_issues = set(private_payload_issues) - set(payload_issues)
+
+            self.assembly_issues.extend(list(private_only_issues))
+
+        return public_entries_for_arch, private_entries_for_arch
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.detect_extend_payload_entry_issues")
     async def detect_extend_payload_entry_issues(self, assembly_inspector: AssemblyInspector):
@@ -706,17 +734,29 @@ class GenPayloadCli:
         Check whether the issues found are permitted,
         and collect issues per component into a serializable report
         """
-
+        permitted_non_acknowledged_embargoed_issues = []
         payload_permitted = True
         assembly_issues_report: Dict[str, List[Dict]] = dict()
         for ai in self.assembly_issues:
             permitted = assembly_inspector.does_permit(ai)
+
+            if self.runtime.assembly_type is not AssemblyTypes.STREAM and ai.code == AssemblyIssueCode.EMBARGOED_CONTENT and permitted:
+                # If this is not a STREAM run, check to see if there are any permitted embargoed content
+                # If there is, --embargo-permit-ack must be specified in build-sync params, as the second and final gate
+                # before letting embargoed builds from being synced to public quay
+                if not self.embargo_permit_ack:
+                    permitted_non_acknowledged_embargoed_issues.append(ai.component)
+
             payload_permitted &= permitted  # If anything not permitted, payload not permitted
             assembly_issues_report.setdefault(ai.component, []).append(dict(
                 code=ai.code.name,
                 msg=ai.msg,
                 permitted=permitted
             ))
+
+        if permitted_non_acknowledged_embargoed_issues:
+            raise IOError(f"Embargoed components found: {set(permitted_non_acknowledged_embargoed_issues)}; "
+                          "must specify --embargo-permit-ack flag to publish private content")
 
         return payload_permitted, assembly_issues_report
 
@@ -773,13 +813,14 @@ class GenPayloadCli:
 
         await asyncio.sleep(120)
 
-        # Update the imagestreams being monitored by the release controller.
-        tasks = []
-        for arch, payload_entries in self.payload_entries_for_arch.items():
-            for private_mode in self.privacy_modes:
+        # Updating public and private image streams
+        for private_mode, payload_entries_for_each_arch_iter in [(False, self.payload_entries_for_arch), (True, self.private_payload_entries_for_arch)]:
+            tasks = []
+            for arch, payload_entries in payload_entries_for_each_arch_iter.items():
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
-        await asyncio.gather(*tasks)
+                tasks.append(self.generate_specific_payload_imagestreams(
+                    arch, private_mode, payload_entries, multi_specs))
+            await asyncio.gather(*tasks)
 
         if self.apply_multi_arch:
             if self.runtime.group_config.multi_arch.enabled:
@@ -1895,4 +1936,23 @@ class PayloadGenerator:
             tasks.append(PayloadGenerator._check_nightly_consistency(assembly_inspector, nightly, arch))
         results = await asyncio.gather(*tasks)
         issues.extend([issue for result in results for issue in result])
+        return issues
+
+    @staticmethod
+    def embargo_issues_for_payload(entries: Dict[str, PayloadEntry], arch: str) -> List[AssemblyIssue]:
+        """
+        Check to see if there are any embargoed builds in public image stream tags
+        """
+        issues = []
+        for payload_tag, entry in entries.items():
+            if not entry.build_inspector:
+                # Probably RHCOS
+                continue
+
+            if entry.build_inspector.is_under_embargo():
+                issues.append(AssemblyIssue(
+                    f"Found embargoed build {entry.build_inspector.get_nvr()} in payload entries for arch {arch}",
+                    component=entry.image_meta.name,
+                    code=AssemblyIssueCode.EMBARGOED_CONTENT
+                ))
         return issues

@@ -20,9 +20,12 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
 
+from artcommon.artcommonlib.assembly import assembly_type
+
 
 async def no_sleep(arg):
     pass
+
 
 rgp_cli.asyncio.sleep = no_sleep
 
@@ -171,6 +174,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             nonlocal build_id
             build_id += 1
             return dict(spam=dict(id=build_id))
+
         ai = flexmock(Mock(AssemblyInspector), get_group_rpm_build_dicts=rpm_build_dict)
 
         # test when we should be tagging for GC prevention
@@ -209,15 +213,69 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues, ["stuff"])
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
-    def test_generate_payload_entries(self, pg_fpe_mock):
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.embargo_issues_for_payload")
+    def test_generate_payload_entries(self, pg_eissuesfp_mock, pg_findpe_mock):
         gpcli = rgp_cli.GenPayloadCli(
             exclude_arch=["s390x"],
             runtime=MagicMock(arches=["ppc64le", "s390x"]),
         )
-        pg_fpe_mock.return_value = ("entries", ["issues"])
+        pg_eissuesfp_mock.return_value = ["embargo_issues"]
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="spam"), issues=[], dest_pullspec="dummy")
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), ["issues"])
         e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, (dict(ppc64le="entries"), dict(ppc64le="entries")))
-        self.assertEqual(gpcli.assembly_issues, ["issues"])
+        self.assertEqual(e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+        self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    def test_generate_payload_entries_rhcos(self, pg_findpe_mock):
+        """
+        Build inspector does not exist, its RHCOS, add to public entry
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            exclude_arch=[],
+            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
+        )
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
+                                                  dest_pullspec="pullspec_1")
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
+        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    def test_generate_payload_no_embargo(self, pg_findpe_mock):
+        gpcli = rgp_cli.GenPayloadCli(
+            exclude_arch=[],
+            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
+        )
+        bbii = MagicMock(BrewBuildImageInspector)
+        bbii.is_under_embargo.return_value = False
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
+                                                  dest_pullspec="pullspec_1", build_inspector=bbii)
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
+        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+
+    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
+    def test_generate_payload_embargo(self, pg_findpe_mock):
+        """
+        Embargoed entry should not be present in public_entries_for_arch
+        """
+        gpcli = rgp_cli.GenPayloadCli(
+            exclude_arch=[],
+            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
+        )
+        bbii = MagicMock(BrewBuildImageInspector)
+        bbii.is_under_embargo.return_value = True
+
+        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
+                                                  dest_pullspec="pullspec_1", build_inspector=bbii)
+        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
+        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        self.assertEqual(payload_entries,
+                         (dict(ppc64le=dict()), dict(ppc64le=dict(tag1=test_payload_entry))))
 
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())
@@ -271,7 +329,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(gpcli.assembly_issues[0].code, AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS)
 
     def test_summarize_issue_permits(self):
-        gpcli = rgp_cli.GenPayloadCli()
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
         gpcli.assembly_issues = [
             Mock(AssemblyIssue, code=AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS, component="spam", msg=""),
             Mock(AssemblyIssue, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED, component="eggs", msg=""),
@@ -282,8 +340,57 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertTrue(report["spam"][0]["permitted"])
         self.assertFalse(report["eggs"][0]["permitted"])
 
+    def test_summarize_issue_permits_embargo(self):
+        """
+        If embargoed content is present, it should not be permitted
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component == "component2")
+        permitted, report = gpcli.summarize_issue_permits(ai)
+        self.assertFalse(permitted)
+        self.assertTrue(report["component2"][0]["permitted"])
+
+    def test_summarize_issue_permits_embargo_more_than_one(self):
+        """
+        If more than one embargoed content is present, the payload should not be permitted, even if one of them is permitted
+        """
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component == "component2")
+        permitted, report = gpcli.summarize_issue_permits(ai)
+        self.assertFalse(permitted)
+        self.assertTrue(report["component2"][0]["permitted"])
+
+    def test_summarize_issue_permits_embargo_unacknowledged(self):
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STANDARD))
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component == "component2")
+
+        with self.assertRaises(IOError):
+            gpcli.summarize_issue_permits(ai)
+
+    def test_summarize_issue_permits_embargo_acknowledged(self):
+        gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly_type=AssemblyTypes.STANDARD), embargo_permit_ack=True)
+        gpcli.assembly_issues = [
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component1", msg=""),
+            Mock(AssemblyIssue, code=AssemblyIssueCode.EMBARGOED_CONTENT, component="component2", msg=""),
+        ]
+        ai = flexmock(Mock(AssemblyInspector), does_permit=lambda x: x.component in ["component1", "component2"])
+        permitted, report = gpcli.summarize_issue_permits(ai)
+        self.assertTrue(permitted)
+
     def test_assess_assembly_viability(self):
-        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True)
+        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True, runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
 
         gpcli.payload_permitted, gpcli.emergency_ignore_issues = True, False
         gpcli.assess_assembly_viability()
@@ -302,15 +409,19 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_sync_payloads(self):
         runtime = MagicMock(group_config=Model(dict(multi_arch=dict(enabled=True))))
         gpcli = rgp_cli.GenPayloadCli(runtime, apply_multi_arch=True)
-        gpcli.payload_entries_for_arch = dict(x86_64=["x86_entries"], aarch64=["arm_entries"])
+        payload_entry_test = rgp_cli.PayloadEntry(
+            issues=[], dest_pullspec="eggs_pullspec",
+            build_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
+        )
+        gpcli.payload_entries_for_arch = {"x86_64": {"x86_entries": payload_entry_test}}
 
         gpcli.mirror_payload_content = AsyncMock()
         gpcli.generate_specific_payload_imagestreams = AsyncMock()
         gpcli.sync_heterogeneous_payloads = AsyncMock()
 
         await gpcli.sync_payloads()
-        self.assertEqual(gpcli.mirror_payload_content.await_count, 2)
-        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 2)
+        self.assertEqual(gpcli.mirror_payload_content.await_count, 1)
+        self.assertEqual(gpcli.generate_specific_payload_imagestreams.await_count, 1)
         gpcli.sync_heterogeneous_payloads.assert_awaited_once()
 
     @patch("aiofiles.open")
