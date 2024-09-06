@@ -390,7 +390,7 @@ class Metadata(object):
 
     def get_latest_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
                          build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
-                         el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None, only_public=False):
+                         el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
@@ -488,10 +488,6 @@ class Metadata(object):
                 # This latter check ensures that 'assembly.how' doesn't match a build from
                 # "assembly.howdy'.
                 refined = [b for b in builds if b['nvr'].endswith(assembly_suffix) or f'{assembly_suffix}.' in b['nvr']]
-
-                if only_public:
-                    # Only collect non-embargoed builds
-                    refined = [b for b in refined if ".p1." not in b['nvr']]
 
                 if refined and build_state == BuildStates.COMPLETE:
                     # A final sanity check to see if the build is tagged with something we

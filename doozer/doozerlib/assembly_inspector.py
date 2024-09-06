@@ -54,14 +54,6 @@ class AssemblyInspector:
             else:
                 self._release_image_inspectors[image_meta.distgit_key] = None
 
-        self._public_release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
-        for image_meta in runtime.get_for_release_image_metas():
-            latest_build_obj = image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target(), only_public=True)
-            if latest_build_obj:
-                self._public_release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
-            else:
-                self._public_release_image_inspectors[image_meta.distgit_key] = None
-
         # Preprocess rpm_deliveries group config
         # This is mainly to support weekly kernel delivery
         self._rpm_deliveries: Dict[str, RPMDelivery] = {}  # Dict[package_name] => per package RpmDelivery config
@@ -421,12 +413,6 @@ class AssemblyInspector:
         :return: Returns a map of distgit_key -> BrewImageInspector for each image built in this group. The value will be None if no build was found.
         """
         return self._release_image_inspectors
-
-    def get_public_group_release_images(self) -> Dict[str, Optional[BrewBuildImageInspector]]:
-        """
-        :return: Returns a map of distgit_key -> BrewImageInspector for each image built in this group. The value will be None if no build was found.
-        """
-        return self._public_release_image_inspectors
 
     def get_group_rpm_build_dicts(self, el_ver: int) -> Dict[str, Optional[Dict]]:
         """

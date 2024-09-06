@@ -611,8 +611,6 @@ class GenPayloadCli:
             payload_issues: List[AssemblyIssue]
             entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
 
-            public_only_entries, _ = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC), only_public_builds=True)
-
             public_entries: Dict[str, PayloadEntry] = dict()
             for k, v in entries.items():
                 if not v.build_inspector:
@@ -623,7 +621,6 @@ class GenPayloadCli:
 
                 if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
                     # It's an embargoed build. Filter it out if its stream
-                    public_entries[k] = public_only_entries[k]
                     continue
 
                 public_entries[k] = v
@@ -1587,7 +1584,7 @@ class PayloadGenerator:
 
     @classmethod
     def find_payload_entries(cls, assembly_inspector: AssemblyInspector,
-                             arch: str, dest_repo: str, only_public_builds=False) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
+                             arch: str, dest_repo: str) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
         """
         Returns a list of images which should be included in the architecture specific release payload.
         This includes images for our group's image metadata as well as RHCOS.
@@ -1597,7 +1594,7 @@ class PayloadGenerator:
         :return: Map[payload_tag_name] -> PayloadEntry.
         """
 
-        members: Dict[str, PayloadEntry] = cls._find_initial_payload_entries(assembly_inspector, arch, dest_repo, only_public_builds)
+        members: Dict[str, PayloadEntry] = cls._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
         members = cls._replace_missing_payload_entries(members, arch)
         rhcos_members, issues = cls._find_rhcos_payload_entries(assembly_inspector, arch)
         members.update(rhcos_members)
@@ -1605,12 +1602,12 @@ class PayloadGenerator:
 
     @staticmethod
     def _find_initial_payload_entries(assembly_inspector: AssemblyInspector,
-                                      arch: str, dest_repo: str, only_public_builds=False) -> Dict[str, PayloadEntry]:
+                                      arch: str, dest_repo: str) -> Dict[str, PayloadEntry]:
 
         # Maps release payload tag name to the PayloadEntry for the image.
         members: Dict[str, Optional[PayloadEntry]] = dict()
         for payload_tag, archive_inspector in \
-                PayloadGenerator.get_group_payload_tag_mapping(assembly_inspector, arch, only_public_builds).items():
+                PayloadGenerator.get_group_payload_tag_mapping(assembly_inspector, arch).items():
 
             if not archive_inspector:
                 # There is no build for this payload tag for this CPU arch. This
@@ -1784,7 +1781,7 @@ class PayloadGenerator:
 
     @staticmethod
     def get_group_payload_tag_mapping(assembly_inspector: AssemblyInspector,
-                                      arch: str, only_public_builds=False) -> Dict[str, Optional[ArchiveImageInspector]]:
+                                      arch: str) -> Dict[str, Optional[ArchiveImageInspector]]:
 
         """
         Each payload tag name used to map exactly to one release imagemeta. With the advent of '-alt' images,
@@ -1797,10 +1794,7 @@ class PayloadGenerator:
         brew_arch = brew_arch_for_go_arch(arch)  # Make certain this is brew arch nomenclature
         members: Dict[str, Optional[
             ArchiveImageInspector]] = dict()  # Maps release payload tag name to the archive which should populate it
-
-        group_release_images = assembly_inspector.get_public_group_release_images().items() if only_public_builds else assembly_inspector.get_group_release_images().items()
-
-        for dgk, build_inspector in group_release_images:
+        for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
 
             if build_inspector is None:
                 # There was no build for this image found associated with the assembly.
