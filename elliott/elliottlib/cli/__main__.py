@@ -28,6 +28,7 @@ import elliottlib.bzutil
 import elliottlib.brew
 import elliottlib.errata
 import elliottlib.exceptions
+from elliottlib.cli.find_konflux_builds_cli import find_k_builds_cli
 
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.util import progress_func, pbar_header
@@ -406,6 +407,7 @@ cli.add_command(create_cli)
 cli.add_command(change_state_cli)
 cli.add_command(find_bugs_sweep_cli)
 cli.add_command(find_builds_cli)
+cli.add_command(find_k_builds_cli)
 cli.add_command(tag_builds_cli)
 cli.add_command(tarball_sources_cli)
 cli.add_command(verify_cvp_cli)
