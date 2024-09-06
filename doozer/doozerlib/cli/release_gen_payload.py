@@ -620,6 +620,25 @@ class GenPayloadCli:
                     continue
 
                 if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
+                    public_build = v.image_meta.get_latest_build(default=None,
+                                                                 el_target=v.image_meta.branch_el_target(),
+                                                                 extra_pattern='*.p0.*')
+                    if not public_build:
+                        raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
+
+                    public_bbi = BrewBuildImageInspector(runtime=self.runtime, build=public_build)
+                    public_archive_inspector = public_bbi.get_image_archive_inspector(arch)
+                    public_entry = PayloadEntry(
+                        image_meta=v.image_meta,
+                        build_inspector=public_bbi,
+                        archive_inspector=public_archive_inspector,
+                        dest_pullspec=v.dest_pullspec,
+                        dest_manifest_list_pullspec=v.dest_manifest_list_pullspec,
+                        issues=list(),
+                    )
+
+                    self.logger.info(f'Replacing embargoed image {v.build_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream')
+                    public_entries[k] = public_entry
                     # It's an embargoed build. Filter it out if its stream
                     continue
 
