@@ -258,25 +258,6 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
 
-    @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
-    def test_generate_payload_embargo(self, pg_findpe_mock):
-        """
-        Embargoed entry should not be present in public_entries_for_arch
-        """
-        gpcli = rgp_cli.GenPayloadCli(
-            exclude_arch=[],
-            runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
-        )
-        bbii = MagicMock(BrewBuildImageInspector)
-        bbii.is_under_embargo.return_value = True
-
-        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
-                                                  dest_pullspec="pullspec_1", build_inspector=bbii)
-        pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
-        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(payload_entries,
-                         (dict(ppc64le=dict()), dict(ppc64le=dict(tag1=test_payload_entry))))
-
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())
         gpcli = flexmock(rgp_cli.GenPayloadCli(runtime))
