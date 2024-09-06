@@ -43,7 +43,7 @@ class BuildSyncPipeline:
 
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                  emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
-                 images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool):
+                 images: str, exclude_arches: str, skip_multiarch_payload: bool):
         self.runtime = runtime
         self.version = version
         self.group = f'openshift-{version}'
@@ -56,7 +56,6 @@ class BuildSyncPipeline:
         self.images = images
         self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
         self.skip_multiarch_payload = skip_multiarch_payload
-        self.embargo_permit_ack = embargo_permit_ack
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
         self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
@@ -346,8 +345,6 @@ class BuildSyncPipeline:
         ])
         if self.emergency_ignore_issues:
             cmd.append('--emergency-ignore-issues')
-        if self.embargo_permit_ack:
-            cmd.append('--embargo-permit-ack')
         if not self.skip_multiarch_payload:
             cmd.append('--apply-multi-arch')
         if self.exclude_arches:
@@ -475,14 +472,12 @@ class BuildSyncPipeline:
 @click.option("--skip-multiarch-payload", is_flag=True,
               help="If group/assembly has multi_arch.enabled, you can bypass --apply-multi-arch and the generation of a"
                    "heterogeneous release payload by setting this to true")
-@click.option("--embargo-permit-ack", is_flag=True, default=False,
-              help="To permit embargoed builds to be promoted after embargo lift")
 @pass_runtime
 @click_coroutine
 @start_as_current_span_async(TRACER, "build-sync")
 async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
-                     images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool):
+                     images: str, exclude_arches: str, skip_multiarch_payload: bool):
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
@@ -494,8 +489,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         doozer_data_gitref=data_gitref,
         images=images,
         exclude_arches=exclude_arches,
-        skip_multiarch_payload=skip_multiarch_payload,
-        embargo_permit_ack=embargo_permit_ack
+        skip_multiarch_payload=skip_multiarch_payload
     )
     span = trace.get_current_span()
     span.set_attributes({
