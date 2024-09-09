@@ -59,6 +59,7 @@ class KonfluxRebaser:
                  runtime: Runtime,
                  base_dir: Path,
                  source_resolver: SourceResolver,
+                 repo_type: str,
                  upcycle: bool = False, force_private_bit: bool = False,
                  record_logger: Optional[RecordLogger] = None,
                  source_modifier_factory=SourceModifierFactory(),
@@ -67,6 +68,7 @@ class KonfluxRebaser:
         self._runtime = runtime
         self._base_dir = base_dir
         self._source_resolver = source_resolver
+        self.repo_type = repo_type
         self.upcycle = upcycle
         self.force_private_bit = force_private_bit
         self._record_logger = record_logger
@@ -715,7 +717,7 @@ class KonfluxRebaser:
         dfp.add_lines(
             "\n# Start Konflux-specific steps",
             "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
-            "COPY .oit/signed.repo /etc/yum.repos.d/",
+            f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
             f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             "# End Konflux-specific steps\n\n",
             at_start=True,
