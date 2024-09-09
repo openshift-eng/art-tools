@@ -26,6 +26,7 @@ class KonfluxRebaseCli:
             release: str,
             embargoed: bool,
             force_yum_updates: bool,
+            repo_type: str,
             message: str,
             push: bool):
         self.runtime = runtime
@@ -33,6 +34,9 @@ class KonfluxRebaseCli:
         self.release = release
         self.embargoed = embargoed
         self.force_yum_updates = force_yum_updates
+        if repo_type not in ['signed', 'unsigned']:
+            raise click.BadParameter(f"repo_type must be one of 'signed' or 'unsigned'. Got: {repo_type}")
+        self.repo_type = repo_type
         self.message = message
         self.push = push
         self.upcycle = runtime.upcycle
@@ -48,6 +52,7 @@ class KonfluxRebaseCli:
             runtime=runtime,
             base_dir=base_dir,
             source_resolver=runtime.source_resolver,
+            repo_type=self.repo_type,
             upcycle=self.upcycle,
             force_private_bit=self.embargoed,
         )
@@ -74,11 +79,15 @@ class KonfluxRebaseCli:
 @click.option("--embargoed", is_flag=True, help="Add .p1 to the release string for all images, which indicates those images have embargoed fixes")
 @click.option("--force-yum-updates", is_flag=True, default=False,
               help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.")
+@click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
+              default="unsigned",
+              help="Repo group type to use (e.g. signed, unsigned).")
 @option_commit_message
 @option_push
 @pass_runtime
 @click_coroutine
-async def images_konflux_rebase(runtime: Runtime, version: str, release: str, embargoed: bool, force_yum_updates: bool, message: str, push: bool):
+async def images_konflux_rebase(runtime: Runtime, version: str, release: str, embargoed: bool, force_yum_updates: bool,
+                                repo_type: str, message: str, push: bool):
     """
     Refresh a group's konflux content from source content.
     """
@@ -88,6 +97,7 @@ async def images_konflux_rebase(runtime: Runtime, version: str, release: str, em
         release=release,
         embargoed=embargoed,
         force_yum_updates=force_yum_updates,
+        repo_type=repo_type,
         message=message,
         push=push,
     )
