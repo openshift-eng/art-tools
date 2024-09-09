@@ -101,13 +101,12 @@ class KonfluxImageBuilder:
         app_name = self._config.group_name.replace(".", "-")
         app_manifest = self._new_application(app_name, app_name)
         app = await self._create_or_patch(dyn_client, app_manifest)
-        self._logger.info(f"Created application: {app['metadata']['name']}")
+        self._logger.info(f"Using application: {app['metadata']['name']}")
 
         # Ensure the component resource exists
         component_name = f"{app_name}-{metadata.distgit_key}"
         dest_image_repo = self._config.output_repo
-        # dest_image_tag = f"{metadata.distgit_key}_{self._uuid_tag}"
-        dest_image_tag = f"{version}-{release}"
+        dest_image_tag = f"{metadata.get_component_name()}-{version}-{release}"
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
 
         component_manifest = self._new_component(
@@ -119,7 +118,7 @@ class KonfluxImageBuilder:
             default_revision,
         )
         component = await self._create_or_patch(dyn_client, component_manifest)
-        self._logger.info(f"Created component: {component['metadata']['name']}")
+        self._logger.info(f"Using component: {component['metadata']['name']}")
 
         # Create a PipelineRun
         arches = metadata.get_arches()
@@ -219,6 +218,7 @@ class KonfluxImageBuilder:
                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
                          build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret") -> dict:
         https_url = art_util.convert_remote_git_to_https(git_url)
+        # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
         template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
         template = jinja2.Template(template_content, autoescape=True)
         rendered = template.render({
@@ -229,11 +229,14 @@ class KonfluxImageBuilder:
 
         })
         obj = yaml.load(rendered)
+        # Those fields in the template are specific to an image. They need to be removed.
         del obj["metadata"]["name"]
         del obj["metadata"]["namespace"]
         del obj["metadata"]["annotations"]["pipelinesascode.tekton.dev/on-cel-expression"]
+        # Override the generated name with the provided one
         if generate_name:
             obj["metadata"]["generateName"] = generate_name
+        # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
@@ -265,6 +268,7 @@ class KonfluxImageBuilder:
                 self._logger.warning(f"[DRY RUN] Would have created {api_version}/{kind} {namespace}/{name}")
             return resource.ResourceInstance(dyn_client, manifest)
         if found:
+            self._logger.info(f"Patching {api_version}/{kind} {namespace}/{name}")
             new = await exectools.to_thread(
                 api.patch,
                 body=manifest,
@@ -272,6 +276,7 @@ class KonfluxImageBuilder:
                 content_type="application/merge-patch+json",
             )
         else:
+            self._logger.info(f"Creating {api_version}/{kind} {namespace}/{name}")
             new = await exectools.to_thread(
                 api.create,
                 namespace=namespace,
