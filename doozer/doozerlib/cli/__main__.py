@@ -37,6 +37,7 @@ from doozerlib.cli.images import images_clone, images_list, images_push_distgit,
     images_foreach, images_revert, images_merge, images_build_image, images_push, images_pull_image, images_show_tree, \
     images_print, distgit_config_template, query_rpm_version
 from doozerlib.cli.images_konflux import images_konflux_rebase
+from doozerlib.cli.images_konflux import images_konflux_build
 
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import analyze_debug_timing

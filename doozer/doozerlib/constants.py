@@ -30,6 +30,11 @@ KONFLUX_REPO_CA_BUNDLE_TMP_PATH = "/tmp"
 KONFLUX_REPO_CA_BUNDLE_FILENAME = "Current-IT-Root-CAs.pem"
 KONFLUX_REPO_CA_BUNDLE_HOST = "https://certs.corp.redhat.com/certs"
 WORKING_SUBDIR_KONFLUX_BUILD_SOURCES = "konflux_build_sources"
+KONFLUX_DEFAULT_PIPELINERUN_SERVICE_ACCOUNT = "appstudio-pipeline"
+KONFLUX_DEFAULT_PIPELINERUN_TIMEOUT = "1h0m0s"
+KONFLUX_DEFAULT_PIPRLINE_DOCKER_BUILD_BUNDLE_PULLSPEC = "quay.io/konflux-ci/tekton-catalog/pipeline-docker-build:devel"
+KONFLUX_DEFAULT_DEST_IMAGE_REPO = "quay.io/yuxzhu/test-ocp-v4-art-konflux-dev"  # FIXME: This is a temporary repo.
+
 
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
