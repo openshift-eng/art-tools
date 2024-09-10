@@ -1285,7 +1285,7 @@ __Change behavior of future PRs__:
 If you have any questions about this pull request, please reach out to `@release-artists` in the `#forum-ocp-art` coreos slack channel.
 """
 
-            parent_pr_url = None
+            parent_pr_urls = None
             parent_meta = image_meta.resolve_parent()
             if parent_meta:
                 if parent_meta.distgit_key in skipping_dgks:
@@ -1293,16 +1293,16 @@ If you have any questions about this pull request, please reach out to `@release
                     yellow_print(f'Image has parent {parent_meta.distgit_key} which was skipped; skipping self: {image_meta.distgit_key}')
                     continue
 
-                parent_pr_url = pr_dgk_map.get(parent_meta.distgit_key, None)
-                if parent_pr_url:
+                parent_pr_urls = pr_dgk_map.get(parent_meta.distgit_key, None)
+                if parent_pr_urls:
                     if parent_meta.config.content.source.ci_alignment.streams_prs.merge_first:
                         skipping_dgks.add(image_meta.distgit_key)
-                        yellow_print(f'Image has parent {parent_meta.distgit_key} open PR ({parent_pr_url[0]}) and streams_prs.merge_first==True; skipping PR opening for this image {image_meta.distgit_key}')
+                        yellow_print(f'Image has parent {parent_meta.distgit_key} open PR ({parent_pr_urls[0]}) and streams_prs.merge_first==True; skipping PR opening for this image {image_meta.distgit_key}')
                         continue
 
                     # If the parent has an open PR associated with it, make sure the
                     # child PR notes that the parent PR should merge first.
-                    pr_body += f'\nDepends on {parent_pr_url[0]} . Allow it to merge and then run `/test all` on this PR.'
+                    pr_body += f'\nDepends on {parent_pr_urls[0]} . Allow it to merge and then run `/test all` on this PR.'
 
             jenkins_build_url = None
             if open_prs:
@@ -1351,8 +1351,8 @@ If you have any questions about this pull request, please reach out to `@release
                 yellow_print('PR body would have been:')
                 yellow_print(pr_body)
 
-                if parent_pr_url:
-                    green_print(f'Would have identified dependency on PR: {parent_pr_url[0]}.')
+                if parent_pr_urls:
+                    green_print(f'Would have identified dependency on PR: {parent_pr_urls[0]}.')
                 if diff_text:
                     yellow_print('PR diff would have been:')
                     yellow_print(diff_text)
