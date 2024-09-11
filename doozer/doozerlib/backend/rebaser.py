@@ -186,7 +186,7 @@ class KonfluxRebaser:
 
         # If this image defines source modifications, apply them
         if metadata.config.content.source.modifications:
-            metadata_scripts_path = self._runtime.data_dir.joinpath("modifications")
+            metadata_scripts_path = os.path.join(self._runtime.data_dir, "modifications")
             self._run_modifications(metadata=metadata, dest_dir=dest_dir, metadata_scripts_path=metadata_scripts_path)
 
         # Given an input release string, make an actual release string
