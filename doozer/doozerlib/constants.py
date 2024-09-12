@@ -1,4 +1,5 @@
 RC_BASE_URL = "https://{arch}.ocp.releases.ci.openshift.org"
+RC_BASE_PRIV_URL = "https://openshift-release{arch}-priv.apps.ci.l2s4.p1.openshiftapps.com"
 
 GITHUB_TOKEN = "GITHUB_TOKEN"
 BREWWEB_URL = "https://brewweb.engineering.redhat.com/brew"
