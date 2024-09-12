@@ -46,7 +46,7 @@ class KonfluxBuildRecord:
     ]
 
     def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
-                 el_target: str = '', arches: list = [], rpms: list = [], parent_images: list = [],
+                 el_target: str = '', arches: list = [], installed_packages: list = [], parent_images: list = [],
                  source_repo: str = '', commitish: str = '', embargoed: bool = False, start_time: datetime = None,
                  end_time: datetime = None, artifact_type: ArtifactType = ArtifactType.IMAGE,
                  engine: Engine = Engine.KONFLUX, image_tag: str = '',
@@ -65,7 +65,7 @@ class KonfluxBuildRecord:
         self.el_target = el_target
         self.arches = arches
 
-        self.rpms = rpms
+        self.installed_packages = installed_packages
         self.parent_images = parent_images
 
         self.source_repo = source_repo

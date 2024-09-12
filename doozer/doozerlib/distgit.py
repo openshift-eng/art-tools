@@ -1289,6 +1289,11 @@ class ImageDistGitRepo(DistGitRepo):
                         traceback.print_exc()
                         self.logger.error(f'Unable to extract brew task information for {task_id}')
 
+    def get_installed_packages(self, image_pullspec) -> list:
+        bbii = BrewBuildImageInspector(self.runtime, image_pullspec)
+        installed_packages_dict = bbii.get_all_installed_package_build_dicts()
+        return [p['nvr'] for p in installed_packages_dict.values()]
+
     def update_konflux_db(self, build_info, success, scratch=False):
         if scratch:
             return
@@ -1296,6 +1301,8 @@ class ImageDistGitRepo(DistGitRepo):
         if not self.runtime.konflux_db:
             self.logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return
+
+        image_pullspec = build_info['extra']['image']['index']['pull'][0]
 
         self.logger.info('Storing build info in Konflux for Brew build %s', build_info['nvr'])
         try:
@@ -1309,7 +1316,7 @@ class ImageDistGitRepo(DistGitRepo):
                 assembly=self.runtime.assembly,
                 el_target=f'el{self.metadata.branch_el_target()}',
                 arches=self.metadata.get_arches(),
-                rpms=[],  # TODO
+                installed_packages=self.get_installed_packages(image_pullspec),
                 parent_images=build_info['extra']['image']['parent_images'],
                 source_repo=source_repo,
                 commitish=commitish,
@@ -1318,7 +1325,7 @@ class ImageDistGitRepo(DistGitRepo):
                 end_time=datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
                 artifact_type=ArtifactType.IMAGE,
                 engine=Engine.BREW,
-                image_tag=build_info['extra']['image']['index']['pull'][0],
+                image_tag=image_pullspec,
                 outcome=success,
                 job_url=os.getenv('BUILD_URL', 'n/a'),
                 pipeline_commit='n/a',
