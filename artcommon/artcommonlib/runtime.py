@@ -56,6 +56,9 @@ class GroupRuntime(ABC):
     def initialize_konxflux_db(self):
         try:
             self.konflux_db = KonfluxDb()
+            self._logger.info('Konflux DB initialized: using dataset %s on project %s',
+                              self.konflux_db.dataset_id, self.konflux_db.client.project)
+
         except Exception as err:
             self._logger.warning('Cannot connect to the Konflux DB: %s\n%s', str(err), traceback.format_exc())
 
