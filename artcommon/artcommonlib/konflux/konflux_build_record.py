@@ -12,17 +12,22 @@ from google.cloud.bigquery.table import Row
 LOGGER = logging.getLogger(__name__)
 
 
-class KonfluxBuildOutcome(Enum):
+class KonfluxEnum(Enum):
+    def __str__(self):
+        return self.value
+
+
+class KonfluxBuildOutcome(KonfluxEnum):
     FAILURE = 'failure'
     SUCCESS = 'success'
 
 
-class ArtifactType(Enum):
+class ArtifactType(KonfluxEnum):
     RPM = 'rpm'
     IMAGE = 'image'
 
 
-class Engine(Enum):
+class Engine(KonfluxEnum):
     KONFLUX = 'konflux'
     BREW = 'brew'
 
