@@ -1317,7 +1317,7 @@ class ImageDistGitRepo(DistGitRepo):
                 el_target=f'el{self.metadata.branch_el_target()}',
                 arches=self.metadata.get_arches(),
                 installed_packages=self.get_installed_packages(image_pullspec),
-                parent_images=build_info['extra']['image']['parent_images'],
+                parent_images=[build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()],
                 source_repo=source_repo,
                 commitish=commitish,
                 embargoed='p1' in build_info['release'].split('.'),
