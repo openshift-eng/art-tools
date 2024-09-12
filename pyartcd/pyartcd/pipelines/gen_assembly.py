@@ -77,8 +77,8 @@ class GenAssemblyPipeline:
         self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path if data_path else \
             self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
 
-        if self.skip_get_nightlies and len(self.nightlies) != 4:
-            raise ValueError("When using --skip-get-nightlies, nightlies for all 4 arches must be specified")
+        if self.skip_get_nightlies and len(self.nightlies) != len(self.arches):
+            raise ValueError(f"When using --skip-get-nightlies, nightlies for all given {len(self.arches)} arches must be specified")
 
     async def run(self):
         self._slack_client.bind_channel(self.group)
