@@ -33,7 +33,7 @@ class GenAssemblyPipeline:
     def __init__(self, runtime: Runtime, group: str, assembly: str, data_path: str,
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
                  custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
-                 auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str,
+                 auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
                  logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
@@ -46,6 +46,7 @@ class GenAssemblyPipeline:
         self.auto_trigger_build_sync = auto_trigger_build_sync
         self.custom = custom
         self.arches = arches
+        self.skip_get_nightlies = skip_get_nightlies
         if in_flight:
             self.in_flight = in_flight
         elif not custom and not pre_ga_mode:
@@ -76,6 +77,9 @@ class GenAssemblyPipeline:
         self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path if data_path else \
             self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
 
+        if self.skip_get_nightlies and len(self.nightlies) != 4:
+            raise ValueError("When using --skip-get-nightlies, nightlies for all 4 arches must be specified")
+
     async def run(self):
         self._slack_client.bind_channel(self.group)
         slack_response = await self._slack_client.say(
@@ -88,8 +92,9 @@ class GenAssemblyPipeline:
             if self.custom and (self.auto_previous or self.previous_list or self.in_flight):
                 raise ValueError("Specifying previous list for a custom release is not allowed.")
 
-            candidate_nightlies, latest_nightly = await asyncio.gather(
-                *[self._get_nightlies(), self._get_latest_accepted_nightly()])
+            if not self.skip_get_nightlies:
+                candidate_nightlies, latest_nightly = await asyncio.gather(
+                    *[self._get_nightlies(), self._get_latest_accepted_nightly()])
 
             self._logger.info("Generating assembly definition...")
             assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
@@ -103,8 +108,11 @@ class GenAssemblyPipeline:
             # Sends a slack message
             message = (f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
                        f"The inflight release is {self.in_flight}")
-            if latest_nightly not in candidate_nightlies:
-                message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
+            if not self.skip_get_nightlies:
+                if latest_nightly not in candidate_nightlies:
+                    message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
+            else:
+                message += '\n\n:warning: note that `gen-assembly` was run with `--skip-get-nightlies`'
 
             await self._slack_client.say(message, slack_thread)
 
@@ -298,15 +306,17 @@ class GenAssemblyPipeline:
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option('--previous', 'previous_list', metavar='EDGES', default=[], multiple=True, help='A list of releases that can upgrade to this release')
 @click.option('--auto-previous', 'auto_previous', is_flag=True, help='If specified, previous list is calculated from Cincinnati graph')
+@click.option('--skip-get-nightlies', 'skip_get_nightlies', is_flag=True, default=False, help='Skip get_nightlies_function (Use only for special cases)')
 @pass_runtime
 @click_coroutine
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
                        allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
                        auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
-                       previous_list: Tuple[str, ...], auto_previous: bool):
+                       previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool):
     pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, data_path=data_path,
                                    nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
                                    allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
                                    auto_trigger_build_sync=auto_trigger_build_sync,
-                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous, pre_ga_mode=pre_ga_mode)
+                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous,
+                                   pre_ga_mode=pre_ga_mode, skip_get_nightlies=skip_get_nightlies)
     await pipeline.run()
