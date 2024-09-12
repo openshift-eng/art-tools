@@ -1308,13 +1308,19 @@ class ImageDistGitRepo(DistGitRepo):
         try:
             source_repo, commitish = build_info['source'].split('#')
 
+            try:
+                release_target = self.org_release.split('.')[-1]
+            except KeyError:
+                release_target = ''
+            el_target = release_target if release_target else f'el{self.metadata.branch_el_target()}'
+
             build_record = KonfluxBuildRecord(
                 name=self.metadata.name,
                 group=self.runtime.group,
                 version=build_info['version'],
                 release=build_info['release'],
                 assembly=self.runtime.assembly,
-                el_target=f'el{self.metadata.branch_el_target()}',
+                el_target=el_target,
                 arches=self.metadata.get_arches(),
                 installed_packages=self.get_installed_packages(image_pullspec),
                 parent_images=[build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()],
