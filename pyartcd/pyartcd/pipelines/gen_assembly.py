@@ -81,8 +81,6 @@ class GenAssemblyPipeline:
             raise ValueError(f"When using --skip-get-nightlies, nightlies for all given {len(self.arches)} arches must be specified")
 
     async def run(self):
-        if self.runtime.dry_run:
-            jenkins.update_title("[DRY_RUN]")
         self._slack_client.bind_channel(self.group)
         slack_response = await self._slack_client.say(
             f":construction: Generating assembly definition {self.assembly} :construction:")
