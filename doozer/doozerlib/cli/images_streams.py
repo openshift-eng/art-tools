@@ -742,8 +742,7 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullReque
             # If the component in prodsec data does not exist in the Jira project, use Unknown.
             component = 'Unknown'
 
-        query = (f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) '
-                 'AND statusCategory in ("To Do", "In Progress")')
+        query = (f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) AND issueFunction in linkedIssuesOfRemote("url", "{pr.html_url}")')
 
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
         def search_issues(query):
