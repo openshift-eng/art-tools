@@ -1320,7 +1320,7 @@ class ImageDistGitRepo(DistGitRepo):
                 parent_images=build_info['extra']['image']['parent_images'],
                 source_repo=source_repo,
                 commitish=commitish,
-                embargoed=build_info['release'].split('.')[1] == 'p1',  # TODO
+                embargoed='p1' in build_info['release'].split('.'),
                 start_time=datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
                 end_time=datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
                 artifact_type=ArtifactType.IMAGE,
