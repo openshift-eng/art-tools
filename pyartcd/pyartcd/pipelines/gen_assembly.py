@@ -95,6 +95,8 @@ class GenAssemblyPipeline:
             if not self.skip_get_nightlies:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()])
+            else:
+                candidate_nightlies = self.nightlies
 
             self._logger.info("Generating assembly definition...")
             assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
