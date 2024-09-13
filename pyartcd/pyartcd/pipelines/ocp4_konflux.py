@@ -56,9 +56,10 @@ class KonfluxOcp4Pipeline:
             '--latest-parent-version',
             f'--images={image_list}',
             'beta:images:konflux:build',
+            "--konflux-namespace=ocp-art-tenant",
         ])
         if self.kubeconfig:
-            cmd.extend(['--kubeconfig', self.kubeconfig])
+            cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
         await exectools.cmd_assert_async(cmd)
