@@ -812,6 +812,8 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
             'customfield_12319940': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12319940 is Target Version in jira
+            'customfield_12320850': {'value': 'Release Note Not Required'},  # customfield_12320850 is Release Notes Type in JIRA
+            'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
             'components': [{'name': component}],
             'summary': summary,
             'description': description
