@@ -29,6 +29,7 @@ class KonfluxRebaseCli:
             embargoed: bool,
             force_yum_updates: bool,
             repo_type: str,
+            image_repo: str,
             message: str,
             push: bool):
         self.runtime = runtime
@@ -39,6 +40,7 @@ class KonfluxRebaseCli:
         if repo_type not in ['signed', 'unsigned']:
             raise click.BadParameter(f"repo_type must be one of 'signed' or 'unsigned'. Got: {repo_type}")
         self.repo_type = repo_type
+        self.image_repo = image_repo
         self.message = message
         self.push = push
         self.upcycle = runtime.upcycle
@@ -65,6 +67,7 @@ class KonfluxRebaseCli:
                 self.version,
                 self.release,
                 force_yum_updates=self.force_yum_updates,
+                image_repo=self.image_repo,
                 commit_message=self.message,
                 push=self.push)))
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -84,12 +87,13 @@ class KonfluxRebaseCli:
 @click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
               default="unsigned",
               help="Repo group type to use (e.g. signed, unsigned).")
+@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
 @option_commit_message
 @option_push
 @pass_runtime
 @click_coroutine
 async def images_konflux_rebase(runtime: Runtime, version: str, release: str, embargoed: bool, force_yum_updates: bool,
-                                repo_type: str, message: str, push: bool):
+                                repo_type: str, image_repo: str, message: str, push: bool):
     """
     Refresh a group's konflux content from source content.
     """
@@ -100,6 +104,7 @@ async def images_konflux_rebase(runtime: Runtime, version: str, release: str, em
         embargoed=embargoed,
         force_yum_updates=force_yum_updates,
         repo_type=repo_type,
+        image_repo=image_repo,
         message=message,
         push=push,
     )
@@ -113,14 +118,14 @@ class KonfluxBuildCli:
         konflux_kubeconfig: Optional[str],
         konflux_context: Optional[str],
         konflux_namespace: Optional[str],
-        output_repo: str,
+        image_repo: str,
         dry_run: bool,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
         self.konflux_namespace = konflux_namespace
-        self.output_repo = output_repo
+        self.image_repo = image_repo
         self.dry_run = dry_run
 
     @start_as_current_span_async(TRACER, "images:konflux:build")
@@ -135,7 +140,7 @@ class KonfluxBuildCli:
             kubeconfig=self.konflux_kubeconfig,
             context=self.konflux_context,
             namespace=self.konflux_namespace,
-            output_repo=self.output_repo,
+            image_repo=self.image_repo,
             dry_run=self.dry_run,
         )
         builder = KonfluxImageBuilder(config=config)
@@ -153,15 +158,15 @@ class KonfluxBuildCli:
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', required=True, help='The namespace to use for Konflux cluster connections.')
-@click.option('--output-repo', default=constants.KONFLUX_DEFAULT_DEST_IMAGE_REPO, help='Push images to the specified repo.')
+@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
         runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-        konflux_namespace: Optional[str], output_repo: str, dry_run: bool):
+        konflux_namespace: Optional[str], image_repo: str, dry_run: bool):
     cli = KonfluxBuildCli(
         runtime=runtime, konflux_kubeconfig=konflux_kubeconfig,
         konflux_context=konflux_context, konflux_namespace=konflux_namespace,
-        output_repo=output_repo, dry_run=dry_run)
+        image_repo=image_repo, dry_run=dry_run)
     await cli.run()
