@@ -49,7 +49,8 @@ class KonfluxBuildRecord:
                  el_target: str = '', arches: list = [], installed_packages: list = [], parent_images: list = [],
                  source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
                  embargoed: bool = False, start_time: datetime = None, end_time: datetime = None,
-                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX, image_tag: str = '',
+                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX,
+                 image_pullspec: str = '', image_tag: str = '',
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
                  ingestion_time: datetime = None, record_id: str = '', build_id: str = None, nvr: str = None):
@@ -81,6 +82,7 @@ class KonfluxBuildRecord:
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
         self.engine = engine if isinstance(engine, Engine) else Engine(engine)
 
+        self.image_pullspec = image_pullspec
         self.image_tag = image_tag
         self.outcome = outcome if isinstance(outcome, KonfluxBuildOutcome) else KonfluxBuildOutcome(outcome)
 
