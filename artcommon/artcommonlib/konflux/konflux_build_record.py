@@ -47,9 +47,9 @@ class KonfluxBuildRecord:
 
     def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
                  el_target: str = '', arches: list = [], installed_packages: list = [], parent_images: list = [],
-                 source_repo: str = '', commitish: str = '', embargoed: bool = False, start_time: datetime = None,
-                 end_time: datetime = None, artifact_type: ArtifactType = ArtifactType.IMAGE,
-                 engine: Engine = Engine.KONFLUX, image_tag: str = '',
+                 source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
+                 embargoed: bool = False, start_time: datetime = None, end_time: datetime = None,
+                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX, image_tag: str = '',
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
                  ingestion_time: datetime = None, record_id: str = '', build_id: str = None, nvr: str = None):
@@ -70,6 +70,8 @@ class KonfluxBuildRecord:
 
         self.source_repo = source_repo
         self.commitish = commitish
+        self.rebase_repo_url = rebase_repo_url
+        self.rebase_commitish = rebase_commitish
 
         self.embargoed = embargoed
 

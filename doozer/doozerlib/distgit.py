@@ -1306,11 +1306,15 @@ class ImageDistGitRepo(DistGitRepo):
             self.logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return
 
-        image_pullspec = build_info['extra']['image']['index']['pull'][0]
-
         self.logger.info('Storing build info in Konflux for Brew build %s', build_info['nvr'])
         try:
-            source_repo, commitish = build_info['source'].split('#')
+            dfp = DockerfileParser(str(self.dg_path.joinpath('Dockerfile')))
+            source_repo = self.metadata.config.content.source.git.url
+            commitish = dfp.labels['io.openshift.build.commit.url'].split('commit/')[-1]
+
+            rebase_repo_url, rebase_commitish = build_info['source'].split('#')
+
+            image_pullspec = build_info['extra']['image']['index']['pull'][0]
 
             try:
                 release_target = self.org_release.split('.')[-1]
@@ -1328,8 +1332,10 @@ class ImageDistGitRepo(DistGitRepo):
                 arches=self.metadata.get_arches(),
                 installed_packages=self.get_installed_packages(image_pullspec),
                 parent_images=[build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()],
-                source_repo=source_repo,
+                source_repo=convert_remote_git_to_https(source_repo),
                 commitish=commitish,
+                rebase_repo_url=rebase_repo_url,
+                rebase_commitish=rebase_commitish,
                 embargoed='p1' in build_info['release'].split('.'),
                 start_time=datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
                 end_time=datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
