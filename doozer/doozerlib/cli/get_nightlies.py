@@ -5,7 +5,6 @@ from typing import Dict, List, Sequence, Set, Tuple
 import aiohttp
 import click
 from tenacity import retry, stop_after_attempt, wait_fixed
-import subprocess
 
 from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
@@ -197,28 +196,24 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
         rc_url: str = f"{rc_api_url(tag_base, _arch, private_nightly)}/tags"
         logger.info(f"Reading nightlies from {rc_url}")
 
-        # Get the token
-        oc_token_result = subprocess.run(["oc", "whoami", "-t"], capture_output=True, text=True)
-
+        headers = {}
         if private_nightly:
-            # Extract the token from the command output
-            if oc_token_result.returncode == 0:  # Check if the command was successful
-                token = oc_token_result.stdout.strip()
-                if not token:
-                    raise ValueError("Token empty, might not be logged in to correct cluster")
-            else:
+            # Get the token
+            rc, token, err = exectools.cmd_gather(["oc", "whoami", "-t"], strip=True)
+
+            if rc:
                 raise ValueError("Error while trying to get the token for reading private nightlies")
 
-            async with aiohttp.ClientSession() as session:
-                headers = {
-                    "Authorization": f"Bearer {token}"
-                }
-                async with session.get(rc_url, headers=headers) as resp:
-                    data = await resp.json()
-        else:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(rc_url) as resp:
-                    data = await resp.json()
+            if not token:
+                raise ValueError("Token empty, might not be logged in to correct cluster")
+
+            headers = {
+                "Authorization": f"Bearer {token}"
+            }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(rc_url, headers=headers) as resp:
+                data = await resp.json()
 
         # filter them per parameters
         nightlies: List[Dict] = [
@@ -268,17 +263,11 @@ def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
     @return e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
     """
     arch = go_arch_for_brew_arch(arch)
-    arch_suffix = go_suffix_for_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch, private_nightly)
+
     if private_nightly:
-        arch = f"-{arch}"
-        if arch == "-amd64":
-            # We do not need to add the arch to URL for amd64
-            return f"{constants.RC_BASE_PRIV_URL.format(arch='')}/api/v1/releasestream/{tag}-priv"
+        return f"{constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
-        # For other arches, add it to the URL
-        return f"{constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}-priv"
-
-    # For public nightlies
     return f"{constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
 
