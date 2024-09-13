@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import hashlib
 import json
 from multiprocessing import Event
@@ -34,6 +35,10 @@ class ImageMetadata(Metadata):
         """ Event that is set when this image is being rebased. """
         self.rebase_status = False
         """ True if this image has been successfully rebased. """
+        self.build_event = Event()
+        """ Event that is set when this image is being built. """
+        self.build_status = False
+        """ True if this image has been successfully built. """
         if clone_source:
             runtime.source_resolver.resolve_source(self)
 
@@ -523,3 +528,19 @@ class ImageMetadata(Metadata):
     @property
     def image_build_method(self):
         return self.config.image_build_method or self.runtime.group_config.default_image_build_method or "osbs2"
+
+    def get_parent_members(self) -> "OrderedDict[str, Optional[ImageMetadata]]":
+        """ Get the dict of parent members for the given image metadata.
+        If a parent is not loaded, its value will be None.
+        """
+        parent_members = OrderedDict()
+        image_from = self.config.get('from', {})
+        for parent in image_from.get("builder", []) + [image_from]:
+            member_name = parent.get("member")
+            if not member_name:
+                continue
+            member = self.runtime.resolve_image(member_name, required=False)
+            if member is None:
+                self.logger.warning(f"Parent member {member_name} not loaded for {self.distgit_key}")
+            parent_members[member_name] = member
+        return parent_members

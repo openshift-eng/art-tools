@@ -37,7 +37,7 @@ class KonfluxImageBuilderConfig:
     kubeconfig: Optional[str] = None
     context: Optional[str] = None
     namespace: Optional[str] = None
-    output_repo: str = constants.KONFLUX_DEFAULT_DEST_IMAGE_REPO
+    image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
     dry_run: bool = False
 
 
@@ -58,29 +58,54 @@ class KonfluxImageBuilder:
 
     async def build(self, metadata: ImageMetadata):
         """ Build a container image with Konflux. """
-        # Load the build source repository
-        dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
-        build_repo = await BuildRepo.from_local_dir(dest_dir, self._logger)
+        try:
+            # Load the build source repository
+            dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
+            build_repo = await BuildRepo.from_local_dir(dest_dir, self._logger)
 
-        if not build_repo.https_url.startswith("https://github.com/openshift-priv/"):
-            raise ValueError("Only GitHub repositories in the openshift-priv organization are supported")
+            # Load the Kubernetes configuration
+            cfg = Configuration()
+            config.load_kube_config(config_file=self._config.kubeconfig, context=self._config.context,
+                                    persist_config=False, client_configuration=cfg)
 
-        # Load the Kubernetes configuration
-        cfg = Configuration()
-        config.load_kube_config(config_file=self._config.kubeconfig, context=self._config.context,
-                                persist_config=False, client_configuration=cfg)
-        with client.ApiClient(configuration=cfg) as api_client:
-            dyn_client = DynamicClient(api_client)
+            # Wait for parent members to be built
+            LOGGER.info("Waiting for parent members to be built...")
+            parent_members = await self._wait_for_parent_members(metadata)
+            failed_parents = [parent_member.distgit_key for parent_member in parent_members if parent_member is not None and not parent_member.build_status]
+            if failed_parents:
+                raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
 
-            pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
+            # Start the build
+            LOGGER.info("Starting Konflux image build for %s...", metadata.distgit_key)
+            with client.ApiClient(configuration=cfg) as api_client:
+                dyn_client = DynamicClient(api_client)
 
-            pipelinerun_name = pipelinerun['metadata']['name']
-            self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-            pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
-            if pipelinerun.status.conditions[0].status != "True":
-                raise KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
+                pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
+
+                pipelinerun_name = pipelinerun['metadata']['name']
+                self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
+                pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
+                self._logger.info("PipelineRun %s completed", pipelinerun_name)
+                if pipelinerun.status.conditions[0].status != "True":
+                    raise KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
+                metadata.build_status = True
+        finally:
+            # Signal that the build is complete
+            metadata.build_event.set()
 
         return pipelinerun_name, pipelinerun
+
+    async def _wait_for_parent_members(self, metadata: ImageMetadata):
+        # If this image is FROM another group member, we need to wait on that group member to be built
+        parent_members = list(metadata.get_parent_members().values())
+        for parent_member in parent_members:
+            if parent_member is None:
+                continue  # Parent member is not included in the group; no need to wait
+            # wait for parent member to be built
+            if not parent_member.build_event.is_set():
+                self._logger.info("[%s] Parent image %s is being rebasing; waiting...", metadata.distgit_key, parent_member.distgit_key)
+                await exectools.to_thread(parent_member.build_event.wait)
+        return parent_members
 
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, dyn_client: DynamicClient):
         git_url = build_repo.https_url
@@ -90,12 +115,8 @@ class KonfluxImageBuilder:
 
         df_path = build_repo.local_dir.joinpath("Dockerfile")
         df = DockerfileParser(str(df_path))
-        version = df.labels["version"]
-        if not version:
-            raise ValueError("Dockerfile must have a 'version' label")
-        release = df.labels["release"]
-        if not release:
-            raise ValueError("Dockerfile must have a 'release' label")
+        if "__doozer_uuid_tag" not in df.envs:
+            raise ValueError("Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
 
         # Ensure the Application resource exists
         app_name = self._config.group_name.replace(".", "-")
@@ -105,8 +126,8 @@ class KonfluxImageBuilder:
 
         # Ensure the component resource exists
         component_name = f"{app_name}-{metadata.distgit_key}"
-        dest_image_repo = self._config.output_repo
-        dest_image_tag = f"{metadata.get_component_name()}-{version}-{release}"
+        dest_image_repo = self._config.image_repo
+        dest_image_tag = df.envs["__doozer_uuid_tag"]
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
 
         component_manifest = self._new_component(
