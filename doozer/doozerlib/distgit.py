@@ -1096,7 +1096,11 @@ class ImageDistGitRepo(DistGitRepo):
                         record["nvrs"] = build_info["nvr"]
                     if not dry_run:
                         self.update_build_db(True, task_id=task_id, scratch=scratch)
-                        self.update_konflux_db(build_info, KonfluxBuildOutcome.SUCCESS, job_url=task_url, scratch=scratch)
+                        self.update_konflux_db(build_info=build_info,
+                                               outcome=KonfluxBuildOutcome.SUCCESS,
+                                               build_pipeline_url=task_url,
+                                               scratch=scratch)
+
                         if comment_on_pr and self.runtime.assembly == "stream":
                             try:
                                 comment_on_pr_obj = CommentOnPr(distgit_dir=self.distgit_dir,
@@ -1294,7 +1298,7 @@ class ImageDistGitRepo(DistGitRepo):
         installed_packages_dict = bbii.get_all_installed_package_build_dicts()
         return [p['nvr'] for p in installed_packages_dict.values()]
 
-    def update_konflux_db(self, build_info, success, job_url='', scratch=False):
+    def update_konflux_db(self, build_info, outcome, build_pipeline_url='', scratch=False):
         if scratch:
             return
 
@@ -1332,8 +1336,9 @@ class ImageDistGitRepo(DistGitRepo):
                 artifact_type=ArtifactType.IMAGE,
                 engine=Engine.BREW,
                 image_tag=image_pullspec,
-                outcome=success,
-                job_url=job_url,
+                outcome=outcome,
+                art_job_url=os.getenv('BUILD_URL', 'n/a'),
+                build_pipeline_url=build_pipeline_url,
                 pipeline_commit='n/a',
                 nvr=build_info['nvr'],
                 build_id=str(build_info['id'])

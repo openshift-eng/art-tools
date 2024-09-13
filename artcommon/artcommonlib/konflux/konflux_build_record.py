@@ -50,9 +50,9 @@ class KonfluxBuildRecord:
                  source_repo: str = '', commitish: str = '', embargoed: bool = False, start_time: datetime = None,
                  end_time: datetime = None, artifact_type: ArtifactType = ArtifactType.IMAGE,
                  engine: Engine = Engine.KONFLUX, image_tag: str = '',
-                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, job_url: str = '',
-                 pipeline_commit: str = '', schema_level: int = 0, ingestion_time: datetime = None, record_id: str = '',
-                 build_id: str = None, nvr: str = None):
+                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
+                 build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
+                 ingestion_time: datetime = None, record_id: str = '', build_id: str = None, nvr: str = None):
         """
         All fields default to None to facilitate testing
         """
@@ -82,7 +82,8 @@ class KonfluxBuildRecord:
         self.image_tag = image_tag
         self.outcome = outcome if isinstance(outcome, KonfluxBuildOutcome) else KonfluxBuildOutcome(outcome)
 
-        self.job_url = job_url
+        self.art_job_url = art_job_url
+        self.build_pipeline_url = build_pipeline_url
         self.pipeline_commit = pipeline_commit
 
         self.schema_level = schema_level
