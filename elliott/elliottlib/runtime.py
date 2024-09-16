@@ -54,6 +54,7 @@ class Runtime(GroupRuntime):
         # initialize defaults in case no value is given
         self.verbose = False
         self.data_path = None
+        self.group_commitish = None
         self.load_wip = False
         self.load_disabled = False
         self._logger = None
@@ -147,6 +148,11 @@ class Runtime(GroupRuntime):
 
         if no_group:
             return  # nothing past here should be run without a group
+
+        if '@' in self.group:
+            self.group, self.group_commitish = self.group.split('@', 1)
+        elif self.group_commitish is None:
+            self.group_commitish = self.group
 
         self.resolve_metadata()
 
@@ -328,7 +334,7 @@ class Runtime(GroupRuntime):
 
         try:
             self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                           commitish=self.group, logger=self._logger)
+                                           commitish=self.group_commitish, logger=self._logger)
             self.data_dir = self.gitdata.data_dir
 
         except gitdata.GitDataException as ex:
