@@ -1130,7 +1130,11 @@ class PromotePipeline:
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name, values are release_info dicts.
         """
+        # This suffix will be used to construct imagestream name
+        # We always want to promote from public imagestream and never private,
+        # therefore is_private should always be set to False
         go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
+
         brew_arch = brew_arch_for_go_arch(arch)  # ensure we are using Brew arches (e.g. aarch64) instead of golang arches (e.g. arm64).
         dest_image_tag = f"{release_name}-{brew_arch}"
         dest_image_pullspec = f"{self.DEST_RELEASE_IMAGE_REPO}:{dest_image_tag}"
@@ -1153,6 +1157,7 @@ class PromotePipeline:
             reference_pullspec = None
             source_image_stream = None
             if reference_release:
+                # ref nightly could be private so consider that
                 arch_suffix = go_suffix_for_arch(arch, is_private="priv" in reference_release)
                 reference_pullspec = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{reference_release}"
             else:
