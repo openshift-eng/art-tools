@@ -609,7 +609,8 @@ class GenPayloadCli:
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
-            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
+            public_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
+            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, public_repo)
 
             public_entries: Dict[str, PayloadEntry] = dict()
             for k, v in entries.items():
@@ -628,12 +629,17 @@ class GenPayloadCli:
 
                     public_bbi = BrewBuildImageInspector(runtime=self.runtime, build=public_build)
                     public_archive_inspector = public_bbi.get_image_archive_inspector(arch)
+
+                    dest_pullspec = PayloadGenerator.get_mirroring_destination(
+                        public_archive_inspector.get_archive_digest(), public_repo)
+                    dest_manifest_list_pullspec = PayloadGenerator.get_mirroring_destination(
+                        public_archive_inspector.get_brew_build_inspector().get_manifest_list_digest(), public_repo)
                     public_entry = PayloadEntry(
                         image_meta=v.image_meta,
                         build_inspector=public_bbi,
                         archive_inspector=public_archive_inspector,
-                        dest_pullspec=v.dest_pullspec,
-                        dest_manifest_list_pullspec=v.dest_manifest_list_pullspec,
+                        dest_pullspec=dest_pullspec,
+                        dest_manifest_list_pullspec=dest_manifest_list_pullspec,
                         issues=list(),
                     )
 
