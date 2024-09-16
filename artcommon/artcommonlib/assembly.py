@@ -123,6 +123,10 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
     recurse the inheritance tree to build you a final version of that key's value.
     The key may refer to a list or dict (set default value appropriately).
     """
+    if key and key[-1] in ['!', '?', '-']:
+        raise ValueError(f"Special assembly field '{key}' should not be fetched directly, instead fetch "
+                         f"the actual field '{key[:-1]}'")
+
     if not assembly or not isinstance(releases_config, Model):
         return Missing
 
