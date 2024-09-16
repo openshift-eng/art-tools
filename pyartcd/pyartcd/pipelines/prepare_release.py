@@ -340,6 +340,9 @@ class PrepareReleasePipeline:
             elif impetus in ["advance", "prerelease"]:
                 await self.build_and_attach_bundles(advisory)
             else:
+                # Skip populating microshift advisory since that is done later after promote
+                if impetus == "microshift":
+                    continue
                 await self.sweep_builds_async(impetus, advisory)
 
         # Verify attached operators - and gather builds if needed
@@ -630,7 +633,9 @@ class PrepareReleasePipeline:
     async def sweep_builds_async(self, impetus: str, advisory: int):
         only_payload = False
         only_non_payload = False
-        if impetus in ["rpm", "microshift"]:
+        kind = ""
+
+        if impetus == "rpm":
             kind = "rpm"
         elif impetus in ["image", "extras"]:
             kind = "image"
@@ -638,18 +643,18 @@ class PrepareReleasePipeline:
                 only_payload = True  # OCP 4+ image advisory only contains payload images
             elif impetus == "extras":
                 only_non_payload = True
-        elif impetus in ("silentops", "prerelease", "advance", "bootimage"):
+        elif impetus in ("silentops", "prerelease", "advance", "bootimage", "microshift"):
             return  # do not sweep into these advisories initially; later steps may fill them
-        else:
+
+        if not kind:
             raise ValueError("Specified impetus is not supported: %s", impetus)
+
         cmd = [
             "elliott",
             f"--working-dir={self.elliott_working_dir}",
             f"--group={self.group_name}",
             "--assembly", self.assembly,
         ]
-        if impetus == "microshift":  # microshift rpm is set to `mode: disabled`, which needs to be explicitly included
-            cmd.append("--rpms=microshift")
         cmd.extend([
             "find-builds",
             f"--kind={kind}",
@@ -660,9 +665,6 @@ class PrepareReleasePipeline:
             cmd.append("--non-payload")
         if self.include_shipped:
             cmd.append("--include-shipped")
-        if impetus == "microshift":
-            # By default, elliott sweeps every tagged rpm. We need `--member-only` to only sweep those listed in `--rpms`.
-            cmd.append("--member-only")
         cmd.append(f"--attach={advisory}")
         cmd.append("--clean")
         if self.dry_run:
