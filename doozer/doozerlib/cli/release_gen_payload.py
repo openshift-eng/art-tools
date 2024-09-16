@@ -914,15 +914,17 @@ class GenPayloadCli:
         for payload_tag_name, payload_entry in payload_entries.items():
             multi_specs[private_mode].setdefault(payload_tag_name, dict())
 
-            if private_mode is False and payload_entry.build_inspector \
-                    and payload_entry.build_inspector.is_under_embargo():
-                # No embargoed images should go to the public release controller, so we will not have
+            if (private_mode is False and payload_entry.build_inspector
+                and payload_entry.build_inspector.is_under_embargo()
+                and self.runtime.assembly_type == AssemblyTypes.STREAM):
+                # No embargoed images for assembly stream
+                # should go to the public release controller, so we will not have
                 # a complete set of payload tags for the public imagestream.
                 incomplete_payload_update = True
+                continue
 
-            else:
-                istags.append(PayloadGenerator.build_payload_istag(payload_tag_name, payload_entry))
-                multi_specs[private_mode][payload_tag_name][arch] = payload_entry
+            istags.append(PayloadGenerator.build_payload_istag(payload_tag_name, payload_entry))
+            multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
         imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
             *self.base_imagestream, arch, private_mode)
