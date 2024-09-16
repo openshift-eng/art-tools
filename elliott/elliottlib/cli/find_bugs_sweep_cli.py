@@ -179,7 +179,8 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
             qualified_bugs = []
             for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
                 qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(chunk_of_bugs, find_bugs_obj.status,
-                                                            sweep_cutoff_timestamp, verbose=runtime.debug)
+                                                                               sweep_cutoff_timestamp,
+                                                                               verbose=runtime.debug)
                 qualified_bugs.extend(qualified_bugs_chunk)
                 not_qualified = {b.id for b in chunk_of_bugs} - {b.id for b in qualified_bugs_chunk}
                 logger.info(f"These bugs did not qualify cutoff time {utc_ts}: {sorted(not_qualified)}")
