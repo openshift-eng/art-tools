@@ -201,8 +201,8 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
             # Get the token
             rc, token, err = exectools.cmd_gather(["oc", "whoami", "-t"], strip=True)
 
-            if rc:
-                raise ValueError("Error while trying to get the token for reading private nightlies")
+            if rc != 0 or err:
+                raise ValueError(f"Error while trying to get the token for reading private nightlies: {err}")
 
             if not token:
                 raise ValueError("Token empty, might not be logged in to correct cluster")
