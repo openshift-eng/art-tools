@@ -170,27 +170,31 @@ advisory with the --add option.
 
 async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracker):
     bugs = find_bugs_obj.search(bug_tracker_obj=bug_tracker, verbose=runtime.debug)
+    if bugs:
+        sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime, cli_brew_event=brew_event)
+        if sweep_cutoff_timestamp:
+            utc_ts = datetime.utcfromtimestamp(sweep_cutoff_timestamp)
+            logger.info(f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
+                        f"cutoff time {utc_ts}...")
+            qualified_bugs = []
+            for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
+                qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(chunk_of_bugs, find_bugs_obj.status,
+                                                                               sweep_cutoff_timestamp,
+                                                                               verbose=runtime.debug)
+                qualified_bugs.extend(qualified_bugs_chunk)
+                not_qualified = {b.id for b in chunk_of_bugs} - {b.id for b in qualified_bugs_chunk}
+                logger.info(f"These bugs did not qualify cutoff time {utc_ts}: {sorted(not_qualified)}")
+            logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}...")
+            bugs = qualified_bugs
 
-    sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime, cli_brew_event=brew_event)
-    if sweep_cutoff_timestamp:
-        utc_ts = datetime.utcfromtimestamp(sweep_cutoff_timestamp)
-        logger.info(f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
-                    f"cutoff time {utc_ts}...")
-        qualified_bugs = []
-        for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
-            b = bug_tracker.filter_bugs_by_cutoff_event(chunk_of_bugs, find_bugs_obj.status,
-                                                        sweep_cutoff_timestamp, verbose=runtime.debug)
-            qualified_bugs.extend(b)
-        logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}...")
-        bugs = qualified_bugs
-
-    # filter bugs that have been swept into other advisories
-    logger.info("Filtering bugs that haven't been attached to any advisories...")
-    attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
-    if attached_bugs:
-        attached_bug_ids = {b.id for b in attached_bugs}
-        logger.warning("The following bugs have been attached to advisories: %s", attached_bug_ids)
-        bugs = [b for b in bugs if b.id not in attached_bug_ids]
+        # filter bugs that have been swept into other advisories
+        logger.info("Filtering bugs that haven't been attached to any advisories...")
+        attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
+        if attached_bugs:
+            attached_bug_ids = {b.id for b in attached_bugs}
+            logger.warning("Filtered following bugs have been attached to other advisories: %s",
+                           sorted(attached_bug_ids))
+            bugs = [b for b in bugs if b.id not in attached_bug_ids]
 
     included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     if included_bug_ids & excluded_bug_ids:
@@ -222,6 +226,9 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
         green_prefix(f"Searching {bug_tracker.type} for bugs with status {statuses} and target releases: {tr}\n")
 
     bugs = await get_bugs_sweep(runtime, find_bugs_obj, brew_event, bug_tracker)
+    if not bugs:
+        logger.info(f"No qualified {bug_tracker.type} bugs found")
+        return []
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)

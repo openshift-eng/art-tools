@@ -260,7 +260,6 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return([])
-        flexmock(JIRABugTracker).should_receive("attach_bugs").times(3).and_return()
         jira_filter_mock.return_value = []
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--into-default-advisories'])
