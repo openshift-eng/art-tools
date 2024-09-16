@@ -110,7 +110,7 @@ def get_pullspec(release, arch):
 
 
 def get_nightly_pullspec(release, arch):
-    suffix = go_suffix_for_arch(arch)
+    suffix = go_suffix_for_arch(arch, "priv" in release)
     return f'registry.ci.openshift.org/ocp{suffix}/release{suffix}:{release}'
 
 
