@@ -680,7 +680,7 @@ def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
             arch = "x86_64"
         if ":" not in nightly:
             # prepend pullspec URL to nightly name
-            arch_suffix = go_suffix_for_arch(arch)
+            arch_suffix = go_suffix_for_arch(arch, "priv" in nightly)
             nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
         arch_nightlies[arch] = nightly
     return arch_nightlies
