@@ -609,7 +609,8 @@ class GenPayloadCli:
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
-            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
+            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch,
+                                                                            self.full_component_repo(repo_type=RepositoryType.PRIVATE))
 
             public_entries: Dict[str, PayloadEntry] = dict()
             for k, v in entries.items():
