@@ -1155,13 +1155,7 @@ class PromotePipeline:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
             self._logger.info("Building arch-specific release image %s for %s (%s)...", release_name, arch, dest_image_pullspec)
             reference_pullspec = None
-            source_image_stream = None
-            if reference_release:
-                # ref nightly could be private so consider that
-                arch_suffix = go_suffix_for_arch(arch, is_private="priv" in reference_release)
-                reference_pullspec = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{reference_release}"
-            else:
-                source_image_stream = is_name
+            source_image_stream = is_name
             await self.build_release_image(release_name, brew_arch, previous_list, next_list, metadata,
                                            dest_image_pullspec, reference_pullspec, source_image_stream,
                                            keep_manifest_list=False)
