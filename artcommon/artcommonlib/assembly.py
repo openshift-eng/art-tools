@@ -132,15 +132,14 @@ def assembly_config_struct(releases_config: Model, assembly_name: typing.Optiona
 
     _check_recursion(releases_config, assembly_name)
 
-    def _get_merged_assembly(name: str):
+    def _get_merged_assembly(name: str) -> dict:
         target = releases_config.releases[name].assembly
         if target.basis.assembly:  # Does this assembly inherit from another?
             parent_assembly_name = target.basis.assembly
             parent_assembly = _get_merged_assembly(parent_assembly_name)  # Recursive merge ancestor assemblies
-            merged_assembly = _merger(target.primitive(), parent_assembly.primitive())
-            return Model(dict_to_model=merged_assembly)
+            return _merger(target.primitive(), parent_assembly)
         else:
-            return target
+            return target.primitive()
 
     target_assembly = _get_merged_assembly(assembly_name)
     key_struct = target_assembly.get(key, default)
