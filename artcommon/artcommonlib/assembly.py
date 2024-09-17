@@ -117,7 +117,7 @@ def assembly_type(releases_config: Model, assembly: typing.Optional[str]) -> Ass
     raise ValueError(f'Unknown assembly type: {str_type}')
 
 
-def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str], key: str, default):
+def assembly_config_struct(releases_config: Model, assembly_name: typing.Optional[str], key: str, default):
     """
     If a key is directly under the 'assembly' (e.g. rhcos), then this method will
     recurse the inheritance tree to build you a final version of that key's value.
@@ -127,19 +127,23 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
         raise ValueError(f"Special assembly field '{key}' should not be fetched directly, instead fetch "
                          f"the actual field '{key[:-1]}'")
 
-    if not assembly or not isinstance(releases_config, Model):
+    if not assembly_name or not isinstance(releases_config, Model):
         return Missing
 
-    _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.releases[assembly].assembly
+    _check_recursion(releases_config, assembly_name)
 
-    if target_assembly.basis.assembly:  # Does this assembly inherit from another?
-        parent_assembly_name = target_assembly.basis.assembly
-        parent_assembly = releases_config.releases[parent_assembly_name].assembly
-        merged_assembly = _merger(target_assembly.primitive(), parent_assembly.primitive())
-        key_struct = merged_assembly.get(key, default)
-    else:
-        key_struct = target_assembly.get(key, default)
+    def _get_merged_assembly(name: str):
+        target = releases_config.releases[name].assembly
+        if target.basis.assembly:  # Does this assembly inherit from another?
+            parent_assembly_name = target.basis.assembly
+            parent_assembly = _get_merged_assembly(parent_assembly_name)  # Recursive merge ancestor assemblies
+            merged_assembly = _merger(target.primitive(), parent_assembly.primitive())
+            return Model(dict_to_model=merged_assembly)
+        else:
+            return target
+
+    target_assembly = _get_merged_assembly(assembly_name)
+    key_struct = target_assembly.get(key, default)
     if isinstance(default, dict):
         return Model(dict_to_model=key_struct)
     elif isinstance(default, list):
