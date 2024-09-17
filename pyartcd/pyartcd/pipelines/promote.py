@@ -317,10 +317,9 @@ class PromotePipeline:
                 metadata["description"] = str(description)
             if errata_url:
                 metadata["url"] = errata_url
-            reference_releases = util.get_assembly_basis(releases_config, self.assembly).get("reference_releases", {})
             tag_stable = assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]
             release_infos = await self.promote(assembly_type, release_name, arches, previous_list, next_list,
-                                               metadata, reference_releases, tag_stable=tag_stable)
+                                               metadata, tag_stable=tag_stable)
             pullspecs = {arch: release_info["image"] for arch, release_info in release_infos.items()}
             pullspecs_repr = ", ".join(f"{arch}: {pullspecs[arch]}" for arch in sorted(pullspecs.keys()))
             self._logger.info("All release images for %s have been promoted. Pullspecs: %s", release_name, pullspecs_repr)
@@ -346,7 +345,7 @@ class PromotePipeline:
             # Send notification to QE if it hasn't been sent yet
             # Skip ECs and RCs
             if assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-                self.handle_qe_notification(release_jira, release_name, impetus_advisories, reference_releases.values())
+                self.handle_qe_notification(release_jira, release_name, impetus_advisories)
 
             if not tag_stable:
                 self._logger.warning("Release %s will not appear on release controllers. Pullspecs: %s", release_name, pullspecs_repr)
@@ -1044,7 +1043,7 @@ class PromotePipeline:
 
     async def promote(self, assembly_type: AssemblyTypes, release_name: str, arches: List[str],
                       previous_list: List[str], next_list: List[str],
-                      metadata: Optional[Dict], reference_releases: Dict[str, str], tag_stable: bool):
+                      metadata: Optional[Dict], tag_stable: bool):
         """ Promote all release payloads
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -1052,7 +1051,6 @@ class PromotePipeline:
         :param previous_list: upgrade edges that are used in `oc adm release new --previous`
         :param next_list: upgrade edges that are used in `oc adm release new --next`
         :param metadata: Payload metadata
-        :param reference_releases: A dict of reference release payloads to promote. Keys are architecture names, values are payload pullspecs
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name or "multi", values are release_info dicts.
         """
@@ -1066,7 +1064,7 @@ class PromotePipeline:
         if not self.multi_only:
             tasks["homogeneous"] = self._promote_homogeneous_payloads(assembly_type, release_name, arches,
                                                                       previous_list, next_list, metadata,
-                                                                      reference_releases, tag_stable=tag_stable)
+                                                                      tag_stable=tag_stable)
         else:
             self._logger.warning("Arch-specific homogeneous release payloads will not be promoted because --multi-only is set.")
         try:
@@ -1083,7 +1081,7 @@ class PromotePipeline:
 
     async def _promote_homogeneous_payloads(self, assembly_type: AssemblyTypes, release_name: str, arches: List[str],
                                             previous_list: List[str], next_list: List[str], metadata: Optional[Dict],
-                                            reference_releases: Dict[str, str], tag_stable: bool,):
+                                            tag_stable: bool):
         """ Promote homogeneous payloads for specified architectures
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -1098,13 +1096,12 @@ class PromotePipeline:
         release_infos = []
         for arch in arches:
             result = await self._promote_arch(assembly_type, release_name, arch, previous_list, next_list, metadata,
-                                              reference_releases.get(arch), tag_stable=tag_stable)
+                                              tag_stable=tag_stable)
             release_infos.append(result)
         return dict(zip(arches, release_infos))
 
     async def _promote_arch(self, assembly_type: AssemblyTypes, release_name: str, arch: str, previous_list: List[str],
-                            next_list: List[str], metadata: Optional[Dict], reference_release: Optional[str],
-                            tag_stable: bool):
+                            next_list: List[str], metadata: Optional[Dict], tag_stable: bool):
         """ Promote an arch-specific homogeneous payload
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -1141,13 +1138,7 @@ class PromotePipeline:
                 raise ValueError(f"Image stream {is_name} is not found. Did you run build-sync?")
             self._logger.info("Building arch-specific release image %s for %s (%s)...", release_name, arch, dest_image_pullspec)
             reference_pullspec = None
-            source_image_stream = None
-            if reference_release:
-                # ref nightly could be private so consider that
-                arch_suffix = go_suffix_for_arch(arch, is_private="priv" in reference_release)
-                reference_pullspec = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{reference_release}"
-            else:
-                source_image_stream = is_name
+            source_image_stream = is_name
             await self.build_release_image(release_name, brew_arch, previous_list, next_list, metadata,
                                            dest_image_pullspec, reference_pullspec, source_image_stream,
                                            keep_manifest_list=False)
@@ -1175,12 +1166,9 @@ class PromotePipeline:
                         }
                     }
                 }
-                if reference_release:
-                    dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-release": reference_release}}
-                else:
-                    major, minor = isolate_major_minor_in_group(self.group)
-                    go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
-                    dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
+                major, minor = isolate_major_minor_in_group(self.group)
+                go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
+                dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
 
         if not tag_stable:
             self._logger.info("Release image %s will not appear on the release controller.", dest_image_pullspec)
@@ -1584,8 +1572,7 @@ class PromotePipeline:
         subject = f"OCP {release_name} Image List"
         return await to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
 
-    def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int],
-                               nightlies: List[str]):
+    def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int]):
         """
         Check release jira subtask for task status
         Send a notification email to QEs if it hasn't been done yet
@@ -1609,9 +1596,7 @@ class PromotePipeline:
 
         self._logger.info("Sending a notification to QE and multi-arch QE...")
         jira_issue_link = parent_jira.permalink()
-        nightlies_w_pullspecs = nightlies_with_pullspecs(nightlies)
-        self._send_release_email(release_name, impetus_advisories, jira_issue_link,
-                                 nightlies_w_pullspecs)
+        self._send_release_email(release_name, impetus_advisories, jira_issue_link)
         self._logger.info("Update QE's release tests repo...")
         self._update_qe_repo(release_name, release_jira, impetus_advisories)
         if not self.runtime.dry_run:
@@ -1664,7 +1649,7 @@ class PromotePipeline:
             self._logger.warning(f"Failed to update upstream repo: {e}")
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str, nightlies):
+    def _send_release_email(self, release_name: str, advisories: Dict[str, int], jira_link: str):
         subject = f"OCP {release_name} advisories and nightlies"
         content = f"This is the current set of advisories for {release_name}:\n"
         for impetus, advisory in advisories.items():
@@ -1674,14 +1659,10 @@ class PromotePipeline:
         if 'microshift' in advisories.keys():
             content += ("\n Note: Microshift advisory gets populated with build and bugs after the release payload has "
                         "been promoted on Release Controller. It will take a few hours for it to be ready and on QE.")
-        if nightlies:
-            content += "\nNightlies:\n"
-            for arch, pullspec in nightlies.items():
-                content += f"- {arch}: {pullspec}\n"
-        elif self.assembly != "stream":
-            content += "\nThis release is NOT directly based on existing nightlies.\n"
-            content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
-                       f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
+
+        content += "\nThis release is NOT directly based on existing nightlies.\n"
+        content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
+                   f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
         content += f"\nJIRA ticket: {jira_link}\n"
         content += f"\nAdvisory dashboard: https://art-dash.engineering.redhat.com/dashboard/release/{self.group} \n"
         content += "\nThanks.\n"
