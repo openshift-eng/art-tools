@@ -335,13 +335,14 @@ class KonfluxImageBuilder:
                     ):
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
-                        conditions = obj.status.conditions
-                        if not conditions:
-                            status = "N/A"
+                        status = "Not Found"
+                        try:
+                            status = obj.status.conditions[0].status
+                        except AttributeError as e:
+                            self._logger.info("Status not found")
                         else:
-                            status = conditions[0].status
-                        self._logger.info("PipelineRun %s status: %s", pipelinerun_name, status)
-                        if status not in ["Unknown", "N/A"]:
+                            self._logger.info("PipelineRun %s status: %s", pipelinerun_name, status)
+                        if status not in ["Unknown", "Not Found"]:
                             return obj
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
