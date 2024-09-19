@@ -41,7 +41,7 @@ class KonfluxOcp4Pipeline:
             '--latest-parent-version',
             f'--images={image_list}',
             'beta:images:konflux:rebase',
-            f'--version=v{version}',
+            f'--version={version}',
             f'--release={input_release}',
             f"--message='Updating Dockerfile version and release {version}-{input_release}'",
         ])
