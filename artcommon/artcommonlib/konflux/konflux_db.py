@@ -66,7 +66,7 @@ class KonfluxDb:
         build.schema_level = SCHEMA_LEVEL
 
         # Execute query
-        values = (f"{value_or_null(value)}" for value in build.to_dict().values())
+        values = [f"{value_or_null(value)}" for value in build.to_dict().values()]
         self.bq_client.insert(self.column_names, values)
 
     async def add_builds(self, builds: typing.List[konflux_build_record.KonfluxBuildRecord]):
@@ -78,30 +78,34 @@ class KonfluxDb:
         with concurrent.futures.ThreadPoolExecutor() as pool:
             await asyncio.gather(*(loop.run_in_executor(pool, self.add_build, build) for build in builds))
 
-    def search_builds_by_fields(self, names: list, values: list, order_by: str = '', sorting: str = 'DESC',
-                                limit: int = None):
+    def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
+                                where: typing.Dict[str, typing.Any] = None, order_by: str = '',
+                                sorting: str = 'DESC', limit: int = None):
         """
-        Execute a SELECT * from the BigQuery table. "names" and "values" are lists of strings that can optionally
-        specify a list of WHERE clauses to include into the query.
+        Execute a SELECT * from the BigQuery table.
 
-        Examples:
-        - search_builds_by_fields(None, None) will execute "SELECT * FROM `<table>`"
-        - search_builds_by_fields(['name'], None) will throw an exception because no value is provided for 'name'
-        - search_builds_by_fields(['name'], 'ironic') will throw an exception because "values" is not of type list
-        - search_builds_by_fields(['name'], ['ironic']) will execute "SELECT * FROM `<table>` WHERE `name` = 'ironic'"
-        - search_builds_by_fields(['name', 'group'], ['ironic', 'openshift-4.16']) will execute
-          "SELECT * FROM `<table>` WHERE `name` = 'ironic' AND `group` = 'openshift-4.16'"
+        "where" is an optional dictionary that maps names and values to define a WHERE clause.
+        "start_search" is a lower bound to be applied to the partitioning field `start_time`.
+        "end_search" can optionally be provided as an upper bound for the same field.
 
         This is a generator function, so it must be looped over to get the query results. For each result row,
         a KonfluxBuildRecord is constructed and yielded at each iteration.
         """
 
         query = f'SELECT * FROM `{self.bq_client.table_ref}`'
+        query += f" WHERE `start_time` > '{start_search}'"
+        if end_search:
+            query += f" AND `start_time` < '{end_search}'"
 
-        if names:
-            assert values and len(values) == len(names), f'Values must be provided for each column in {names}'
-            query += ' WHERE '
-            where_clauses = [f"`{field}` = '{value}'" for field, value in zip(names, values)]
+        where_clauses = []
+        where = where if where is not None else {}
+        for name, value in where.items():
+            if value is not None:
+                where_clauses.append(f"`{name}` = '{value}'")
+            else:
+                where_clauses.append(f"`{name}` IS NULL")
+        if where_clauses:
+            query += ' AND '
             query += ' AND '.join(where_clauses)
 
         if order_by:
@@ -114,7 +118,12 @@ class KonfluxDb:
 
         results = self.bq_client.query(query)
         self.logger.info('Found %s builds', results.total_rows)
-        return results
+
+        while True:
+            try:
+                yield konflux_build_record.from_result_row(next(results))
+            except StopIteration:
+                return
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',

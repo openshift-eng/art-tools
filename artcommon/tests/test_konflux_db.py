@@ -47,42 +47,83 @@ class TestKonfluxDB(TestCase):
 
     @patch('artcommonlib.bigquery.BigQueryClient.query')
     def test_search_builds_by_fields(self, query_mock):
-        self.db.search_builds_by_fields(names=[], values=[])
-        query_mock.assert_called_once_with('SELECT * FROM `project.dataset.builds`')
-
-        query_mock.reset_mock()
-        self.db.search_builds_by_fields(names=['name', 'group'], values=['ironic', 'openshift-4.18'])
+        start_search = datetime(2024, 9, 23, 9, 0, 0, 0)
+        next(self.db.search_builds_by_fields(start_search=start_search, where={}))
         query_mock.assert_called_once_with(
-            "SELECT * FROM `project.dataset.builds` WHERE `name` = 'ironic' AND `group` = 'openshift-4.18'")
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'")
 
         query_mock.reset_mock()
-        self.db.search_builds_by_fields(names=['name', 'group'], values=['ironic', 'openshift-4.18'],
-                                        order_by='start_time')
-        query_mock.assert_called_once_with("SELECT * FROM `project.dataset.builds` WHERE `name` = 'ironic' "
-                                           "AND `group` = 'openshift-4.18' ORDER BY `start_time` DESC")
+        end_search = start_search + timedelta(days=7)
+        next(self.db.search_builds_by_fields(start_search=start_search, end_search=end_search, where={}))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `start_time` < '2024-09-30 09:00:00'")
 
         query_mock.reset_mock()
-        self.db.search_builds_by_fields(names=['name', 'group'], values=['ironic', 'openshift-4.18'],
-                                        order_by='start_time', sorting='ASC')
-        query_mock.assert_called_once_with("SELECT * FROM `project.dataset.builds` WHERE `name` = 'ironic' "
-                                           "AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC")
+        next(self.db.search_builds_by_fields(start_search=start_search, where=None))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'")
 
         query_mock.reset_mock()
-        self.db.search_builds_by_fields(names=['name', 'group'], values=['ironic', 'openshift-4.18'],
-                                        order_by='start_time', sorting='ASC', limit=0)
-        query_mock.assert_called_once_with("SELECT * FROM `project.dataset.builds` WHERE `name` = 'ironic' "
-                                           "AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 0")
+        next(self.db.search_builds_by_fields(start_search=start_search,
+                                             where={'name': 'ironic', 'group': 'openshift-4.18'}))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `name` = 'ironic' AND `group` = 'openshift-4.18'")
 
         query_mock.reset_mock()
-        self.db.search_builds_by_fields(names=['name', 'group'], values=['ironic', 'openshift-4.18'],
-                                        order_by='start_time', sorting='ASC', limit=10)
-        query_mock.assert_called_once_with("SELECT * FROM `project.dataset.builds` WHERE `name` = 'ironic' "
-                                           "AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 10")
+        next(self.db.search_builds_by_fields(start_search=start_search, where={'name': None}))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00' AND `name` IS NULL")
+
+        query_mock.reset_mock()
+        next(self.db.search_builds_by_fields(start_search=start_search, where={'name': None, 'group': None}))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `name` IS NULL AND `group` IS NULL")
+
+        query_mock.reset_mock()
+        next(self.db.search_builds_by_fields(
+            start_search=start_search,
+            where={'name': 'ironic', 'group': 'openshift-4.18'},
+            order_by='start_time'))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` DESC")
+
+        query_mock.reset_mock()
+        next(self.db.search_builds_by_fields(
+            start_search=start_search,
+            where={'name': 'ironic', 'group': 'openshift-4.18'},
+            order_by='start_time', sorting='ASC'))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC")
+
+        query_mock.reset_mock()
+        next(self.db.search_builds_by_fields(
+            start_search=start_search,
+            where={'name': 'ironic', 'group': 'openshift-4.18'},
+            order_by='start_time', sorting='ASC', limit=0))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 0")
+
+        query_mock.reset_mock()
+        next(self.db.search_builds_by_fields(
+            start_search=start_search,
+            where={'name': 'ironic', 'group': 'openshift-4.18'},
+            order_by='start_time', sorting='ASC', limit=10))
+        query_mock.assert_called_once_with(
+            "SELECT * FROM `project.dataset.builds` WHERE `start_time` > '2024-09-23 09:00:00'"
+            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 10")
 
         query_mock.reset_mock()
         with self.assertRaises(AssertionError):
-            self.db.search_builds_by_fields(names=['name', 'group'], values=['ironic', 'openshift-4.18'],
-                                            order_by='start_time', sorting='ASC', limit=-1)
+            next(self.db.search_builds_by_fields(
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time', sorting='ASC', limit=-1))
 
     @patch('artcommonlib.konflux.konflux_db.datetime')
     @patch('artcommonlib.bigquery.BigQueryClient.query')
