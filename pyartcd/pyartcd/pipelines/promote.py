@@ -335,7 +335,11 @@ class PromotePipeline:
 
             # Before waiting for release images to be accepted by release controllers,
             # we can start microshift build
-            await self._build_microshift(releases_config)
+            if "microshift" in impetus_advisories.keys():
+                await self._build_microshift(releases_config)
+            else:
+                self._logger.warning("Skipping microshift build because microshift advisory not found. "
+                                     "If you need to build, first define microshift advisory in assembly config")
 
             release_jira = group_config.get("release_jira", '')
 
