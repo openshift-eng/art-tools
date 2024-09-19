@@ -10,6 +10,7 @@ from typing import List
 from artcommonlib import exectools
 from artcommonlib.exectools import RetryException
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
+from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.brew import get_build_objects
 from doozerlib.cli import cli, click_coroutine, pass_runtime, validate_rpm_version
@@ -327,6 +328,9 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
         rebase_url = build["extra"]["source"]["original_url"].split('+')[-1]
         rebase_repo_url, rebase_commitish = rebase_url.split('#')
 
+        el_version = isolate_el_version_in_release(build["nvr"])
+        el_target = f'el{el_version}' if el_version else ''
+
         with open(rpm.specfile) as specfile:
             rpmspec = specfile.read().splitlines()
             try:
@@ -341,7 +345,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             version=version,
             release=rpm.release,
             assembly=runtime.assembly,
-            el_target=build["nvr"].split(".")[-1],
+            el_target=el_target,
             arches=rpm.get_arches(),
             installed_packages=[],
             parent_images=[],
