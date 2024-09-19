@@ -58,11 +58,21 @@ class KonfluxDb:
         Insert a build record into Konflux DB
         """
 
+        def value_or_null(value):
+            if value is None:
+                return 'NULL'
+
+            elif isinstance(value, str):
+                return f"'{value}'"
+
+            else:
+                return str(value)
+
         # Fill in missing record fields
         build.ingestion_time = datetime.now()
         build.schema_level = SCHEMA_LEVEL
         query = f'INSERT INTO `{self.table_ref}` {self.column_names} VALUES '
-        values = (f"'{value}'" if isinstance(value, str) else str(value) for value in build.to_dict().values())
+        values = (f"{value_or_null(value)}" for value in build.to_dict().values())
         query += '(' + ', '.join(values) + ')'
         self.logger.info('Executing query: %s', query)
 
