@@ -78,6 +78,7 @@ class KonfluxImageBuilder:
             # Start the build
             LOGGER.info("Starting Konflux image build for %s...", metadata.distgit_key)
             retries = 3
+            error = None
             for attempt in range(retries):
                 self._logger.info("Build attempt %s/%s", attempt + 1, retries)
                 with client.ApiClient(configuration=cfg) as api_client:
@@ -95,7 +96,7 @@ class KonfluxImageBuilder:
                     else:
                         metadata.build_status = True
                         break
-            if error:
+            if not metadata.build_status and error:
                 raise error
         finally:
             # Signal that the build is complete
