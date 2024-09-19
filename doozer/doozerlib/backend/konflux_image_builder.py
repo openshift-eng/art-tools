@@ -90,9 +90,13 @@ class KonfluxImageBuilder:
                     pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
                     self._logger.info("PipelineRun %s completed", pipelinerun_name)
                     if pipelinerun.status.conditions[0].status != "True":
-                        raise KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
-                    metadata.build_status = True
-                    break
+                        error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
+                                                       pipelinerun_name, pipelinerun)
+                    else:
+                        metadata.build_status = True
+                        break
+            if error:
+                raise error
         finally:
             # Signal that the build is complete
             metadata.build_event.set()
