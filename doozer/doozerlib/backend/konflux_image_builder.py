@@ -316,8 +316,10 @@ class KonfluxImageBuilder:
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
                         status = "Not Found"
-                        if hasattr(obj, status):
+                        try:
                             status = obj.status.conditions[0].status
+                        except AttributeError:
+                            pass
                         self._logger.info("PipelineRun %s status: %s", pipelinerun_name, status)
                         if status not in ["Unknown", "Not Found"]:
                             return obj
