@@ -77,18 +77,22 @@ class KonfluxImageBuilder:
 
             # Start the build
             LOGGER.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            with client.ApiClient(configuration=cfg) as api_client:
-                dyn_client = DynamicClient(api_client)
+            retries = 3
+            for attempt in range(retries):
+                self._logger.info("Build attempt %s/%s", attempt + 1, retries)
+                with client.ApiClient(configuration=cfg) as api_client:
+                    dyn_client = DynamicClient(api_client)
 
-                pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
+                    pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
 
-                pipelinerun_name = pipelinerun['metadata']['name']
-                self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
-                self._logger.info("PipelineRun %s completed", pipelinerun_name)
-                if pipelinerun.status.conditions[0].status != "True":
-                    raise KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
-                metadata.build_status = True
+                    pipelinerun_name = pipelinerun['metadata']['name']
+                    self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
+                    pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
+                    self._logger.info("PipelineRun %s completed", pipelinerun_name)
+                    if pipelinerun.status.conditions[0].status != "True":
+                        raise KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
+                    metadata.build_status = True
+                    break
         finally:
             # Signal that the build is complete
             metadata.build_event.set()

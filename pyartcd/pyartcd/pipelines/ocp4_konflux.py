@@ -49,7 +49,6 @@ class KonfluxOcp4Pipeline:
             cmd.append('--push')
         await exectools.cmd_assert_async(cmd)
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(3))
     async def build(self):
         cmd = self._doozer_base_command.copy()
         image_list = self.image_list or ''
