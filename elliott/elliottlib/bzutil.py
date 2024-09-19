@@ -82,7 +82,7 @@ class Bug:
         raise NotImplementedError
 
     def is_flaw_bug(self):
-        return self.product == "Security Response" and self.component == "vulnerability"
+        return self.product == "Security Response" and (self.component == "vulnerability" or self.component == "vulnerability-draft")
 
     def is_ocp_bug(self):
         raise NotImplementedError
