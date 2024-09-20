@@ -98,9 +98,10 @@ class KonfluxImageBuilder:
                         break
             if not metadata.build_status and error:
                 raise error
-        finally:
-            # Signal that the build is complete
-            metadata.build_event.set()
+        except:
+            metadata.build_status = False
+
+        metadata.build_event.set()
 
         return pipelinerun_name, pipelinerun
 
