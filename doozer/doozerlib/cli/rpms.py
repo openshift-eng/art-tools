@@ -11,6 +11,7 @@ from artcommonlib import exectools
 from artcommonlib.exectools import RetryException
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.brew import get_build_objects
 from doozerlib.cli import cli, click_coroutine, pass_runtime, validate_rpm_version
@@ -320,16 +321,14 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
     with runtime.shared_koji_client_session() as koji_api:
         builds = get_build_objects(nvrs, koji_api)
 
-    _, version, _ = await exectools.cmd_gather_async(
-        ["rpmspec", "-q", "--qf", "%{version}", "--srpm", "--undefine", "dist", "--",
-         str(rpm.specfile)])
-
     for build in builds:
         rebase_url = build["extra"]["source"]["original_url"].split('+')[-1]
         rebase_repo_url, rebase_commitish = rebase_url.split('#')
 
         el_version = isolate_el_version_in_release(build["nvr"])
         el_target = f'el{el_version}' if el_version else ''
+
+        nvr = build["nvr"]
 
         with open(rpm.specfile) as specfile:
             rpmspec = specfile.read().splitlines()
@@ -342,7 +341,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
         build_record = KonfluxBuildRecord(
             name=rpm.rpm_name,
             group=runtime.group,
-            version=version,
+            version=parse_nvr(nvr)["version"],
             release=rpm.release,
             assembly=runtime.assembly,
             el_target=el_target,
@@ -364,7 +363,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             art_job_url=os.getenv("BUILD_URL", "n/a"),
             build_pipeline_url=str(build["task_id"]),
             pipeline_commit='n/a',
-            nvr=build["nvr"],
+            nvr=nvr,
             build_id=str(build["build_id"])
         )
 
