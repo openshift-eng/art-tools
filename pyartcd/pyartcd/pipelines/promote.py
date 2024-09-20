@@ -499,7 +499,7 @@ class PromotePipeline:
         elif self.skip_cincinnati_prs or self.runtime.dry_run:
             self._logger.info("Skipping Cincinnati PRs creation since skip param is set")
         else:
-            self.create_cincinnati_prs(assembly_type, data)
+            await self.create_cincinnati_prs(assembly_type, data)
 
         try:
             # send promote complete email
