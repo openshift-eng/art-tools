@@ -9,7 +9,7 @@ class TestGitHelper(unittest.IsolatedAsyncioTestCase):
         from artcommonlib import git_helper
         args = ["init", "local_dir"]
         check = True
-        await git_helper.run_git(args, check=check)
+        await git_helper.run_git_async(args, check=check)
         cmd_assert_async.assert_called_once_with(["git"] + args, env=ANY, check=check)
 
     @patch('artcommonlib.exectools.cmd_gather_async')
@@ -18,5 +18,5 @@ class TestGitHelper(unittest.IsolatedAsyncioTestCase):
         from artcommonlib import git_helper
         args = ["init", "local_dir"]
         check = True
-        await git_helper.gather_git(args, check=check)
+        await git_helper.gather_git_async(args, check=check)
         cmd_gather_async.assert_called_once_with(["git"] + args, env=ANY, check=check)

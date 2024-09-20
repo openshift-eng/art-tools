@@ -25,7 +25,7 @@ from tenacity import (before_sleep_log, retry, retry_if_not_result,
                       stop_after_attempt, wait_fixed)
 
 import doozerlib
-from artcommonlib import assertion, logutil, build_util, exectools
+from artcommonlib import assertion, logutil, exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
 from artcommonlib.format_util import yellow_print
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
@@ -33,12 +33,12 @@ from artcommonlib.model import Missing, Model, ListModel
 from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
-from doozerlib import constants, state, util
+from doozerlib import state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.brew_info import BrewBuildImageInspector
-from artcommonlib.git_helper import git_clone
+from artcommonlib.git_helper import git_clone, gather_git
 from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.source_modifications import SourceModifierFactory
@@ -1119,6 +1119,12 @@ class ImageDistGitRepo(DistGitRepo):
                     record["task_id"], record["task_url"] = build_err.task_id, build_err.task_url
                     if not dry_run:
                         self.update_build_db(False, task_id=build_err.task_id, scratch=scratch)
+                        self.update_konflux_db(
+                            build_info=build_err,
+                            outcome=KonfluxBuildOutcome.FAILURE,
+                            build_pipeline_url=build_err.task_url,
+                            scratch=scratch
+                        )
                     raise
             record["message"] = "Success"
             record["status"] = 0
@@ -1306,50 +1312,61 @@ class ImageDistGitRepo(DistGitRepo):
             self.logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return
 
-        self.logger.info('Storing build info in Konflux for Brew build %s', build_info['nvr'])
         try:
             dfp = DockerfileParser(str(self.dg_path.joinpath('Dockerfile')))
-            source_repo = self.metadata.config.content.source.git.url
+            source_repo = convert_remote_git_to_https(self.metadata.config.content.source.git.url)
             commitish = dfp.labels['io.openshift.build.commit.url'].split('commit/')[-1]
 
-            rebase_repo_url, rebase_commitish = build_info['source'].split('#')
+            _, rebase_repo_url, _ = gather_git(['-C', self.distgit_dir, 'remote', 'get-url', 'origin'])
+            _, rebase_commitish, _ = gather_git(['-C', self.distgit_dir, 'rev-parse', 'HEAD'])
 
-            image_pullspec = build_info['extra']['image']['index']['pull'][0]
+            build_record_params = {
+                'name': self.metadata.name,
+                'group': self.runtime.group,
+                'assembly': self.runtime.assembly,
+                'source_repo': source_repo,
+                'commitish': commitish,
+                'rebase_repo_url': convert_remote_git_to_https(rebase_repo_url),
+                'rebase_commitish': rebase_commitish.strip(),
+                'artifact_type': ArtifactType.IMAGE,
+                'engine': Engine.BREW,
+                'outcome': outcome,
+                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+                'build_pipeline_url': build_pipeline_url if build_pipeline_url else '',
+                'pipeline_commit': 'n/a'
+            }
 
-            try:
-                release_target = self.org_release.split('.')[-1]
-            except KeyError:
-                release_target = ''
-            el_target = release_target if release_target else f'el{self.metadata.branch_el_target()}'
+            if outcome == KonfluxBuildOutcome.FAILURE:
+                self.logger.info('Storing failed Brew build info for %s in Konflux DB', self.metadata.name)
+                build_record_params.update({
+                    'start_time': datetime.now(),  # placeholder, cannot be NULL
+                    'end_time': datetime.now(),  # placeholder, cannot be NULL
+                    'nvr': 'n/a'
+                })
 
-            build_record = KonfluxBuildRecord(
-                name=self.metadata.name,
-                group=self.runtime.group,
-                version=build_info['version'],
-                release=build_info['release'],
-                assembly=self.runtime.assembly,
-                el_target=el_target,
-                arches=self.metadata.get_arches(),
-                installed_packages=self.get_installed_packages(image_pullspec),
-                parent_images=[build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()],
-                source_repo=convert_remote_git_to_https(source_repo),
-                commitish=commitish,
-                rebase_repo_url=rebase_repo_url,
-                rebase_commitish=rebase_commitish,
-                embargoed='p1' in build_info['release'].split('.'),
-                start_time=datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
-                end_time=datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
-                artifact_type=ArtifactType.IMAGE,
-                engine=Engine.BREW,
-                image_pullspec=image_pullspec,
-                image_tag=image_pullspec.split('sha256:')[-1],
-                outcome=outcome,
-                art_job_url=os.getenv('BUILD_URL', 'n/a'),
-                build_pipeline_url=build_pipeline_url,
-                pipeline_commit='n/a',
-                nvr=build_info['nvr'],
-                build_id=str(build_info['id'])
-            )
+            else:
+                self.logger.info('Storing Brew build info for %s in Konflux DB', build_info['nvr'])
+                image_pullspec = build_info['extra']['image']['index']['pull'][0]
+                el_target = f'el{isolate_el_version_in_release(build_info["release"])}'
+
+                build_record_params.update({
+                    'version': build_info['version'],
+                    'release': build_info['release'],
+                    'el_target': el_target,
+                    'arches': self.metadata.get_arches(),
+                    'installed_packages': self.get_installed_packages(image_pullspec),
+                    'parent_images': [build['nvr']
+                                      for build in build_info['extra']['image']['parent_image_builds'].values()],
+                    'embargoed': 'p1' in build_info['release'].split('.'),
+                    'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                    'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                    'image_pullspec': image_pullspec,
+                    'image_tag': image_pullspec.split('sha256:')[-1],
+                    'nvr': build_info['nvr'],
+                    'build_id': str(build_info['id'])
+                })
+
+            build_record = KonfluxBuildRecord(**build_record_params)
             self.runtime.konflux_db.add_build(build_record)
             self.logger.info('Brew build info stored successfully')
 

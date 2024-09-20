@@ -69,39 +69,39 @@ class BuildRepo:
         """
         local_dir = str(self.local_dir)
         self._logger.info("Cloning build source repository %s on branch %s into %s...", self.url, self.branch, local_dir)
-        await git_helper.run_git(["init", local_dir])
-        _, out, _ = await git_helper.gather_git(["-C", local_dir, "remote"], stderr=None)
+        await git_helper.run_git_async(["init", local_dir])
+        _, out, _ = await git_helper.gather_git_async(["-C", local_dir, "remote"], stderr=None)
         if 'origin' not in out.strip().split():
-            await git_helper.run_git(["-C", local_dir, "remote", "add", "origin", self.url])
+            await git_helper.run_git_async(["-C", local_dir, "remote", "add", "origin", self.url])
         else:
-            await git_helper.run_git(["-C", local_dir, "remote", "set-url", "origin", self.url])
-        rc, _, err = await git_helper.gather_git(["-C", local_dir, "fetch", "--depth=1", "origin", self.branch], check=False)
+            await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", "origin", self.url])
+        rc, _, err = await git_helper.gather_git_async(["-C", local_dir, "fetch", "--depth=1", "origin", self.branch], check=False)
         if rc != 0:
             if "fatal: couldn't find remote ref" in err:
                 self._logger.info("Branch %s not found in build source repository; creating a new branch instead", self.branch)
-                await git_helper.run_git(["-C", local_dir, "checkout", "--orphan", self.branch])
+                await git_helper.run_git_async(["-C", local_dir, "checkout", "--orphan", self.branch])
             else:
                 raise ChildProcessError(f"Failed to fetch {self.branch} from {self.url}: {err}")
         else:
-            await git_helper.run_git(["-C", local_dir, "checkout", "-B", self.branch, "-t", f"origin/{self.branch}"])
-            _, commit_hash, _ = await git_helper.gather_git(["-C", local_dir, "rev-parse", "HEAD"])
+            await git_helper.run_git_async(["-C", local_dir, "checkout", "-B", self.branch, "-t", f"origin/{self.branch}"])
+            _, commit_hash, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "HEAD"])
             self._commit_hash = commit_hash.strip()
 
     async def commit(self, message: str, allow_empty: bool = False):
         """ Commit changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git(["-C", local_dir, "add", "."])
+        await git_helper.run_git_async(["-C", local_dir, "add", "."])
         commit_opts = []
         if allow_empty:
             commit_opts.append("--allow-empty")
-        await git_helper.run_git(["-C", local_dir, "commit"] + commit_opts + ["-m", message])
-        _, out, _ = await git_helper.gather_git(["-C", local_dir, "rev-parse", "HEAD"])
+        await git_helper.run_git_async(["-C", local_dir, "commit"] + commit_opts + ["-m", message])
+        _, out, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "HEAD"])
         self._commit_hash = out.strip()
 
     async def push(self):
         """ Push changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git(["-C", local_dir, "push", "origin", self.branch])
+        await git_helper.run_git_async(["-C", local_dir, "push", "origin", self.branch])
 
     @staticmethod
     async def from_local_dir(local_dir: Union[str, Path], logger: Optional[logging.Logger] = None):
@@ -114,9 +114,9 @@ class BuildRepo:
         if not local_dir.joinpath(".git").exists():
             raise FileNotFoundError(f"{local_dir} is not a git repository")
         local_dir = str(local_dir)
-        _, url, _ = await git_helper.gather_git(["-C", local_dir, "config", "--get", "remote.origin.url"])
-        _, branch, _ = await git_helper.gather_git(["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"])
-        _, commit_hash, _ = await git_helper.gather_git(["-C", local_dir, "rev-parse", "HEAD"])
+        _, url, _ = await git_helper.gather_git_async(["-C", local_dir, "config", "--get", "remote.origin.url"])
+        _, branch, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "--abbrev-ref", "HEAD"])
+        _, commit_hash, _ = await git_helper.gather_git_async(["-C", local_dir, "rev-parse", "HEAD"])
         repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger)
         repo._commit_hash = commit_hash.strip()
         return repo
