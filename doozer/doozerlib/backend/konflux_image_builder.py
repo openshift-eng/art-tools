@@ -98,7 +98,7 @@ class KonfluxImageBuilder:
                         break
             if not metadata.build_status and error:
                 raise error
-        except:
+        except KonfluxImageBuildError:
             metadata.build_status = False
 
         metadata.build_event.set()
