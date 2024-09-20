@@ -273,6 +273,8 @@ class KonfluxImageBuilder:
         for param in obj["spec"]["params"]:
             if param["name"] == "output-image":
                 param["value"] = output_image
+            if param["name"] == "skip-checks":
+                param["value"] = "true"
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
         return obj
 
