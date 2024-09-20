@@ -59,6 +59,12 @@ class KonfluxDb:
         """
 
         def value_or_null(value):
+            """
+            Return the value representation to be inserted into the query String.
+            Strings need to be quoted in '', other values (e.g. timestamps) are rendered without quotes.
+            None values translate into NULL
+            """
+
             if value is None:
                 return 'NULL'
 
