@@ -447,7 +447,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     }))
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")
     @patch("pyartcd.pipelines.promote.PromotePipeline.send_promote_complete_email")
-    async def test_run_with_standard_assembly(self, send_promote_complete_email: Mock, get_image_stream: AsyncMock, load_group_config: AsyncMock,
+    @patch("pyartcd.pipelines.promote.PromotePipeline.create_cincinnati_prs")
+    async def test_run_with_standard_assembly(self, create_cincinnati_prs: AsyncMock, send_promote_complete_email: Mock, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
                                               build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
         runtime = MagicMock(
