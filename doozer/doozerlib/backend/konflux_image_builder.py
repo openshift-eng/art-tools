@@ -222,6 +222,7 @@ class KonfluxImageBuilder:
                 "name": name,
                 "annotations": {
                     "build.appstudio.openshift.io/pipeline": '{"name":"docker-build-multi-platform-oci-ta","bundle":"latest"}',
+                    "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',
                     # "build.appstudio.openshift.io/request": "configure-pac",
                     "mintmaker.appstudio.redhat.com/disabled": "true",  # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
                 }
