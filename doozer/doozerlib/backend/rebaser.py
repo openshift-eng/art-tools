@@ -216,6 +216,14 @@ class KonfluxRebaser:
         for builder in image_from.get("builder", []):
             parents.append(builder)
         parents.append(image_from)
+
+        # Remove duplicates
+        temp = []
+        for parent in parents:
+            if parent not in temp:
+                temp.append(parent)
+        parents = temp
+
         if len(parents) != len(dfp.parent_images):
             raise ValueError(f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile")
 
