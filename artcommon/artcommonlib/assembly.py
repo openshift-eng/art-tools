@@ -117,31 +117,32 @@ def assembly_type(releases_config: Model, assembly: typing.Optional[str]) -> Ass
     raise ValueError(f'Unknown assembly type: {str_type}')
 
 
-def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str], key: str, default):
+def assembly_config_struct(releases_config: Model, assembly_name: typing.Optional[str], key: str, default):
     """
     If a key is directly under the 'assembly' (e.g. rhcos), then this method will
     recurse the inheritance tree to build you a final version of that key's value.
     The key may refer to a list or dict (set default value appropriately).
     """
-    if not assembly or not isinstance(releases_config, Model):
+    if key and key[-1] in ['!', '?', '-']:
+        raise ValueError(f"Special assembly field '{key}' should not be fetched directly, instead fetch "
+                         f"the actual field '{key[:-1]}'")
+
+    if not assembly_name or not isinstance(releases_config, Model):
         return Missing
 
-    _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.releases[assembly].assembly
+    _check_recursion(releases_config, assembly_name)
 
-    if target_assembly.basis.assembly:  # Does this assembly inherit from another?
-        # Recursive apply ancestor assemblies
-        parent_config_struct = assembly_config_struct(releases_config, target_assembly.basis.assembly, key, default)
-        if key in target_assembly:
-            key_struct = target_assembly[key]
-            if hasattr(key_struct, "primitive"):
-                key_struct = key_struct.primitive()
-            key_struct = _merger(key_struct, parent_config_struct.primitive() if hasattr(
-                parent_config_struct, "primitive") else parent_config_struct)
+    def _get_merged_assembly(name: str) -> dict:
+        target = releases_config.releases[name].assembly
+        if target.basis.assembly:  # Does this assembly inherit from another?
+            parent_assembly_name = target.basis.assembly
+            parent_assembly = _get_merged_assembly(parent_assembly_name)  # Recursive merge ancestor assemblies
+            return _merger(target.primitive(), parent_assembly)
         else:
-            key_struct = parent_config_struct
-    else:
-        key_struct = target_assembly.get(key, default)
+            return target.primitive()
+
+    target_assembly = _get_merged_assembly(assembly_name)
+    key_struct = target_assembly.get(key, default)
     if isinstance(default, dict):
         return Model(dict_to_model=key_struct)
     elif isinstance(default, list):
@@ -248,27 +249,7 @@ def assembly_rhcos_config(releases_config: Model, assembly: str) -> Model:
     :param assembly: The name of the assembly to assess
     Returns the computed rhcos config model for a given assembly.
     """
-    return _assembly_field("rhcos", releases_config, assembly)
-
-
-def _assembly_field(field_name: str, releases_config: Model, assembly: str) -> Model:
-    """
-    :param field_name: the field name
-    :param releases_config: The content of releases.yml in Model form.
-    :param assembly: The name of the assembly to assess
-    Returns the computed rhcos config model for a given assembly.
-    """
-    if not assembly or not isinstance(releases_config, Model):
-        return Missing
-
-    _check_recursion(releases_config, assembly)
-    target_assembly = releases_config.releases[assembly].assembly
-    config_dict = target_assembly.get(field_name, {})
-    if target_assembly.basis.assembly:  # Does this assembly inherit from another?
-        # Recursive apply ancestor assemblies
-        basis_rhcos_config = _assembly_field(field_name, releases_config, target_assembly.basis.assembly)
-        config_dict = _merger(config_dict, basis_rhcos_config.primitive())
-    return Model(dict_to_model=config_dict)
+    return assembly_config_struct(releases_config, assembly, "rhcos", {})
 
 
 def assembly_basis_event(releases_config: Model, assembly: str, strict: bool = False) -> typing.Optional[int]:
@@ -331,9 +312,9 @@ def assembly_issues_config(releases_config: Model, assembly: str) -> Model:
     """
     :param releases_config: The content of releases.yml in Model form.
     :param assembly: The name of the assembly to assess
-    Returns the a computed issues config model for a given assembly.
+    Returns the computed issues config model for a given assembly.
     """
-    return _assembly_field("issues", releases_config, assembly)
+    return assembly_config_struct(releases_config, assembly, "issues", {})
 
 
 def assembly_streams_config(releases_config: Model, assembly: typing.Optional[str], streams_config: Model) -> Model:
