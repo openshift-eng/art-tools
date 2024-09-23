@@ -1,14 +1,16 @@
 import asyncio
 import concurrent
+import copy
 import inspect
 import logging
-import os
 import typing
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from google.cloud import bigquery
+from sqlalchemy import Column, String, DateTime
 
+from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType
 
 SCHEMA_LEVEL = 1
 
@@ -17,29 +19,14 @@ class KonfluxDb:
     REQUIRED_VARS = ['GOOGLE_CLOUD_PROJECT', 'GOOGLE_APPLICATION_CREDENTIALS', 'DATASET_ID', 'TABLE_ID']
 
     def __init__(self):
-        self._check_env_vars()
-        self.client = bigquery.Client()
-        self.dataset_id = os.environ['DATASET_ID']
-        self.table_ref = f'{self.client.project}.{self.dataset_id}.{os.environ["TABLE_ID"]}'
         self.logger = logging.getLogger(__name__)
+        self.bq_client = bigquery.BigQueryClient()
         self.column_names = self._get_column_names()  # e.g. "(name, group, version, release, ... )"
 
-        # Make the gcp logger less noisy
-        logging.getLogger('google.auth.transport.requests').setLevel(logging.WARNING)
-
-    def _check_env_vars(self):
-        """
-        Check if all required env vars are defined. Raise an exception otherwise
-        """
-
-        missing_vars = [var for var in self.REQUIRED_VARS if var not in os.environ]
-        if missing_vars:
-            raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
     @staticmethod
-    def _get_column_names() -> str:
+    def _get_column_names() -> list:
         """
-        Inspects the KonfluxBuildRecord class definition, and returns its fields a list
+        Inspects the KonfluxBuildRecord class definition, and returns a list of fields
         To be used with INSERT statements
         """
 
@@ -49,9 +36,9 @@ class KonfluxDb:
         for param_name, _ in parameters.items():
             if param_name == 'self':
                 continue
-            fields.append(f"`{param_name}`")
+            fields.append(param_name)
 
-        return f'({", ".join(fields)})'
+        return fields
 
     def add_build(self, build: konflux_build_record.KonfluxBuildRecord):
         """
@@ -77,100 +64,143 @@ class KonfluxDb:
         # Fill in missing record fields
         build.ingestion_time = datetime.now()
         build.schema_level = SCHEMA_LEVEL
-        query = f'INSERT INTO `{self.table_ref}` {self.column_names} VALUES '
-        values = (f"{value_or_null(value)}" for value in build.to_dict().values())
-        query += '(' + ', '.join(values) + ')'
-        self.logger.info('Executing query: %s', query)
 
-        # This is using the standard table API, which could possibly exceed BigQuery quotas
-        # See https://cloud.google.com/bigquery/quotas#load_job_per_table.long for details
-        # In case this happens, we can use the streaming api, e.g. self.client.insert_rows_json(self.table_ref, builds)
-        # This can lead to unconsistent results, as there might be delays from the time a record is inserted,
-        # and the time it is actually available for retrieval. If we can't live with this limitation, we should consider
-        # adopting the new BigQuery Storage API, safe but harder to implement:
-        # https://github.com/googleapis/python-bigquery-storage/blob/main/samples/snippets/append_rows_proto2.py
-        self.client.query(query).result()
+        # Execute query
+        values = [f"{value_or_null(value)}" for value in build.to_dict().values()]
+        self.bq_client.insert(self.column_names, values)
 
     async def add_builds(self, builds: typing.List[konflux_build_record.KonfluxBuildRecord]):
         """
-        Insert a list of Konflux build records
+        Insert a list of Konflux build records using a parallel async loop to enable concurrent queries.
         """
 
         loop = asyncio.get_event_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             await asyncio.gather(*(loop.run_in_executor(pool, self.add_build, build) for build in builds))
 
-    def search_builds_by_fields(self, names: list, values: list):
-        query = f'SELECT * FROM `{self.table_ref}` WHERE '
-        where_clauses = [f'`{field}` = "{value}"' for field, value in zip(names, values)]
-        query += ' AND'.join(where_clauses)
+    def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
+                                where: typing.Dict[str, typing.Any] = None, order_by: str = '',
+                                sorting: str = 'DESC', limit: int = None):
+        """
+        Execute a SELECT * from the BigQuery table.
 
-        self.logger.info('Executing query: %s', query)
-        results = self.client.query(query).result()
+        "where" is an optional dictionary that maps names and values to define a WHERE clause.
+        "start_search" is a lower bound to be applied to the partitioning field `start_time`.
+        "end_search" can optionally be provided as an upper bound for the same field.
+
+        This is a generator function, so it must be looped over to get the query results. For each result row,
+        a KonfluxBuildRecord is constructed and yielded at each iteration.
+        """
+
+        query = f'SELECT * FROM `{self.bq_client.table_ref}`'
+        query += f" WHERE `start_time` > '{start_search}'"
+        if end_search:
+            query += f" AND `start_time` < '{end_search}'"
+
+        where_clauses = []
+        where = where if where is not None else {}
+        for name, value in where.items():
+            if value is not None:
+                where_clauses.append(f"`{name}` = '{value}'")
+            else:
+                where_clauses.append(f"`{name}` IS NULL")
+        if where_clauses:
+            query += ' AND '
+            query += ' AND '.join(where_clauses)
+
+        if order_by:
+            query += f' ORDER BY `{order_by}` {sorting}'
+
+        if limit is not None:
+            assert isinstance(limit, int)
+            assert limit >= 0, 'LIMIT expects a non-negative integer literal or parameter '
+            query += f' LIMIT {limit}'
+
+        results = self.bq_client.query(query)
         self.logger.info('Found %s builds', results.total_rows)
 
-        for row in results:
-            yield konflux_build_record.from_result_row(row)
+        while True:
+            try:
+                yield konflux_build_record.from_result_row(next(results))
+            except StopIteration:
+                return
 
-    def search_builds_by_field(self, name, value):
+    async def get_latest_builds(self, names: typing.List[str], group: str,
+                                outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
+                                el_target: str = None, artifact_type: ArtifactType = None,
+                                completed_before: datetime = None)\
+            -> typing.List[konflux_build_record.KonfluxBuildRecord]:
         """
-        Search for all builds matching component name
-        Returns a generator of KonfluxBuildRecord objects
-        """
-
-        query = f'SELECT * FROM `{self.table_ref}` WHERE {name} = '
-
-        if isinstance(value, str):
-            query += f'"{value}"'
-        else:
-            query += f'{value}'
-
-        self.logger.info('Executing query: %s', query)
-        results = self.client.query(query).result()
-        self.logger.info('Found %s builds', results.total_rows)
-
-        for row in results:
-            yield konflux_build_record.from_result_row(row)
-
-    def search_builds_by_name(self, name: str):
-        """
-        Search for all builds matching component name
-        Returns a generator of KonfluxBuildRecord objects
+        For a list of component names, run get_latest_build() in a concurrent pool executor.
+        Filter results that are None, which means that no builds have been found for that specific component
         """
 
-        return self.search_builds_by_field('name', name)
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            results = await asyncio.gather(*(loop.run_in_executor(
+                pool, self.get_latest_build, name, group, outcome, assembly, el_target, artifact_type, completed_before)
+                for name in names))
 
-    def search_build_by_build_id(self, build_id: str) -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
+        return [r for r in results if r]
+
+    def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+                         assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
+                         completed_before: datetime = None) -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
         """
-        Search for a build matching build ID.
-        If no build is found, return None.
-        If more than one build is found, raise an error.
-        Otherwise, return a KonfluxBuildRecord object
-        """
+        Search for the latest Konflux build information in BigQuery.
 
-        self.logger.info('Searching for a build matching ID "%s"', build_id)
-        builds = list(self.search_builds_by_field('build_id', build_id))
-
-        if not builds:
-            return None
-
-        elif len(builds) > 1:
-            raise ValueError('More than one build found with build ID equal to "%s"', build_id)
-
-        return builds[0]
-
-    def search_builds_by_record_id(self, record_id: str):
-        """
-        Search for all builds matching record ID
-        Returns a generator of KonfluxBuildRecord objects
+        :param name: component name, e.g. 'ironic'
+        :param group: e.g. 'openshift-4.18'
+        :param outcome: 'success' | 'failure'
+        :param assembly: non-standard assembly name, defaults to 'stream' if omitted
+        :param el_target: e.g. 'el8'
+        :param artifact_type: 'rpm' | 'image'
+        :param completed_before: cut off timestamp for builds completion time
         """
 
-        return self.search_builds_by_field('record_id', record_id)
+        if not completed_before:
+            completed_before = datetime.now()
+        self.logger.info('Searching for %s builds completed before %s', name, completed_before)
 
-    def search_builds_by_nvr(self, nvr: str):
-        """
-        Search for all builds matching NVR
-        Returns a generator of KonfluxBuildRecord objects
-        """
+        # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
+        # at most. This will let us reduce the amount of scanned data (and the BigQuery usage cost), as in the vast
+        # majority of cases we would find a build in the first 3-month interval.
+        base_clauses = [
+            Column('name', String) == name,
+            Column('group', String) == group,
+            Column('outcome', String) == str(outcome),
+            Column('assembly', String) == assembly,
+            Column('end_time').isnot(None),
+            Column('end_time', DateTime) < completed_before
+        ]
+        order_by_clause = Column('start_time', quote=True).desc()
 
-        return self.search_builds_by_field('nvr', nvr)
+        if el_target:
+            base_clauses.append(Column('el_target', String) == el_target)
+
+        if artifact_type:
+            base_clauses.append(Column('artifact_type', String) == str(artifact_type))
+
+        for window in range(12):
+            end_search = completed_before - window * 3 * timedelta(days=30)
+            start_search = end_search - 3 * timedelta(days=30)
+
+            where_clauses = copy.copy(base_clauses)
+            where_clauses.extend([
+                Column('start_time', DateTime) >= start_search,
+                Column('start_time', DateTime) < end_search,
+            ])
+
+            results = self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
+
+            try:
+                return konflux_build_record.from_result_row(next(results))
+
+            except (StopIteration, Exception):
+                # No builds found in current window, shift to the earlier one
+                continue
+
+        # If we got here, no builds have been found in the whole 36 months period
+        self.logger.warning('No builds found for %s with status %s in assembly %s and target %s',
+                            name, outcome.value, assembly, el_target)
+        return None
