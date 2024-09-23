@@ -16,8 +16,6 @@ SCHEMA_LEVEL = 1
 
 
 class KonfluxDb:
-    REQUIRED_VARS = ['GOOGLE_CLOUD_PROJECT', 'GOOGLE_APPLICATION_CREDENTIALS', 'DATASET_ID', 'TABLE_ID']
-
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.bq_client = bigquery.BigQueryClient()

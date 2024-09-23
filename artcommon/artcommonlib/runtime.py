@@ -4,7 +4,7 @@ import traceback
 import warnings
 from abc import ABC, abstractmethod
 
-from artcommonlib import logutil
+from artcommonlib import logutil, constants
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 
@@ -56,8 +56,8 @@ class GroupRuntime(ABC):
     def initialize_konxflux_db(self):
         try:
             self.konflux_db = KonfluxDb()
-            self._logger.info('Konflux DB initialized: using dataset %s on project %s',
-                              self.konflux_db.bq_client.dataset_id, self.konflux_db.bq_client.client.project)
+            self._logger.info('Konflux DB initialized using table %s',
+                              f'{constants.DATASET_ID}.{constants.DATASET_ID}.{constants.TABLE_ID}')
 
         except Exception as err:
             self._logger.warning('Cannot connect to the Konflux DB: %s\n%s', str(err), traceback.format_exc())
