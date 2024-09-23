@@ -4,16 +4,16 @@ from unittest.mock import patch
 
 from sqlalchemy import Column, String
 
+from artcommonlib import constants
 from artcommonlib.bigquery import BigQueryClient
 
 
 class TestBigQuery(TestCase):
-    @patch('os.environ', {'DATASET_ID': '', 'TABLE_ID': 'builds',
-                          'GOOGLE_CLOUD_PROJECT': '', 'GOOGLE_APPLICATION_CREDENTIALS': ''})
+    @patch('os.environ', {'GOOGLE_APPLICATION_CREDENTIALS': ''})
     @patch('artcommonlib.bigquery.bigquery.Client')
     def setUp(self, _):
         self.client = BigQueryClient()
-        self.client._table_ref = os.environ['TABLE_ID']
+        self.client._table_ref = constants.TABLE_ID
 
 
 class TestInsert(TestBigQuery):
@@ -22,7 +22,8 @@ class TestInsert(TestBigQuery):
 
         query_mock.reset_mock()
         self.client.insert(['name', 'group'], ['ironic', 'openshift-4.18'])
-        query_mock.assert_called_once_with("INSERT INTO `builds` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')")
+        query_mock.assert_called_once_with(
+            f"INSERT INTO `{constants.TABLE_ID}` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')")
 
         query_mock.reset_mock()
         with self.assertRaises(ValueError):

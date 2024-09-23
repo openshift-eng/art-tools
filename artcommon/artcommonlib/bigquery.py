@@ -8,15 +8,16 @@ from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import BinaryExpression, UnaryExpression
 from sqlalchemy.dialects import mysql
 
+from artcommonlib import constants
+
 
 class BigQueryClient:
-    REQUIRED_VARS = ['GOOGLE_CLOUD_PROJECT', 'GOOGLE_APPLICATION_CREDENTIALS', 'DATASET_ID', 'TABLE_ID']
-
     def __init__(self):
-        self._check_env_vars()
+        if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
+            raise EnvironmentError('Missing required environment variable GOOGLE_APPLICATION_CREDENTIALS')
+
         self.client = bigquery.Client()
-        self.dataset_id = os.environ['DATASET_ID']
-        self._table_ref = f'{self.client.project}.{self.dataset_id}.{os.environ["TABLE_ID"]}'
+        self._table_ref = f'{self.client.project}.{constants.DATASET_ID}.{constants.TABLE_ID}'
         self.logger = logging.getLogger(__name__)
 
         # Make the gcp logger less noisy
@@ -25,15 +26,6 @@ class BigQueryClient:
     @property
     def table_ref(self):
         return self._table_ref
-
-    def _check_env_vars(self):
-        """
-        Check if all required env vars are defined. Raise an exception otherwise
-        """
-
-        missing_vars = [var for var in self.REQUIRED_VARS if var not in os.environ]
-        if missing_vars:
-            raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
     def query(self, query: str) -> RowIterator:
         """
