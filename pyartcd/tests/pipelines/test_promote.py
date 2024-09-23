@@ -106,8 +106,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             "SIGNING_CERT": "/path/to/signing.crt",
             "SIGNING_KEY": "/path/to/signing.key",
             "REDIS_SERVER_PASSWORD": "fake-redis-server-password",
-            "REDIS_HOST": "fake-redis-host",
-            "REDIS_PORT": "12345",
             "JENKINS_SERVICE_ACCOUNT": "fake-jenkins-service-account",
             "JENKINS_SERVICE_ACCOUNT_TOKEN": "fake-jenkins-service-account-token",
             "AWS_SHARED_CREDENTIALS_FILE": "/path/to/credentials/file",

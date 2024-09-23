@@ -17,3 +17,7 @@ ACTIVE_OCP_VERSIONS = [4.12, 4.13, 4.14, 4.15, 4.16, 4.17, 4.18]
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'
 TABLE_ID = 'builds'
+
+# Redis related vars
+REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'
+REDIS_PORT = '6379'

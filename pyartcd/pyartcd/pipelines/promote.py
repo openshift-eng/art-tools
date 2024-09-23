@@ -128,7 +128,7 @@ class PromotePipeline:
         if not self.skip_mirror_binaries and not self.skip_signing:
             required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
         if not self.skip_signing:
-            required_vars += ["SIGNING_CERT", "SIGNING_KEY", "REDIS_SERVER_PASSWORD", "REDIS_HOST", "REDIS_PORT"]
+            required_vars += ["SIGNING_CERT", "SIGNING_KEY", "REDIS_SERVER_PASSWORD"]
         if not self.skip_sigstore:
             required_vars += ["KMS_CRED_FILE", "KMS_KEY_ID"]
         if not self.skip_build_microshift:
