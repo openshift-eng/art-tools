@@ -957,6 +957,11 @@ class GenPayloadCli:
 
         with oc.project(imagestream_namespace):
             istream_apiobj = self.ensure_imagestream_apiobj(imagestream_name)
+
+            if self.is_imagestream_locked(istream_apiobj):
+                self.logger.warning(f'The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.')
+                return
+
             pruning_tags, adding_tags = await self.apply_imagestream_update(
                 istream_apiobj, istags, incomplete_payload_update)
 
@@ -983,7 +988,7 @@ class GenPayloadCli:
                                     imagestream_namespace, imagestream_name, adding_tags)
 
     @staticmethod
-    def ensure_imagestream_apiobj(imagestream_name):
+    def ensure_imagestream_apiobj(imagestream_name) -> oc.APIObject:
         """
         Create the imagestream if it does not exist, and return the api object.
         """
@@ -1001,6 +1006,17 @@ class GenPayloadCli:
             }
         })
         return oc.selector(f"imagestream/{imagestream_name}").object()
+
+    @staticmethod
+    def is_imagestream_locked(imagestream_obj: oc.APIObject) -> bool:
+        """
+        Via the CRT "release-tool", TRT can "lock" nightly imagestream, which requests
+        that ART stop making updates to the stream for period of time, until the lock
+        is removed.
+        https://github.com/openshift/release-controller/blob/master/hack/release-tool.py
+        """
+        imagestream_mode = imagestream_obj.get_annotation('release.openshift.io/mode')
+        return imagestream_mode == 'locked'
 
     async def apply_imagestream_update(self, istream_apiobj, istags: List[Dict],
                                        incomplete_payload_update: bool) -> Tuple[Set[str], Set[str]]:
@@ -1314,7 +1330,11 @@ class GenPayloadCli:
 
         multi_art_latest_is = self.ensure_imagestream_apiobj(imagestream_name)
 
-        # For nightlies, these will to set as annotations on the release imagestream tag.
+        if self.is_imagestream_locked(multi_art_latest_is):
+            self.logger.warning(f'The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.')
+            return
+
+        # For nightlies, these will be set as annotations on the release imagestream tag.
         # For non-nightlies, the new 4.x-art-assembly-$name the annotations will also be
         # applied at the top level annotations for the imagestream.
         pipeline_metadata_annotations = {
