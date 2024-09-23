@@ -812,15 +812,21 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
             'customfield_12319940': [{'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}],  # customfield_12319940 is Target Version in jira
+            'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
+            'customfield_12320850': {'value': 'Release Note Not Required'},  # customfield_12320850 is Release Notes Type in JIRA
             'components': [{'name': component}],
             'summary': summary,
             'description': description
         }
 
         if not dry_run:
-            issue = jira_client.create_issue(
-                fields
-            )
+            try:
+                issue = jira_client.create_issue(
+                    fields
+                )
+            except Exception as e:
+                print(f"An error occurred while creating the issue: {str(e)}")
+
             # check depend issues and set depend to a higher version issue if ture
             look_for_summary = f'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
