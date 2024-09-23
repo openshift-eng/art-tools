@@ -441,7 +441,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
     async def test_generate_specific_payload_imagestreams(self, build_mock):
         build_mock.side_effect = lambda name, _: name  # just to make the test simpler
-        runtime = MagicMock(images=[], exclude=[])
+        runtime = MagicMock(images=[], exclude=[], assembly_type=AssemblyTypes.STREAM)
         gpcli = flexmock(rgp_cli.GenPayloadCli(
             runtime=runtime,
             apply=True,
@@ -471,8 +471,8 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         await gpcli.generate_specific_payload_imagestreams("s390x", False, payload_entries, multi_specs)
         self.maxDiff = None
         self.assertEqual(multi_specs, {
-            True: dict(
-            ), False: dict(
+            True: dict(),
+            False: dict(
                 rhcos=dict(s390x=payload_entries["rhcos"]),
                 spam=dict(),  # embargoed
                 eggs=dict(s390x=payload_entries["eggs"]),
