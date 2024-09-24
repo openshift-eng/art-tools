@@ -60,7 +60,7 @@ class GroupRuntime(ABC):
                               f'{constants.DATASET_ID}.{constants.DATASET_ID}.{constants.TABLE_ID}')
 
         except Exception as err:
-            self._logger.warning('Cannot connect to the Konflux DB: %s\n%s', str(err), traceback.format_exc())
+            self._logger.warning('Cannot connect to the Konflux DB: %s', str(err))
 
     @property
     @abstractmethod
