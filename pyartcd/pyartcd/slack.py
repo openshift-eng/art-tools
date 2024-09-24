@@ -74,7 +74,7 @@ class SlackClient:
         return response.data
 
     async def upload_file(self, file=None, content=None, filename=None, initial_comment=None, thread_ts: Optional[str] = None):
-        response = await self._client.files_upload(
+        response = await self._client.files_upload_v2(
             file=file,
             filename=content,
             filetype=filename,
@@ -93,7 +93,7 @@ class SlackClient:
         if self.dry_run:
             _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)
             return {"message": {"ts": "fake"}}
-        response = await self._client.files_upload(
+        response = await self._client.files_upload_v2(
             file=file,
             initial_comment=message,
             channels=self.channel)
@@ -103,7 +103,7 @@ class SlackClient:
         """
         Similar to upload_file but can upload from a variable instead of a file
         """
-        response = await self._client.files_upload(
+        response = await self._client.files_upload_v2(
             initial_comment=intro,
             channels=self.channel,
             content=content,
