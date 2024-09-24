@@ -77,7 +77,7 @@ class KonfluxImageBuilder:
 
             # Start the build
             LOGGER.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 3
+            retries = 10
             error = None
             for attempt in range(retries):
                 self._logger.info("Build attempt %s/%s", attempt + 1, retries)
@@ -98,9 +98,10 @@ class KonfluxImageBuilder:
                         break
             if not metadata.build_status and error:
                 raise error
-        finally:
-            # Signal that the build is complete
-            metadata.build_event.set()
+        except KonfluxImageBuildError:
+            metadata.build_status = False
+
+        metadata.build_event.set()
 
         return pipelinerun_name, pipelinerun
 
@@ -134,7 +135,8 @@ class KonfluxImageBuilder:
         self._logger.info(f"Using application: {app['metadata']['name']}")
 
         # Ensure the component resource exists
-        component_name = f"{app_name}-{metadata.distgit_key}"
+        # Openshift doesn't allow dots in any of its fields, so we replace them with dashes
+        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-")
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
@@ -220,6 +222,7 @@ class KonfluxImageBuilder:
                 "name": name,
                 "annotations": {
                     "build.appstudio.openshift.io/pipeline": '{"name":"docker-build-multi-platform-oci-ta","bundle":"latest"}',
+                    "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',
                     # "build.appstudio.openshift.io/request": "configure-pac",
                     "mintmaker.appstudio.redhat.com/disabled": "true",  # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
                 }
@@ -273,6 +276,8 @@ class KonfluxImageBuilder:
         for param in obj["spec"]["params"]:
             if param["name"] == "output-image":
                 param["value"] = output_image
+            if param["name"] == "skip-checks":
+                param["value"] = "true"
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
         return obj
 

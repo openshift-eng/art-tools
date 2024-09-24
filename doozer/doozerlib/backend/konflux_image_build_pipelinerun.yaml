@@ -25,6 +25,8 @@ spec:
     value: quay.io/redhat-user-workloads/crt-nshift-art-pipeli-tenant/ui-openshift-4-18/ui-ocp-4-18-base-rhel-9:{{revision}}
   - name: dockerfile
     value: Dockerfile
+  - name: skip-checks
+    value: "false"
   pipelineSpec:
     finally:
     - name: show-sbom

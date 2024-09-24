@@ -213,9 +213,8 @@ class KonfluxRebaser:
         """ Resolve the parent images for the given image metadata."""
         image_from = metadata.config.get('from', {})
         parents = image_from.get("builder", []).copy()
-        for builder in image_from.get("builder", []):
-            parents.append(builder)
         parents.append(image_from)
+
         if len(parents) != len(dfp.parent_images):
             raise ValueError(f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile")
 
