@@ -1321,7 +1321,7 @@ class ImageDistGitRepo(DistGitRepo):
             _, rebase_commitish, _ = gather_git(['-C', self.distgit_dir, 'rev-parse', 'HEAD'])
 
             build_record_params = {
-                'name': self.metadata.name,
+                'name': self.metadata.distgit_key,
                 'group': self.runtime.group,
                 'assembly': self.runtime.assembly,
                 'source_repo': source_repo,
