@@ -247,12 +247,14 @@ class SigstoreSignatory:
     # it's easier to set AWS_REGION for now than to create a whole AWS_CONFIG_FILE
     ENV["AWS_REGION"] = "us-east-1"
 
-    def __init__(self, logger, dry_run: bool, signing_creds: str, signing_key_id: str,
+    def __init__(self, logger, dry_run: bool, signing_creds: str,
+                 signing_key_ids: List[str], rekor_url: str,
                  concurrency_limit: int, sign_release: bool, sign_components: bool,
                  verify_release: bool) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
-        self.signing_key_id = signing_key_id  # key id for signing
+        self.signing_key_ids = signing_key_ids  # key ids for signing
+        self.rekor_url = rekor_url  # rekor server for cosign tlog storage
         self.ENV["AWS_SHARED_CREDENTIALS_FILE"] = signing_creds  # filename for KMS credentials
         self.concurrency_limit = concurrency_limit  # limit on concurrent lookups or signings
         self.sign_release = sign_release  # whether to sign release images that we examine
@@ -405,33 +407,39 @@ class SigstoreSignatory:
                     return True
 
     async def _sign_single_manifest(self, pullspec: str) -> Dict[str, Exception]:
-        """ use sigstore to sign a single image manifest and upload the signature
+        """
+        use sigstore to sign a single image manifest, with one or more signing keys, and upload the signature
         :param pullspec: Pullspec to be signed
         :return: dict with any signing errors for pullspec
         """
         log = self._logger
-        cmd = ["cosign", "sign",
-               # initially we are signing and verifying with a static key, so no transaction log is
-               # needed, and we also do not have our own service to upload it to; so it will be
-               # skipped until something about that situation changes to require and enable it.
-               "--tlog-upload=false",
-               # https://issues.redhat.com/browse/ART-10052
-               f"--sign-container-identity={pullspec}",
-               "--key", f"awskms:///{self.signing_key_id}",
-               pullspec]
+        for signing_key_id in self.signing_key_ids:
+            cmd = ["cosign", "sign",
+                   # https://issues.redhat.com/browse/ART-10052
+                   f"--sign-container-identity={pullspec}",
+                   "--key", f"awskms:///{signing_key_id}",
+                   ]
 
-        if self.dry_run:
-            log.info("[DRY RUN] Would have signed image: %s", cmd)
-            return {}
+            if self.rekor_url:
+                cmd.append(f"--rekor-url={self.rekor_url}")
+            else:
+                cmd.append("--tlog-upload=false")
 
-        log.info("Signing %s...", pullspec)
-        try:
-            stdout = await self._retrying_sign_single_manifest(cmd)
-            log.debug("Successfully signed %s:\n%s", pullspec, stdout)
-            return {}
-        except Exception as exc:
-            log.error("Failure signing %s:\n%s", pullspec, exc)
-            return {pullspec: exc}
+            cmd.append(pullspec)
+
+            if self.dry_run:
+                log.info("[DRY RUN] Would have signed image: %s", cmd)
+                return {}
+
+            log.info("Signing %s with %s...", pullspec, signing_key_id)
+            try:
+                stdout = await self._retrying_sign_single_manifest(cmd)
+                log.debug("Successfully signed %s with %s:\n%s", pullspec, signing_key_id, stdout)
+                await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
+                return {}
+            except Exception as exc:
+                log.error("Failure signing %s with %s:\n%s", pullspec, signing_key_id, exc)
+                return {pullspec: exc}
 
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
     async def _retrying_sign_single_manifest(self, cmd: List[str]) -> str:

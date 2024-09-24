@@ -808,7 +808,9 @@ class PromotePipeline:
             logger=self._logger,
             dry_run=self.runtime.dry_run,
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
-            signing_key_id=os.environ.get("KMS_KEY_ID", "dummy-key"),
+            # Allow AWS_KEY_ID to be a comma delimited list
+            signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
+            rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
             sign_release=True,
             sign_components=True,
