@@ -429,17 +429,18 @@ class SigstoreSignatory:
 
             if self.dry_run:
                 log.info("[DRY RUN] Would have signed image: %s", cmd)
-                return {}
+                continue
 
             log.info("Signing %s with %s...", pullspec, signing_key_id)
             try:
                 stdout = await self._retrying_sign_single_manifest(cmd)
                 log.debug("Successfully signed %s with %s:\n%s", pullspec, signing_key_id, stdout)
                 await asyncio.sleep(uniform(0, self.THROTTLE_DELAY))  # introduce jitter to avoid rate limits
-                return {}
             except Exception as exc:
                 log.error("Failure signing %s with %s:\n%s", pullspec, signing_key_id, exc)
                 return {pullspec: exc}
+
+        return {}
 
     @retry(wait=wait_random_exponential(), stop=stop_after_attempt(5), reraise=True)
     async def _retrying_sign_single_manifest(self, cmd: List[str]) -> str:
