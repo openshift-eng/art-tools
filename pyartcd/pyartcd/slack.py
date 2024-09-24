@@ -83,22 +83,6 @@ class SlackClient:
             thread_ts=thread_ts)
         return response.data
 
-    async def post_image(self, message: str, file: str):
-        attachments = []
-        if self.build_url:
-            attachments.append({
-                "title": f"Job: {self.job_name} <{self.build_url}|{self.build_id}>",
-                "color": "#439FE0",
-            })
-        if self.dry_run:
-            _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)
-            return {"message": {"ts": "fake"}}
-        response = await self._client.files_upload(
-            file=file,
-            initial_comment=message,
-            channels=self.channel)
-        return response.data
-
     async def upload_content(self, content, intro=None, filename=None, filetype=None, thread_ts: Optional[str] = None):
         """
         Similar to upload_file but can upload from a variable instead of a file
