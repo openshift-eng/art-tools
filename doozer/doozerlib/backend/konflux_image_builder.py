@@ -77,7 +77,7 @@ class KonfluxImageBuilder:
 
             # Start the build
             LOGGER.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 10
+            retries = 3
             error = None
             for attempt in range(retries):
                 self._logger.info("Build attempt %s/%s", attempt + 1, retries)
@@ -100,6 +100,7 @@ class KonfluxImageBuilder:
                 raise error
         except KonfluxImageBuildError:
             metadata.build_status = False
+            raise Exception(metadata.distgit_key)
 
         metadata.build_event.set()
 
