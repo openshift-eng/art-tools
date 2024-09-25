@@ -415,6 +415,7 @@ class SigstoreSignatory:
         log = self._logger
         for signing_key_id in self.signing_key_ids:
             cmd = ["cosign", "sign",
+                   "--yes",
                    # https://issues.redhat.com/browse/ART-10052
                    f"--sign-container-identity={pullspec}",
                    "--key", f"awskms:///{signing_key_id}",
