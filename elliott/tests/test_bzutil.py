@@ -479,8 +479,8 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         tr = '4.8.0'
         self.assertRaisesRegex(
             ValueError,
-            r'does not have an alias',
-            bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), ['foobar'], tr)
+            r'does not have a CVE alias',
+            bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [JIRABug(flexmock(key="OCPBUGS-foo"))], tr)
 
     def test_is_first_fix_any(self):
         hydra_data = {
