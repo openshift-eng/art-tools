@@ -2,12 +2,11 @@ import hashlib
 import json
 import logging
 import random
-import typing
 import uuid
 from datetime import datetime
 from enum import Enum
 
-from google.cloud.bigquery.table import Row
+from artcommonlib import constants
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,17 +31,7 @@ class Engine(KonfluxEnum):
     BREW = 'brew'
 
 
-class KonfluxBuildRecord:
-    """
-    This class represents the data structure we use to store build information in Konflux
-    By calling the konfluxdb.support.konflux_build.generate_build_schema() function,
-    a table schema can be auto-generated from this class definition.
-    The schema we get can then be injected into the konfluxdb.support.konflux_db.SupportKonfluxDb.create_table()
-    function, that will create the table in BigQuery for us.
-
-    In order for this to work, this class should contain no fields other than those we want to appear as table columns.
-    """
-
+class KonfluxRecord:
     # These fields are excluded when computing the build ID, but are included in the build string representation
     EXCLUDED_KEYS = [
         'record_id',
@@ -50,15 +39,16 @@ class KonfluxBuildRecord:
         'nvr',
     ]
 
+    TABLE_ID = None
+
     def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
-                 el_target: str = '', arches: list = [], installed_packages: list = [], parent_images: list = [],
                  source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
-                 embargoed: bool = False, start_time: datetime = None, end_time: datetime = None,
+                 start_time: datetime = None, end_time: datetime = None,
                  artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX,
                  image_pullspec: str = '', image_tag: str = '',
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
-                 ingestion_time: datetime = None, record_id: str = '', build_id: str = None, nvr: str = None):
+                 ingestion_time: datetime = None):
         """
         All fields default to None to facilitate testing
         """
@@ -68,33 +58,20 @@ class KonfluxBuildRecord:
         self.version = version
         self.release = release
         self.assembly = assembly
-        self.el_target = el_target
-        self.arches = arches
-
-        self.installed_packages = installed_packages
-        self.parent_images = parent_images
-
         self.source_repo = source_repo
         self.commitish = commitish
         self.rebase_repo_url = rebase_repo_url
         self.rebase_commitish = rebase_commitish
-
-        self.embargoed = embargoed
-
         self.start_time = start_time
         self.end_time = end_time
-
         self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
         self.engine = engine if isinstance(engine, Engine) else Engine(engine)
-
         self.image_pullspec = image_pullspec
         self.image_tag = image_tag
         self.outcome = outcome if isinstance(outcome, KonfluxBuildOutcome) else KonfluxBuildOutcome(outcome)
-
         self.art_job_url = art_job_url
         self.build_pipeline_url = build_pipeline_url
         self.pipeline_commit = pipeline_commit
-
         self.schema_level = schema_level
 
         # A build will correspond to multiple records, as Doozer will first create a build record with PENDING state.
@@ -103,24 +80,15 @@ class KonfluxBuildRecord:
         # ingestion_time is set by Doozer and will let us select the most recent record
         # The NVR can be used as a compact, human-readable name for the build
         self.ingestion_time = ingestion_time
+        self.record_id = None
+        self.build_id = None
+        self.nvr = None
+
+    def init_uuids(self, record_id, build_id, nvr):
+        # These fields must be computed in the child class, otherwise we would be hashing incomplete types into UUIDs
         self.record_id = record_id if record_id else self.generate_record_id()
         self.build_id = build_id if build_id else self.generate_build_id()
         self.nvr = nvr if nvr else self.get_nvr()
-
-    def __str__(self):
-        return json.dumps(self.to_dict(), indent=4)
-
-    def to_dict(self) -> dict:
-        """
-        Returns a dict object representing the build data.
-        KonfluxDb.add_builds() can use data in this form to store the build info into the DB.
-        """
-
-        return {
-            key: (value.strftime("%Y-%m-%dT%H:%M:%S") if isinstance(value, datetime)
-                  else value.value if isinstance(value, Enum) else value)
-            for key, value in self.__dict__.items()
-        }
 
     def generate_build_id(self) -> str:
         """
@@ -148,18 +116,73 @@ class KonfluxBuildRecord:
         self.nvr = f'{self.name}-{self.version}-{self.release}'
         return self.nvr
 
+    def __str__(self):
+        return json.dumps(self.to_dict(), indent=4)
 
-def from_result_row(row: Row) -> typing.Optional[KonfluxBuildRecord]:
+    def to_dict(self) -> dict:
+        """
+        Returns a dict object representing the build data.
+        KonfluxDb.add_builds() can use data in this form to store the build info into the DB.
+        """
+
+        return {
+            key: (value.strftime("%Y-%m-%dT%H:%M:%S") if isinstance(value, datetime)
+                  else value.value if isinstance(value, Enum) else value)
+            for key, value in self.__dict__.items()
+        }
+
+
+class KonfluxBuildRecord(KonfluxRecord):
+    TABLE_ID = constants.BUILDS_TABLE_ID
+
     """
-    Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
+    This class represents the data structure we use to store build information in Konflux
+    By calling the konfluxdb.support.konflux_build.generate_build_schema() function,
+    a table schema can be auto-generated from this class definition.
+    The schema we get can then be injected into the konfluxdb.support.konflux_db.SupportKonfluxDb.create_table()
+    function, that will create the table in BigQuery for us.
+
+    In order for this to work, this class should contain no fields other than those we want to appear as table columns.
     """
 
-    try:
-        return KonfluxBuildRecord(**{
-            field: (row[field])
-            for field in row.keys()
-        })
+    def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
+                 el_target: str = '', arches: list = [], installed_packages: list = [], parent_images: list = [],
+                 source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
+                 embargoed: bool = False, start_time: datetime = None, end_time: datetime = None,
+                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX,
+                 image_pullspec: str = '', image_tag: str = '',
+                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
+                 build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
+                 ingestion_time: datetime = None, record_id: str = '', build_id: str = None, nvr: str = None):
 
-    except AttributeError as e:
-        LOGGER.error('Could not construct a KonfluxBuild object from result row %s: %s', row, e)
-        raise
+        super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
+                         rebase_commitish, start_time, end_time, artifact_type, engine, image_pullspec, image_tag,
+                         outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
+
+        self.el_target = el_target
+        self.arches = arches
+        self.installed_packages = installed_packages
+        self.parent_images = parent_images
+        self.embargoed = embargoed
+        self.init_uuids(record_id, build_id, nvr)
+
+
+class KonfluxBundleBuildRecord(KonfluxRecord):
+    TABLE_ID = constants.BUNDLES_TABLE_ID
+
+    def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
+                 source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
+                 start_time: datetime = None, end_time: datetime = None,
+                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX,
+                 image_pullspec: str = '', image_tag: str = '',
+                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
+                 build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
+                 ingestion_time: datetime = None, operand_nvrs: list = [], operator_nvr: str = '',
+                 record_id: str = '', build_id: str = None, nvr: str = None):
+
+        super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
+                         rebase_commitish, start_time, end_time, artifact_type, engine, image_pullspec, image_tag,
+                         outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
+        self.operand_nvrs = operand_nvrs
+        self.operator_nvr = operator_nvr
+        self.init_uuids(record_id, build_id, nvr)

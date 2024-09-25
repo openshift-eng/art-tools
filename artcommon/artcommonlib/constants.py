@@ -16,7 +16,8 @@ ACTIVE_OCP_VERSIONS = [4.12, 4.13, 4.14, 4.15, 4.16, 4.17, 4.18]
 # Konflux DB related vars
 GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'
-TABLE_ID = 'builds'
+BUILDS_TABLE_ID = 'builds'
+BUNDLES_TABLE_ID = 'bundles'
 
 # Redis related vars
 REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'

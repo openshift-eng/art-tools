@@ -13,29 +13,22 @@ class TestBigQuery(TestCase):
     @patch('artcommonlib.bigquery.bigquery.Client')
     def setUp(self, _):
         self.client = BigQueryClient()
-        self.client._table_ref = constants.TABLE_ID
+        self.client._table_ref = constants.BUILDS_TABLE_ID
 
 
 class TestInsert(TestBigQuery):
     @patch('artcommonlib.bigquery.BigQueryClient.query')
     def test_insert(self, query_mock):
-
         query_mock.reset_mock()
-        self.client.insert(['name', 'group'], ["'ironic'", "'openshift-4.18'"])
+        self.client.insert({'name': "'ironic'"})
         query_mock.assert_called_once_with(
-            f"INSERT INTO `{constants.TABLE_ID}` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')")
+            f"INSERT INTO `{constants.BUILDS_TABLE_ID}` (`name`) VALUES ('ironic')")
 
         query_mock.reset_mock()
-        with self.assertRaises(ValueError):
-            self.client.insert(['name', 'group'], ['ironic'])
-
-        query_mock.reset_mock()
-        with self.assertRaises(AssertionError):
-            self.client.insert([], [])
-
-        query_mock.reset_mock()
-        with self.assertRaises(AssertionError):
-            self.client.insert(None, None)
+        self.client.insert({'name': "'ironic'", 'group': "'openshift-4.18'"})
+        query_mock.assert_called_once_with(
+            f"INSERT INTO `{constants.BUILDS_TABLE_ID}` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')")
+        return
 
 
 class TestSelect(TestBigQuery):

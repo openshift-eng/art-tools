@@ -56,8 +56,7 @@ class GroupRuntime(ABC):
     def initialize_konxflux_db(self):
         try:
             self.konflux_db = KonfluxDb()
-            self._logger.info('Konflux DB initialized using table %s',
-                              f'{constants.DATASET_ID}.{constants.DATASET_ID}.{constants.TABLE_ID}')
+            self._logger.info('Konflux DB initialized ')
 
         except Exception as err:
             self._logger.warning('Cannot connect to the Konflux DB: %s', str(err))

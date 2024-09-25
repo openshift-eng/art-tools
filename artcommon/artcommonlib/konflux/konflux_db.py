@@ -3,14 +3,16 @@ import concurrent
 import copy
 import inspect
 import logging
+import pprint
 import typing
 from datetime import datetime, timedelta
 
+from google.cloud.bigquery import SchemaField, Row
 from sqlalchemy import Column, String, DateTime
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord
 
 SCHEMA_LEVEL = 1
 
@@ -19,26 +21,56 @@ class KonfluxDb:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.bq_client = bigquery.BigQueryClient()
-        self.column_names = self._get_column_names()  # e.g. "(name, group, version, release, ... )"
+        self.record_cls = None
 
-    @staticmethod
-    def _get_column_names() -> list:
+    def bind(self, record_cls: type):
         """
-        Inspects the KonfluxBuildRecord class definition, and returns a list of fields
-        To be used with INSERT statements
+        Binds the DB client to a specific table, via the KonfluxRecord class definition that represents it.
+        When bound, all insert/select statements will target that table, until the DB is bound to a different one.
+
+        If the client instance has never been bound, all attempts to insert/select will throw an exception.
+        """
+
+        self.bq_client.bind(record_cls.TABLE_ID)
+        self.record_cls = record_cls
+
+    def generate_build_schema(self):
+        """
+        Generate a schema that can be fed into the create_table() function,
+        starting from the representation of a Konflux build record object
         """
 
         fields = []
-        parameters = inspect.signature(konflux_build_record.KonfluxBuildRecord.__init__).parameters
+        annotations = typing.get_type_hints(self.record_cls.__init__)  # konflux_build_record.KonfluxBuildRecord.__init__)
+        parameters = inspect.signature(self.record_cls.__init__).parameters  # konflux_build_record.KonfluxBuildRecord.__init__).parameters
 
-        for param_name, _ in parameters.items():
+        for param_name, param in parameters.items():
             if param_name == 'self':
                 continue
-            fields.append(param_name)
 
+            field_type = annotations.get(param_name, str)  # Default to string if type is not provided
+            mode = 'NULLABLE' if param.default is param.empty else 'REQUIRED'
+
+            if field_type == int:
+                field_type_str = 'INTEGER'
+            elif field_type == float:
+                field_type_str = 'FLOAT'
+            elif field_type == bool:
+                field_type_str = 'BOOLEAN'
+            elif field_type == datetime:
+                field_type_str = 'TIMESTAMP'
+            elif field_type == list:
+                field_type_str = 'STRING'
+                mode = 'REPEATED'
+            else:
+                field_type_str = 'STRING'
+
+            fields.append(SchemaField(param_name, field_type_str, mode=mode))
+
+        self.logger.info('Generated DB schema:\n%s', pprint.pformat(fields))
         return fields
 
-    def add_build(self, build: konflux_build_record.KonfluxBuildRecord):
+    def add_build(self, build):
         """
         Insert a build record into Konflux DB
         """
@@ -64,8 +96,8 @@ class KonfluxDb:
         build.schema_level = SCHEMA_LEVEL
 
         # Execute query
-        values = [f"{value_or_null(value)}" for value in build.to_dict().values()]
-        self.bq_client.insert(self.column_names, values)
+        items = {k: f"{value_or_null(v)}" for k, v in build.to_dict().items()}
+        self.bq_client.insert(items)
 
     async def add_builds(self, builds: typing.List[konflux_build_record.KonfluxBuildRecord]):
         """
@@ -115,7 +147,7 @@ class KonfluxDb:
 
         results = await self.bq_client.query_async(query)
         self.logger.info('Found %s builds', results.total_rows)
-        return [konflux_build_record.from_result_row(result) for result in results]
+        return [self.from_result_row(result) for result in results]
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
@@ -186,7 +218,7 @@ class KonfluxDb:
             results = self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
 
             try:
-                return konflux_build_record.from_result_row(next(results))
+                return self.from_result_row(next(results))
 
             except (StopIteration, Exception):
                 # No builds found in current window, shift to the earlier one
@@ -196,3 +228,19 @@ class KonfluxDb:
         self.logger.warning('No builds found for %s with status %s in assembly %s and target %s',
                             name, outcome.value, assembly, el_target)
         return None
+
+    def from_result_row(self, row: Row) -> typing.Optional[KonfluxRecord]:
+        """
+        Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
+        """
+
+        try:
+            return self.record_cls(**{
+                field: (row[field])
+                for field in row.keys()
+            })
+
+        except AttributeError as e:
+            self.logger.error('Could not construct a %s object from result row %s: %s',
+                              self.record_cls.__name__, row, e)
+            raise
