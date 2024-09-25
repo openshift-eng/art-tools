@@ -1319,7 +1319,9 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
         raise ValueError(f'flaw bug {flaw_bug.id} does not seem to have trackers')
 
     if not (hasattr(flaw_bug, 'alias') and flaw_bug.alias):
-        raise ValueError(f'flaw bug {flaw_bug.id} does not have an alias')
+        raise ValueError(f'Flaw bug {flaw_bug.id} does not have a CVE alias. Is it a CVE bug? These trackers '
+                         f'reference the bug: {sorted([b.id for b in tracker_bugs])}. If it is not a valid flaw bug'
+                         'please remove references from the tracker bugs.')
 
     alias = flaw_bug.alias[0]
     cve_url = f"https://access.redhat.com/hydra/rest/securitydata/cve/{alias}.json"
