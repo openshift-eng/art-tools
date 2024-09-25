@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -41,6 +42,22 @@ class BigQueryClient:
 
         except Exception as err:
             self.logger.error('Failed executing query %s: ', err)
+            raise
+
+    async def query_async(self, query: str) -> RowIterator:
+        """
+        Asynchronously execute a query in BigQuery and return a generator object with the results
+        """
+
+        self.logger.info('Executing query: %s', query)
+
+        try:
+            results = await asyncio.to_thread(self.client.query(query).result)
+            self.logger.debug('Query returned %s result rows', results.total_rows)
+            return results
+
+        except Exception as err:
+            self.logger.error('Failed executing query: %s', err)
             raise
 
     def insert(self, names: typing.List[str], values: list) -> None:
