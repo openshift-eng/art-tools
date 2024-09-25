@@ -16,7 +16,7 @@ class BigQueryClient:
         if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
             raise EnvironmentError('Missing required environment variable GOOGLE_APPLICATION_CREDENTIALS')
 
-        self.client = bigquery.Client()
+        self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
         self._table_ref = f'{self.client.project}.{constants.DATASET_ID}.{constants.TABLE_ID}'
         self.logger = logging.getLogger(__name__)
 
@@ -65,7 +65,6 @@ class BigQueryClient:
             raise ValueError('Provided value row does not match the column count')
 
         query = f'INSERT INTO `{self._table_ref}` ({", ".join([f"`{name}`" for name in names])}) VALUES '
-        values = (f"'{value}'" if isinstance(value, str) else str(value) for value in values)
         query += '(' + ', '.join(values) + ')'
         self.query(query)
 
