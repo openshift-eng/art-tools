@@ -1062,7 +1062,7 @@ class GenPayloadCli:
                 # istag being reverted with the value "reverted-from: X".
                 # Thus, we should not update the annotated tag UNTIL our
                 # target image is something other than X.
-                if existing_istag.annotations['reverted-from']:
+                if existing_istag.annotations and 'reverted-from' in existing_istag.annotations:
                     revereted_tag_name = existing_istag.name
                     reverted_from_image = existing_istag.annotations['reverted-from']
                     reverted_to_image = existing_istag['from'].name
