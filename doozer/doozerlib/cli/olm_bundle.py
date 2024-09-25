@@ -1,12 +1,21 @@
+import os
+from datetime import datetime
+
 import click
 import sys
 import traceback
 import koji
 from urllib.parse import urlparse
 
+from dockerfile_parse import DockerfileParser
+
 from artcommonlib import exectools, logutil
+from artcommonlib.git_helper import gather_git
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.constants import BREW_HUB
+from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.util import convert_remote_git_to_https
 from doozerlib import Runtime, brew
 from doozerlib.cli import cli, pass_runtime
 from typing import Optional, Tuple
@@ -201,42 +210,109 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     record['bundle_nvr'] = bundle_nvr
                     return record
                 runtime.logger.info("%s - No bundle build found", operator_nvr)
-            runtime.logger.info("%s - Rebasing bundle distgit repo", operator_nvr)
+            LOGGER.info("%s - Rebasing bundle distgit repo", operator_nvr)
             olm_bundle.rebase()
-            runtime.logger.info("%s - Building bundle distgit repo", operator_nvr)
-            task_id, task_url, bundle_nvr = olm_bundle.build()
+            LOGGER.info("%s - Building bundle distgit repo", operator_nvr)
+            task_id, task_url, build_info = olm_bundle.build()
             record['status'] = 0
             record['message'] = 'Success'
             record['task_id'] = task_id
             record['task_url'] = task_url
-            record['bundle_nvr'] = bundle_nvr
+            record['bundle_nvr'] = build_info["nvr"]
+            update_konflux_db(olm_bundle, record, build_info)
+
         except Exception as err:
             traceback.print_exc()
-            runtime.logger.error('Error during rebase or build for: {}'.format(operator_nvr))
+            LOGGER.error('Error during rebase or build for: {}'.format(operator_nvr))
             record['message'] = str(err)
+
         finally:
             runtime.record_logger.add_record("build_olm_bundle", **record)
             return record
 
+    def update_konflux_db(olm_bundle, record, build_info):
+        if dry_run:
+            return
+
+        if not runtime.konflux_db:
+            LOGGER.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
+            return
+
+        try:
+            dfp = DockerfileParser(f'{olm_bundle.bundle_clone_path}/Dockerfile')
+            source_repo, commitish = dfp.labels['io.openshift.build.commit.url'].split('/commit/')
+            _, rebase_repo_url, _ = gather_git(['-C', olm_bundle.bundle_clone_path, 'remote', 'get-url', 'origin'])
+            _, rebase_commitish, _ = gather_git(['-C', olm_bundle.bundle_clone_path, 'rev-parse', 'HEAD'])
+
+            build_record_params = {
+                'name': olm_bundle.bundle_name,
+                'group': runtime.group,
+                'assembly': runtime.assembly,
+                'source_repo': source_repo,
+                'commitish': commitish,
+                'rebase_repo_url': convert_remote_git_to_https(rebase_repo_url),
+                'rebase_commitish': rebase_commitish.strip(),
+                'artifact_type': ArtifactType.IMAGE,
+                'engine': Engine.BREW,
+                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+                'build_pipeline_url': record['task_url'],
+                'pipeline_commit': 'n/a'
+            }
+
+            if record['status'] == 0:
+                image_pullspec = build_info['extra']['image']['index']['pull'][0]
+
+                build_record_params.update({
+                    'version': build_info['version'],
+                    'release': build_info['release'],
+                    'el_target': f'el{isolate_el_version_in_release(build_info["release"])}',
+                    'arches': [],
+                    'installed_packages': [],
+                    'parent_images': [],
+                    'embargoed': 'p1' in build_info['release'].split('.'),
+                    'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                    'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                    'image_pullspec': image_pullspec,
+                    'image_tag': image_pullspec.split('sha256:')[-1],
+                    'build_id': str(build_info['id']),
+                    'outcome': KonfluxBuildOutcome.SUCCESS,
+                    'nvr': record['bundle_nvr']
+                })
+
+            else:
+                build_record_params.update({
+                    'outcome': KonfluxBuildOutcome.FAILURE,
+                    'start_time': datetime.now(),  # placeholder, cannot be NULL
+                    'end_time': datetime.now(),  # placeholder, cannot be NULL
+                    'nvr': 'n/a'
+                })
+
+            build_record = KonfluxBuildRecord(**build_record_params)
+            runtime.konflux_db.add_build(build_record)
+            LOGGER.info('Brew build info stored successfully')
+
+        except Exception as err:
+            LOGGER.error('Failed writing record to the konflux DB: %s', err)
+
     olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
     get_branches_results = [bundle.does_bundle_branch_exist() for bundle in olm_bundles]
     if not all([result[0] for result in get_branches_results]):
-        runtime.logger.error('One or more bundle branches do not exist: '
-                             f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.')
+        LOGGER.error('One or more bundle branches do not exist: '
+                     f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.')
         sys.exit(1)
 
     results = exectools.parallel_exec(lambda bundle, _: rebase_and_build(bundle), olm_bundles).get()
 
     for record in results:
         if record['status'] == 0:
-            runtime.logger.info('Successfully built %s', record['bundle_nvr'])
+            LOGGER.info('Successfully built %s', record['bundle_nvr'])
             click.echo(record['bundle_nvr'])
         else:
-            runtime.logger.error('Error building bundle for %s: %s', record['operator_nvr'], record['message'])
+            LOGGER.error('Error building bundle for %s: %s', record['operator_nvr'], record['message'])
 
     rc = 0 if all(map(lambda i: i['status'] == 0, results)) else 1
 
     if rc:
-        runtime.logger.error('One or more bundles failed')
+        LOGGER.error('One or more bundles failed')
 
     sys.exit(rc)
