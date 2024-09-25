@@ -919,6 +919,7 @@ class GenPayloadCli:
                and self.runtime.assembly_type == AssemblyTypes.STREAM):
                 # No embargoed images for assembly stream
                 # should go to the public release controller, so we will not have
+                # a complete payload.
                 incomplete_payload_update = True
                 continue
 
@@ -937,7 +938,8 @@ class GenPayloadCli:
     async def write_imagestream_artifact_file(self, imagestream_namespace: str, imagestream_name: str,
                                               istags: List[Dict], incomplete_payload_update):
         """
-        Write the yaml file for the imagestream.
+        Write out an artifact showing the entries we expect to add/update in the target
+        integration imagestream.
         """
 
         filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}" \
@@ -1022,7 +1024,7 @@ class GenPayloadCli:
     async def apply_imagestream_update(self, istream_apiobj, istags: List[Dict],
                                        incomplete_payload_update: bool) -> Tuple[Set[str], Set[str]]:
         """
-        Apply changes for one imagestream object to the OCP cluster.
+        Apply changes for one integration imagestream object on the app.ci cluster.
         """
 
         # gather diffs between old and new, indicating removal or addition
@@ -1046,9 +1048,37 @@ class GenPayloadCli:
 
             apiobj.model.metadata["annotations"] = new_annotations
 
-            incoming_tag_names = set([istag["name"] for istag in istags])
+            incoming_tag_lookup = {istag["name"]: istag for istag in istags}
+            incoming_tag_names = set(incoming_tag_lookup.keys())
             existing_tag_names = set([istag["name"] for istag in apiobj.model.spec.tags])
             adding_tags = incoming_tag_names - existing_tag_names
+
+            for existing_istag in apiobj.model.spec.tags:
+                # When TRT reverts an image using release-tool (https://github.com/openshift/release-controller/blob/master/hack/release-tool.py)
+                # it means they are setting a tag pointing to image X to use an older image Y.
+                # Since there is something wrong with X, they don't want to unstick
+                # from Y until a new image Z supersedes X.
+                # To accomplish this, the 'revert' verb adds an annotation to the
+                # istag being reverted with the value "reverted-from: X".
+                # Thus, we should not update the annotated tag UNTIL our
+                # target image is something other than X.
+                if existing_istag.annotations['reverted-from']:
+                    revereted_tag_name = existing_istag.name
+                    reverted_from_image = existing_istag.annotations['reverted-from']
+                    reverted_to_image = existing_istag['from'].name
+                    if revereted_tag_name not in incoming_tag_lookup:
+                        if not incomplete_payload_update:
+                            self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.')
+                    else:
+                        target_image = incoming_tag_lookup[revereted_tag_name]['from'].name
+                        self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.')
+                        if target_image == reverted_from_image:
+                            self.logger.warning(f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}')
+                            incoming_tag_lookup[revereted_tag_name]['from'].name = reverted_to_image
+                            # We must also preserve the annotation to persist the revert for the next update
+                            incoming_tag_lookup[revereted_tag_name]['annotations'] = existing_istag.annotations.primitive()
+                        else:
+                            self.logger.warning(f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}')
 
             new_istags = list(istags)  # copy, don't update/embed list parameter
             if incomplete_payload_update:

@@ -287,7 +287,7 @@ class BuildSyncPipeline:
         Starting with 4.12, ART is responsible for populating the CI imagestream (-n ocp is/4.12) with
         references to the latest machine-os-content, rhel-coreos-8, rhel-coreos-8-extensions (and
         potentially more with rhel9). If this is failing, it must be treated as a priority since
-        CI will begin falling being nightly CoreOS content.
+        CI will begin falling behind nightly CoreOS content.
         """
 
         # Only for applicable versions
