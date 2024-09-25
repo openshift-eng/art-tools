@@ -21,7 +21,7 @@ class TestInsert(TestBigQuery):
     def test_insert(self, query_mock):
 
         query_mock.reset_mock()
-        self.client.insert(['name', 'group'], ['ironic', 'openshift-4.18'])
+        self.client.insert(['name', 'group'], ["'ironic'", "'openshift-4.18'"])
         query_mock.assert_called_once_with(
             f"INSERT INTO `{constants.TABLE_ID}` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')")
 
