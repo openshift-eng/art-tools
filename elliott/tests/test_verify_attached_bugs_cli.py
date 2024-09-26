@@ -110,9 +110,11 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
         bugs = [
             flexmock(id="OCPBUGS-1", target_release=['4.6.z'], depends_on=['OCPBUGS-4'],
-                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
+                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False,
+                     is_invalid_tracker_bug=lambda: False, is_flaw_bug=lambda: False),
             flexmock(id="OCPBUGS-2", target_release=['4.6.z'], depends_on=['OCPBUGS-3'],
-                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False)
+                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False,
+                     is_invalid_tracker_bug=lambda: False, is_flaw_bug=lambda: False)
         ]
         depend_on_bugs = [
             flexmock(id="OCPBUGS-3", target_release=['4.7.z'], status='MODIFIED',
