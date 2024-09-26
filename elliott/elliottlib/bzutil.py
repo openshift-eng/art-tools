@@ -316,6 +316,15 @@ class JIRABug(Bug):
         tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
         if not tr_field:
             raise ValueError(f'bug {self.id} does not have `Target Version` field set')
+        if len(tr_field) > 1:
+            # Some bugs (e.g. OCPBUGS-39183) have multiple target versions set. This is not expected.
+            # Usually when this happens, we edit the bug to remove the incorrect target versions.
+            # However in some cases, those incorrect target versions have the archived flag set to True,
+            # which means we can't remove them.
+            # To work around this, we'll filter out the archived target versions.
+            active_target_versions = [x.name for x in tr_field if not x.archived]
+            if active_target_versions:
+                return active_target_versions
         return [x.name for x in tr_field]
 
     @property
