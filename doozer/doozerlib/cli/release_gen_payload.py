@@ -1062,10 +1062,10 @@ class GenPayloadCli:
                 # istag being reverted with the value "reverted-from: X".
                 # Thus, we should not update the annotated tag UNTIL our
                 # target image is something other than X.
-                if existing_istag.annotations and 'reverted-from' in existing_istag.annotations:
-                    revereted_tag_name = existing_istag.name
-                    reverted_from_image = existing_istag.annotations['reverted-from']
-                    reverted_to_image = existing_istag['from'].name
+                if 'annotations' in existing_istag and 'reverted-from' in existing_istag['annotations']:
+                    revereted_tag_name = existing_istag['name']
+                    reverted_from_image = existing_istag['annotations']['reverted-from']
+                    reverted_to_image = existing_istag['from']['name']
                     if revereted_tag_name not in incoming_tag_lookup:
                         if not incomplete_payload_update:
                             self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.')
@@ -1076,7 +1076,7 @@ class GenPayloadCli:
                             self.logger.warning(f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}')
                             incoming_tag_lookup[revereted_tag_name]['from'].name = reverted_to_image
                             # We must also preserve the annotation to persist the revert for the next update
-                            incoming_tag_lookup[revereted_tag_name]['annotations'] = existing_istag.annotations.primitive()
+                            incoming_tag_lookup[revereted_tag_name]['annotations'] = dict(existing_istag['annotations'])
                         else:
                             self.logger.warning(f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}')
 
