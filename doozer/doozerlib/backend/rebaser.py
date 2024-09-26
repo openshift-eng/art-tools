@@ -267,6 +267,12 @@ class KonfluxRebaser:
         if stream_image.startswith("openshift/"):
             stream_image = f"{constants.BREW_REGISTRY_BASE_URL}/{stream_image}"
 
+            if "openshift/golang-builder" in stream_image:
+                # For example:
+                # "brew.registry.redhat.io/openshift/golang-builder:v1.22.5-202407301806.g4c8b32d.el9" ->
+                # "brew.registry.redhat.io/rh-osbs/openshift-golang-builder:v1.22.5-202407301806.g4c8b32d.el9"
+                stream_image = stream_image.replace("openshift/golang-builder", "rh-osbs/openshift-golang-builder")
+
         if not self.should_match_upstream:
             # Do typical stream resolution.
             return stream_image
