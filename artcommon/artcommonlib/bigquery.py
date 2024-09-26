@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -16,7 +17,7 @@ class BigQueryClient:
         if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
             raise EnvironmentError('Missing required environment variable GOOGLE_APPLICATION_CREDENTIALS')
 
-        self.client = bigquery.Client()
+        self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
         self._table_ref = f'{self.client.project}.{constants.DATASET_ID}.{constants.TABLE_ID}'
         self.logger = logging.getLogger(__name__)
 
@@ -43,6 +44,22 @@ class BigQueryClient:
             self.logger.error('Failed executing query %s: ', err)
             raise
 
+    async def query_async(self, query: str) -> RowIterator:
+        """
+        Asynchronously execute a query in BigQuery and return a generator object with the results
+        """
+
+        self.logger.info('Executing query: %s', query)
+
+        try:
+            results = await asyncio.to_thread(self.client.query(query).result)
+            self.logger.debug('Query returned %s result rows', results.total_rows)
+            return results
+
+        except Exception as err:
+            self.logger.error('Failed executing query: %s', err)
+            raise
+
     def insert(self, names: typing.List[str], values: list) -> None:
         """
         Translate a list of column names and values into an INSERT INTO statement.
@@ -65,7 +82,6 @@ class BigQueryClient:
             raise ValueError('Provided value row does not match the column count')
 
         query = f'INSERT INTO `{self._table_ref}` ({", ".join([f"`{name}`" for name in names])}) VALUES '
-        values = (f"'{value}'" if isinstance(value, str) else str(value) for value in values)
         query += '(' + ', '.join(values) + ')'
         self.query(query)
 

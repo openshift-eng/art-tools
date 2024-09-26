@@ -260,18 +260,30 @@ class KonfluxRebaser:
 
     def _resolve_stream_parent(self, stream_name: str, original_parent: str, dfp: DockerfileParser):
         stream = self._runtime.resolve_stream(stream_name)
+        stream_image = str(stream.image)
+
+        # For pullspecs not containing full registry URL, like `openshift/golang-builder:foo`,
+        # we need to prepend the full brew registry URL.
+        if stream_image.startswith("openshift/"):
+            stream_image = f"{constants.BREW_REGISTRY_BASE_URL}/{stream_image}"
+
+            if "openshift/golang-builder" in stream_image:
+                # For example:
+                # "brew.registry.redhat.io/openshift/golang-builder:v1.22.5-202407301806.g4c8b32d.el9" ->
+                # "brew.registry.redhat.io/rh-osbs/openshift-golang-builder:v1.22.5-202407301806.g4c8b32d.el9"
+                stream_image = stream_image.replace("openshift/golang-builder", "rh-osbs/openshift-golang-builder")
 
         if not self.should_match_upstream:
             # Do typical stream resolution.
-            return str(stream.image)
+            return stream_image
 
         # canonical_builders_from_upstream flag is either True, or 'auto' and we are before feature freeze
-        image = self._resolve_image_from_upstream_parent(original_parent, dfp)
-        if image:
-            return image
+        matching_image = self._resolve_image_from_upstream_parent(original_parent, dfp)
+        if matching_image:
+            return matching_image
 
-        # Didn't find a match in streams.yml: do typical stream resolution
-        return str(stream.image)
+        # Didn't find a match for upstream parent: do typical stream resolution
+        return stream_image
 
     def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group

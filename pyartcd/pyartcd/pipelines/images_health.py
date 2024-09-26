@@ -1,4 +1,7 @@
+import json
+
 import click
+
 from artcommonlib import exectools
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -10,17 +13,15 @@ class ImagesHealthPipeline:
                  send_to_release_channel: bool, send_to_forum_ocp_art: bool):
         self.runtime = runtime
         self.doozer_working = self.runtime.working_dir / "doozer_working"
-        self.logger = self.runtime.logger
         self.version = version
         self.send_to_release_channel = send_to_release_channel
         self.send_to_forum_ocp_art = send_to_forum_ocp_art
-        self.report = ''
-        self.slack_client = None
+        self.report = {}
 
     async def run(self):
         # Check if automation is frozen for current group
         if not await util.is_build_permitted(self.version, doozer_working=self.doozer_working):
-            self.logger.info('Skipping this build as it\'s not permitted')
+            self.runtime.logger.info('Skipping this build as it\'s not permitted')
             return
 
         # Get doozer report
@@ -30,34 +31,38 @@ class ImagesHealthPipeline:
             f'--group=openshift-{self.version}',
             'images:health'
         ]
-        _, out, err = await exectools.cmd_gather_async(cmd)
-        self.report = out.strip()
-        if self.report:
-            self.logger.info('images:health output for openshift-%s:\n%s', self.version, out)
+        _, out, err = await exectools.cmd_gather_async(cmd, stderr=None)
+        self.report = json.loads(out.strip())
+        self.runtime.logger.info('images:health output for openshift-%s:\n%s', self.version, out)
 
         if any([self.send_to_release_channel, self.send_to_forum_ocp_art]):
-            self.slack_client = self.runtime.new_slack_client()
             await self._send_notifications()
 
     async def _send_notifications(self):
+        slack_client = self.runtime.new_slack_client()
+
         if self.report:
-            count = self.report.count('Latest attempt')
-            msg = f':alert: Howdy! There are some issues to look into for openshift-{self.version}. {count} components have failed!'
+            msg = (f':alert: Howdy! There are some issues to look into for openshift-{self.version}. '
+                   f'{len(self.report)} components have failed!')
+
+            report = ''
+            for image_name, concerns in self.report.items():
+                report += f'\n`{image_name}`:\n- ' + '\n- '.join(concerns)
 
             if self.send_to_release_channel:
-                self.slack_client.bind_channel(self.version)
-                response = await self.slack_client.say(msg)
-                await self.slack_client.say(f'{self.report}', thread_ts=response['ts'])
+                slack_client.bind_channel(self.version)
+                response = await slack_client.say(msg)
+                await slack_client.say(report, thread_ts=response['ts'])
 
             if self.send_to_forum_ocp_art:
-                self.slack_client.bind_channel('#forum-ocp-art')
-                response = await self.slack_client.say(msg)
-                await self.slack_client.say(f'{self.report}', thread_ts=response['ts'])
+                slack_client.bind_channel('#forum-ocp-art')
+                response = await slack_client.say(msg)
+                await slack_client.say(report, thread_ts=response['ts'])
 
         else:
             if self.send_to_release_channel:
-                self.slack_client.bind_channel(self.version)
-                await self.slack_client.say(f':white_check_mark: All images are healthy for openshift-{self.version}')
+                slack_client.bind_channel(self.version)
+                await slack_client.say(f':white_check_mark: All images are healthy for openshift-{self.version}')
 
 
 @cli.command('images-health')

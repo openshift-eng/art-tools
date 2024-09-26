@@ -76,9 +76,9 @@ class KonfluxDb:
         with concurrent.futures.ThreadPoolExecutor() as pool:
             await asyncio.gather(*(loop.run_in_executor(pool, self.add_build, build) for build in builds))
 
-    def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
-                                where: typing.Dict[str, typing.Any] = None, order_by: str = '',
-                                sorting: str = 'DESC', limit: int = None):
+    async def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
+                                      where: typing.Dict[str, typing.Any] = None, order_by: str = '',
+                                      sorting: str = 'DESC', limit: int = None) -> list:
         """
         Execute a SELECT * from the BigQuery table.
 
@@ -86,8 +86,7 @@ class KonfluxDb:
         "start_search" is a lower bound to be applied to the partitioning field `start_time`.
         "end_search" can optionally be provided as an upper bound for the same field.
 
-        This is a generator function, so it must be looped over to get the query results. For each result row,
-        a KonfluxBuildRecord is constructed and yielded at each iteration.
+        Return a (possibly empty) list of results
         """
 
         query = f'SELECT * FROM `{self.bq_client.table_ref}`'
@@ -114,14 +113,9 @@ class KonfluxDb:
             assert limit >= 0, 'LIMIT expects a non-negative integer literal or parameter '
             query += f' LIMIT {limit}'
 
-        results = self.bq_client.query(query)
+        results = await self.bq_client.query_async(query)
         self.logger.info('Found %s builds', results.total_rows)
-
-        while True:
-            try:
-                yield konflux_build_record.from_result_row(next(results))
-            except StopIteration:
-                return
+        return [konflux_build_record.from_result_row(result) for result in results]
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
