@@ -17,6 +17,7 @@ from ruamel.yaml import YAML
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
+from doozerlib.source_resolver import SourceResolution
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -60,9 +61,25 @@ class KonfluxImageBuilder:
         """ Build a container image with Konflux. """
         metadata.build_status = False
         try:
-            # Load the build source repository
             dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
-            build_repo = await BuildRepo.from_local_dir(dest_dir, self._logger)
+            if dest_dir.exists():
+                # Load exiting build source repository
+                build_repo = await BuildRepo.from_local_dir(dest_dir, self._logger)
+            else:
+                # Clone the build source repository
+                source = None
+                if metadata.has_source():
+                    self._logger.info(f"Resolving source for {metadata.qualified_key}")
+                    source = cast(SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata))
+                else:
+                    raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
+                dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
+                    "group": metadata.runtime.group,
+                    "assembly_name": metadata.runtime.assembly,
+                    "distgit_key": metadata.distgit_key
+                })
+                build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
+                await build_repo.ensure_source()
 
             # Load the Kubernetes configuration
             cfg = Configuration()
