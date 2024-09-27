@@ -1115,11 +1115,11 @@ class PromotePipeline:
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name, values are release_info dicts.
         """
-        tasks = []
+        release_info = []
         for arch in arches:
-            tasks.append(self._promote_arch(assembly_type, release_name, arch, previous_list, next_list, metadata,
-                                            reference_releases.get(arch), tag_stable=tag_stable))
-        release_infos = await asyncio.gather(*tasks)
+            result = await self._promote_arch(assembly_type, release_name, arch, previous_list, next_list, metadata,
+                                              reference_releases.get(arch), tag_stable=tag_stable)
+            release_info.append(result)
         return dict(zip(arches, release_infos))
 
     async def _promote_arch(self, assembly_type: AssemblyTypes, release_name: str, arch: str, previous_list: List[str],
