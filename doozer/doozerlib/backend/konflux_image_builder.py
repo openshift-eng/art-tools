@@ -58,6 +58,7 @@ class KonfluxImageBuilder:
 
     async def build(self, metadata: ImageMetadata):
         """ Build a container image with Konflux. """
+        metadata.build_status = False
         try:
             # Load the build source repository
             dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
@@ -69,27 +70,26 @@ class KonfluxImageBuilder:
                                     persist_config=False, client_configuration=cfg)
 
             # Wait for parent members to be built
-            LOGGER.info("Waiting for parent members to be built...")
             parent_members = await self._wait_for_parent_members(metadata)
             failed_parents = [parent_member.distgit_key for parent_member in parent_members if parent_member is not None and not parent_member.build_status]
             if failed_parents:
                 raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
 
             # Start the build
-            LOGGER.info("Starting Konflux image build for %s...", metadata.distgit_key)
+            self._logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
             retries = 3
             error = None
             for attempt in range(retries):
-                self._logger.info("Build attempt %s/%s", attempt + 1, retries)
+                self._logger.info("[%s] Build attempt %s/%s", metadata.distgit_key, attempt + 1, retries)
                 with client.ApiClient(configuration=cfg) as api_client:
                     dyn_client = DynamicClient(api_client)
 
                     pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
 
                     pipelinerun_name = pipelinerun['metadata']['name']
-                    self._logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
+                    self._logger.info("[%s] Waiting for PipelineRun %s to complete...", metadata.distgit_key, pipelinerun_name)
                     pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
-                    self._logger.info("PipelineRun %s completed", pipelinerun_name)
+                    self._logger.info("[%s] PipelineRun %s completed", metadata.distgit_key, pipelinerun_name)
                     if pipelinerun.status.conditions[0].status != "True":
                         error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
                                                        pipelinerun_name, pipelinerun)
@@ -98,12 +98,8 @@ class KonfluxImageBuilder:
                         break
             if not metadata.build_status and error:
                 raise error
-        except KonfluxImageBuildError:
-            metadata.build_status = False
-            raise Exception(metadata.distgit_key)
-
-        metadata.build_event.set()
-
+        finally:
+            metadata.build_event.set()
         return pipelinerun_name, pipelinerun
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
@@ -113,27 +109,28 @@ class KonfluxImageBuilder:
             if parent_member is None:
                 continue  # Parent member is not included in the group; no need to wait
             # wait for parent member to be built
-            if not parent_member.build_event.is_set():
-                self._logger.info("[%s] Parent image %s is being rebasing; waiting...", metadata.distgit_key, parent_member.distgit_key)
-                await exectools.to_thread(parent_member.build_event.wait)
+            while not parent_member.build_event.is_set():
+                self._logger.info("[%s] Parent image %s is building; waiting...", metadata.distgit_key, parent_member.distgit_key)
+                if await exectools.to_thread(parent_member.build_event.wait, timeout=20):
+                    break
         return parent_members
 
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, dyn_client: DynamicClient):
         git_url = build_repo.https_url
         git_branch = build_repo.branch
-        assert build_repo.commit_hash is not None, "git_commit is required for Konflux image build"
+        assert build_repo.commit_hash is not None, f"[{metadata.distgit_key}] git_commit is required for Konflux image build"
         git_commit = build_repo.commit_hash
 
         df_path = build_repo.local_dir.joinpath("Dockerfile")
         df = DockerfileParser(str(df_path))
         if "__doozer_uuid_tag" not in df.envs:
-            raise ValueError("Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
+            raise ValueError(f"[{metadata.distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
 
         # Ensure the Application resource exists
         app_name = self._config.group_name.replace(".", "-")
         app_manifest = self._new_application(app_name, app_name)
         app = await self._create_or_patch(dyn_client, app_manifest)
-        self._logger.info(f"Using application: {app['metadata']['name']}")
+        self._logger.info(f"[%s] Using application: {app['metadata']['name']}", metadata.distgit_key)
 
         # Ensure the component resource exists
         # Openshift doesn't allow dots in any of its fields, so we replace them with dashes
@@ -151,13 +148,13 @@ class KonfluxImageBuilder:
             default_revision,
         )
         component = await self._create_or_patch(dyn_client, component_manifest)
-        self._logger.info(f"Using component: {component['metadata']['name']}")
+        self._logger.info(f"[%s] Using component: {component['metadata']['name']}", metadata.distgit_key)
 
         # Create a PipelineRun
         arches = metadata.get_arches()
         unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
         if unsupported_arches:
-            raise ValueError(f"{metadata.distgit_key}: Unsupported arches: {', '.join(unsupported_arches)}")
+            raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
         build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
         pipelinerun_manifest = self._new_pipelinerun(
@@ -174,7 +171,7 @@ class KonfluxImageBuilder:
         if self._config.dry_run:
             pipelinerun_manifest = resource.ResourceInstance(dyn_client, pipelinerun_manifest)
             pipelinerun_manifest.metadata.name = f"doozer-build-{component_name}-dry-run"
-            self._logger.warning(f"[DRY RUN] Would have created PipelineRun: {pipelinerun_manifest.metadata.name}")
+            self._logger.warning(f"[DRY RUN] [%s] Would have created PipelineRun: {pipelinerun_manifest.metadata.name}", metadata.distgit_key)
             return pipelinerun_manifest
 
         pipelinerun = await exectools.to_thread(
@@ -186,7 +183,7 @@ class KonfluxImageBuilder:
         pipelinerun = cast(resource.ResourceInstance, pipelinerun)
 
         pipelinerun_name = pipelinerun['metadata']['name']
-        self._logger.info(f"Created PipelineRun: {pipelinerun_name}")
+        self._logger.info(f"[%s] Created PipelineRun: {pipelinerun_name}", metadata.distgit_key)
         return pipelinerun
 
     @staticmethod
