@@ -15,12 +15,13 @@ LOGGER = logging.getLogger(__name__)
 class KonfluxOcp4Pipeline:
     def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str],
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
-                 kubeconfig: Optional[str]):
+                 kubeconfig: Optional[str], skip_rebase: bool):
         self.runtime = runtime
         self.image_list = image_list
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.version = version
         self.kubeconfig = kubeconfig
+        self.skip_rebase = skip_rebase
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -68,8 +69,11 @@ class KonfluxOcp4Pipeline:
         version = f"v{self.version}.0"
         input_release = util.default_release_suffix()
 
-        LOGGER.info(f"Rebasing images for OCP {self.version} with release {input_release}")
-        await self.rebase(version, input_release)
+        if self.skip_rebase:
+            LOGGER.warning("Skipping rebase step because --skip-rebase flag is set")
+        else:
+            LOGGER.info(f"Rebasing images for OCP {self.version} with release {input_release}")
+            await self.rebase(version, input_release)
 
         LOGGER.info(f"Building images for OCP {self.version} with release {input_release}")
         await self.build()
@@ -88,10 +92,11 @@ class KonfluxOcp4Pipeline:
 @click.option('--data-gitref', required=False, default='',
               help='Doozer data path git [branch / tag / sha] to use')
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
+@click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, assembly: str, data_path: Optional[str], image_list: Optional[str],
-               version: str, data_gitref: Optional[str], kubeconfig: Optional[str]):
+               version: str, data_gitref: Optional[str], kubeconfig: Optional[str], skip_rebase: bool):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-    await KonfluxOcp4Pipeline(runtime, assembly, data_path, image_list, version, data_gitref, kubeconfig).run()
+    await KonfluxOcp4Pipeline(runtime, assembly, data_path, image_list, version, data_gitref, kubeconfig, skip_rebase).run()
