@@ -188,6 +188,7 @@ def extract_version_fields(version, at_least=0):
     :param version: A version to parse
     :param at_least: The minimum number of fields to find (else raise an error)
     """
+    # .split('-')[0] accounts for both 4.19.1-0 / 4.19.0-0.rc.1 (with versioning) and 4.19.1 / 4.19.0.rc-1  (without versioning)
     fields = [int(f) for f in version.strip().split('-')[0].lstrip('v').split('.')]  # v1.17.1 => [ '1', '17', '1' ]
     if len(fields) < at_least:
         raise IOError(f'Unable to find required {at_least} fields in {version}')
@@ -578,3 +579,15 @@ def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     if you expect the image to change during the course of doozer's execution.
     """
     return oc_image_info(pull_spec, go_arch)
+
+def infer_assembly_type(custom, assembly_name):
+    # Infer assembly type
+    if custom:
+        return AssemblyTypes.CUSTOM
+    elif re.search(r'^[fr]c\.[0-9]+$', assembly_name):
+        return AssemblyTypes.CANDIDATE
+    elif re.search(r'^ec\.[0-9]+$', assembly_name):
+        return AssemblyTypes.PREVIEW
+    else:
+        return AssemblyTypes.STANDARD
+

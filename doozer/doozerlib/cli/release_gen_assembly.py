@@ -148,14 +148,7 @@ class GenAssemblyCli:
         self.final_previous_list: List[VersionInfo] = []
 
         # Infer assembly type
-        if self.custom:
-            self.assembly_type = AssemblyTypes.CUSTOM
-        elif re.search(r'^[fr]c\.[0-9]+$', self.gen_assembly_name):
-            self.assembly_type = AssemblyTypes.CANDIDATE
-        elif re.search(r'^ec\.[0-9]+$', self.gen_assembly_name):
-            self.assembly_type = AssemblyTypes.PREVIEW
-        else:
-            self.assembly_type = AssemblyTypes.STANDARD
+        self.assembly_type = util.infer_assembly_type(self.custom, self.gen_assembly_name)
 
         # Create a map of package_name to RPMMetadata
         self.package_rpm_meta: Dict[str, RPMMetadata] = \
@@ -167,6 +160,7 @@ class GenAssemblyCli:
 
     async def run(self):
         self._validate_params()
+        self._check_version_against_threshold()
         self._get_release_pullspecs()
         await self._select_images()
         self._get_rhcos_container()
@@ -200,6 +194,26 @@ class GenAssemblyCli:
 
         if self.pre_ga_mode == "prerelease" and self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             self._exit_with_error("Prerelease is only valid for preview and candidate assemblies.")
+
+        if self.assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.STANDARD] and self._check_version_against_threshold() == True:
+            if "-" not in self.gen_assembly_name:
+                self._exit_with_error(f"Invalid assembly name: {self.gen_assembly_name}. Has to include release field. Eg: 4.18.0-0")
+
+    def _check_version_against_threshold(self):
+        # Threshold is 4.18
+        # Split into major and minor as integers
+        #major, minor = isolate_major_minor_in_group(self.group)
+        self.parts = self.gen_assembly_name.split(".")
+        self.major = self.parts[0]
+        self.minor = self.parts[1]
+        self.threshold_major = "4"
+        self.threshold_minor = "17"
+        if self.major > self.threshold_major or (self.major == self.threshold_major and self.minor > self.threshold_minor):
+            self.includes_release_version = True
+        else:
+            self.includes_release_version = False
+
+        return self.includes_release_version
 
     def _get_release_pullspecs(self):
         for nightly_name in self.nightlies:
