@@ -578,3 +578,31 @@ def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     if you expect the image to change during the course of doozer's execution.
     """
     return oc_image_info(pull_spec, go_arch)
+
+
+def infer_assembly_type(custom, assembly_name):
+    # Infer assembly type
+    if custom:
+        return AssemblyTypes.CUSTOM
+    elif re.search(r'^[fr]c\.[0-9]+$', assembly_name):
+        return AssemblyTypes.CANDIDATE
+    elif re.search(r'^ec\.[0-9]+$', assembly_name):
+        return AssemblyTypes.PREVIEW
+    else:
+        return AssemblyTypes.STANDARD
+
+def check_version_against_threshold(assembly_name):
+        # Threshold is 4.19
+        # Split into major and minor
+        parts = assembly_name.split(".")
+        major = parts[0]
+        minor = parts[1]
+        threshold_major = "4"
+        threshold_minor = "17"
+        if major > threshold_major or (major == threshold_major and minor > threshold_minor):
+            includes_release_version = True
+        else:
+            includes_release_version = False
+
+        return includes_release_version
+
