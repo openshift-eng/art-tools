@@ -8,7 +8,7 @@ from artcommonlib.telemetry import start_as_current_span_async
 from opentelemetry import trace
 
 from doozerlib import constants
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder, KonfluxImageBuilderConfig, KonfluxBuildRecord
 from doozerlib.backend.rebaser import KonfluxRebaser
 from doozerlib.cli import (cli, click_coroutine, option_commit_message,
                            option_push, pass_runtime,
@@ -132,6 +132,7 @@ class KonfluxBuildCli:
     async def run(self):
         runtime = self.runtime
         runtime.initialize(mode='images', clone_distgits=False)
+        runtime.konflux_db.bind(KonfluxBuildRecord)
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         metas = runtime.ordered_image_metas()
         config = KonfluxImageBuilderConfig(

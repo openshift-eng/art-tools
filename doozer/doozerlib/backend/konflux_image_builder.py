@@ -228,8 +228,6 @@ class KonfluxImageBuilder:
                                  'DB.')
             return
 
-        metadata.runtime.konflux_db.bind(KonfluxBuildRecord)
-
         try:
             rebase_repo_url = build_repo.https_url
             rebase_commit = build_repo.commit_hash
