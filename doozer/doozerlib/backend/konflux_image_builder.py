@@ -208,12 +208,11 @@ class KonfluxImageBuilder:
 
         pipelinerun_name = pipelinerun['metadata']['name']
         self._logger.info(f"[%s] Created PipelineRun: {pipelinerun_name}", metadata.distgit_key)
-        self.update_konflux_db(
-            metadata, build_repo, pipelinerun
-        )
+        build_pipeline_url = pipelinerun_name  # TODO: construct konflux ui url
+        self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, build_pipeline_url)
         return pipelinerun
 
-    def update_konflux_db(self, metadata, build_repo, build_info, outcome, build_pipeline_url='', scratch=False):
+    def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, build_pipeline_url='', scratch=False):
         if scratch:
             return
 
@@ -239,6 +238,8 @@ class KonfluxImageBuilder:
             release = df.labels['release']
             nvr = "-".join([component_name, version, release])
 
+            pipelinerun_name = pipelinerun['metadata']['name']
+
             build_record_params = {
                 'name': metadata.distgit_key,
                 'version': version,
@@ -246,7 +247,7 @@ class KonfluxImageBuilder:
                 'el_target': f'el{isolate_el_version_in_release(release)}',
                 'arches': metadata.get_arches(),
                 'embargoed': 'p1' in release.split('.'),
-                'start_time': datetime.now(),
+                'start_time': datetime.now(),  # TODO: get start time from pipelinerun
                 'end_time': datetime.now(),
                 'nvr': nvr,
                 'group': metadata.runtime.group,
@@ -257,12 +258,11 @@ class KonfluxImageBuilder:
                 'rebase_commitish': rebase_commit,
                 'artifact_type': ArtifactType.IMAGE,
                 'engine': Engine.KONFLUX,
-                'outcome': KonfluxBuildOutcome.PENDING,
+                'outcome': outcome,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
-                # TODO: populate these
-                'build_id': 'n/a',
-                'build_pipeline_url': 'n/a',
-                'pipeline_commit': 'n/a'
+                'build_id': pipelinerun_name,
+                'build_pipeline_url': build_pipeline_url,
+                'pipeline_commit': 'n/a'  # TODO: populate this
             }
 
             build_record = KonfluxBuildRecord(**build_record_params)

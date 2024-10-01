@@ -50,7 +50,7 @@ async def find_k_builds_cli(runtime: Runtime, kind, engine, outcome, output):
 
     LOGGER.info('Found %s builds', len(builds))
 
-    if output == 'json':
+    if output == 'json' and builds:
         click.echo(str(builds[0]))
     else:
         for build in builds:
