@@ -21,7 +21,6 @@ from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution
 
-from artcommonlib.util import convert_remote_git_to_https
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
 
@@ -211,9 +210,17 @@ class KonfluxImageBuilder:
         )
         pipelinerun = cast(resource.ResourceInstance, pipelinerun)
 
-        pipelinerun_name = pipelinerun['metadata']['name']
-        self._logger.info(f"[%s] Created PipelineRun: {pipelinerun_name}", metadata.distgit_key)
+        self._logger.info(f"[%s] Created PipelineRun: {self.build_pipeline_url(pipelinerun)}", metadata.distgit_key)
         return pipelinerun
+
+    @staticmethod
+    def build_pipeline_url(pipelinerun):
+        pipelinerun_name = pipelinerun['metadata']['name']
+        application = pipelinerun['metadata']['labels']['appstudio.openshift.io/application']
+        return (f"{constants.KONFLUX_UI_HOST}/application-pipeline/"
+                f"workspaces/{constants.KONFLUX_UI_DEFAULT_WORKSPACE}/"
+                f"applications/{application}/"
+                f"pipelineruns/{pipelinerun_name}")
 
     def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
         if not metadata.runtime.konflux_db:
@@ -239,6 +246,7 @@ class KonfluxImageBuilder:
             nvr = "-".join([component_name, version, release])
 
             pipelinerun_name = pipelinerun['metadata']['name']
+            build_pipeline_url = self.build_pipeline_url(pipelinerun)
 
             build_record_params = {
                 'name': metadata.distgit_key,
@@ -247,7 +255,7 @@ class KonfluxImageBuilder:
                 'el_target': f'el{isolate_el_version_in_release(release)}',
                 'arches': metadata.get_arches(),
                 'embargoed': 'p1' in release.split('.'),
-                'start_time': datetime.now(),  # TODO: get start time from pipelinerun
+                'start_time': datetime.now(),
                 'end_time': datetime.now(),
                 'nvr': nvr,
                 'group': metadata.runtime.group,
@@ -261,7 +269,7 @@ class KonfluxImageBuilder:
                 'outcome': outcome,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_id': pipelinerun_name,
-                'build_pipeline_url': pipelinerun_name,  # TODO: construct konflux ui url
+                'build_pipeline_url': build_pipeline_url,
                 'pipeline_commit': 'n/a'  # TODO: populate this
             }
 
