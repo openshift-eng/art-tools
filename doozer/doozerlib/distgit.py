@@ -1312,6 +1312,7 @@ class ImageDistGitRepo(DistGitRepo):
             self.logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return
 
+        self.runtime.konflux_db.bind(KonfluxBuildRecord)
         try:
             dfp = DockerfileParser(str(self.dg_path.joinpath('Dockerfile')))
             source_repo = convert_remote_git_to_https(self.metadata.config.content.source.git.url)

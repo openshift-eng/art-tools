@@ -104,10 +104,11 @@ class OLMBundle(object):
         self.create_container_yaml()
         return self.commit_and_push_bundle(commit_msg="Update bundle manifests")
 
-    def build(self) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    def build(self) -> Tuple[Optional[int], Optional[int], Optional[dict]]:
         """Trigger a brew build of operator's bundle
 
-        :return: (task_id, task_url, nvr) if build succeeds, (task_id, task_url, None) if container-build task is created but build fails,
+        :return: (task_id, task_url, build_info) if build succeeds,
+                 (task_id, task_url, None) if container-build task is created but build fails,
                  or (None, None, None) if unable to create a container-build task.
         """
         self.clone_bundle()
@@ -120,12 +121,12 @@ class OLMBundle(object):
             return task_id, task_url, None
 
         if self.dry_run:
-            return task_id, task_url, f"{self.bundle_brew_component}-v0.0.0-1"
+            return task_id, task_url, {'nvr': f"{self.bundle_brew_component}-v0.0.0-1"}
 
         taskResult = self.brew_session.getTaskResult(task_id)
         build_id = int(taskResult["koji_builds"][0])
         build_info = self.brew_session.getBuild(build_id)
-        return task_id, task_url, build_info["nvr"]
+        return task_id, task_url, build_info
 
     @property
     def bundle_image_name(self):

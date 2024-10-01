@@ -18,11 +18,15 @@ class BigQueryClient:
             raise EnvironmentError('Missing required environment variable GOOGLE_APPLICATION_CREDENTIALS')
 
         self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
-        self._table_ref = f'{self.client.project}.{constants.DATASET_ID}.{constants.TABLE_ID}'
+        self._table_ref = None
         self.logger = logging.getLogger(__name__)
 
         # Make the gcp logger less noisy
         logging.getLogger('google.auth.transport.requests').setLevel(logging.WARNING)
+
+    def bind(self, table_id: str):
+        self._table_ref = f'{self.client.project}.{constants.DATASET_ID}.{table_id}'
+        self.logger.info('Bound to table %s', self.table_ref)
 
     @property
     def table_ref(self):
@@ -60,9 +64,9 @@ class BigQueryClient:
             self.logger.error('Failed executing query: %s', err)
             raise
 
-    def insert(self, names: typing.List[str], values: list) -> None:
+    def insert(self, items: dict) -> None:
         """
-        Translate a list of column names and values into an INSERT INTO statement.
+        Translate a dictionary of (key, value) pairs into an INSERT INTO statement.
         Execute the query on BigQuery
 
         This is currently using the standard table API, which could possibly exceed BigQuery quotas
@@ -74,15 +78,11 @@ class BigQueryClient:
         https://github.com/googleapis/python-bigquery-storage/blob/main/samples/snippets/append_rows_proto2.py
         """
 
-        assert isinstance(names, list)
-        assert isinstance(values, list)
-        assert names and values, 'Names and values cannot be empty lists'
-
-        if len(names) != len(values):
-            raise ValueError('Provided value row does not match the column count')
-
-        query = f'INSERT INTO `{self._table_ref}` ({", ".join([f"`{name}`" for name in names])}) VALUES '
-        query += '(' + ', '.join(values) + ')'
+        query = f'INSERT INTO `{self._table_ref}` ('
+        query += ", ".join([f"`{name}`" for name in items.keys()])
+        query += ') VALUES ('
+        query += ', '.join(items.values())
+        query += ')'
         self.query(query)
 
     def select(self, where_clauses: typing.List[BinaryExpression] = None,
