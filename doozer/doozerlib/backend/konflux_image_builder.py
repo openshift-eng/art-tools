@@ -221,7 +221,7 @@ class KonfluxImageBuilder:
                                  'DB.')
             return
 
-        metadata.konflux_db.bind(KonfluxBuildRecord)
+        metadata.runtime.konflux_db.bind(KonfluxBuildRecord)
 
         try:
             rebase_repo_url = build_repo.https_url
@@ -266,24 +266,43 @@ class KonfluxImageBuilder:
             }
 
             if outcome == KonfluxBuildOutcome.SUCCESS:
-                # TODO: populate these
+                # results:
+                # - name: IMAGE_URL
+                #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+                # - name: IMAGE_DIGEST
+                #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                image_pullspec = 'quay.io/foo/bar:foobar@sha256:foobar'
-                # start_time =
-                # end_time =
+                image_url = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
+                image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                if not (image_url and image_digest):
+                    raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                                     f"pipelinerun {pipelinerun_name}")
+
+                repo_url = image_url.split(':')[0]
+                image_pullspec = f"{repo_url}@{image_digest}"
+
+                start_time = pipelinerun.status.startTime
+                end_time = pipelinerun.status.completionTime
 
                 build_record_params.update({
                     'image_pullspec': image_pullspec,
-                    'installed_packages': [],
-                    'parent_images': [],
-                    # 'start_time': datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f'),
-                    # 'end_time': datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f'),
-                    'image_tag': image_pullspec.split('sha256:')[-1],
+                    'installed_packages': [],  # TODO: populate this
+                    'parent_images': [],  # TODO: populate this
+                    'start_time': datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    'end_time': datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    'image_tag': image_digest.split('sha256:')[-1],
+                })
+            elif outcome == KonfluxBuildOutcome.FAILURE:
+                start_time = pipelinerun.status.startTime
+                end_time = pipelinerun.status.completionTime
+                build_record_params.update({
+                    'start_time': datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    'end_time': datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f'),
                 })
 
             build_record = KonfluxBuildRecord(**build_record_params)
-            # metadata.runtime.konflux_db.add_build(build_record)
-            self._logger.info(build_record_params)
+            metadata.runtime.konflux_db.add_build(build_record)
             self._logger.info('Konflux build info stored successfully')
 
         except Exception as err:
@@ -437,6 +456,7 @@ class KonfluxImageBuilder:
 
         def _inner():
             watcher = watch.Watch()
+            status = "Not Found"
             while True:
                 try:
                     obj = api.get(name=pipelinerun_name, namespace=self._config.namespace)
@@ -451,17 +471,17 @@ class KonfluxImageBuilder:
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
-                        status = "Not Found"
+                        status_message = status
                         try:
                             status = obj.status.conditions[0].status
+                            message = obj.status.conditions[0].message
+                            status_message = f"{status} {message}"
                         except AttributeError:
                             pass
-                        self._logger.info("PipelineRun %s status: %s", pipelinerun_name, status)
+                        self._logger.info(f"PipelineRun %s status: %s", pipelinerun_name, status_message)
                         if status not in ["Unknown", "Not Found"]:
                             return obj
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
-        pipelinerun = await exectools.to_thread(_inner)
-        self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
-        return pipelinerun
+        return await exectools.to_thread(_inner)
