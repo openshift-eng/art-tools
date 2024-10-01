@@ -12,6 +12,7 @@ import bashlex
 import bashlex.errors
 import yaml
 from artcommonlib import exectools, release_util
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
 from artcommonlib.model import ListModel, Missing
 from dockerfile_parse import DockerfileParser
 
@@ -75,6 +76,9 @@ class KonfluxRebaser:
         self._source_modifier_factory = source_modifier_factory
         self.should_match_upstream = False  # FIXME: Matching upstream is not supported yet
         self._logger = logger or LOGGER
+
+        self.konflux_db = self._runtime.konflux_db
+        self.konflux_db.bind(KonfluxBuildRecord)
 
     async def rebase_to(
             self,
@@ -244,7 +248,14 @@ class KonfluxRebaser:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
                     raise IOError(f"Parent image {member} is not found.")
-                _, v, r = parent_metadata.get_latest_build_info()
+
+                build = self._runtime.konflux_db.get_latest_build(
+                    name=parent_metadata.name,
+                    assembly=self._runtime.assembly,
+                    group=self._runtime.group)
+                v = build.version
+                r = build.release
+
                 if util.isolate_pflag_in_release(r) == 'p1':
                     private_fix = True
                 return f"{parent_metadata.config.name}:{v}-{r}", private_fix
@@ -1428,7 +1439,14 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                _, v, r = meta.get_latest_build_info()
+
+                build = self._runtime.konflux_db.get_latest_build(
+                    name=meta.name,
+                    assembly=self._runtime.assembly,
+                    group=self._runtime.group)
+                v = build.version
+                r = build.release
+
                 image_tag = '{}:{}-{}'.format(meta.image_name_short, v, r)
 
             if metadata.distgit_key != meta.distgit_key:
