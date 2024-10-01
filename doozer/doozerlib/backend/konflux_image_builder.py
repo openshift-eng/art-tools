@@ -484,7 +484,7 @@ class KonfluxImageBuilder:
                             status_message = f"{status} {message}"
                         except AttributeError:
                             pass
-                        self._logger.info(f"PipelineRun %s status: %s.", pipelinerun_name, status_message)
+                        self._logger.info("PipelineRun %s status: %s.", pipelinerun_name, status_message)
                         if status not in ["Unknown", "Not Found"]:
                             return obj
                 except TimeoutError:
