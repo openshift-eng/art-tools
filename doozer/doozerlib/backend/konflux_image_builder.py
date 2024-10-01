@@ -108,12 +108,18 @@ class KonfluxImageBuilder:
                     dyn_client = DynamicClient(api_client)
 
                     pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
+                    self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
 
                     pipelinerun_name = pipelinerun['metadata']['name']
                     self._logger.info("[%s] Waiting for PipelineRun %s to complete...", metadata.distgit_key, pipelinerun_name)
                     pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
                     self._logger.info("[%s] PipelineRun %s completed", metadata.distgit_key, pipelinerun_name)
-                    if pipelinerun.status.conditions[0].status != "True":
+
+                    status = pipelinerun.status.conditions[0].status
+                    outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
+                    self.update_konflux_db(metadata, build_repo, pipelinerun, outcome)
+
+                    if status != "True":
                         error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
                                                        pipelinerun_name, pipelinerun)
                     else:
@@ -123,7 +129,6 @@ class KonfluxImageBuilder:
                 raise error
         finally:
             metadata.build_event.set()
-
         return pipelinerun_name, pipelinerun
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
@@ -208,14 +213,9 @@ class KonfluxImageBuilder:
 
         pipelinerun_name = pipelinerun['metadata']['name']
         self._logger.info(f"[%s] Created PipelineRun: {pipelinerun_name}", metadata.distgit_key)
-        build_pipeline_url = pipelinerun_name  # TODO: construct konflux ui url
-        self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, build_pipeline_url)
         return pipelinerun
 
-    def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, build_pipeline_url='', scratch=False):
-        if scratch:
-            return
-
+    def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
         if not metadata.runtime.konflux_db:
             self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
                                  'DB.')
@@ -261,12 +261,29 @@ class KonfluxImageBuilder:
                 'outcome': outcome,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_id': pipelinerun_name,
-                'build_pipeline_url': build_pipeline_url,
+                'build_pipeline_url': pipelinerun_name,  # TODO: construct konflux ui url
                 'pipeline_commit': 'n/a'  # TODO: populate this
             }
 
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                # TODO: populate these
+
+                image_pullspec = 'quay.io/foo/bar:foobar@sha256:foobar'
+                # start_time =
+                # end_time =
+
+                build_record_params.update({
+                    'image_pullspec': image_pullspec,
+                    'installed_packages': [],
+                    'parent_images': [],
+                    # 'start_time': datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    # 'end_time': datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    'image_tag': image_pullspec.split('sha256:')[-1],
+                })
+
             build_record = KonfluxBuildRecord(**build_record_params)
-            metadata.runtime.konflux_db.add_build(build_record)
+            # metadata.runtime.konflux_db.add_build(build_record)
+            self._logger.info(build_record_params)
             self._logger.info('Konflux build info stored successfully')
 
         except Exception as err:
@@ -445,4 +462,6 @@ class KonfluxImageBuilder:
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
-        return await exectools.to_thread(_inner)
+        pipelinerun = await exectools.to_thread(_inner)
+        self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
+        return pipelinerun
