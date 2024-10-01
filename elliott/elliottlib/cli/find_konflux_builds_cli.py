@@ -1,7 +1,7 @@
 import click
 
 from artcommonlib import logutil
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
 from elliottlib import Runtime
 from elliottlib.cli.common import cli, pass_runtime, click_coroutine
 
@@ -14,27 +14,34 @@ LOGGER = logutil.get_logger(__name__)
     type=click.Choice([e.value for e in ArtifactType]),
     help=f'Find builds of the given KIND {[e.value for e in ArtifactType]}')
 @click.option(
-    '--engine', '-e', metavar='ENGINE', required=False,
+    '--engine', '-e', metavar='ENGINE',
     type=click.Choice([e.value for e in Engine]),
     help=f'Limit builds to ones built in the given ENGINE {[e.value for e in Engine]}')
+@click.option('--outcome', type=click.Choice([e.value for e in KonfluxBuildOutcome]),
+              help=f'Limit builds to given OUTCOME {[e.value for e in KonfluxBuildOutcome]}')
+@click.option('--output', '-o', type=click.Choice(['json']),
+              help='Output in the given format')
 @pass_runtime
 @click_coroutine
-async def find_k_builds_cli(runtime: Runtime, kind, engine):
+async def find_k_builds_cli(runtime: Runtime, kind, engine, outcome, output):
     runtime.initialize(mode='images' if kind == 'image' else 'rpms')
     if runtime.konflux_db is None:
         raise RuntimeError('Must run Elliott with Konflux DB initialized')
+    runtime.konflux_db.bind(KonfluxBuildRecord)
 
     engine_fmt = f"{engine} " if engine else ""
-    LOGGER.info(f'searching for {engine_fmt}builds of kind %s in group %s', kind, runtime.group)
+    outcome = KonfluxBuildOutcome(outcome) if outcome else KonfluxBuildOutcome.SUCCESS
+    LOGGER.info(f'searching for {engine_fmt}builds of kind={kind} in group={runtime.group} with outcome={outcome.value}')
     metas = runtime.image_metas() if kind == 'image' else runtime.rpm_metas()
     names = [meta.name for meta in metas]
+
     args = {
         'names': names,
         'group': runtime.group,
-        'outcome': KonfluxBuildOutcome.SUCCESS
+        'outcome': outcome
     }
     if engine:
-        args.update({'engine': engine})
+        args.update({'engine': Engine(engine)})
     builds = await runtime.konflux_db.get_latest_builds(**args)
 
     missing_builds = [name for name in names if name not in [b.name for b in builds]]
@@ -42,5 +49,9 @@ async def find_k_builds_cli(runtime: Runtime, kind, engine):
         LOGGER.warning('Builds have not been found for these components: %s', ', '.join(missing_builds))
 
     LOGGER.info('Found %s builds', len(builds))
-    for build in builds:
-        click.echo(build.nvr)
+
+    if output == 'json':
+        click.echo(str(builds[0]))
+    else:
+        for build in builds:
+            click.echo(build.nvr)

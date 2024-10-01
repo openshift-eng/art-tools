@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, cast
@@ -18,6 +20,10 @@ from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution
+
+from artcommonlib.util import convert_remote_git_to_https
+from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -117,6 +123,7 @@ class KonfluxImageBuilder:
                 raise error
         finally:
             metadata.build_event.set()
+
         return pipelinerun_name, pipelinerun
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
@@ -201,7 +208,69 @@ class KonfluxImageBuilder:
 
         pipelinerun_name = pipelinerun['metadata']['name']
         self._logger.info(f"[%s] Created PipelineRun: {pipelinerun_name}", metadata.distgit_key)
+        self.update_konflux_db(
+            metadata, build_repo, pipelinerun
+        )
         return pipelinerun
+
+    def update_konflux_db(self, metadata, build_repo, build_info, outcome, build_pipeline_url='', scratch=False):
+        if scratch:
+            return
+
+        if not metadata.runtime.konflux_db:
+            self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
+                                 'DB.')
+            return
+
+        metadata.konflux_db.bind(KonfluxBuildRecord)
+
+        try:
+            rebase_repo_url = build_repo.https_url
+            rebase_commit = build_repo.commit_hash
+
+            df_path = build_repo.local_dir.joinpath("Dockerfile")
+            df = DockerfileParser(str(df_path))
+
+            source_repo = df.labels['io.openshift.build.source-location']
+            commitish = df.labels['io.openshift.build.commit.id']
+
+            component_name = df.labels['com.redhat.component']
+            version = df.labels['version']
+            release = df.labels['release']
+            nvr = "-".join([component_name, version, release])
+
+            build_record_params = {
+                'name': metadata.distgit_key,
+                'version': version,
+                'release': release,
+                'el_target': f'el{isolate_el_version_in_release(release)}',
+                'arches': metadata.get_arches(),
+                'embargoed': 'p1' in release.split('.'),
+                'start_time': datetime.now(),
+                'end_time': datetime.now(),
+                'nvr': nvr,
+                'group': metadata.runtime.group,
+                'assembly': metadata.runtime.assembly,
+                'source_repo': source_repo,
+                'commitish': commitish,
+                'rebase_repo_url': rebase_repo_url,
+                'rebase_commitish': rebase_commit,
+                'artifact_type': ArtifactType.IMAGE,
+                'engine': Engine.KONFLUX,
+                'outcome': KonfluxBuildOutcome.PENDING,
+                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+                # TODO: populate these
+                'build_id': 'n/a',
+                'build_pipeline_url': 'n/a',
+                'pipeline_commit': 'n/a'
+            }
+
+            build_record = KonfluxBuildRecord(**build_record_params)
+            metadata.runtime.konflux_db.add_build(build_record)
+            self._logger.info('Konflux build info stored successfully')
+
+        except Exception as err:
+            self._logger.error('Failed writing record to the konflux DB: %s', err)
 
     @staticmethod
     def _new_application(name: str, display_name: str) -> dict:

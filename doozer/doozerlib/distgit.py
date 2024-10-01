@@ -1315,8 +1315,12 @@ class ImageDistGitRepo(DistGitRepo):
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
         try:
             dfp = DockerfileParser(str(self.dg_path.joinpath('Dockerfile')))
-            source_repo = convert_remote_git_to_https(self.metadata.config.content.source.git.url)
-            commitish = dfp.labels['io.openshift.build.commit.url'].split('commit/')[-1]
+            source_repo = dfp.labels['io.openshift.build.source-location']
+            commitish = dfp.labels['io.openshift.build.commit.id']
+            component_name = dfp.labels['com.redhat.component']
+            version = dfp.labels['version']
+            release = dfp.labels['release']
+            nvr = "-".join([component_name, version, release])
 
             _, rebase_repo_url, _ = gather_git(['-C', self.distgit_dir, 'remote', 'get-url', 'origin'])
             _, rebase_commitish, _ = gather_git(['-C', self.distgit_dir, 'rev-parse', 'HEAD'])
@@ -1325,6 +1329,12 @@ class ImageDistGitRepo(DistGitRepo):
                 'name': self.metadata.distgit_key,
                 'group': self.runtime.group,
                 'assembly': self.runtime.assembly,
+                'nvr': nvr,
+                'version': version,
+                'release': release,
+                'el_target': f'el{isolate_el_version_in_release(release)}',
+                'embargoed': 'p1' in release.split('.'),
+                'arches': self.metadata.get_arches(),
                 'source_repo': source_repo,
                 'commitish': commitish,
                 'rebase_repo_url': convert_remote_git_to_https(rebase_repo_url),
@@ -1342,28 +1352,20 @@ class ImageDistGitRepo(DistGitRepo):
                 build_record_params.update({
                     'start_time': datetime.now(),  # placeholder, cannot be NULL
                     'end_time': datetime.now(),  # placeholder, cannot be NULL
-                    'nvr': 'n/a'
                 })
 
             else:
                 self.logger.info('Storing Brew build info for %s in Konflux DB', build_info['nvr'])
                 image_pullspec = build_info['extra']['image']['index']['pull'][0]
-                el_target = f'el{isolate_el_version_in_release(build_info["release"])}'
 
                 build_record_params.update({
-                    'version': build_info['version'],
-                    'release': build_info['release'],
-                    'el_target': el_target,
-                    'arches': self.metadata.get_arches(),
                     'installed_packages': self.get_installed_packages(image_pullspec),
                     'parent_images': [build['nvr']
                                       for build in build_info['extra']['image']['parent_image_builds'].values()],
-                    'embargoed': 'p1' in build_info['release'].split('.'),
                     'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'image_pullspec': image_pullspec,
                     'image_tag': image_pullspec.split('sha256:')[-1],
-                    'nvr': build_info['nvr'],
                     'build_id': str(build_info['id'])
                 })
 
