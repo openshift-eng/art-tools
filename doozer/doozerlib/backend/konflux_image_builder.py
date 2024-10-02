@@ -254,7 +254,7 @@ class KonfluxImageBuilder:
                 'arches': metadata.get_arches(),
                 'embargoed': 'p1' in release.split('.'),
                 'start_time': datetime.now(),
-                'end_time': datetime.now(),
+                'end_time': None,
                 'nvr': nvr,
                 'group': metadata.runtime.group,
                 'assembly': metadata.runtime.assembly,
