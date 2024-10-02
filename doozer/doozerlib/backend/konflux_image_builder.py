@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import json
 from datetime import datetime, UTC
 from dataclasses import dataclass
 from pathlib import Path
@@ -222,6 +223,38 @@ class KonfluxImageBuilder:
                 f"applications/{application}/"
                 f"pipelineruns/{pipelinerun_name}")
 
+    @staticmethod
+    def get_installed_packages(image_pullspec, arches) -> list:
+        def _get_for_arch(arch):
+            cmd = [
+                "cosign",
+                "download",
+                "sbom",
+                image_pullspec,
+                "--platform", f"linux/{arch}"
+            ]
+            rc, stdout, stderr = exectools.cmd_gather(cmd)
+            if rc != 0:
+                raise IOError(stderr)
+
+            sbom_contents = json.load(stdout)
+            source_rpms = set()
+            for x in sbom_contents["components"]:
+                if x["bom-ref"].startswith("pkg:rpm"):
+                    for i in x["properties"]:
+                        if i["name"] == "syft:metadata:sourceRpm":
+                            source_rpms.add(i["value"].rstrip(".src.rpm"))
+                            break
+            return source_rpms
+
+        installed_packages = set()
+        for arch in arches:
+            srpms = _get_for_arch(arch)
+            installed_packages.update(srpms)
+        return sorted(installed_packages)
+
+        # results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
+
     def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
         if not metadata.runtime.konflux_db:
             self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
@@ -291,7 +324,7 @@ class KonfluxImageBuilder:
 
                 build_record_params.update({
                     'image_pullspec': image_pullspec,
-                    'installed_packages': [],  # TODO: populate this
+                    'installed_packages': self.get_installed_packages(image_pullspec, metadata.get_arches()),
                     'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'image_tag': image_digest.split('sha256:')[-1],
