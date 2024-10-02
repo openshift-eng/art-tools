@@ -99,7 +99,7 @@ class KonfluxImageBuilder:
 
             # Start the build
             self._logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 5
+            retries = 3
             error = None
             for attempt in range(retries):
                 self._logger.info("[%s] Build attempt %s/%s", metadata.distgit_key, attempt + 1, retries)
@@ -265,6 +265,7 @@ class KonfluxImageBuilder:
                 'artifact_type': ArtifactType.IMAGE,
                 'engine': Engine.KONFLUX,
                 'outcome': outcome,
+                'parent_images': df.parent_images,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_id': pipelinerun_name,
                 'build_pipeline_url': build_pipeline_url,
@@ -278,15 +279,12 @@ class KonfluxImageBuilder:
                 # - name: IMAGE_DIGEST
                 #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                image_url = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
+                image_pullspec = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
                 image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
 
-                if not (image_url and image_digest):
+                if not (image_pullspec and image_digest):
                     raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
                                      f"pipelinerun {pipelinerun_name}")
-
-                repo_url = image_url.split(':')[0]
-                image_pullspec = f"{repo_url}@{image_digest}"
 
                 start_time = pipelinerun.status.startTime
                 end_time = pipelinerun.status.completionTime
@@ -294,7 +292,6 @@ class KonfluxImageBuilder:
                 build_record_params.update({
                     'image_pullspec': image_pullspec,
                     'installed_packages': [],  # TODO: populate this
-                    'parent_images': [],  # TODO: populate this
                     'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'image_tag': image_digest.split('sha256:')[-1],
