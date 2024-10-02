@@ -108,7 +108,7 @@ class KonfluxImageBuilder:
                     dyn_client = DynamicClient(api_client)
 
                     pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
-                    self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
+                    await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
 
                     pipelinerun_name = pipelinerun['metadata']['name']
                     self._logger.info("[%s] Waiting for PipelineRun %s to complete...", metadata.distgit_key, pipelinerun_name)
@@ -117,7 +117,7 @@ class KonfluxImageBuilder:
 
                     status = pipelinerun.status.conditions[0].status
                     outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
-                    self.update_konflux_db(metadata, build_repo, pipelinerun, outcome)
+                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome)
 
                     if status != "True":
                         error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
@@ -224,12 +224,12 @@ class KonfluxImageBuilder:
                 f"pipelineruns/{pipelinerun_name}")
 
     @staticmethod
-    def get_installed_packages(image_pullspec, arches) -> list:
+    async def get_installed_packages(image_pullspec, arches) -> list:
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
-        def _get_for_arch(arch):
+        async def _get_for_arch(arch):
             cmd = [
                 "cosign",
                 "download",
@@ -237,10 +237,7 @@ class KonfluxImageBuilder:
                 image_pullspec,
                 "--platform", f"linux/{arch}"
             ]
-            rc, stdout, stderr = exectools.cmd_gather(cmd)
-            if rc != 0:
-                raise IOError(stderr)
-
+            _, stdout, _ = await exectools.cmd_gather_async(cmd)
             sbom_contents = json.loads(stdout)
             source_rpms = set()
             for x in sbom_contents["components"]:
@@ -251,15 +248,13 @@ class KonfluxImageBuilder:
                             break
             return source_rpms
 
+        results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
         installed_packages = set()
-        for arch in arches:
-            srpms = _get_for_arch(arch)
+        for srpms in results:
             installed_packages.update(srpms)
         return sorted(installed_packages)
 
-        # results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
-
-    def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
+    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
         if not metadata.runtime.konflux_db:
             self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
                                  'DB.')
@@ -326,9 +321,11 @@ class KonfluxImageBuilder:
                 start_time = pipelinerun.status.startTime
                 end_time = pipelinerun.status.completionTime
 
+                installed_packages = await self.get_installed_packages(image_pullspec, metadata.get_arches())
+
                 build_record_params.update({
                     'image_pullspec': image_pullspec,
-                    'installed_packages': self.get_installed_packages(image_pullspec, metadata.get_arches()),
+                    'installed_packages': installed_packages,
                     'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'image_tag': image_digest.split('sha256:')[-1],
