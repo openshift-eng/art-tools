@@ -7,7 +7,7 @@ import urllib.parse
 import click
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from doozerlib import Runtime
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 
@@ -22,6 +22,7 @@ class ImagesHealthPipeline:
         self.start_search = datetime.datetime.now() - datetime.timedelta(days=DELTA_DAYS)
         self.concerns = {}
         self.logger = logging.getLogger(__name__)
+        self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
     def generate_art_dash_history_link(self, dg_name):
         base_url = "https://art-dash.engineering.redhat.com/dashboard/build/history"
