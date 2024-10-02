@@ -295,8 +295,8 @@ class KonfluxImageBuilder:
                     'image_pullspec': image_pullspec,
                     'installed_packages': [],  # TODO: populate this
                     'parent_images': [],  # TODO: populate this
-                    'start_time': datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f'),
-                    'end_time': datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
+                    'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
                     'image_tag': image_digest.split('sha256:')[-1],
                 })
             elif outcome == KonfluxBuildOutcome.FAILURE:
