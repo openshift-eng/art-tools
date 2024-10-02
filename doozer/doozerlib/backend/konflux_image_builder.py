@@ -225,6 +225,10 @@ class KonfluxImageBuilder:
 
     @staticmethod
     def get_installed_packages(image_pullspec, arches) -> list:
+        """
+        Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
+        :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
+        """
         def _get_for_arch(arch):
             cmd = [
                 "cosign",
@@ -237,7 +241,7 @@ class KonfluxImageBuilder:
             if rc != 0:
                 raise IOError(stderr)
 
-            sbom_contents = json.load(stdout)
+            sbom_contents = json.loads(stdout)
             source_rpms = set()
             for x in sbom_contents["components"]:
                 if x["bom-ref"].startswith("pkg:rpm"):
