@@ -10,9 +10,15 @@ from artcommonlib.exectools import cmd_assert
 from doozerlib.util import mkdirs
 
 
-class DoomsdaySync:
+N_RETRIES = 4
+
+
+class QuayDoomsdaySync:
+    """
+    Backup promoted payloads to AWS bucket, in the event we need to recover a payload or if quay goes down
+    """
+
     ALL_ARCHES_LIST = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
-    N_RETRIES = 4
 
     def __init__(self, runtime: Runtime, all_arches: bool, arches: Optional[list[str]], version: str):
         self.runtime = runtime
@@ -32,18 +38,26 @@ class DoomsdaySync:
             raise Exception(f"Invalid arch: {arch}")
 
         major_minor = ".".join(self.version.split(".")[:2])
-        path = f"{self.workdir}/{major_minor}/{self.version}/{arch}"
-        mirror_cmd = f"oc adm release mirror quay.io/openshift-release-dev/ocp-release:{self.version}-{arch} --keep-manifest-list --to-dir={path}"
-        aws_cmd = f"aws s3 sync {path} s3://ocp-doomsday-registry/release-image/{path}"
+        path = f"{major_minor}/{self.version}/{arch}"
+
+        mirror_cmd = [
+            "oc", "adm", "release", "mirror",
+            f"quay.io/openshift-release-dev/ocp-release:{self.version}-{arch}",
+            "--keep-manifest-list",
+            f"--to-dir={self.workdir}/{path}"
+        ]
+        aws_cmd = [
+            "aws", "s3", "sync", f"{self.workdir}/{path}",
+            f"s3://ocp-doomsday-registry/release-image/{path}"
+        ]
 
         try:
+            cmd_assert(mirror_cmd, realtime=True, retries=N_RETRIES)
             if self.runtime.dry_run:
-                self.runtime.logger.info("[DRY RUN] Would have run %s", mirror_cmd)
-                self.runtime.logger.info("[DRY RUN] Would have run %s", aws_cmd)
+                self.runtime.logger.info("[DRY RUN] Would have run %s", " ".join(aws_cmd))
             else:
-                cmd_assert(mirror_cmd, retries=self.N_RETRIES)
                 sleep(5)
-                cmd_assert(aws_cmd, retries=self.N_RETRIES)
+                cmd_assert(aws_cmd, realtime=True, retries=N_RETRIES)
                 sleep(5)
 
         except ChildProcessError:
@@ -66,9 +80,9 @@ class DoomsdaySync:
 @click.option("--all-arches", is_flag=True, required=False, default=False, help="Sync all arches")
 @click.option("--version", required=True, help="Release to sync, e.g. 4.15.3")
 @pass_runtime
-def doomsday_sync(runtime: Runtime, arches: str, all_arches: bool, version: bool):
-    doomsday_pipeline = DoomsdaySync(runtime=runtime,
-                                     arches=arches,
-                                     all_arches=all_arches,
-                                     version=version)
+def doomsday_sync(runtime: Runtime, arches: str, all_arches: bool, version: str):
+    doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
+                                         arches=arches,
+                                         all_arches=all_arches,
+                                         version=version)
     doomsday_pipeline.run()
