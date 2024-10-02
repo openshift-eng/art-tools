@@ -248,7 +248,7 @@ class KonfluxRebaser:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
                     raise IOError(f"Parent image {member} is not found.")
-                build = self._runtime.konflux_db.get_latest_build(
+                build = self.konflux_db.get_latest_build(
                     name=parent_metadata.name,
                     assembly=self._runtime.assembly,
                     group=self._runtime.group,
