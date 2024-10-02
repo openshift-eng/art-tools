@@ -303,8 +303,8 @@ class KonfluxImageBuilder:
                 start_time = pipelinerun.status.startTime
                 end_time = pipelinerun.status.completionTime
                 build_record_params.update({
-                    'start_time': datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S.%f'),
-                    'end_time': datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S.%f'),
+                    'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
+                    'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
                 })
 
             build_record = KonfluxBuildRecord(**build_record_params)
