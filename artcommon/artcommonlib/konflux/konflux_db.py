@@ -12,7 +12,7 @@ from sqlalchemy import Column, String, DateTime
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord, Engine
 
 SCHEMA_LEVEL = 1
 
@@ -152,7 +152,7 @@ class KonfluxDb:
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
                                 el_target: str = None, artifact_type: ArtifactType = None,
-                                completed_before: datetime = None)\
+                                engine: Engine = None, completed_before: datetime = None)\
             -> typing.List[konflux_build_record.KonfluxBuildRecord]:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
@@ -162,14 +162,16 @@ class KonfluxDb:
         loop = asyncio.get_event_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             results = await asyncio.gather(*(loop.run_in_executor(
-                pool, self.get_latest_build, name, group, outcome, assembly, el_target, artifact_type, completed_before)
+                pool, self.get_latest_build, name, group, outcome, assembly, el_target, artifact_type, engine,
+                completed_before)
                 for name in names))
 
         return [r for r in results if r]
 
     def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
                          assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
-                         completed_before: datetime = None) -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
+                         engine: Engine = None, completed_before: datetime = None)\
+            -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
         """
         Search for the latest Konflux build information in BigQuery.
 
@@ -179,6 +181,7 @@ class KonfluxDb:
         :param assembly: non-standard assembly name, defaults to 'stream' if omitted
         :param el_target: e.g. 'el8'
         :param artifact_type: 'rpm' | 'image'
+        :param engine: 'brew' | 'konflux'
         :param completed_before: cut off timestamp for builds completion time
         """
 
@@ -204,6 +207,9 @@ class KonfluxDb:
 
         if artifact_type:
             base_clauses.append(Column('artifact_type', String) == str(artifact_type))
+
+        if engine:
+            base_clauses.append(Column('engine', String) == str(engine))
 
         for window in range(12):
             end_search = completed_before - window * 3 * timedelta(days=30)

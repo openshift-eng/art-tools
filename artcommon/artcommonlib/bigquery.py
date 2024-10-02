@@ -37,7 +37,7 @@ class BigQueryClient:
         Execute a query in BigQuery and return a generator object with the results
         """
 
-        self.logger.info('Executing query: %s', query)
+        self.logger.debug('Executing query: %s', query)
 
         try:
             results = self.client.query(query).result()
@@ -53,7 +53,7 @@ class BigQueryClient:
         Asynchronously execute a query in BigQuery and return a generator object with the results
         """
 
-        self.logger.info('Executing query: %s', query)
+        self.logger.debug('Executing query: %s', query)
 
         try:
             results = await asyncio.to_thread(self.client.query(query).result)

@@ -19,6 +19,7 @@ class KonfluxEnum(Enum):
 class KonfluxBuildOutcome(KonfluxEnum):
     FAILURE = 'failure'
     SUCCESS = 'success'
+    PENDING = 'pending'
 
 
 class ArtifactType(KonfluxEnum):

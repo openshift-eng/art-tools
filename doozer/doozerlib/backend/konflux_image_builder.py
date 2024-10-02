@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, cast
@@ -18,6 +20,9 @@ from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution
+
+from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -102,12 +107,18 @@ class KonfluxImageBuilder:
                     dyn_client = DynamicClient(api_client)
 
                     pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
+                    self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
 
                     pipelinerun_name = pipelinerun['metadata']['name']
                     self._logger.info("[%s] Waiting for PipelineRun %s to complete...", metadata.distgit_key, pipelinerun_name)
                     pipelinerun = await self._wait_for_pipelinerun(dyn_client, pipelinerun_name)
                     self._logger.info("[%s] PipelineRun %s completed", metadata.distgit_key, pipelinerun_name)
-                    if pipelinerun.status.conditions[0].status != "True":
+
+                    status = pipelinerun.status.conditions[0].status
+                    outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
+                    self.update_konflux_db(metadata, build_repo, pipelinerun, outcome)
+
+                    if status != "True":
                         error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
                                                        pipelinerun_name, pipelinerun)
                     else:
@@ -199,9 +210,109 @@ class KonfluxImageBuilder:
         )
         pipelinerun = cast(resource.ResourceInstance, pipelinerun)
 
-        pipelinerun_name = pipelinerun['metadata']['name']
-        self._logger.info(f"[%s] Created PipelineRun: {pipelinerun_name}", metadata.distgit_key)
+        self._logger.info(f"[%s] Created PipelineRun: {self.build_pipeline_url(pipelinerun)}", metadata.distgit_key)
         return pipelinerun
+
+    @staticmethod
+    def build_pipeline_url(pipelinerun):
+        pipelinerun_name = pipelinerun['metadata']['name']
+        application = pipelinerun['metadata']['labels']['appstudio.openshift.io/application']
+        return (f"{constants.KONFLUX_UI_HOST}/application-pipeline/"
+                f"workspaces/{constants.KONFLUX_UI_DEFAULT_WORKSPACE}/"
+                f"applications/{application}/"
+                f"pipelineruns/{pipelinerun_name}")
+
+    def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
+        if not metadata.runtime.konflux_db:
+            self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
+                                 'DB.')
+            return
+
+        try:
+            rebase_repo_url = build_repo.https_url
+            rebase_commit = build_repo.commit_hash
+
+            df_path = build_repo.local_dir.joinpath("Dockerfile")
+            df = DockerfileParser(str(df_path))
+
+            source_repo = df.labels['io.openshift.build.source-location']
+            commitish = df.labels['io.openshift.build.commit.id']
+
+            component_name = df.labels['com.redhat.component']
+            version = df.labels['version']
+            release = df.labels['release']
+            nvr = "-".join([component_name, version, release])
+
+            pipelinerun_name = pipelinerun['metadata']['name']
+            build_pipeline_url = self.build_pipeline_url(pipelinerun)
+
+            build_record_params = {
+                'name': metadata.distgit_key,
+                'version': version,
+                'release': release,
+                'el_target': f'el{isolate_el_version_in_release(release)}',
+                'arches': metadata.get_arches(),
+                'embargoed': 'p1' in release.split('.'),
+                'start_time': datetime.now(),
+                'end_time': None,
+                'nvr': nvr,
+                'group': metadata.runtime.group,
+                'assembly': metadata.runtime.assembly,
+                'source_repo': source_repo,
+                'commitish': commitish,
+                'rebase_repo_url': rebase_repo_url,
+                'rebase_commitish': rebase_commit,
+                'artifact_type': ArtifactType.IMAGE,
+                'engine': Engine.KONFLUX,
+                'outcome': outcome,
+                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+                'build_id': pipelinerun_name,
+                'build_pipeline_url': build_pipeline_url,
+                'pipeline_commit': 'n/a'  # TODO: populate this
+            }
+
+            if outcome == KonfluxBuildOutcome.SUCCESS:
+                # results:
+                # - name: IMAGE_URL
+                #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+                # - name: IMAGE_DIGEST
+                #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+
+                image_url = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
+                image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
+
+                if not (image_url and image_digest):
+                    raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                                     f"pipelinerun {pipelinerun_name}")
+
+                repo_url = image_url.split(':')[0]
+                image_pullspec = f"{repo_url}@{image_digest}"
+
+                start_time = pipelinerun.status.startTime
+                end_time = pipelinerun.status.completionTime
+
+                build_record_params.update({
+                    'image_pullspec': image_pullspec,
+                    'installed_packages': [],  # TODO: populate this
+                    'parent_images': [],  # TODO: populate this
+                    'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
+                    'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
+                    'image_tag': image_digest.split('sha256:')[-1],
+                })
+            elif outcome == KonfluxBuildOutcome.FAILURE:
+                start_time = pipelinerun.status.startTime
+                end_time = pipelinerun.status.completionTime
+                build_record_params.update({
+                    'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
+                    'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
+                })
+
+            build_record = KonfluxBuildRecord(**build_record_params)
+            metadata.runtime.konflux_db.add_build(build_record)
+            self._logger.info('Konflux build info stored successfully')
+
+        except Exception as err:
+            self._logger.error('Failed writing record to the konflux DB: %s', err)
 
     @staticmethod
     def _new_application(name: str, display_name: str) -> dict:
@@ -351,6 +462,7 @@ class KonfluxImageBuilder:
 
         def _inner():
             watcher = watch.Watch()
+            status = "Not Found"
             while True:
                 try:
                     obj = api.get(name=pipelinerun_name, namespace=self._config.namespace)
@@ -365,12 +477,14 @@ class KonfluxImageBuilder:
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
-                        status = "Not Found"
+                        status_message = status
                         try:
                             status = obj.status.conditions[0].status
+                            message = obj.status.conditions[0].message
+                            status_message = f"{status} {message}"
                         except AttributeError:
                             pass
-                        self._logger.info("PipelineRun %s status: %s", pipelinerun_name, status)
+                        self._logger.info("PipelineRun %s status: %s.", pipelinerun_name, status_message)
                         if status not in ["Unknown", "Not Found"]:
                             return obj
                 except TimeoutError:
