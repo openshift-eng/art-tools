@@ -5,7 +5,7 @@ import inspect
 import logging
 import pprint
 import typing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from google.cloud.bigquery import SchemaField, Row
 from sqlalchemy import Column, String, DateTime
@@ -92,7 +92,7 @@ class KonfluxDb:
                 return str(value)
 
         # Fill in missing record fields
-        build.ingestion_time = datetime.now()
+        build.ingestion_time = datetime.now(tz=UTC)
         build.schema_level = SCHEMA_LEVEL
 
         # Execute query
@@ -186,7 +186,7 @@ class KonfluxDb:
         """
 
         if not completed_before:
-            completed_before = datetime.now()
+            completed_before = datetime.now(tz=UTC)
         self.logger.info('Searching for %s builds completed before %s', name, completed_before)
 
         # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
