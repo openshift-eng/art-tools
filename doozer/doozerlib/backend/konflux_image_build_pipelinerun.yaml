@@ -16,9 +16,6 @@ metadata:
   name: ui-ocp-4-18-base-rhel-9-on-push
   namespace: crt-nshift-art-pipeli-tenant
 spec:
-  timeouts:
-    # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
-    pipeline: 12h
   params:
   - name: git-url
     value: '{{source_url}}'
@@ -201,7 +198,7 @@ spec:
           value:
           - $(params.build-platforms)
       name: build-images
-      timeout: 12h
+      timeout: 12h  # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
       params:
       - name: IMAGE
         value: $(params.output-image)
