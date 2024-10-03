@@ -521,7 +521,9 @@ class KonfluxImageBuilder:
                         resource_version=resource_version,
                         namespace=self._config.namespace,
                         serialize=False,
-                        field_selector=f"metadata.name={pipelinerun_name}"
+                        field_selector=f"metadata.name={pipelinerun_name}",
+                        timeout_seconds=180,  # server-side, request to close the stream if there's no event in duration
+                        _request_timeout = 60,  # client-side
                     ):
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
