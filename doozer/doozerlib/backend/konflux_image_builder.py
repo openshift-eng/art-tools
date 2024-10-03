@@ -514,12 +514,14 @@ class KonfluxImageBuilder:
             status = "Not Found"
             while True:
                 try:
+                    obj = api.get(name=pipelinerun_name, namespace=self._config.namespace)
+                    resource_version = obj.metadata.resourceVersion
                     for event in watcher.stream(
                         api.get,
+                        resource_version=resource_version,
                         namespace=self._config.namespace,
                         serialize=False,
-                        field_selector=f"metadata.name={pipelinerun_name}",
-                        timeout_seconds=180,  # server-side, request to close the stream if there's no event in duration
+                        field_selector=f"metadata.name={pipelinerun_name}"
                     ):
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
