@@ -149,9 +149,14 @@ class KonfluxBuildCli:
         for image_meta in metas:
             tasks.append(asyncio.create_task(builder.build(image_meta)))
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        failed = [r for r in results if isinstance(r, Exception)]
-        if failed:
-            raise DoozerFatalError(f"Failed to build images: {failed}")
+        failed_images = []
+        for index, result in enumerate(results):
+            if isinstance(result, Exception):
+                image_name = metas[index].distgit_key
+                failed_images.append(image_name)
+                LOGGER.error(f"Build failed for {image_name}: {result}")
+        if failed_images:
+            raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
 
 
