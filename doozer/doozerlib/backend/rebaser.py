@@ -252,7 +252,7 @@ class KonfluxRebaser:
                     name=parent_metadata.distgit_key,
                     assembly=self._runtime.assembly,
                     group=self._runtime.group,
-                    el_target=parent_metadata.branch_el_target(),
+                    el_target=f'el{parent_metadata.branch_el_target()}',
                     engine=Engine.KONFLUX)
                 return build.image_pullspec, build.embargoed
 
