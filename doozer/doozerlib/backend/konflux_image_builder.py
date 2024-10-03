@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Sequence, cast
@@ -253,7 +253,7 @@ class KonfluxImageBuilder:
                 'el_target': f'el{isolate_el_version_in_release(release)}',
                 'arches': metadata.get_arches(),
                 'embargoed': 'p1' in release.split('.'),
-                'start_time': datetime.now(),
+                'start_time': datetime.now(tz=UTC),
                 'end_time': None,
                 'nvr': nvr,
                 'group': metadata.runtime.group,

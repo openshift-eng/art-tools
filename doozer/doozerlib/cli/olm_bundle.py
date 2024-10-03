@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 
 import click
 import sys
@@ -15,7 +15,6 @@ from artcommonlib.konflux.konflux_build_record import (KonfluxBuildOutcome, Engi
                                                        KonfluxBundleBuildRecord)
 from artcommonlib.model import Missing
 from artcommonlib.constants import BREW_HUB
-from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib import Runtime, brew
 from doozerlib.cli import cli, pass_runtime
@@ -281,8 +280,8 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             else:
                 build_record_params.update({
                     'outcome': KonfluxBuildOutcome.FAILURE,
-                    'start_time': datetime.now(),  # placeholder, cannot be NULL
-                    'end_time': datetime.now(),  # placeholder, cannot be NULL
+                    'start_time': datetime.now(tz=UTC),  # TODO: store start time from taskID
+                    'end_time': None,
                     'nvr': 'n/a'
                 })
 

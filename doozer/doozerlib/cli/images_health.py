@@ -3,7 +3,6 @@ import datetime
 import json
 import logging
 import urllib.parse
-
 import click
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -19,7 +18,7 @@ class ImagesHealthPipeline:
         self.runtime = runtime
         self.limit = limit
         self.url_markup = url_markup
-        self.start_search = datetime.datetime.now() - datetime.timedelta(days=DELTA_DAYS)
+        self.start_search = datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(days=DELTA_DAYS)
         self.concerns = {}
         self.logger = logging.getLogger(__name__)
         self.runtime.konflux_db.bind(KonfluxBuildRecord)

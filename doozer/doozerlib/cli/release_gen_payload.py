@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, UTC
 import hashlib
 import traceback
 import sys
@@ -1179,7 +1179,7 @@ class GenPayloadCli:
         the same.
         """
 
-        multi_ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        multi_ts = datetime.now(tz=UTC).strftime("%Y-%m-%d-%H%M%S")
         if self.runtime.assembly_type is AssemblyTypes.STREAM:
             # We are publicizing a nightly. Unlike single-arch payloads, the release controller does
             # not react to 4.x-art-latest updates and create a timestamp-based name. We create the

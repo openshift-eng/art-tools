@@ -1,5 +1,5 @@
 from typing import OrderedDict, Optional, Tuple, Iterable, List
-from datetime import datetime
+from datetime import datetime, UTC
 import re
 import asyncio
 
@@ -111,7 +111,7 @@ def is_future_release_date(date_str):
         target_date = datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
         return False
-    current_date = datetime.now()
+    current_date = datetime.now(tz=UTC)
     if target_date > current_date:
         return True
     else:
