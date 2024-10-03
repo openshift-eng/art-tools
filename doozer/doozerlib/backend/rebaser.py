@@ -239,7 +239,7 @@ class KonfluxRebaser:
 
     def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
         """ Resolve the parent image for the given image metadata."""
-        parent_metadata = self._runtime.resolve_image(member, required=False)
+        parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
         private_fix = False
         if parent_metadata is None:
             if not self._runtime.ignore_missing_base:
@@ -249,9 +249,10 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Parent image {member} is not found.")
                 build = self.konflux_db.get_latest_build(
-                    name=parent_metadata.name,
+                    name=parent_metadata.distgit_key,
                     assembly=self._runtime.assembly,
                     group=self._runtime.group,
+                    el_target=parent_metadata.branch_el_target(),
                     engine=Engine.KONFLUX)
                 return build.image_pullspec, build.embargoed
 
