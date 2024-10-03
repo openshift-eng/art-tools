@@ -1302,7 +1302,7 @@ class ImageDistGitRepo(DistGitRepo):
     def get_installed_packages(self, image_pullspec) -> list:
         bbii = BrewBuildImageInspector(self.runtime, image_pullspec)
         installed_packages_dict = bbii.get_all_installed_package_build_dicts()
-        return [p['nvr'] for p in installed_packages_dict.values()]
+        return sorted([p['nvr'] for p in installed_packages_dict.values()])
 
     def update_konflux_db(self, build_info, outcome, build_pipeline_url='', scratch=False):
         if scratch:
