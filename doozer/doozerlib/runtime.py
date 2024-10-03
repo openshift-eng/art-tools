@@ -880,7 +880,7 @@ class Runtime(GroupRuntime):
         with io.open(os.path.join(distgit_path, distgit + '.patch'), 'w', encoding='utf-8') as f:
             f.write(diff)
 
-    def resolve_image(self, distgit_name, required=True):
+    def resolve_image(self, distgit_name, required=True) -> ImageMetadata:
         """
         Returns an ImageMetadata for the specified group member name.
         :param distgit_name: The name of an image member in this group
