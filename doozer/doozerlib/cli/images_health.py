@@ -125,6 +125,7 @@ class ImagesHealthPipeline:
             where={
                 'name': image_meta.distgit_key,
                 'group': self.runtime.group_config.name,
+                'engine': 'brew'
             },
             limit=self.limit)
 
