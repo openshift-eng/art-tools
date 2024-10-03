@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -76,7 +77,7 @@ class KonfluxRebaseCli:
             if isinstance(result, Exception):
                 image_name = metas[index].distgit_key
                 failed_images.append(image_name)
-                LOGGER.error(f"Rebase failed for {image_name}: {result}")
+                traceback.print_exception(result)
         if failed_images:
             raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
         LOGGER.info("Rebase complete")
@@ -159,7 +160,7 @@ class KonfluxBuildCli:
             if isinstance(result, Exception):
                 image_name = metas[index].distgit_key
                 failed_images.append(image_name)
-                LOGGER.error(f"Build failed for {image_name}: {result}")
+                traceback.print_exception(result)
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
