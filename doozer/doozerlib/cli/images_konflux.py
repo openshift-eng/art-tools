@@ -71,9 +71,14 @@ class KonfluxRebaseCli:
                 commit_message=self.message,
                 push=self.push)))
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        failed = [r for r in results if isinstance(r, Exception)]
-        if failed:
-            raise DoozerFatalError(f"Failed to rebase images: {failed}")
+        failed_images = []
+        for index, result in enumerate(results):
+            if isinstance(result, Exception):
+                image_name = metas[index].distgit_key
+                failed_images.append(image_name)
+                LOGGER.error(f"Rebase failed for {image_name}: {result}")
+        if failed_images:
+            raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
         LOGGER.info("Rebase complete")
 
 
