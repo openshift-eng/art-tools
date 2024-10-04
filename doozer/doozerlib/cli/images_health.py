@@ -124,8 +124,9 @@ class ImagesHealthPipeline:
             where={
                 'name': image_meta.distgit_key,
                 'group': self.runtime.group_config.name,
-                'engine': 'brew'
+                'engine': 'brew',
             },
+            order_by='end_time',
             limit=self.limit)
 
 
