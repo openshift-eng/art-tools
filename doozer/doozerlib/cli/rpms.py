@@ -367,5 +367,6 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             build_id=str(build["build_id"])
         )
 
+        runtime.konflux_db.bind(KonfluxBuildRecord)
         runtime.konflux_db.add_build(build_record)
         rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])
