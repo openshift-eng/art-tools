@@ -22,7 +22,22 @@ spec:
 
         set -e
 
-        artcd -vv quay-doomsday-backup --version $(params.version) --all-arches
+        mkdir -p workspace 
+        cd workspace
+        arches=(x86_64 s390x ppc64le aarch64 multi)
+        for arch in "${arches[@]}"; do
+            path=$(params.major)/$(params.version)/$arch
+            command="oc adm release mirror quay.io/openshift-release-dev/ocp-release:$(params.version)-$arch --keep-manifest-list --to-dir=$path"
+            echo "Running command: $command"
+            $command
+            sleep 5
+            awscommand="aws s3 sync $path s3://ocp-doomsday-registry/release-image/$path"
+            echo Running aws command: $awscommand
+            $awscommand
+            sleep 5
+            echo "Cleaning dir: $(params.major)/$(params.version)"
+            rm -rf $path
+        done
       securityContext:
         runAsGroup: 0
         runAsUser: 0
