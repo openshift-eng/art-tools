@@ -146,7 +146,7 @@ class KonfluxDb:
             query += f' LIMIT {limit}'
 
         results = await self.bq_client.query_async(query)
-        self.logger.info('Found %s builds', results.total_rows)
+        self.logger.debug('Found %s builds', results.total_rows)
         return [self.from_result_row(result) for result in results]
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
