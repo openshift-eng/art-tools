@@ -9,9 +9,6 @@ RUN pip3 install --upgrade pip
 # Set workspace
 WORKDIR /home/dev
 
-# Setup uv package manager
-RUN pip3 install uv && uv venv --python 3.11
-
 # Copy art-tools and run the install script
 COPY . .
 RUN ./install.sh
