@@ -75,12 +75,12 @@ class QuayDoomsdaySync:
             self.sync_arch(arch)
 
 
-@cli.command("doomsday-sync", help="Run doomsday pipeline for the specified version and arches")
+@cli.command("quay-doomsday-backup", help="Run doomsday pipeline for the specified version and arches")
 @click.option("--arches", required=False, help="Comma separated list of arches to sync")
 @click.option("--all-arches", is_flag=True, required=False, default=False, help="Sync all arches")
 @click.option("--version", required=True, help="Release to sync, e.g. 4.15.3")
 @pass_runtime
-def doomsday_sync(runtime: Runtime, arches: str, all_arches: bool, version: str):
+def quay_doomsday_backup(runtime: Runtime, arches: str, all_arches: bool, version: str):
     doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
                                          arches=arches,
                                          all_arches=all_arches,

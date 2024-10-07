@@ -22,7 +22,7 @@ spec:
 
         set -e
 
-        artcd -vv doomsday-sync --version $(params.version) --all-arches
+        artcd -vv quay-doomsday-backup --version $(params.version) --all-arches
       securityContext:
         runAsGroup: 0
         runAsUser: 0
