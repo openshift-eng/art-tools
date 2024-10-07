@@ -39,6 +39,9 @@ WORKDIR /home/dev
 # Fixes issue "ERROR: Cannot uninstall requests 2.25.1, RECORD file not found. Hint: The package was installed by rpm."
 RUN rpm -e --nodeps python3-requests
 
+# Setup uv package manager
+RUN pip3 install uv && uv venv --python 3.11
+
 # Copy art-tools and run the install script
 COPY . .
 
