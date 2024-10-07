@@ -46,7 +46,7 @@ COPY . .
 # running ./install.sh
 RUN pip3 install setuptools==70.0.0
 
-RUN ./install.sh
+RUN pip3 install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
 
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 RUN git clone https://github.com/openshift/check-payload check-payload &&  \

@@ -11,7 +11,7 @@ WORKDIR /home/dev
 
 # Copy art-tools and run the install script
 COPY . .
-RUN ./install.sh
+RUN pip3 install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
 
 # Install check-payload tool for FIPS scanning, and copy to a location in PATH
 # They update the tool often, so lets keep in update for now
