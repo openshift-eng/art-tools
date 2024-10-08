@@ -76,22 +76,21 @@ class SlackClient:
     async def upload_file(self, file=None, content=None, filename=None, initial_comment=None, thread_ts: Optional[str] = None):
         response = await self._client.files_upload_v2(
             file=file,
-            filename=content,
-            filetype=filename,
+            content=content,
+            filename=filename,
             initial_comment=initial_comment,
-            channels=self.channel,
+            channel=self.channel,
             thread_ts=thread_ts)
         return response.data
 
-    async def upload_content(self, content, intro=None, filename=None, filetype=None, thread_ts: Optional[str] = None):
+    async def upload_content(self, content, intro=None, filename=None, thread_ts: Optional[str] = None):
         """
         Similar to upload_file but can upload from a variable instead of a file
         """
         response = await self._client.files_upload_v2(
             initial_comment=intro,
-            channels=self.channel,
+            channel=self.channel,
             content=content,
             filename=filename,
-            filetype=filetype,
             thread_ts=thread_ts)
         return response.data
