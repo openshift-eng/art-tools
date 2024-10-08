@@ -453,18 +453,17 @@ class BuildMicroShiftPipeline:
     async def _notify_microshift_alerts(self, version_release: str):
         doozer_log_file = Path(self._doozer_env_vars["DOOZER_WORKING_DIR"]) / "debug.log"
         slack_client = self.runtime.new_slack_client()
-        slack_client.channel = "#microshift-alerts"
+        slack_client.channel = "C0310LGMQQY"  # microshift-alerts
         message = f":alert: @here ART build failure: microshift-{version_release}."
         message += "\nPing @ release-artists if you need help."
         slack_response = await slack_client.say(message)
         slack_thread = slack_response["message"]["ts"]
         if doozer_log_file.exists():
-            with doozer_log_file.open() as f:
-                await slack_client.upload_file(
-                    file=f,
-                    filename="microshift-build.log",
-                    initial_comment="Build logs",
-                    thread_ts=slack_thread)
+            await slack_client.upload_file(
+                file=doozer_log_file,
+                filename="microshift-build.log",
+                initial_comment="Build logs",
+                thread_ts=slack_thread)
         else:
             await slack_client.say("Logs are not available.", thread_ts=slack_thread)
 
