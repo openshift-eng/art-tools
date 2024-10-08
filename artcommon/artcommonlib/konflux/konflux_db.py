@@ -170,7 +170,7 @@ class KonfluxDb:
 
     def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
                          assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
-                         engine: Engine = None, completed_before: datetime = None)\
+                         engine: Engine = None, completed_before: datetime = None, extra_patterns: dict = {})\
             -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
         """
         Search for the latest Konflux build information in BigQuery.
@@ -183,6 +183,7 @@ class KonfluxDb:
         :param artifact_type: 'rpm' | 'image'
         :param engine: 'brew' | 'konflux'
         :param completed_before: cut off timestamp for builds completion time
+        :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         """
 
         if not completed_before:
@@ -210,6 +211,9 @@ class KonfluxDb:
 
         if engine:
             base_clauses.append(Column('engine', String) == str(engine))
+
+        for name, value in extra_patterns.items():
+            base_clauses.append(Column(name, String).like(f"%{value}%"))
 
         for window in range(12):
             end_search = completed_before - window * 3 * timedelta(days=30)

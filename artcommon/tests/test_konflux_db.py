@@ -123,11 +123,24 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         now = datetime(2022, 1, 1, 12, 0, 0)
         lower_bound = now - 3 * timedelta(days=30)
         datetime_mock.now.return_value = now
+
         self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success')
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' AND end_time IS NOT NULL "
                                            f"AND end_time < '{str(now)}' "
+                                           f"AND start_time >= '{str(lower_bound)}' "
+                                           f"AND start_time < '{now}' "
+                                           "ORDER BY `start_time` DESC LIMIT 1")
+
+        query_mock.reset_mock()
+        like = {'release': 'b45ea65'}
+        self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', extra_patterns=like)
+        query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
+                                           "AND `group` = 'openshift-4.18' AND outcome = 'success' "
+                                           "AND assembly = 'stream' AND end_time IS NOT NULL "
+                                           f"AND end_time < '{str(now)}' "
+                                           f"AND `release` LIKE '%%b45ea65%%' "
                                            f"AND start_time >= '{str(lower_bound)}' "
                                            f"AND start_time < '{now}' "
                                            "ORDER BY `start_time` DESC LIMIT 1")
