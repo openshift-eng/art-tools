@@ -138,11 +138,12 @@ class KonfluxImageBuilder:
         for parent_member in parent_members:
             if parent_member is None:
                 continue  # Parent member is not included in the group; no need to wait
+            self._logger.info("[%s] Parent image %s is building; waiting...", metadata.distgit_key,
+                              parent_member.distgit_key)
             # wait for parent member to be built
             while not parent_member.build_event.is_set():
-                self._logger.info("[%s] Parent image %s is building; waiting...", metadata.distgit_key, parent_member.distgit_key)
-                if await exectools.to_thread(parent_member.build_event.wait, timeout=20):
-                    break
+                # asyncio.sleep instead of Event.wait since it's less CPU intensive
+                await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
 
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, dyn_client: DynamicClient):
