@@ -159,8 +159,7 @@ class KonfluxBuildCli:
             if isinstance(result, Exception):
                 image_name = metas[index].distgit_key
                 failed_images.append(image_name)
-                LOGGER.error(f"Failed to build {image_name}")
-                traceback.print_exception(result)
+                LOGGER.error(f"Failed to build {image_name}: {result}")
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
