@@ -434,11 +434,25 @@ class KonfluxImageBuilder:
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
+
+        skip_checks_flag = False
         for param in obj["spec"]["params"]:
             if param["name"] == "output-image":
                 param["value"] = output_image
             if param["name"] == "skip-checks":
                 param["value"] = "true"
+                skip_checks_flag = True
+
+        if not skip_checks_flag:
+            obj["spec"]["params"].append({"name": "skip-checks", "value": "true"})
+
+        # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
+        obj["spec"]["timeouts"] = {"pipeline": "12h"}
+
+        for task in obj["spec"]["pipelineSpec"]["tasks"]:
+            if task["name"] == "build-images":
+                task["timeout"] = "12h"
+
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
         return obj
 
