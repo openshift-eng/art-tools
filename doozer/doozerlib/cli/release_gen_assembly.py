@@ -41,8 +41,8 @@ def releases_gen_assembly(ctx, name):
 @click.option("--custom", default=False, is_flag=True,
               help="If specified, weaker conformance criteria are applied "
                    "(e.g. a nightly is not required for every arch).")
-@click.option("--pre-ga-mode", type=click.Choice(["prerelease", "advance"], case_sensitive=False),
-              help="Prepare the advisory for 'prerelease' or 'advance' operator release")
+@click.option("--pre-ga-mode", type=click.Choice(["prerelease"], case_sensitive=False),
+              help="Prepare the advisory for 'prerelease' operator release")
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option('--previous', 'previous_list', metavar='EDGES', default=[], multiple=True,
               help='A list of releases that can upgrade to this release')
@@ -512,7 +512,7 @@ class GenAssemblyCli:
             'metadata': -1,
         }
 
-        preGA_advisory_type = ['prerelease', 'advance']
+        preGA_advisory_type = ['prerelease']
         for key in preGA_advisory_type:
             if self.pre_ga_mode == key:
                 advisories[key] = -1
@@ -557,7 +557,7 @@ class GenAssemblyCli:
         previous_group = releases_config.releases[previous_assembly].assembly.group
         previous_advisories = previous_group.advisories.primitive()
 
-        # preGA advisories (prerelease/advance) associated with an assembly should not be reused
+        # preGA advisories (prerelease) associated with an assembly should not be reused
         # they should be shipped or dropped if not shipping
         for key in preGA_advisory_type:
             previous_advisories.pop(key, None)
