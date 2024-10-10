@@ -80,12 +80,12 @@ class ImagesHealthPipeline:
                 latest_success_idx = idx
                 latest_success_bi_task_url = build.build_pipeline_url
                 latest_success_bi_build_id = build.build_id
-                latest_success_bi_dt = build.end_time
+                latest_success_bi_dt = build.start_time
                 break
 
         latest_attempt_build_url = builds[0].art_job_url
         latest_attempt_task_url = builds[0].build_pipeline_url
-        oldest_attempt_bi_dt = builds[-1].end_time
+        oldest_attempt_bi_dt = builds[-1].start_time
 
         # Generate the Art-Dash link
         art_dash_link = self.generate_art_dash_history_link(key)
@@ -125,8 +125,9 @@ class ImagesHealthPipeline:
                 'name': image_meta.distgit_key,
                 'group': self.runtime.group_config.name,
                 'engine': 'brew',
+                'assembly': 'stream'
             },
-            order_by='end_time',
+            order_by='start_time',
             limit=self.limit)
 
 
