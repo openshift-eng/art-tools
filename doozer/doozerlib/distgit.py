@@ -12,7 +12,7 @@ import shutil
 import sys
 import time
 import traceback
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from multiprocessing import Lock
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union, Set, cast
 
@@ -1350,7 +1350,7 @@ class ImageDistGitRepo(DistGitRepo):
             if outcome == KonfluxBuildOutcome.FAILURE:
                 self.logger.info('Storing failed Brew build info for %s in Konflux DB', self.metadata.name)
                 build_record_params.update({
-                    'start_time': datetime.now(tz=UTC),  # TODO: store start time from taskID
+                    'start_time': datetime.now(tz=timezone.utc),  # TODO: store start time from taskID
                     'end_time': None,
                 })
 

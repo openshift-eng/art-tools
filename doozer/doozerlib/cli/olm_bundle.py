@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 
 import click
 import sys
@@ -280,7 +280,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             else:
                 build_record_params.update({
                     'outcome': KonfluxBuildOutcome.FAILURE,
-                    'start_time': datetime.now(tz=UTC),  # TODO: store start time from taskID
+                    'start_time': datetime.now(tz=timezone.utc),  # TODO: store start time from taskID
                     'end_time': None,
                     'nvr': 'n/a'
                 })

@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from jira.resources import Issue
 from ruamel.yaml import YAML
 from tenacity import retry, stop_after_attempt, wait_fixed
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
@@ -195,7 +195,7 @@ class PrepareReleasePipeline:
                         elif ad == "prerelease":
                             # Set release date of prerelease advisory to 3 days after when we prepare the release
                             # it should not be a weekend
-                            today = datetime.now(tz=UTC)
+                            today = datetime.now(tz=timezone.utc)
                             release_date = today + timedelta(days=3)
                             if release_date.weekday() == 5:  # Saturday
                                 release_date += timedelta(days=2)

@@ -1,7 +1,7 @@
 import logging
 from time import sleep
 from typing import OrderedDict, Optional, Tuple, Iterable, List
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 import re
 import asyncio
 
@@ -124,10 +124,10 @@ def is_future_release_date(date_str):
     If the input date is in future then return True elase False
     """
     try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
         return False
-    current_date = datetime.now(tz=UTC)
+    current_date = datetime.now(tz=timezone.utc)
     if target_date > current_date:
         return True
     else:

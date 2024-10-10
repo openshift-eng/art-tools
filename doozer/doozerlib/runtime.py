@@ -298,7 +298,7 @@ class Runtime(GroupRuntime):
         if self.lock_runtime_uuid:
             self.uuid = self.lock_runtime_uuid
         else:
-            self.uuid = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d.%H%M%S")
+            self.uuid = datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y%m%d.%H%M%S")
 
         self.distgits_dir = os.path.join(self.working_dir, "distgits")
         self.distgits_diff_dir = os.path.join(self.working_dir, "distgits-diffs")

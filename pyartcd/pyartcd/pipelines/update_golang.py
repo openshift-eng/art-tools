@@ -5,7 +5,7 @@ import re
 import os
 import base64
 from typing import List
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from ghapi.all import GhApi
 from ruamel.yaml import YAML
 
@@ -338,7 +338,7 @@ class UpdateGolangPipeline:
         _LOGGER.info("Rebasing...")
         branch = self.get_golang_branch(el_v, go_version)
         version = f"v{go_version}"
-        release = datetime.now(tz=UTC).strftime('%Y%m%d%H%M')
+        release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
             "--group", branch,
