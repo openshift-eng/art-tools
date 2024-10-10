@@ -108,7 +108,7 @@ def is_future_release_date(date_str):
     If the input date is in future then return True elase False
     """
     try:
-        target_date = datetime.strptime(date_str, "%Y-%m-%d")
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
         return False
     current_date = datetime.now(tz=UTC)
