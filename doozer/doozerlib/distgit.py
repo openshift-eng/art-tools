@@ -1117,6 +1117,11 @@ class ImageDistGitRepo(DistGitRepo):
                             push_release = build_info["release"]
                 except OSBS2BuildError as build_err:
                     record["task_id"], record["task_url"] = build_err.task_id, build_err.task_url
+                    if build_err.task_id is not None:
+                        with self.runtime.shared_koji_client_session() as api:
+                            task_end_time = api.getTaskInfo(build_err.task_id)['completion_time']
+                            build_err.end_time = task_end_time
+
                     if not dry_run:
                         self.update_build_db(False, task_id=build_err.task_id, scratch=scratch)
                         self.update_konflux_db(
@@ -1351,7 +1356,7 @@ class ImageDistGitRepo(DistGitRepo):
                 self.logger.info('Storing failed Brew build info for %s in Konflux DB', self.metadata.name)
                 build_record_params.update({
                     'start_time': datetime.now(tz=UTC),  # TODO: store start time from taskID
-                    'end_time': None,
+                    'end_time': build_info.end_time
                 })
 
             else:
