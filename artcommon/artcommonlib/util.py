@@ -1,3 +1,5 @@
+import logging
+from time import sleep
 from typing import OrderedDict, Optional, Tuple, Iterable, List
 from datetime import datetime, UTC
 import re
@@ -6,6 +8,9 @@ import asyncio
 import requests
 
 from artcommonlib.constants import RELEASE_SCHEDULES
+from artcommonlib.exectools import retry
+
+LOGGER = logging.getLogger(__name__)
 
 
 def remove_prefix(s: str, prefix: str) -> str:
@@ -79,13 +84,24 @@ def split_git_url(url) -> (str, str, str):
 def download_file_from_github(repository, branch, path, token: str, destination):
     server, org, repo_name = split_git_url(repository)
     url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
-    headers = {"Authorization": f"token {token}"}
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
+    headers = {"Authorization": token}
+
+    def _wait(_):
+        LOGGER.info("Error downloading %s -- retrying in 10 seconds" % url)
+        sleep(10)
+
+    try:
+        LOGGER.info('Downloading %s...', url)
+        response = retry(
+            retries=3,
+            task_f=lambda: requests.get(url, headers=headers),
+            check_f=lambda r: r.status_code == 200,
+            wait_f=_wait
+        )
         with open(str(destination), "wb") as f:
             f.write(response.content)
-    else:
-        raise IOError(f'Failed to download {url} from github')
+    except Exception as e:
+        raise IOError(f'Failed to download {url} from github: %s', e)
 
 
 def merge_objects(a, b):
