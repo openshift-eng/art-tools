@@ -821,6 +821,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             issue = jira_client.create_issue(
                 fields
             )
+            issue_key = issue.key
             # check depend issues and set depend to a higher version issue if ture
             look_for_summary = f'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
@@ -831,6 +832,25 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             new_issues[distgit_key] = issue
             print(f'A JIRA issue has been opened for {pr.html_url}: {issue.key}')
             connect_issue_with_pr(pr, issue.key)
+            try:
+                # Check if the custom fields are already set
+                release_notes_text_value = issue.fields.__dict__.get('customfield_12317313')
+                release_notes_type_value = issue.fields.__dict__.get('customfield_12320850')
+
+                if release_notes_type_value not in ['Release Notes Not Required'] and release_notes_text_value not in ['N/A']:
+                    issue_update = {
+                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
+                        'customfield_12320850': {'value': 'Release Note Not Required'},  # customfield_12320850 is Release Notes Type in JIRA
+                    }
+                elif release_notes_type_value in ['Release Notes Not Required'] and release_notes_text_value not in ['N/A']:
+                    issue_update = {
+                        'customfield_12317313': 'N/A'  # customfield_12317313 is Release Notes Text in JIRA
+                    }
+
+                # Use the update_issue method to update the issue
+                issue.update(fields=issue_update)
+            except Exception as e:
+                print(f"An error occurred while updating the issue {issue_key}: {e}")
         else:
             new_issues[distgit_key] = 'NEW!'
             print(f'Would have created JIRA issue for {distgit_key} / {pr.html_url}:\n{fields}\n')
