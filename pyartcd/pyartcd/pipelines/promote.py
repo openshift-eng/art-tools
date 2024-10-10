@@ -1732,7 +1732,7 @@ class PromotePipeline:
             advisory_id = release_info["advisory"]
 
         release_name = release_info["name"]
-        branchName = f"pr-candidate-{release_name}"
+        branchName = f"pr_candidate_{release_name}"
         pr_title = f"Enable {release_name} in candidate channel"
         extraSlackComment = ""
         if advisory_id != 0:
