@@ -26,6 +26,6 @@ openshift-client ~= 2.0.1
 ruamel.yaml
 setuptools>=70.0.0 # not directly required, pinned by Snyk to avoid a vulnerability
 aiohttp
-jira==3.4.1
+jira>=3.4.1
 ghapi
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
