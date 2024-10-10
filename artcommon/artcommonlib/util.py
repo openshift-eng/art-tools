@@ -84,7 +84,7 @@ def split_git_url(url) -> (str, str, str):
 def download_file_from_github(repository, branch, path, token: str, destination):
     server, org, repo_name = split_git_url(repository)
     url = f'https://raw.githubusercontent.com/{org}/{repo_name}/{branch}/{path}'
-    headers = {"Authorization": token}
+    headers = {"Authorization": f'token {token}'}
 
     def _wait(_):
         LOGGER.info("Error downloading %s -- retrying in 10 seconds" % url)
