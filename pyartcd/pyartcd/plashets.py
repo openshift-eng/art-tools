@@ -39,6 +39,7 @@ ironic_previous_packages_for_4_15_plus = [
     "openstack-ironic-python-agent",
     "python-ironic-lib",
     "python-sushy",
+    "python-zipp",
 ]
 
 
