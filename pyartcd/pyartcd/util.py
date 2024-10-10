@@ -4,7 +4,7 @@ import re
 import shutil
 import sys
 import tempfile
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Union, Iterable
 
@@ -382,7 +382,7 @@ def default_release_suffix():
     E.g. "202312311112.p?"
     """
 
-    return f'{datetime.strftime(datetime.now(tz=UTC), "%Y%m%d%H%M")}.p?'
+    return f'{datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")}.p?'
 
 
 def dockerfile_url_for(url, branch, sub_path) -> str:

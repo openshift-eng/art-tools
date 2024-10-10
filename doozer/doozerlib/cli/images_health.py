@@ -18,7 +18,7 @@ class ImagesHealthPipeline:
         self.runtime = runtime
         self.limit = limit
         self.url_markup = url_markup
-        self.start_search = datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(days=DELTA_DAYS)
+        self.start_search = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=DELTA_DAYS)
         self.concerns = {}
         self.logger = logging.getLogger(__name__)
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
@@ -107,7 +107,7 @@ class ImagesHealthPipeline:
             self.concerns[key].append(msg)
 
         else:
-            if latest_success_bi_dt < datetime.datetime.now(tz=datetime.UTC) - datetime.timedelta(days=14):
+            if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
                 # Successful build is older than 2 weeks
                 self.concerns[key].append(
                     f'Last {self.url_text(latest_success_bi_task_url, "build")} '
