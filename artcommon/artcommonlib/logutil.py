@@ -72,6 +72,7 @@ def setup_logging(log_level: int, debug_log_path: str):
 
     # configure the log level for some third-party libraries
     logging.getLogger("requests").setLevel(logging.WARNING)
+    logging.getLogger("requests_kerberos").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 

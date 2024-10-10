@@ -7,7 +7,7 @@ import hashlib
 import time
 import random
 import re
-from typing import Dict, Set
+from typing import Dict, Set, Tuple, Optional
 
 from github import Github, UnknownObjectException, GithubException, PullRequest
 from jira import JIRA, Issue
@@ -696,16 +696,16 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
         pr.edit(title=f"{issue}: {pr.title}")
 
 
-def reconcile_jira_issues(runtime, pr_map: Dict[str, PullRequest.PullRequest], dry_run: bool):
+def reconcile_jira_issues(runtime, pr_map: Dict[str, Tuple[PullRequest.PullRequest, Optional[str]]], dry_run: bool):
     """
     Ensures there is a Jira issue open for reconciliation PRs.
     Args:
         runtime: The doozer runtime
-        pr_map: a map of distgit_keys->pr_object to open reconciliation PRs
+        pr_map: a map of distgit_keys -> (pr_object, jenkins_build_url) to open reconciliation PRs
         dry_run: If true, new desired jira issues would only be printed to the console.
     """
     major, minor = runtime.get_major_minor_fields()
-    if (major == 4 and minor < 13) or major < 4:
+    if (major == 4 and minor < 16) or major < 4:
         # Only enabled for 4.13 and beyond at the moment.
         return
 
@@ -719,7 +719,8 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, PullRequest.PullRequest], d
     jira_project_names = set([project.name for project in jira_projects])
     jira_project_components: Dict[str, Set[str]] = dict()  # Maps project names to the components they expose
 
-    for distgit_key, pr in pr_map.items():
+    for distgit_key, value in pr_map.items():
+        pr, jenkins_build_url = value
         image_meta: ImageMetadata = runtime.image_map[distgit_key]
         potential_project, potential_component = image_meta.get_jira_info()
         summary = f"ART requests updates to {release_version} image {image_meta.get_component_name()}"
@@ -741,8 +742,7 @@ def reconcile_jira_issues(runtime, pr_map: Dict[str, PullRequest.PullRequest], d
             # If the component in prodsec data does not exist in the Jira project, use Unknown.
             component = 'Unknown'
 
-        query = (f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) '
-                 'AND statusCategory in ("To Do", "In Progress")')
+        query = (f'project={project} AND ( summary ~ "{summary}" OR summary ~ "{old_summary_format}" ) AND issueFunction in linkedIssuesOfRemote("url", "{pr.html_url}")')
 
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
         def search_issues(query):
@@ -799,6 +799,11 @@ against OCPBUGS/Unknown -- creating unnecessary processing work and delay.
 
 Component name: {image_meta.get_component_name()} .
 Jira mapping: https://github.com/openshift-eng/ocp-build-data/blob/main/product.yml
+'''
+        if jenkins_build_url:
+            description += f'''
+
+This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 '''
 
         fields = {
@@ -870,7 +875,8 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
 
     prs_in_master = (major == master_major and minor == master_minor) and not ignore_ci_master
 
-    pr_dgk_map = {}  # map of distgit_key to PR URLs associated with updates
+    # map of distgit_key to (PR url, jenkins_build_url) associated with updates
+    pr_dgk_map: Dict[str, Tuple[PullRequest.PullRequest, Optional[str]]] = {}
     new_pr_links = {}
     skipping_dgks = set()  # If a distgit key is skipped, it children will see it in this list and skip themselves.
     checked_upstream_images = set()  # A PR will not be opened unless the upstream image exists; keep track of ones we have checked.
@@ -1278,7 +1284,7 @@ __Change behavior of future PRs__:
 If you have any questions about this pull request, please reach out to `@release-artists` in the `#forum-ocp-art` coreos slack channel.
 """
 
-            parent_pr_url = None
+            parent_pr_urls = None
             parent_meta = image_meta.resolve_parent()
             if parent_meta:
                 if parent_meta.distgit_key in skipping_dgks:
@@ -1286,17 +1292,18 @@ If you have any questions about this pull request, please reach out to `@release
                     yellow_print(f'Image has parent {parent_meta.distgit_key} which was skipped; skipping self: {image_meta.distgit_key}')
                     continue
 
-                parent_pr_url = pr_dgk_map.get(parent_meta.distgit_key, None)
-                if parent_pr_url:
+                parent_pr_urls = pr_dgk_map.get(parent_meta.distgit_key, None)
+                if parent_pr_urls:
                     if parent_meta.config.content.source.ci_alignment.streams_prs.merge_first:
                         skipping_dgks.add(image_meta.distgit_key)
-                        yellow_print(f'Image has parent {parent_meta.distgit_key} open PR ({parent_pr_url}) and streams_prs.merge_first==True; skipping PR opening for this image {image_meta.distgit_key}')
+                        yellow_print(f'Image has parent {parent_meta.distgit_key} open PR ({parent_pr_urls[0]}) and streams_prs.merge_first==True; skipping PR opening for this image {image_meta.distgit_key}')
                         continue
 
                     # If the parent has an open PR associated with it, make sure the
                     # child PR notes that the parent PR should merge first.
-                    pr_body += f'\nDepends on {parent_pr_url} . Allow it to merge and then run `/test all` on this PR.'
+                    pr_body += f'\nDepends on {parent_pr_urls[0]} . Allow it to merge and then run `/test all` on this PR.'
 
+            jenkins_build_url = None
             if open_prs:
                 existing_pr = open_prs[0]
                 # Update body, but never title; The upstream team may need set something like a Bug XXXX: there.
@@ -1313,7 +1320,7 @@ If you have any questions about this pull request, please reach out to `@release
                     # We are not admin on all repos
                     yellow_print(f'Unable to add labels to {existing_pr.html_url}: {str(pr_e)}')
 
-                pr_dgk_map[dgk] = existing_pr
+                pr_dgk_map[dgk] = (existing_pr, jenkins_build_url)
 
                 # The pr_body may change and the base branch may change (i.e. at branch cut,
                 # a version 4.6 in master starts being tracked in release-4.6 and master tracks
@@ -1338,13 +1345,13 @@ If you have any questions about this pull request, please reach out to `@release
 
             # Otherwise, we need to create a pull request
             if moist_run:
-                pr_dgk_map[dgk] = f'MOIST-RUN-PR:{dgk}'
+                pr_dgk_map[dgk] = (f'MOIST-RUN-PR:{dgk}', jenkins_build_url)
                 green_print(f'Would have opened PR against: {public_source_repo.html_url}/blob/{public_branch}/{dockerfile_name}.')
                 yellow_print('PR body would have been:')
                 yellow_print(pr_body)
 
-                if parent_pr_url:
-                    green_print(f'Would have identified dependency on PR: {parent_pr_url}.')
+                if parent_pr_urls:
+                    green_print(f'Would have identified dependency on PR: {parent_pr_urls[0]}.')
                 if diff_text:
                     yellow_print('PR diff would have been:')
                     yellow_print(diff_text)
@@ -1356,9 +1363,9 @@ If you have any questions about this pull request, please reach out to `@release
                     pr_title = f'Bug {bug}: {pr_title}'
                 try:
                     new_pr = public_source_repo.create_pull(title=pr_title, body=pr_body, base=public_branch, head=fork_branch_head, draft=draft_prs)
-                    build_url = jenkins.get_build_url()
-                    if build_url:
-                        new_pr.create_issue_comment(f"Created by job run {build_url}")
+                    jenkins_build_url = jenkins.get_build_url()
+                    if jenkins_build_url:
+                        new_pr.create_issue_comment(f"Created by ART pipeline job run {jenkins_build_url}")
 
                 except GithubException as ge:
                     if 'already exists' in json.dumps(ge.data):
@@ -1381,9 +1388,9 @@ If you have any questions about this pull request, please reach out to `@release
                     yellow_print(f'Unable to add labels to {existing_pr.html_url}: {str(pr_e)}')
 
                 pr_msg = f'A new PR has been opened: {new_pr.html_url}'
-                pr_dgk_map[dgk] = new_pr
+                pr_dgk_map[dgk] = (new_pr, jenkins_build_url)
                 new_pr_links[dgk] = new_pr.html_url
-                reconcile_jira_issues(runtime, {dgk: new_pr}, moist_run)
+                reconcile_jira_issues(runtime, {dgk: (new_pr, jenkins_build_url)}, moist_run)
                 logger.info(pr_msg)
                 yellow_print(pr_msg)
                 print(f'Sleeping {interstitial} seconds before opening another PR to prevent flooding prow...')
@@ -1395,7 +1402,7 @@ If you have any questions about this pull request, please reach out to `@release
 
     if pr_dgk_map:
         print('Currently open PRs:')
-        print(yaml.safe_dump({key: pr_dgk_map[key].html_url for key in pr_dgk_map}))
+        print(yaml.safe_dump({key: pr_dgk_map[key][0].html_url for key in pr_dgk_map}))
         reconcile_jira_issues(runtime, pr_dgk_map, moist_run)
 
     if skipping_dgks:

@@ -187,7 +187,7 @@ PRESENT advisory. Here are some examples:
                     LOGGER.info(f'{len(nvrs)} builds are already attached to given advisory')
                 else:
                     LOGGER.warning(f'Cannot attach {len(nvrs)} build(s), since they are already attached to '
-                                   f'ART advisory {attached_ad_id} - {sorted(nvrs)}. Remove them from the advisory'
+                                   f'ART advisory {attached_ad_id} - {sorted(nvrs)}. Remove them from the advisory '
                                    'and then try again.')
 
     if not advisory_id:
@@ -243,6 +243,9 @@ PRESENT advisory. Here are some examples:
                 else:
                     erratum.ensure_state('NEW_FILES')
                     erratum.remove_builds(list(nvrs_to_remove))
+
+        if not builds:
+            return
 
         cdn_repos = et_data.get('cdn_repos')
         if kind == 'image':

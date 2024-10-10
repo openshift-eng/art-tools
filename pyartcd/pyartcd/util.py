@@ -4,7 +4,7 @@ import re
 import shutil
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Dict, Optional, Union, Iterable
 
@@ -382,7 +382,7 @@ def default_release_suffix():
     E.g. "202312311112.p?"
     """
 
-    return f'{datetime.strftime(datetime.now(), "%Y%m%d%H%M")}.p?'
+    return f'{datetime.strftime(datetime.now(tz=UTC), "%Y%m%d%H%M")}.p?'
 
 
 def dockerfile_url_for(url, branch, sub_path) -> str:
@@ -680,7 +680,7 @@ def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
             arch = "x86_64"
         if ":" not in nightly:
             # prepend pullspec URL to nightly name
-            arch_suffix = go_suffix_for_arch(arch)
+            arch_suffix = go_suffix_for_arch(arch, "priv" in nightly)
             nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
         arch_nightlies[arch] = nightly
     return arch_nightlies

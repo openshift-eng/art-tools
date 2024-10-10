@@ -68,13 +68,6 @@ class FindBugsGolangCli:
             if not flaw_bug:
                 return None
 
-        if 'golang:' not in flaw_bug.summary.lower():
-            self._logger.warning(f"{flaw_bug.id} doesn't have `golang:` in title. title=`{flaw_bug.summary}`. "
-                                 "It does not look like a golang compiler cve and therefore we cannot trust it's "
-                                 "`Fixed in Version` field. Run with --fixed-in-nvr to specify the golang compiler "
-                                 "nvr this CVE is fixed in. Ignoring it for now")
-            return None
-
         fixed_in = flaw_bug.fixed_in
         # value can be "golang 1.20.9, golang 1.21.2"
         # or "Go 1.20.7, Go 1.19.12"
@@ -93,22 +86,6 @@ class FindBugsGolangCli:
                 self._logger.warning(f"{flaw_bug.id} doesn't have valid fixed_in value: {fixed_in}")
                 return None
         return {Version.parse(v) for v in set(fixed_in_versions)}
-
-    def tracker_fixed_in(self, bug: JIRABug) -> Union[None, Set[Version]]:
-        f_ids: List[int] = bug.corresponding_flaw_bug_ids
-        if not f_ids:
-            self._logger.warning(f"{bug.id} doesn't have any flaw bugs, please investigate")
-            return None
-
-        tracker_fixed_in = set()
-        for f_id in f_ids:
-            flaw_fixed_in = self.flaw_fixed_in(f_id)
-            if not flaw_fixed_in:
-                self._logger.warning(
-                    f"Could not determine fixed in version for {f_id}. Ignoring it for now")
-                continue
-            tracker_fixed_in.update(flaw_fixed_in)
-        return tracker_fixed_in
 
     def _is_fixed(self, bug: JIRABug, tracker_fixed_in: Set[Version], go_nvr_map) -> (bool, str):
         versions_to_build_map = {}
@@ -362,10 +339,32 @@ class FindBugsGolangCli:
 
         cves = sorted(set([b.cve_id for b in bugs]), reverse=True)
         cve_url = "https://access.redhat.com/hydra/rest/securitydata/cve/{cve_id}.json"
+        pkg_go_dev_search_url = "https://pkg.go.dev/search?q={cve_id}"
+        go_vuln_db_api_url = "https://vuln.go.dev/ID/{go_vuln_id}.json"
         cve_table = PrettyTable()
         cve_table.align = "l"
         cve_table.field_names = ["Bugzilla ID", "CVE", "Component in title", "Fixed in Versions", "Fix Compatible"]
+        cves_fixed_in = {}
         for cve_id in cves:
+            res = requests.get(pkg_go_dev_search_url.format(cve_id=cve_id))
+            go_vuln_id = res.url.split("/")[-1]
+            fixed_in_version_go_db = set()
+            if go_vuln_id.startswith("GO-"):
+                logger.info(f"Found {cve_id} in go vulnerability database: {go_vuln_id}")
+                res = requests.get(go_vuln_db_api_url.format(go_vuln_id=go_vuln_id))
+                for entry in res.json()['affected']:
+                    if entry['package']['ecosystem'] != "Go" or entry['package']['name'] != "stdlib":
+                        continue
+                    for r in entry['ranges']:
+                        if r['type'] == "SEMVER":
+                            fixed_in_version_go_db = {Version.parse(e['fixed']) for e in r['events'] if e.get('fixed')}
+                            cves_fixed_in[cve_id] = fixed_in_version_go_db
+                            break
+                if not fixed_in_version_go_db:
+                    logger.warning(f"Could not find stdlib fixed in versions for {cve_id} in go vulnerability database")
+            else:
+                logger.warning(f"Could not find {cve_id} in go vulnerability database")
+
             response = requests.get(cve_url.format(cve_id=cve_id))
             try:
                 data = response.json()
@@ -384,20 +383,42 @@ class FindBugsGolangCli:
                 logger.warning(f"Could not extract component from title {title}: {e}")
                 comp_in_title = 'Unknown'
 
+            def _fmt(version_list):
+                return ", ".join(sorted(str(v) for v in version_list)) if version_list else ""
+
             # Check rough compatibility of fixed-in versions with in-use golang versions
             # example, if fixed-in is 1.21.x and in-use are [1.20.y, 1.19.z] then they are incompatible
             # this is a rough check to exit early if there is no compatible version found
             # we will do a more detailed check later
             compatible = False
+            flaw_fixed_in = self.flaw_fixed_in(flaw_bug)
             if self.fixed_in_nvrs:
                 compatible = True
             else:
-                flaw_fixed_in = self.flaw_fixed_in(flaw_bug)
-                if not flaw_fixed_in:
-                    self._logger.error(
-                        f"Could not determine fixed in version for {flaw_id}")
-                    cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", "NOT FOUND"])
-                    continue
+                if fixed_in_version_go_db != flaw_fixed_in:
+                    if not fixed_in_version_go_db and not flaw_fixed_in:
+                        self._logger.error(f"{flaw_id} - Could not find fixed in versions in go vulnerability "
+                                           "database and bugzilla. Skipping, please investigate")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", False])
+                        continue
+                    elif fixed_in_version_go_db and flaw_fixed_in:
+                        self._logger.warning(
+                            f"{flaw_id} - Fixed in versions in go vulnerability database and bugzilla do not "
+                            f"match. Go vulnerability database: {_fmt(fixed_in_version_go_db)}, "
+                            f"Bugzilla: {_fmt(flaw_fixed_in)}. Skipping, please investigate")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
+                        continue
+                    elif not fixed_in_version_go_db and flaw_fixed_in:
+                        self._logger.warning(f"{flaw_id} - Could not find fixed in versions in go vulnerability "
+                                             f"database. Assuming CVE isn't fixed in stdlib. Skipping")
+                        cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
+                        continue
+                    else:
+                        self._logger.warning(
+                            f"{flaw_id} - Could not find fixed in versions in bugzilla, but found in go "
+                            f"vulnerability database: {_fmt(fixed_in_version_go_db)}. Using go "
+                            "vulnerability database as the source of truth.")
+                        flaw_fixed_in = fixed_in_version_go_db
 
                 for fixed_in_version in flaw_fixed_in:
                     for go_version in [entry['go_version'] for entry in golang_report]:
@@ -409,8 +430,10 @@ class FindBugsGolangCli:
                         break
             if compatible:
                 self.compatible_cves.add(cve_id)
+            else:
+                logger.warning(f"{cve_id} is not compatible with in-use golang versions for {ocp_version}.")
 
-            cve_table.add_row([flaw_id, cve_id, comp_in_title, flaw_bug.fixed_in, compatible])
+            cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), compatible])
         self._logger.info(f"Found trackers for {len(cves)} CVEs")
         self._logger.info(f"\n{cve_table}")
 
@@ -441,23 +464,19 @@ class FindBugsGolangCli:
             return
 
         if not self.fixed_in_nvrs:
-            # golang compiler cve title text always has `golang:`
-            # we cannot auto determine fix version for
-            # golang lib cves e.g. `podman: net/http, golang.org/x/net/http2:`, `golang-fips/openssl:`
-            # so warn if not running with --fixed-in-nvr
-            invalid_bugs = sorted(b.id for b in bugs if 'golang:' not in b.summary.lower())
-            bugs = [b for b in bugs if 'golang:' in b.summary.lower()]
+            invalid_bugs = sorted(b.id for b in bugs if b.cve_id not in cves_fixed_in)
+            bugs = [b for b in bugs if b.cve_id in cves_fixed_in]
             if invalid_bugs:
-                logger.warning("These bugs do not have `golang:` in title, therefore they do not look like golang "
-                               "compiler cves and we cannot auto-determine their fixed-in-golang-version. Run "
-                               f"with --fixed-in-nvr to specify the golang compiler nvr these CVEs are fixed in. {invalid_bugs}")
+                logger.warning("These bugs do not look like golang compiler cves and we cannot determine their "
+                               "fixed-in-golang-version. Run with --fixed-in-nvr to specify the golang compiler nvr(s) "
+                               f"the corresponding CVEs are fixed in: {invalid_bugs}")
 
             incompatible_fix_bugs = sorted(b.id for b in bugs if b.cve_id not in self.compatible_cves)
             bugs = [b for b in bugs if b.cve_id in self.compatible_cves]
             if incompatible_fix_bugs:
-                logger.warning("These bugs have fixed-in versions incompatible with in-use golang versions. "
-                               "Run with --fixed-in-nvr to specify the golang compiler nvr these "
-                               f"CVEs are fixed in. {incompatible_fix_bugs}")
+                logger.warning(f"These bugs have fixed-in versions incompatible with in-use golang versions for {ocp_version}. "
+                               "Run with --fixed-in-nvr to specify the golang compiler nvr(s) the corresponding "
+                               f"CVEs are fixed in: {incompatible_fix_bugs}")
 
         if not bugs:
             exit(0)
@@ -474,7 +493,7 @@ class FindBugsGolangCli:
                 else:
                     fixed, comment = await self.is_fixed_rpm(bug, component)
             else:
-                tracker_fixed_in = self.tracker_fixed_in(bug)
+                tracker_fixed_in = cves_fixed_in.get(bug.cve_id)
                 if not tracker_fixed_in:
                     self._logger.warning(
                         f"Could not determine fixed in versions for {bug.id}. Ignoring it for now")

@@ -58,6 +58,7 @@ class CommentOnPr:
                   "All builds following this will include this PR."
 
         self.gh_client.issues.create_comment(issue_number=self.pr["number"], body=comment)
+        LOGGER.info(f"[{self.distgit_name}] Successful commented on PR: https://github.com/{self.owner}/{self.repo}/pull/{self.pr['number']}")
 
     def set_pr_from_commit(self):
         """

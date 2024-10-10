@@ -53,10 +53,9 @@ class Ocp4ScanPipeline:
                 return
 
             # Update build description
-            if image_list:
-                jenkins.update_description(f'Changed images: {",".join(image_list)}<br/>')
+            jenkins.update_description(f'Changed {len(image_list)} images<br/>')
             if rpm_list:
-                jenkins.update_description(f'Changed RPMs: {",".join(rpm_list)}<br/>')
+                jenkins.update_description(f'Changed {len(rpm_list)} rpms<br/>')
 
             # Trigger ocp4
             self.logger.info('Triggering a %s ocp4 build', self.version)

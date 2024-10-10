@@ -82,6 +82,8 @@ class Bug:
         raise NotImplementedError
 
     def is_flaw_bug(self):
+        if self.product == "Security Response" and self.component == "vulnerability-draft":
+            raise ValueError(f'{self.id} has Component "vulnerability-draft". Consult ProdSec on how to proceed.')
         return self.product == "Security Response" and self.component == "vulnerability"
 
     def is_ocp_bug(self):
@@ -314,6 +316,15 @@ class JIRABug(Bug):
         tr_field = getattr(self.bug.fields, JIRABugTracker.field_target_version)
         if not tr_field:
             raise ValueError(f'bug {self.id} does not have `Target Version` field set')
+        if len(tr_field) > 1:
+            # Some bugs (e.g. OCPBUGS-39183) have multiple target versions set. This is not expected.
+            # Usually when this happens, we edit the bug to remove the incorrect target versions.
+            # However in some cases, those incorrect target versions have the archived flag set to True,
+            # which means we can't remove them.
+            # To work around this, we'll filter out the archived target versions.
+            active_target_versions = [x.name for x in tr_field if not x.archived]
+            if active_target_versions:
+                return active_target_versions
         return [x.name for x in tr_field]
 
     @property
@@ -1317,7 +1328,9 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
         raise ValueError(f'flaw bug {flaw_bug.id} does not seem to have trackers')
 
     if not (hasattr(flaw_bug, 'alias') and flaw_bug.alias):
-        raise ValueError(f'flaw bug {flaw_bug.id} does not have an alias')
+        raise ValueError(f'Flaw bug {flaw_bug.id} does not have a CVE alias. Is it a CVE bug? These trackers '
+                         f'reference the bug: {sorted([b.id for b in tracker_bugs])}. If it is not a valid flaw bug'
+                         'please remove references from the tracker bugs.')
 
     alias = flaw_bug.alias[0]
     cve_url = f"https://access.redhat.com/hydra/rest/securitydata/cve/{alias}.json"

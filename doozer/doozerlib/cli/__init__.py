@@ -190,7 +190,7 @@ def validate_semver_major_minor_patch(ctx, param, version):
 
     vsplit = version.split(".")
     try:
-        int(vsplit[0].lstrip('v'))
+        int(vsplit[0].removeprefix('v'))
         minor_version = int('0' if len(vsplit) < 2 else vsplit[1])
         patch_version = int('0' if len(vsplit) < 3 else vsplit[2])
     except ValueError:

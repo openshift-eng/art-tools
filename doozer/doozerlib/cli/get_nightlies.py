@@ -4,6 +4,7 @@ from typing import Dict, List, Sequence, Set, Tuple
 
 import aiohttp
 import click
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import logutil, exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
@@ -83,6 +84,12 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
       * The second retrieves image info for all payload content in order to
         compare group image NVRs and RHCOS RPM content.
     """
+    # If we are looking at private nightlies
+    private_nightly = any("priv" in nightly for nightly in matching)
+    if private_nightly:
+        if not all("priv" in nightly for nightly in matching):
+            raise ValueError("If passing in private nightlies, all of them should be private")
+
     # parameter validation/processing
     if latest and limit > 1:
         raise ValueError("Don't use --latest and --limit > 1")
@@ -96,7 +103,7 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
 
     # make lists of nightly objects per arch
     try:
-        nightlies = await find_rc_nightlies(runtime, include_arches, allow_pending, allow_rejected, matching)
+        nightlies = await find_rc_nightlies(runtime, include_arches, allow_pending, allow_rejected, matching, private_nightly)
         nightlies_for_arch: Dict[str, List[Nightly]] = {
             arch: [Nightly(nightly_info=n) for n in nightlies]
             for arch, nightlies in nightlies.items()
@@ -170,7 +177,7 @@ class EmptyArchException(Exception):
     pass
 
 
-async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: bool, allow_rejected: bool, matching: Sequence[str] = []) -> Dict[str, List[Dict]]:
+async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: bool, allow_rejected: bool, matching: Sequence[str] = [], private_nightly: bool = False) -> Dict[str, List[Dict]]:
     """
     Retrieve current nightly dicts for each arch, in order RC gives them (most
     recent to oldest). Filter to Accepted unless allow_pending/rejected is true.
@@ -186,11 +193,26 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
 
     async def _find_nightlies(_arch: str):
         # retrieve the list of nightlies from the release-controller
-        rc_url: str = f"{rc_api_url(tag_base, _arch)}/tags"
+        rc_url: str = f"{rc_api_url(tag_base, _arch, private_nightly)}/tags"
         logger.info(f"Reading nightlies from {rc_url}")
 
+        headers = {}
+        if private_nightly:
+            # Get the token
+            rc, token, err = exectools.cmd_gather(["oc", "whoami", "-t"], strip=True)
+
+            if rc != 0 or err:
+                raise ValueError(f"Error while trying to get the token for reading private nightlies: {err}")
+
+            if not token:
+                raise ValueError("Token empty, might not be logged in to correct cluster")
+
+            headers = {
+                "Authorization": f"Bearer {token}"
+            }
+
         async with aiohttp.ClientSession() as session:
-            async with session.get(rc_url) as resp:
+            async with session.get(rc_url, headers=headers) as resp:
                 data = await resp.json()
 
         # filter them per parameters
@@ -232,7 +254,7 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
     return nightlies_for_arch
 
 
-def rc_api_url(tag: str, arch: str) -> str:
+def rc_api_url(tag: str, arch: str, private_nightly: bool) -> str:
     """
     base url for a release tag in release controller.
 
@@ -241,7 +263,11 @@ def rc_api_url(tag: str, arch: str) -> str:
     @return e.g. "https://s390x.ocp.releases.ci.openshift.org/api/v1/releasestream/4.9.0-0.nightly-s390x"
     """
     arch = go_arch_for_brew_arch(arch)
-    arch_suffix = go_suffix_for_arch(arch)
+    arch_suffix = go_suffix_for_arch(arch, private_nightly)
+
+    if private_nightly:
+        return f"{constants.RC_BASE_PRIV_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
+
     return f"{constants.RC_BASE_URL.format(arch=arch)}/api/v1/releasestream/{tag}{arch_suffix}"
 
 
@@ -335,6 +361,7 @@ class Nightly:
         return f"{self.name}: {self.commit_for_tag}"
 
     @exectools.limit_concurrency(500)
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def retrieve_image_info_async(self, pullspec: str) -> Model:
         """pull/cache/return json info for a container pullspec (enable concurrency)"""
         if pullspec not in image_info_cache:

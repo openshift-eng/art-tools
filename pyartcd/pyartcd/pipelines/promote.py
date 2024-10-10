@@ -128,7 +128,7 @@ class PromotePipeline:
         if not self.skip_mirror_binaries and not self.skip_signing:
             required_vars += ["AWS_SHARED_CREDENTIALS_FILE", "CLOUDFLARE_ENDPOINT"]
         if not self.skip_signing:
-            required_vars += ["SIGNING_CERT", "SIGNING_KEY", "REDIS_SERVER_PASSWORD", "REDIS_HOST", "REDIS_PORT"]
+            required_vars += ["SIGNING_CERT", "SIGNING_KEY", "REDIS_SERVER_PASSWORD"]
         if not self.skip_sigstore:
             required_vars += ["KMS_CRED_FILE", "KMS_KEY_ID"]
         if not self.skip_build_microshift:
@@ -335,7 +335,11 @@ class PromotePipeline:
 
             # Before waiting for release images to be accepted by release controllers,
             # we can start microshift build
-            await self._build_microshift(releases_config)
+            if "microshift" in impetus_advisories.keys():
+                await self._build_microshift(releases_config)
+            else:
+                self._logger.warning("Skipping microshift build because microshift advisory not found. "
+                                     "If you need to build, first define microshift advisory in assembly config")
 
             release_jira = group_config.get("release_jira", '')
 
@@ -809,7 +813,9 @@ class PromotePipeline:
             logger=self._logger,
             dry_run=self.runtime.dry_run,
             signing_creds=os.environ.get("KMS_CRED_FILE", "dummy-file"),
-            signing_key_id=os.environ.get("KMS_KEY_ID", "dummy-key"),
+            # Allow AWS_KEY_ID to be a comma delimited list
+            signing_key_ids=os.environ.get("KMS_KEY_ID", "dummy-key").strip().split(','),
+            rekor_url=os.environ.get("REKOR_URL", ""),
             concurrency_limit=CONCURRENCY_LIMIT,
             sign_release=True,
             sign_components=True,
@@ -1114,11 +1120,11 @@ class PromotePipeline:
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name, values are release_info dicts.
         """
-        tasks = []
+        release_infos = []
         for arch in arches:
-            tasks.append(self._promote_arch(assembly_type, release_name, arch, previous_list, next_list, metadata,
-                                            reference_releases.get(arch), tag_stable=tag_stable))
-        release_infos = await asyncio.gather(*tasks)
+            result = await self._promote_arch(assembly_type, release_name, arch, previous_list, next_list, metadata,
+                                              reference_releases.get(arch), tag_stable=tag_stable)
+            release_infos.append(result)
         return dict(zip(arches, release_infos))
 
     async def _promote_arch(self, assembly_type: AssemblyTypes, release_name: str, arch: str, previous_list: List[str],
@@ -1135,7 +1141,11 @@ class PromotePipeline:
         :param tag_stable: Whether to tag the promoted payload to "4-stable[-$arch]" release stream.
         :return: A dict. Keys are architecture name, values are release_info dicts.
         """
+        # This suffix will be used to construct imagestream name
+        # We always want to promote from public imagestream and never private,
+        # therefore is_private should always be set to False
         go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
+
         brew_arch = brew_arch_for_go_arch(arch)  # ensure we are using Brew arches (e.g. aarch64) instead of golang arches (e.g. arm64).
         dest_image_tag = f"{release_name}-{brew_arch}"
         dest_image_pullspec = f"{self.DEST_RELEASE_IMAGE_REPO}:{dest_image_tag}"
@@ -1158,7 +1168,9 @@ class PromotePipeline:
             reference_pullspec = None
             source_image_stream = None
             if reference_release:
-                reference_pullspec = f"registry.ci.openshift.org/ocp{go_arch_suffix}/release{go_arch_suffix}:{reference_release}"
+                # ref nightly could be private so consider that
+                arch_suffix = go_suffix_for_arch(arch, is_private="priv" in reference_release)
+                reference_pullspec = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{reference_release}"
             else:
                 source_image_stream = is_name
             await self.build_release_image(release_name, brew_arch, previous_list, next_list, metadata,

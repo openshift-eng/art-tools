@@ -294,6 +294,10 @@ class ConfigScanSources:
 
     def check_for_image_changes(self, koji_api):
         for image_meta in self.runtime.image_metas():
+            # If a rebuild is already requested, skip following checks
+            if image_meta in self.changing_image_metas:
+                continue
+
             build_info = image_meta.get_latest_build(default=None)
 
             if build_info is None:
@@ -301,10 +305,6 @@ class ConfigScanSources:
 
             # To limit the size of the queries we are going to make, find the oldest and newest image
             self.find_oldest_newest(koji_api, build_info)
-
-            # If a rebuild is already requested, skip following checks
-            if image_meta in self.changing_image_metas:
-                continue
 
             # Request a rebuild if A is a dependent (operator or child image) of B
             # but the latest build of A is older than B.

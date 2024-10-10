@@ -189,6 +189,9 @@ class BugValidator:
 
     def validate(self, non_flaw_bugs: List[Bug], verify_bug_status: bool, no_verify_blocking_bugs: bool,
                  is_attached: bool = False):
+        if verify_bug_status:
+            self._verify_bug_status(non_flaw_bugs)
+
         non_flaw_bugs = self.filter_bugs_by_release(non_flaw_bugs, complain=True)
         self._find_invalid_trackers(non_flaw_bugs)
 
@@ -207,9 +210,6 @@ class BugValidator:
         if not no_verify_blocking_bugs:
             blocking_bugs_for = self._get_blocking_bugs_for(non_flaw_bugs)
             self._verify_blocking_bugs(blocking_bugs_for, is_attached=is_attached)
-
-        if verify_bug_status:
-            self._verify_bug_status(non_flaw_bugs)
 
     def verify_bugs_advisory_type(self, non_flaw_bugs, advisory_id_map, advisory_bug_map, permitted_bug_ids):
         advance_release = False

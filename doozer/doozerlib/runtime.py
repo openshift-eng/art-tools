@@ -1,6 +1,4 @@
-import warnings
-
-from artcommonlib import logutil, exectools, gitdata
+from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
 from artcommonlib.model import Model, Missing
@@ -17,7 +15,6 @@ import atexit
 import datetime
 import yaml
 import click
-import logging
 import traceback
 import urllib.parse
 import signal
@@ -82,10 +79,10 @@ class Runtime(GroupRuntime):
     log_lock = Lock()
 
     def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
         # initialize defaults in case no value is given
         self.verbose = False
-        self.quiet = False
-        self.debug = False
         self.load_wip = False
         self.load_disabled = False
         self.data_path = None
@@ -139,8 +136,6 @@ class Runtime(GroupRuntime):
         # A record logger writes record.log file
         self.record_logger = None
 
-        self.debug_log_path = None
-
         self.brew_logs_dir = None
 
         self.flags_dir = None
@@ -165,8 +160,6 @@ class Runtime(GroupRuntime):
         # See registry_repo.
         self.public_upstreams = {}
 
-        self.initialized = False
-
         # Will be loaded with the streams.yml Model
         self.streams = Model(dict_to_model={})
 
@@ -182,7 +175,7 @@ class Runtime(GroupRuntime):
         # allows mapping from name or distgit to meta
         self.image_name_map = {}
         # allows mapping from name in bundle to meta
-        self.name_in_bundle_map: Dict[str, ImageMetadata] = {}
+        self.name_in_bundle_map: Dict[str, str] = {}
 
         # holds untouched group config
         self.raw_group_config = {}
@@ -201,14 +194,6 @@ class Runtime(GroupRuntime):
             self.rhpkg_config_lst = self.rhpkg_config.split()
         else:
             self.rhpkg_config = ''
-
-    @property
-    def logger(self):
-        """ Get the runtime logger of Doozer.
-        Your module should generally use `logging.getLogger(__name__)` instead of using this one.
-        """
-        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`", DeprecationWarning)
-        return self._logger
 
     def get_releases_config(self):
         if self.releases_config is not None:
@@ -285,6 +270,18 @@ class Runtime(GroupRuntime):
         if self.initialized:
             return
 
+        if self.working_dir is None:
+            self.working_dir = tempfile.mkdtemp(".tmp", "oit-")
+            # This can be set to False by operations which want the working directory to be left around
+            self.remove_tmp_working_dir = True
+            atexit.register(remove_tmp_working_dir, self)
+        else:
+            self.working_dir = os.path.abspath(os.path.expanduser(self.working_dir))
+            if not os.path.isdir(self.working_dir):
+                os.makedirs(self.working_dir)
+
+        super().initialize()
+
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")
             exit(1)
@@ -301,17 +298,7 @@ class Runtime(GroupRuntime):
         if self.lock_runtime_uuid:
             self.uuid = self.lock_runtime_uuid
         else:
-            self.uuid = datetime.datetime.now().strftime("%Y%m%d.%H%M%S")
-
-        if self.working_dir is None:
-            self.working_dir = tempfile.mkdtemp(".tmp", "oit-")
-            # This can be set to False by operations which want the working directory to be left around
-            self.remove_tmp_working_dir = True
-            atexit.register(remove_tmp_working_dir, self)
-        else:
-            self.working_dir = os.path.abspath(os.path.expanduser(self.working_dir))
-            if not os.path.isdir(self.working_dir):
-                os.makedirs(self.working_dir)
+            self.uuid = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d.%H%M%S")
 
         self.distgits_dir = os.path.join(self.working_dir, "distgits")
         self.distgits_diff_dir = os.path.join(self.working_dir, "distgits-diffs")
@@ -320,7 +307,6 @@ class Runtime(GroupRuntime):
         self.brew_logs_dir = os.path.join(self.working_dir, "brew-logs")
         self.flags_dir = os.path.join(self.working_dir, "flags")
         self.state_file = os.path.join(self.working_dir, 'state.yaml')
-        self.debug_log_path = os.path.join(self.working_dir, "debug.log")
 
         if self.upcycle:
             # A working directory may be upcycle'd numerous times.
@@ -343,14 +329,12 @@ class Runtime(GroupRuntime):
         if disabled is not None:
             self.load_disabled = disabled
 
-        self.initialize_logging()
-
         self.init_state()
 
         try:
             self.db = dblib.DB(self, self.datastore)
         except Exception as err:
-            self._logger.warning('Cannot connect to the DB: %s\n%s', str(err), traceback.format_exc())
+            self._logger.warning('Cannot connect to the DB: %s', str(err))
 
         self._logger.info(f'Initial execution (cwd) directory: {os.getcwd()}')
 
@@ -652,26 +636,6 @@ class Runtime(GroupRuntime):
 
         self.initialized = True
 
-    def initialize_logging(self):
-
-        if self.initialized or self._logger:
-            return
-
-        # Three flags control the output modes of the command:
-        # --verbose prints logs to CLI as well as to files
-        # --debug increases the log level to produce more detailed internal
-        #         behavior logging
-        # --quiet opposes both verbose and debug
-        if self.debug:
-            log_level = logging.DEBUG
-        elif self.quiet:
-            log_level = logging.WARN
-        else:
-            log_level = logging.INFO
-
-        logutil.setup_logging(log_level, self.debug_log_path)
-        self._logger = logging.getLogger('doozerlib')
-
     def build_jira_client(self) -> JIRA:
         """
         :return: Returns a JIRA client setup for the server in bug.yaml
@@ -916,7 +880,7 @@ class Runtime(GroupRuntime):
         with io.open(os.path.join(distgit_path, distgit + '.patch'), 'w', encoding='utf-8') as f:
             f.write(diff)
 
-    def resolve_image(self, distgit_name, required=True):
+    def resolve_image(self, distgit_name, required=True) -> ImageMetadata:
         """
         Returns an ImageMetadata for the specified group member name.
         :param distgit_name: The name of an image member in this group

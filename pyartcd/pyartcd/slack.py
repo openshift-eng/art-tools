@@ -59,7 +59,7 @@ class SlackClient:
             })
         if self.dry_run:
             _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)
-            return {"ts": "fake"}
+            return {"message": {"ts": "fake"}}
         response = await self._client.chat_postMessage(channel=self.channel, text=message, thread_ts=thread_ts,
                                                        username=self.as_user, link_names=True, attachments=attachments,
                                                        icon_emoji=self.icon_emoji, reply_broadcast=False)
@@ -74,40 +74,23 @@ class SlackClient:
         return response.data
 
     async def upload_file(self, file=None, content=None, filename=None, initial_comment=None, thread_ts: Optional[str] = None):
-        response = await self._client.files_upload(
+        response = await self._client.files_upload_v2(
             file=file,
-            filename=content,
-            filetype=filename,
+            content=content,
+            filename=filename,
             initial_comment=initial_comment,
-            channels=self.channel,
+            channel=self.channel,
             thread_ts=thread_ts)
         return response.data
 
-    async def post_image(self, message: str, file: str):
-        attachments = []
-        if self.build_url:
-            attachments.append({
-                "title": f"Job: {self.job_name} <{self.build_url}|{self.build_id}>",
-                "color": "#439FE0",
-            })
-        if self.dry_run:
-            _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)
-            return {"message": {"ts": "fake"}}
-        response = await self._client.files_upload(
-            file=file,
-            initial_comment=message,
-            channels=self.channel)
-        return response.data
-
-    async def upload_content(self, content, intro=None, filename=None, filetype=None, thread_ts: Optional[str] = None):
+    async def upload_content(self, content, intro=None, filename=None, thread_ts: Optional[str] = None):
         """
         Similar to upload_file but can upload from a variable instead of a file
         """
-        response = await self._client.files_upload(
+        response = await self._client.files_upload_v2(
             initial_comment=intro,
-            channels=self.channel,
+            channel=self.channel,
             content=content,
             filename=filename,
-            filetype=filetype,
             thread_ts=thread_ts)
         return response.data

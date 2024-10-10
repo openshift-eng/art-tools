@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, UTC
 import hashlib
 import traceback
 import sys
@@ -77,12 +77,14 @@ class RepositoryType(Enum):
               help="Also create a release payload for multi-arch/heterogeneous clusters.")
 @click.option("--moist-run", default=False, is_flag=True,
               help="Mirror and determine tags but do not actually update imagestreams.")
+@click.option("--embargo-permit-ack", default=False, is_flag=True,
+              help="Allow embargoed builds to sync publicly in named assemblies")
 @click_coroutine
 @pass_runtime
 async def release_gen_payload(runtime: Runtime, is_name: str, is_namespace: str, organization: str,
                               repository: str, private_repository: str, release_repository: str, output_dir: str,
                               exclude_arch: Tuple[str, ...], skip_gc_tagging: bool, emergency_ignore_issues: bool,
-                              apply: bool, apply_multi_arch: bool, moist_run: bool):
+                              apply: bool, apply_multi_arch: bool, moist_run: bool, embargo_permit_ack: bool):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
 assembly. The tags may not be valid unless --apply or --moist-run triggers mirroring.
@@ -143,7 +145,7 @@ read and propagate/expose this annotation in its display of the release image.
         output_dir,
         exclude_arch,
         skip_gc_tagging, emergency_ignore_issues,
-        apply, apply_multi_arch, moist_run
+        apply, apply_multi_arch, moist_run, embargo_permit_ack
     ).run()
 
 
@@ -269,7 +271,7 @@ class GenPayloadCli:
                  repository: str = None, private_repository: str = None, release_repository: str = None,
                  output_dir: str = None, exclude_arch: Tuple[str] = None, skip_gc_tagging: bool = False,
                  emergency_ignore_issues: bool = False, apply: bool = False, apply_multi_arch: bool = False,
-                 moist_run: bool = False):
+                 moist_run: bool = False, embargo_permit_ack: bool = False):
 
         self.runtime = runtime
         self.logger = runtime.logger if runtime else MagicMock()  # in tests, blackhole logs by default
@@ -300,6 +302,8 @@ class GenPayloadCli:
         self.privacy_modes: List[bool] = [False]
         # do we proceed with this payload after weighing issues against permits?
         self.payload_permitted = False
+        # Allows embargoed builds to be released
+        self.embargo_permit_ack = embargo_permit_ack
 
     @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
@@ -595,7 +599,7 @@ class GenPayloadCli:
         Returns a dict of dicts, keyed by architecture, then by payload component name.
         """
 
-        entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
+        public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         for arch in self.runtime.arches:
             if arch in self.exclude_arch:
@@ -604,16 +608,65 @@ class GenPayloadCli:
             # No adjustment for private or public; the assembly's canonical payload content is the same.
 
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
-            issues: List[AssemblyIssue]
-            entries, issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PUBLIC))
+            payload_issues: List[AssemblyIssue]
+            public_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
+            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, public_repo)
 
-            # Exclude issues for now, for private repo
-            private_entries, _ = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
-            entries_for_arch[arch] = entries
+            public_entries: Dict[str, PayloadEntry] = dict()
+            for k, v in entries.items():
+                if not v.build_inspector:
+                    # Its RHCOS, since it doesn't have a build inspector. Put it in for now, but change once RHCOS
+                    # supports private nightlies
+                    public_entries[k] = v
+                    continue
+
+                if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
+                    public_build = v.image_meta.get_latest_build(default=None,
+                                                                 el_target=v.image_meta.branch_el_target(),
+                                                                 extra_pattern='*.p0.*')
+                    if not public_build:
+                        raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
+
+                    public_bbi = BrewBuildImageInspector(runtime=self.runtime, build=public_build)
+                    public_archive_inspector = public_bbi.get_image_archive_inspector(arch)
+
+                    dest_pullspec = PayloadGenerator.get_mirroring_destination(
+                        public_archive_inspector.get_archive_digest(), public_repo)
+                    dest_manifest_list_pullspec = PayloadGenerator.get_mirroring_destination(
+                        public_archive_inspector.get_brew_build_inspector().get_manifest_list_digest(), public_repo)
+                    public_entry = PayloadEntry(
+                        image_meta=v.image_meta,
+                        build_inspector=public_bbi,
+                        archive_inspector=public_archive_inspector,
+                        dest_pullspec=dest_pullspec,
+                        dest_manifest_list_pullspec=dest_manifest_list_pullspec,
+                        issues=list(),
+                    )
+
+                    self.logger.info(f'Replacing embargoed image {v.build_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream')
+                    public_entries[k] = public_entry
+                    # It's an embargoed build. Filter it out if its stream
+                    continue
+
+                public_entries[k] = v
+
+            public_entries_for_arch[arch] = public_entries
+            self.assembly_issues.extend(payload_issues)
+
+            # Report issues for any embargoed content being made public.
+            # If releasing after embargo lift, these can be permitted using 'EMBARGOED_CONTENT' code
+            embargo_issues = PayloadGenerator.embargo_issues_for_payload(public_entries, arch)
+            self.assembly_issues.extend(embargo_issues)
+
+            private_entries, private_payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
             private_entries_for_arch[arch] = private_entries
-            self.assembly_issues.extend(issues)
 
-        return entries_for_arch, private_entries_for_arch
+            # Check to see if there are private only issues, and add them to the list of assembly issues
+            private_only_issues = set(private_payload_issues) - set(payload_issues)
+
+            self.assembly_issues.extend(list(private_only_issues))
+
+        return public_entries_for_arch, private_entries_for_arch
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.detect_extend_payload_entry_issues")
     async def detect_extend_payload_entry_issues(self, assembly_inspector: AssemblyInspector):
@@ -706,17 +759,29 @@ class GenPayloadCli:
         Check whether the issues found are permitted,
         and collect issues per component into a serializable report
         """
-
+        permitted_non_acknowledged_embargoed_issues = []
         payload_permitted = True
         assembly_issues_report: Dict[str, List[Dict]] = dict()
         for ai in self.assembly_issues:
             permitted = assembly_inspector.does_permit(ai)
+
+            if self.runtime.assembly_type is not AssemblyTypes.STREAM and ai.code == AssemblyIssueCode.EMBARGOED_CONTENT and permitted:
+                # If this is not a STREAM run, check to see if there are any permitted embargoed content
+                # If there is, --embargo-permit-ack must be specified in build-sync params, as the second and final gate
+                # before letting embargoed builds from being synced to public quay
+                if not self.embargo_permit_ack:
+                    permitted_non_acknowledged_embargoed_issues.append(ai.component)
+
             payload_permitted &= permitted  # If anything not permitted, payload not permitted
             assembly_issues_report.setdefault(ai.component, []).append(dict(
                 code=ai.code.name,
                 msg=ai.msg,
                 permitted=permitted
             ))
+
+        if permitted_non_acknowledged_embargoed_issues:
+            raise IOError(f"Embargoed components found: {set(permitted_non_acknowledged_embargoed_issues)}; "
+                          "must specify --embargo-permit-ack flag to publish private content")
 
         return payload_permitted, assembly_issues_report
 
@@ -773,13 +838,14 @@ class GenPayloadCli:
 
         await asyncio.sleep(120)
 
-        # Update the imagestreams being monitored by the release controller.
-        tasks = []
-        for arch, payload_entries in self.payload_entries_for_arch.items():
-            for private_mode in self.privacy_modes:
+        # Updating public and private image streams
+        for private_mode, payload_entries_for_each_arch_iter in [(False, self.payload_entries_for_arch), (True, self.private_payload_entries_for_arch)]:
+            tasks = []
+            for arch, payload_entries in payload_entries_for_each_arch_iter.items():
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
-                tasks.append(self.generate_specific_payload_imagestreams(arch, private_mode, payload_entries, multi_specs))
-        await asyncio.gather(*tasks)
+                tasks.append(self.generate_specific_payload_imagestreams(
+                    arch, private_mode, payload_entries, multi_specs))
+            await asyncio.gather(*tasks)
 
         if self.apply_multi_arch:
             if self.runtime.group_config.multi_arch.enabled:
@@ -848,15 +914,17 @@ class GenPayloadCli:
         for payload_tag_name, payload_entry in payload_entries.items():
             multi_specs[private_mode].setdefault(payload_tag_name, dict())
 
-            if private_mode is False and payload_entry.build_inspector \
-                    and payload_entry.build_inspector.is_under_embargo():
-                # No embargoed images should go to the public release controller, so we will not have
-                # a complete set of payload tags for the public imagestream.
+            if (private_mode is False and payload_entry.build_inspector
+               and payload_entry.build_inspector.is_under_embargo()
+               and self.runtime.assembly_type == AssemblyTypes.STREAM):
+                # No embargoed images for assembly stream
+                # should go to the public release controller, so we will not have
+                # a complete payload.
                 incomplete_payload_update = True
+                continue
 
-            else:
-                istags.append(PayloadGenerator.build_payload_istag(payload_tag_name, payload_entry))
-                multi_specs[private_mode][payload_tag_name][arch] = payload_entry
+            istags.append(PayloadGenerator.build_payload_istag(payload_tag_name, payload_entry))
+            multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
         imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
             *self.base_imagestream, arch, private_mode)
@@ -870,7 +938,8 @@ class GenPayloadCli:
     async def write_imagestream_artifact_file(self, imagestream_namespace: str, imagestream_name: str,
                                               istags: List[Dict], incomplete_payload_update):
         """
-        Write the yaml file for the imagestream.
+        Write out an artifact showing the entries we expect to add/update in the target
+        integration imagestream.
         """
 
         filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}" \
@@ -891,6 +960,11 @@ class GenPayloadCli:
 
         with oc.project(imagestream_namespace):
             istream_apiobj = self.ensure_imagestream_apiobj(imagestream_name)
+
+            if self.is_imagestream_locked(istream_apiobj):
+                self.logger.warning(f'The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.')
+                return
+
             pruning_tags, adding_tags = await self.apply_imagestream_update(
                 istream_apiobj, istags, incomplete_payload_update)
 
@@ -917,7 +991,7 @@ class GenPayloadCli:
                                     imagestream_namespace, imagestream_name, adding_tags)
 
     @staticmethod
-    def ensure_imagestream_apiobj(imagestream_name):
+    def ensure_imagestream_apiobj(imagestream_name) -> oc.APIObject:
         """
         Create the imagestream if it does not exist, and return the api object.
         """
@@ -936,10 +1010,21 @@ class GenPayloadCli:
         })
         return oc.selector(f"imagestream/{imagestream_name}").object()
 
+    @staticmethod
+    def is_imagestream_locked(imagestream_obj: oc.APIObject) -> bool:
+        """
+        Via the CRT "release-tool", TRT can "lock" nightly imagestream, which requests
+        that ART stop making updates to the stream for period of time, until the lock
+        is removed.
+        https://github.com/openshift/release-controller/blob/master/hack/release-tool.py
+        """
+        imagestream_mode = imagestream_obj.get_annotation('release.openshift.io/mode')
+        return imagestream_mode == 'locked'
+
     async def apply_imagestream_update(self, istream_apiobj, istags: List[Dict],
                                        incomplete_payload_update: bool) -> Tuple[Set[str], Set[str]]:
         """
-        Apply changes for one imagestream object to the OCP cluster.
+        Apply changes for one integration imagestream object on the app.ci cluster.
         """
 
         # gather diffs between old and new, indicating removal or addition
@@ -963,9 +1048,40 @@ class GenPayloadCli:
 
             apiobj.model.metadata["annotations"] = new_annotations
 
-            incoming_tag_names = set([istag["name"] for istag in istags])
+            incoming_tag_lookup = {istag["name"]: istag for istag in istags}
+            incoming_tag_names = set(incoming_tag_lookup.keys())
             existing_tag_names = set([istag["name"] for istag in apiobj.model.spec.tags])
             adding_tags = incoming_tag_names - existing_tag_names
+
+            for existing_istag in apiobj.model.spec.tags:
+                # When TRT reverts an image using release-tool (https://github.com/openshift/release-controller/blob/master/hack/release-tool.py)
+                # it means they are setting a tag pointing to image X to use an older image Y.
+                # Since there is something wrong with X, they don't want to unstick
+                # from Y until a new image Z supersedes X.
+                # To accomplish this, the 'revert' verb adds an annotation to the
+                # istag being reverted with the value "reverted-from: X".
+                # Thus, we should not update the annotated tag UNTIL our
+                # target image is something other than X.
+                # Note that existing_istag.annotations may be None (vs model.Missing) if
+                # "annotations: null" is specified in the istag, so take care before
+                # assuming it is dict-like.
+                if existing_istag.annotations and 'reverted-from' in existing_istag.annotations:
+                    revereted_tag_name = existing_istag.name
+                    reverted_from_image = existing_istag.annotations['reverted-from']
+                    reverted_to_image = existing_istag['from'].name
+                    if revereted_tag_name not in incoming_tag_lookup:
+                        if not incomplete_payload_update:
+                            self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.')
+                    else:
+                        target_image = incoming_tag_lookup[revereted_tag_name]['from'].name
+                        self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.')
+                        if target_image == reverted_from_image:
+                            self.logger.warning(f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}')
+                            incoming_tag_lookup[revereted_tag_name]['from'].name = reverted_to_image
+                            # We must also preserve the annotation to persist the revert for the next update
+                            incoming_tag_lookup[revereted_tag_name]['annotations'] = existing_istag.annotations.primitive()
+                        else:
+                            self.logger.warning(f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}')
 
             new_istags = list(istags)  # copy, don't update/embed list parameter
             if incomplete_payload_update:
@@ -1063,7 +1179,7 @@ class GenPayloadCli:
         the same.
         """
 
-        multi_ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        multi_ts = datetime.now(tz=UTC).strftime("%Y-%m-%d-%H%M%S")
         if self.runtime.assembly_type is AssemblyTypes.STREAM:
             # We are publicizing a nightly. Unlike single-arch payloads, the release controller does
             # not react to 4.x-art-latest updates and create a timestamp-based name. We create the
@@ -1248,7 +1364,11 @@ class GenPayloadCli:
 
         multi_art_latest_is = self.ensure_imagestream_apiobj(imagestream_name)
 
-        # For nightlies, these will to set as annotations on the release imagestream tag.
+        if self.is_imagestream_locked(multi_art_latest_is):
+            self.logger.warning(f'The {imagestream_name} imagestream is currently locked by TRT. Skipping updates.')
+            return
+
+        # For nightlies, these will be set as annotations on the release imagestream tag.
         # For non-nightlies, the new 4.x-art-assembly-$name the annotations will also be
         # applied at the top level annotations for the imagestream.
         pipeline_metadata_annotations = {
@@ -1895,4 +2015,23 @@ class PayloadGenerator:
             tasks.append(PayloadGenerator._check_nightly_consistency(assembly_inspector, nightly, arch))
         results = await asyncio.gather(*tasks)
         issues.extend([issue for result in results for issue in result])
+        return issues
+
+    @staticmethod
+    def embargo_issues_for_payload(entries: Dict[str, PayloadEntry], arch: str) -> List[AssemblyIssue]:
+        """
+        Check to see if there are any embargoed builds in public image stream tags
+        """
+        issues = []
+        for payload_tag, entry in entries.items():
+            if not entry.build_inspector:
+                # Probably RHCOS
+                continue
+
+            if entry.build_inspector.is_under_embargo():
+                issues.append(AssemblyIssue(
+                    f"Found embargoed build {entry.build_inspector.get_nvr()} in payload entries for arch {arch}",
+                    component=entry.image_meta.name,
+                    code=AssemblyIssueCode.EMBARGOED_CONTENT
+                ))
         return issues

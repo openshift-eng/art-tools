@@ -86,10 +86,7 @@ class LockManager(Aioredlock):
     @staticmethod
     def from_lock(lock: Lock, use_ssl=True):
         """
-        Builds and returns a new aioredlock.Aioredlock instance. Requires following env vars to be defined:
-        - REDIS_SERVER_PASSWORD: authentication token to the Redis server
-        - REDIS_HOST: hostname where Redis is deployed
-        - REDIS_PORT: port where Redis is exposed
+        Builds and returns a new aioredlock.Aioredlock instance. Requires REDIS_SERVER_PASSWORD env var to be defined.
 
         If use_ssl is set, we assume Redis server is using a secure connection, and the protocol will be rediss://
         Otherwise, it will fall back to the unsecure redis://

@@ -4,7 +4,9 @@ click >= 8.1.3
 dockerfile-parse >= 0.0.13
 defusedxml
 future
+importlib-resources
 koji
+kubernetes ~= 28.0
 kubernetes-asyncio ~= 28.0
 openshift ~= 0.13.2
 opentelemetry-sdk

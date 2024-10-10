@@ -1,10 +1,19 @@
 import asyncio
+import os
+from datetime import datetime
+
 import click
 import io
 import traceback
 from typing import List
 
+from artcommonlib import exectools
 from artcommonlib.exectools import RetryException
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
+from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import convert_remote_git_to_https
+from doozerlib.brew import get_build_objects
 from doozerlib.cli import cli, click_coroutine, pass_runtime, validate_rpm_version
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_builder import RPMBuilder
@@ -288,6 +297,8 @@ async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata):
         record["status"] = 0
         record["message"] = "Success"
         logger.info("Successfully built rpm: %s ; Task URLs: %s", rpm.distgit_key, [url for url in task_urls])
+        await update_konflux_db(runtime, rpm, record)
+
     except (Exception, KeyboardInterrupt) as e:
         tb = traceback.format_exc()
         record["message"] = "Exception occurred:\n{}".format(tb)
@@ -302,3 +313,60 @@ async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata):
             record["task_url"] = task_urls[0]
         runtime.record_logger.add_record(action, **record)
     return record["status"]
+
+
+async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
+    nvrs = record["nvrs"].split(",")
+
+    with runtime.shared_koji_client_session() as koji_api:
+        builds = get_build_objects(nvrs, koji_api)
+
+    for build in builds:
+        rebase_url = build["extra"]["source"]["original_url"].split('+')[-1]
+        rebase_repo_url, rebase_commitish = rebase_url.split('#')
+
+        el_version = isolate_el_version_in_release(build["nvr"])
+        el_target = f'el{el_version}' if el_version else ''
+
+        nvr = build["nvr"]
+
+        with open(rpm.specfile) as specfile:
+            rpmspec = specfile.read().splitlines()
+            try:
+                commitish = [line for line in rpmspec if "Update to source commit" in line][0].split(" ")[-1].split("/")[-1]
+            except IndexError:
+                rpm.logger.warning('Could not determine commitish for rpm %s', rpm.rpm_name)
+                commitish = ''
+
+        build_record = KonfluxBuildRecord(
+            name=rpm.rpm_name,
+            group=runtime.group,
+            version=parse_nvr(nvr)["version"],
+            release=rpm.release,
+            assembly=runtime.assembly,
+            el_target=el_target,
+            arches=rpm.get_arches(),
+            installed_packages=[],
+            parent_images=[],
+            source_repo=convert_remote_git_to_https(rpm.source.git.url),
+            commitish=commitish,
+            rebase_repo_url=rebase_repo_url,
+            rebase_commitish=rebase_commitish,
+            embargoed="p1" in rpm.release.split("."),
+            start_time=datetime.strptime(build["creation_time"], '%Y-%m-%d %H:%M:%S.%f'),
+            end_time=datetime.strptime(build["completion_time"], '%Y-%m-%d %H:%M:%S.%f'),
+            artifact_type=ArtifactType.RPM,
+            engine=Engine.BREW,
+            image_pullspec="n/a",
+            image_tag="n/a",
+            outcome=KonfluxBuildOutcome.SUCCESS,
+            art_job_url=os.getenv("BUILD_URL", "n/a"),
+            build_pipeline_url=str(build["task_id"]),
+            pipeline_commit='n/a',
+            nvr=nvr,
+            build_id=str(build["build_id"])
+        )
+
+        runtime.konflux_db.bind(KonfluxBuildRecord)
+        runtime.konflux_db.add_build(build_record)
+        rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])

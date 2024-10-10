@@ -6,6 +6,8 @@ from string import Template
 
 import redis
 
+from artcommonlib import constants
+
 logger = logging.getLogger(__name__)
 
 # Redis instance template, to be rendered with env vars
@@ -19,16 +21,12 @@ class RedisError(Exception):
 def redis_url(use_ssl=True):
     if not os.environ.get('REDIS_SERVER_PASSWORD', None):
         raise RedisError('Please define REDIS_SERVER_PASSWORD env var')
-    if not os.environ.get('REDIS_HOST', None):
-        raise RedisError('Please define REDIS_HOST env var')
-    if not os.environ.get('REDIS_PORT', None):
-        raise RedisError('Please define REDIS_PORT env var')
 
     return redis_url_template.substitute(
         protocol='rediss' if use_ssl else 'redis',
         redis_password=os.environ['REDIS_SERVER_PASSWORD'],
-        redis_host=os.environ['REDIS_HOST'],
-        redis_port=os.environ['REDIS_PORT']
+        redis_host=constants.REDIS_HOST,
+        redis_port=constants.REDIS_PORT
     )
 
 

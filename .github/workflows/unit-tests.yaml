@@ -13,6 +13,10 @@ jobs:
     steps:
       - name: Install git
         run: dnf install -y git
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Verify uv installation
+        run: uv --version
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

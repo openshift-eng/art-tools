@@ -8,6 +8,7 @@ from typing import Optional
 
 import click
 
+from artcommonlib import logutil
 from pyartcd import __version__
 from pyartcd.runtime import Runtime
 from pyartcd.telemetry import initialize_telemetry
@@ -56,16 +57,14 @@ def cli(ctx: click.Context, config: Optional[str], working_dir: Optional[str], d
     # Initialize telemetry if needed
     if enable_telemetry or os.environ.get("TELEMETRY_ENABLED") == "1":
         initialize_telemetry()
-    config_filename = config or Path("~/.config/artcd.toml").expanduser()
-    working_dir = working_dir or Path.cwd()
+    config_filename = Path(config) if config else Path("~/.config/artcd.toml").expanduser()
+    working_dir_path = Path(working_dir) if working_dir else Path.cwd()
     # configure logging
     if not verbosity:
-        logging.basicConfig(level=logging.WARNING)
+        level = logging.WARNING
     elif verbosity == 1:
-        logging.basicConfig(level=logging.INFO)
+        level = logging.INFO
     elif verbosity >= 2:
-        logging.basicConfig(level=logging.DEBUG)
-        logging.getLogger("requests_kerberos").setLevel(logging.INFO)
-    else:
-        raise ValueError(f"Invalid verbosity {verbosity}")
-    ctx.obj = Runtime.from_config_file(config_filename, working_dir=Path(working_dir), dry_run=dry_run)
+        level = logging.DEBUG
+    logutil.setup_logging(level, str(working_dir_path / "debug.log"))
+    ctx.obj = Runtime.from_config_file(config_filename, working_dir=working_dir_path, dry_run=dry_run)
