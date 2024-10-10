@@ -304,8 +304,8 @@ class GenAssemblyPipeline:
               help="Allow matching nightlies built from matching commits but with inconsistent RPMs")
 @click.option("--custom", is_flag=True,
               help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.")
-@click.option("--pre-ga-mode", type=click.Choice(["prerelease", "advance"], case_sensitive=False),
-              help="Prepare the advisory for 'prerelease' or 'advance' operator release")
+@click.option("--pre-ga-mode", type=click.Choice(["prerelease"], case_sensitive=False),
+              help="Prepare the advisory for 'prerelease' operator release")
 @click.option('--auto-trigger-build-sync', is_flag=True,
               help='Will trigger build-sync automatically after PR creation')
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
