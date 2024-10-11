@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import traceback
 import sys
@@ -35,7 +35,7 @@ from doozerlib.brew_info import BrewBuildImageInspector, ArchiveImageInspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
 from artcommonlib.telemetry import start_as_current_span_async
-from doozerlib.util import isolate_nightly_name_components
+from doozerlib.util import isolate_nightly_name_components, extract_version_fields, what_is_in_master
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import find_manifest_list_sha
@@ -1406,6 +1406,27 @@ class GenPayloadCli:
                     remaining_tags = release_tags[:-5]
                     remaining_accepted = list(filter(is_accepted, remaining_tags))
                     new_release_tags = remaining_accepted[-2:] + new_release_tags  # Keep the newest accepted of the payloads we were going to otherwise prune
+
+                if release_tags:
+                    last_nightly_tagname = release_tags[-1].get('name', None)
+                    if last_nightly_tagname:
+                        date_str = last_nightly_tagname.split('-multi-')[-1]  # 4.18.0-0.nightly-multi-2024-10-10-163835 => "2024-10-10-163835"
+                        last_nightly_time = datetime.strptime(date_str, "%Y-%m-%d-%H%M%S")
+                        current_time = datetime.utcnow()
+
+                        major = self.runtime.group_config.vars['MAJOR']
+                        minor = self.runtime.group_config.vars['MINOR']
+
+                        master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
+                        if major != master_major or minor != master_minor:
+                            next_nightly_delay = timedelta(hours=12)
+                        else:
+                            # More frequent nightlies for master
+                            next_nightly_delay = timedelta(hours=6)
+
+                        if current_time < last_nightly_time + next_nightly_delay:
+                            self.logger.info(f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update')
+                            return
 
                 obj_model.spec["tags"] = new_release_tags
 

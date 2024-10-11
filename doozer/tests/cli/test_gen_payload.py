@@ -27,6 +27,12 @@ async def no_sleep(arg):
     pass
 
 
+# ART regulates the frequency of multi payloads by extracting a timestamp
+# from the name. This function makes it easier to generate these names.
+def as_multi_release_name(prefix):
+    return f'{prefix}-multi-2024-10-10-061203'
+
+
 rgp_cli.asyncio.sleep = no_sleep
 
 
@@ -740,13 +746,13 @@ manifests:
         istream_apiobj = Mock(oc.APIObject, model=oc.Model(dict(
             metadata=dict(),
             spec=dict(tags=[
-                dict(name="spam0", annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name="spam1", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam2", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam3", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam4", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam5", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam6", annotations={'release.openshift.io/phase': 'Accepted'}),
+                dict(name=as_multi_release_name("spam0"), annotations={'release.openshift.io/phase': 'Accepted'}),
+                dict(name=as_multi_release_name("spam1"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam2"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam3"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam4"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam5"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam6"), annotations={'release.openshift.io/phase': 'Accepted'}),
             ])
         )))
         gpcli.should_receive("ensure_imagestream_apiobj").once().and_return(istream_apiobj)
@@ -758,10 +764,10 @@ manifests:
             return False
 
         await gpcli.apply_multi_imagestream_update("final_pullspec", "is_name", "multi_release_name")
-        self.assertFalse(contains(name="spam1"), "old rejected should have been pruned")
-        self.assertTrue(contains(name="spam2"), "recent rejected not pruned")
-        self.assertTrue(contains(name="spam6"), "new accepted not pruned")
-        self.assertTrue(contains(name="spam0"), "older 2nd accepted not pruned")
+        self.assertFalse(contains(name=as_multi_release_name("spam1")), "old rejected should have been pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam2")), "recent rejected not pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam6")), "new accepted not pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam0")), "older 2nd accepted not pruned")
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
@@ -779,17 +785,17 @@ manifests:
         istream_apiobj = Mock(oc.APIObject, model=oc.Model(dict(
             metadata=dict(),
             spec=dict(tags=[
-                dict(name="spam-1", annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name="spam0", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam1", annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name="spam2", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam3", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam4", annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name="spam5", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam6", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam7", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam8", annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name="spam9", annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam-1"), annotations={'release.openshift.io/phase': 'Accepted'}),
+                dict(name=as_multi_release_name("spam0"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam1"), annotations={'release.openshift.io/phase': 'Accepted'}),
+                dict(name=as_multi_release_name("spam2"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam3"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam4"), annotations={'release.openshift.io/phase': 'Accepted'}),
+                dict(name=as_multi_release_name("spam5"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam6"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam7"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam8"), annotations={'release.openshift.io/phase': 'Rejected'}),
+                dict(name=as_multi_release_name("spam9"), annotations={'release.openshift.io/phase': 'Rejected'}),
             ])
         )))
         gpcli.should_receive("ensure_imagestream_apiobj").once().and_return(istream_apiobj)
@@ -802,10 +808,10 @@ manifests:
                     return True
             return False
 
-        self.assertFalse(contains(name="spam-1"), "oldest accepted release should have been pruned")
-        self.assertTrue(contains(name="spam1"), "accepted release should not have been pruned")
-        self.assertTrue(contains(name="spam4"), "2nd accepted release should not have been pruned")
-        self.assertFalse(contains(name="spam0"), "oldest rejected release should have been pruned")
+        self.assertFalse(contains(name=as_multi_release_name("spam-1")), "oldest accepted release should have been pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam1")), "accepted release should not have been pruned")
+        self.assertTrue(contains(name=as_multi_release_name("spam4")), "2nd accepted release should not have been pruned")
+        self.assertFalse(contains(name=as_multi_release_name("spam0")), "oldest rejected release should have been pruned")
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])
