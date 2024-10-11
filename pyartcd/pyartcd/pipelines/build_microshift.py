@@ -497,11 +497,12 @@ async def build_microshift(runtime: Runtime, data_path: str, group: str, assembl
         await pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift pipeline encountered error: {err}"
+        reaction = None
         error_message = slack_message + f"\n {traceback.format_exc()}"
         runtime.logger.error(error_message)
-        if assembly in ["stream", "test"]:
-            slack_message += "\n@release-artists"
-            await slack_client.say_in_thread(slack_message, reaction="art-attention")
-            raise
-        await slack_client.say_in_thread(slack_message)
+        if not runtime.dry_run:
+            if assembly not in ["stream", "test", "microshift"]:
+                slack_message += "\n@release-artists"
+                reaction = "art-attention"
+            await slack_client.say_in_thread(slack_message, reaction)
         raise
