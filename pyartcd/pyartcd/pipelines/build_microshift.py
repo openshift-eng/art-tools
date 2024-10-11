@@ -183,7 +183,12 @@ class BuildMicroShiftPipeline:
         if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             version = f'{major}.{minor}'
             try:
-                jenkins.start_microshift_sync(version=version, assembly=self.assembly)
+                if self.runtime.dry_run:
+                    self._logger.info("[DRY RUN] Would have triggered microshift_sync job for version %s and assembly %s",
+                                      version, self.assembly)
+                else:
+                    jenkins.start_microshift_sync(version=version, assembly=self.assembly)
+
                 message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
                           f"This will publish the microshift build to mirror"
                 await self.slack_client.say_in_thread(message)
@@ -215,6 +220,8 @@ class BuildMicroShiftPipeline:
             "--member-only",
             "--use-default-advisory", "microshift"
         ]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _sweep_bugs(self):
@@ -228,6 +235,8 @@ class BuildMicroShiftPipeline:
             "--permissive",  # this is so we don't error out on non-microshift bugs
             "--use-default-advisory", "microshift"
         ]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _attach_cve_flaws(self):
@@ -240,6 +249,8 @@ class BuildMicroShiftPipeline:
             "attach-cve-flaws",
             "--use-default-advisory", "microshift"
         ]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _verify_microshift_bugs(self, advisory_id):
@@ -269,6 +280,8 @@ class BuildMicroShiftPipeline:
             "--from", "NEW_FILES",
             "--use-default-advisory", "microshift"
         ]
+        if self.runtime.dry_run:
+            cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     @staticmethod
