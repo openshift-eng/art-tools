@@ -132,7 +132,7 @@ async def _rpms_rebase_and_build(runtime: Runtime, version: str, release: str, e
         status = await _rebase_rpm(runtime, builder, rpm, version, release)
         if status != 0:
             return status
-        status = await _build_rpm(runtime, builder, rpm)
+        status = await _build_rpm(runtime, builder, rpm, dry_run=dry_run)
         return status
 
     tasks = [asyncio.ensure_future(_rebase_and_build(rpm)) for rpm in rpms]
@@ -267,7 +267,7 @@ async def _rpms_build(runtime: Runtime, scratch: bool, dry_run: bool):
             koji_api.gssapi_login()
 
     builder = RPMBuilder(runtime, dry_run=dry_run, scratch=scratch)
-    tasks = [asyncio.ensure_future(_build_rpm(runtime, builder, rpm)) for rpm in rpms]
+    tasks = [asyncio.ensure_future(_build_rpm(runtime, builder, rpm, dry_run=dry_run)) for rpm in rpms]
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
     failed = [rpms[i].distgit_key for i, r in enumerate(results) if r != 0]
@@ -277,7 +277,7 @@ async def _rpms_build(runtime: Runtime, scratch: bool, dry_run: bool):
     return 0
 
 
-async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata):
+async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata, dry_run: bool = False):
     logger = rpm.logger
     action = "build_rpm"
     record = {
@@ -297,7 +297,10 @@ async def _build_rpm(runtime: Runtime, builder: RPMBuilder, rpm: RPMMetadata):
         record["status"] = 0
         record["message"] = "Success"
         logger.info("Successfully built rpm: %s ; Task URLs: %s", rpm.distgit_key, [url for url in task_urls])
-        await update_konflux_db(runtime, rpm, record)
+        if dry_run:
+            logger.info("DRY-RUN: Would've updated konflux db")
+        else:
+            await update_konflux_db(runtime, rpm, record)
 
     except (Exception, KeyboardInterrupt) as e:
         tb = traceback.format_exc()
@@ -368,5 +371,8 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
         )
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
-        runtime.konflux_db.add_build(build_record)
-        rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])
+        if not runtime.dry_run:
+            runtime.konflux_db.add_build(build_record)
+            rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])
+        else:
+            rpm.logger.info('DRY-RUN: Would have stored build info for %s', build["nvr"])
