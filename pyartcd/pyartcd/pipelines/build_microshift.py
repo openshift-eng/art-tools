@@ -131,10 +131,8 @@ class BuildMicroShiftPipeline:
         except Exception as build_err:
             self._logger.error(build_err)
             # Send a message to #microshift-alerts for STREAM failures
-            try:
-                await self._notify_microshift_alerts(f"{version}-{release}")
-            except Exception as slack_err:
-                self._logger.error(slack_err)
+            await self._notify_microshift_alerts(f"{version}-{release}")
+            raise
 
     async def _rebase_and_build_for_named_assembly(self):
         # Do a sanity check
@@ -170,11 +168,7 @@ class BuildMicroShiftPipeline:
         else:
             # Rebase and build microshift
             version, release = self.generate_microshift_version_release(release_name)
-            try:
-                nvrs = await self._rebase_and_build_rpm(version, release, custom_payloads=None)
-            except Exception as build_err:
-                raise build_err
-
+            nvrs = await self._rebase_and_build_rpm(version, release, custom_payloads=None)
             message = f"microshift for assembly {self.assembly} has been successfully built."
             await self.slack_client.say_in_thread(message)
 
