@@ -249,7 +249,7 @@ class RPMBuilder:
                 else:
                     logger.warning("DRY RUN - Would have downloaded Brew logs with %s", cmd)
             failed_tasks = {task_id for task_id, error in errors.items() if error is not None}
-            if not failed_tasks:
+            if not failed_tasks and not self._dry_run:
                 # All tasks complete.
                 with self._runtime.shared_koji_client_session() as koji_api:
                     if not koji_api.logged_in:
