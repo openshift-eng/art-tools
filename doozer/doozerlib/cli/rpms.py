@@ -371,8 +371,5 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
         )
 
         runtime.konflux_db.bind(KonfluxBuildRecord)
-        if not runtime.dry_run:
-            runtime.konflux_db.add_build(build_record)
-            rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])
-        else:
-            rpm.logger.info('DRY-RUN: Would have stored build info for %s', build["nvr"])
+        runtime.konflux_db.add_build(build_record)
+        rpm.logger.info('Brew build info for %s stored successfully', build["nvr"])
