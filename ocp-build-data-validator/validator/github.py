@@ -136,13 +136,9 @@ def uses_ssh(data):
 
 def has_permitted_repo(data):
     permitted = [
-        'redhat-cne/hw-event-proxy',  # max version 4.10
-        'redhat-cne/hw-event-proxy-operator',  # max version 4.10
         'redhat-cne/cloud-event-proxy',  # max version 4.12
-        'openshift-kni/cluster-group-upgrades-operator',  # max version 4.10
         'operator-framework/operator-lifecycle-manager',  # max version 4.7 3.11
-        'operator-framework/operator-marketplace',  # max version 4.12
-        'operator-framework/operator-registry',  # max version 4.7
+        'operator-framework/operator-marketplace',  # max version 4.19
         'openshift/jenkins',  # max version 3.11
         'openshift/kubernetes-metrics-server',  # max version 3.11
         'openshift/kuryr-kubernetes',  # max version 3.11
@@ -167,18 +163,11 @@ def has_permitted_repo(data):
         'openshift/node_exporter',  # max version 3.11
         'openshift/kubernetes',  # config tweak
         'openshift/prometheus-alertmanager',  # max version 3.11
-        'openshift/eventrouter',  # max version 4.6
         'openshift/cluster-capacity',  # max version 3.11
-        'openshift-eng/ocp-build-data',  # max version 4.12
+        'openshift-eng/ocp-build-data',  # max version 4.19
         'openshift/node-problem-detector',  # max version 3.11
         'openshift/kube-state-metrics',  # max version 3.11
         'openshift/c2s-install',  # max version 3.11
-        'kube-reporting/metering-operator',  # max version 4.8
-        'kube-reporting/hive',  # max version 4.8
-        'kube-reporting/hadoop',  # max version 4.8
-        'kube-reporting/helm',  # max version 4.8
-        'kube-reporting/presto',  # max version 4.8
-        'kube-reporting/ghostunnel',  # max version 4.8
         'org/repo'  # For testing
     ]
     regex = re.compile(r'^git@(?P<host>[^:]+):(?P<org>[^/]+)/(?P<repo>.*?)(\.git)?$')
