@@ -495,8 +495,6 @@ class PromotePipeline:
             rhcos_version = release_info.get("displayVersions", {}).get("machine-os", {}).get("Version", "")
             if rhcos_version:
                 data["content"][arch]["rhcos_version"] = rhcos_version
-        # sync rhcos srpms
-        await self.sync_rhcos_srpms(assembly_type, data)
 
         self.create_cincinnati_prs(assembly_type, data)
 
@@ -527,29 +525,6 @@ class PromotePipeline:
     def _get_image_stream_name(assembly_type: AssemblyTypes, arch: str):
         go_arch_suffix = go_suffix_for_arch(arch)
         return f'4-dev-preview{go_arch_suffix}' if assembly_type == AssemblyTypes.PREVIEW else f'release{go_arch_suffix}'
-
-    async def sync_rhcos_srpms(self, assembly_type, data):
-        # Sync potential pre-release source on which RHCOS depends. See ART-6419 for details.
-        major, minor = isolate_major_minor_in_group(self.group)
-        if assembly_type in [AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
-            src_output_dir = self._working_dir / "rhcos_src_staging"
-            src_output_dir.mkdir(parents=True, exist_ok=True)
-            for arch in data['content']:
-                if arch != "multi":
-                    cmd = [
-                        "doozer",
-                        "--group", self.group,
-                        "--assembly", self.assembly,
-                        "config:rhcos-srpms",
-                        "--version", data["content"][arch]['rhcos_version'],
-                        "--arch", arch,
-                        "-o", str(src_output_dir),
-                    ]
-                    await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
-            # Publish the clients to our S3 bucket.
-            await sync_dir_to_s3_mirror(str(src_output_dir), "/pub/openshift-v4/sources/packages/", "", "", dry_run=self.runtime.dry_run, remove_old=False)
-        else:
-            self._logger.info("Skipping sync srpms of rhcos")
 
     def send_promote_complete_email(self, name, release_infos):
         content = "PullSpecs: \n"
