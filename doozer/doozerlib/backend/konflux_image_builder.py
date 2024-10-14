@@ -344,7 +344,7 @@ class KonfluxImageBuilder:
 
             build_record = KonfluxBuildRecord(**build_record_params)
             metadata.runtime.konflux_db.add_build(build_record)
-            self._logger.info('Konflux build info stored successfully')
+            self._logger.info(f'[{metadata.distgit_key}] Konflux build info stored successfully with status {outcome}')
 
         except Exception as err:
             self._logger.error('Failed writing record to the konflux DB: %s', err)
