@@ -1,0 +1,11 @@
+name = "openshift-mirror-list"
+main = "src/index.ts"
+compatibility_date = "2023-03-01"
+
+workers_dev = true
+
+# Bind an R2 Bucket. Use R2 to store arbitrarily large blobs of data, such as files.
+# Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
+r2_buckets  = [
+    { binding = "BUCKET_bucketname", bucket_name = "lgarciaac-bucket", preview_bucket_name = "lgarciaac-bucket" }
+]
