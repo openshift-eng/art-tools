@@ -85,9 +85,9 @@ class BigQueryClient:
         query += ')'
         self.query(query)
 
-    def select(self, where_clauses: typing.List[BinaryExpression] = None,
-               order_by_clause: typing.Optional[UnaryExpression] = None,
-               limit=None) -> RowIterator:
+    async def select(self, where_clauses: typing.List[BinaryExpression] = None,
+                     order_by_clause: typing.Optional[UnaryExpression] = None,
+                     limit=None) -> RowIterator:
         """
         Execute a SELECT statement and return a generator object with the results.
 
@@ -116,5 +116,4 @@ class BigQueryClient:
             assert limit >= 0, 'LIMIT expects a non-negative integer literal or parameter '
             query += f' LIMIT {limit}'
 
-        results = self.query(query)
-        return results
+        return await self.query_async(query)

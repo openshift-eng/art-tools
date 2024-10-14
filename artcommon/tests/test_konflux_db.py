@@ -6,7 +6,7 @@ from unittest.mock import patch
 from google.cloud.bigquery import SchemaField
 
 from artcommonlib import constants
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 
@@ -118,13 +118,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
                 order_by='start_time', sorting='ASC', limit=-1)
 
     @patch('artcommonlib.konflux.konflux_db.datetime')
-    @patch('artcommonlib.bigquery.BigQueryClient.query')
-    def test_get_latest_build(self, query_mock, datetime_mock):
+    @patch('artcommonlib.bigquery.BigQueryClient.query_async')
+    async def test_get_latest_build(self, query_mock, datetime_mock):
         now = datetime(2022, 1, 1, 12, 0, 0)
         lower_bound = now - 3 * timedelta(days=30)
         datetime_mock.now.return_value = now
 
-        self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success')
+        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success')
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' AND end_time IS NOT NULL "
@@ -135,7 +135,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         query_mock.reset_mock()
         like = {'release': 'b45ea65'}
-        self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', extra_patterns=like)
+        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', extra_patterns=like)
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' AND end_time IS NOT NULL "
@@ -146,8 +146,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
                                            "ORDER BY `start_time` DESC LIMIT 1")
 
         query_mock.reset_mock()
-        asyncio.run(self.db.get_latest_builds(names=['ironic', 'ose-installer-artifacts'], group='openshift-4.18',
-                                              outcome='success'))
+        await self.db.get_latest_builds(names=['ironic', 'ose-installer-artifacts'],
+                                        group='openshift-4.18',
+                                        outcome=KonfluxBuildOutcome.SUCCESS)
 
         actual_calls = [query_mock.call_args_list[x][0][0] for x in range(0, 2)]
         self.assertIn(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
