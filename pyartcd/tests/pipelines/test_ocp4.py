@@ -858,11 +858,11 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
     @patch("builtins.open")
     @patch("pyartcd.record.parse_record_log", return_value={
         'build': [
-            {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr1,nvr2'},
-            {'has_olm_bundle': '0', 'status': '0', 'nvrs': 'nvr3'},
-            {'has_olm_bundle': '1', 'status': '1', 'nvrs': 'nvr4'},
-            {'has_olm_bundle': '1', 'status': '0', 'nvrs': ''},
-            {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr5'},
+            {'has_olm_bundle': '1', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr1,nvr2'},
+            {'has_olm_bundle': '0', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr3'},
+            {'has_olm_bundle': '1', 'status': '1', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr4'},
+            {'has_olm_bundle': '1', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': ''},
+            {'has_olm_bundle': '1', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr5'},
         ]
     })
     @patch("pyartcd.util.sync_images")
@@ -902,11 +902,11 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
     @patch("builtins.open")
     @patch("pyartcd.record.parse_record_log", return_value={
         'build': [
-            {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr1,nvr2'},
-            {'has_olm_bundle': '0', 'status': '0', 'nvrs': 'nvr3'},
-            {'has_olm_bundle': '1', 'status': '1', 'nvrs': 'nvr4'},
-            {'has_olm_bundle': '1', 'status': '0', 'nvrs': ''},
-            {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr5'},
+            {'has_olm_bundle': '1', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr1,nvr2'},
+            {'has_olm_bundle': '0', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr3'},
+            {'has_olm_bundle': '1', 'status': '1', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr4'},
+            {'has_olm_bundle': '1', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': ''},
+            {'has_olm_bundle': '1', 'status': '0', 'dependents': '', 'distgit': 'nvr', 'nvrs': 'nvr5'},
         ]
     })
     @patch("pyartcd.jenkins.start_olm_bundle")
