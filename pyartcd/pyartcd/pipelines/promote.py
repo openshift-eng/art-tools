@@ -1762,6 +1762,7 @@ class PromotePipeline:
             self._logger.info(f"Cincinnati PR {pr.html_url} created")
         except GithubException as e:
             self._logger.warning(f"Failed to update upstream repo: {e}")
+            raise ValueError(f"Failed to update upstream repo: {e}")
 
         if not self.skip_ota_notification:
             new_slackclient = self.runtime.new_slack_client()
