@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from pathlib import Path
+import traceback
 from typing import Optional
 
 import click
@@ -159,7 +160,8 @@ class KonfluxBuildCli:
             if isinstance(result, Exception):
                 image_name = metas[index].distgit_key
                 failed_images.append(image_name)
-                LOGGER.error(f"Failed to build {image_name}: {result}")
+                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                LOGGER.error(f"Failed to build {image_name}: {result}; {stack_trace}")
         if failed_images:
             raise DoozerFatalError(f"Failed to build images: {failed_images}")
         LOGGER.info("Build complete")
