@@ -100,10 +100,10 @@ class ImagesHealthPipeline:
                 msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
             else:
                 msg += (f'Last {self.url_text(latest_success_bi_task_url, "success")} '
-                        f'was {latest_success_idx} attempts ago on {latest_success_bi_dt}')
+                        f'was {latest_success_idx} attempts ago')
 
             # Append the Art-Dash link to the message
-            msg += f'. See more details: {self.url_text(art_dash_link, "art-dashboard link")}'
+            msg += f'. {self.url_text(art_dash_link, "Details")}'
             self.concerns[key].append(msg)
 
         else:
