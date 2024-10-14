@@ -156,21 +156,15 @@ class KonfluxDb:
             -> typing.List[konflux_build_record.KonfluxBuildRecord]:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
-        Filter results that are None, which means that no builds have been found for that specific component
         """
 
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            results = await asyncio.gather(*(loop.run_in_executor(
-                pool, self.get_latest_build, name, group, outcome, assembly, el_target, artifact_type, engine,
-                completed_before)
-                for name in names))
+        return await asyncio.gather(*[
+            self.get_latest_build(name, group, outcome, assembly, el_target, artifact_type, engine, completed_before)
+            for name in names])
 
-        return [r for r in results if r]
-
-    def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-                         assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
-                         engine: Engine = None, completed_before: datetime = None, extra_patterns: dict = {})\
+    async def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+                               assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
+                               engine: Engine = None, completed_before: datetime = None, extra_patterns: dict = {}) \
             -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
         """
         Search for the latest Konflux build information in BigQuery.
@@ -212,8 +206,8 @@ class KonfluxDb:
         if engine:
             base_clauses.append(Column('engine', String) == str(engine))
 
-        for name, value in extra_patterns.items():
-            base_clauses.append(Column(name, String).like(f"%{value}%"))
+        for col_name, col_value in extra_patterns.items():
+            base_clauses.append(Column(col_name, String).like(f"%{col_value}%"))
 
         for window in range(12):
             end_search = completed_before - window * 3 * timedelta(days=30)
@@ -225,7 +219,7 @@ class KonfluxDb:
                 Column('start_time', DateTime) < end_search,
             ])
 
-            results = self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
+            results = await self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
 
             try:
                 return self.from_result_row(next(results))
@@ -235,8 +229,8 @@ class KonfluxDb:
                 continue
 
         # If we got here, no builds have been found in the whole 36 months period
-        self.logger.warning('No builds found for %s with status %s in assembly %s and target %s',
-                            name, outcome.value, assembly, el_target)
+        self.logger.warning('No builds found for %s in %s with status %s in assembly %s and target %s',
+                            name, group, outcome.value, assembly, el_target)
         return None
 
     def from_result_row(self, row: Row) -> typing.Optional[KonfluxRecord]:
