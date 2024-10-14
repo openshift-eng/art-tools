@@ -37,7 +37,7 @@ class BigQueryClient:
         Execute a query in BigQuery and return a generator object with the results
         """
 
-        self.logger.debug('Executing query: %s', query)
+        self.logger.info('Executing query: %s', query)
 
         try:
             results = self.client.query(query).result()
