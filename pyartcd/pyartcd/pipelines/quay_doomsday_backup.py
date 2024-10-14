@@ -51,17 +51,13 @@ class QuayDoomsdaySync:
             f"s3://ocp-doomsday-registry/release-image/{path}"
         ]
 
-        try:
-            cmd_assert(mirror_cmd, realtime=True, retries=N_RETRIES)
-            if self.runtime.dry_run:
-                self.runtime.logger.info("[DRY RUN] Would have run %s", " ".join(aws_cmd))
-            else:
-                sleep(5)
-                cmd_assert(aws_cmd, realtime=True, retries=N_RETRIES)
-                sleep(5)
-
-        except ChildProcessError:
-            self.runtime.logger.error("Failed to sync arch %s", arch)
+        cmd_assert(mirror_cmd, realtime=True, retries=N_RETRIES)
+        if self.runtime.dry_run:
+            self.runtime.logger.info("[DRY RUN] Would have run %s", " ".join(aws_cmd))
+        else:
+            sleep(5)
+            cmd_assert(aws_cmd, realtime=True, retries=N_RETRIES)
+            sleep(5)
 
         if os.path.exists(path):
             self.runtime.logger.info("Cleaning dir: %s", path)
