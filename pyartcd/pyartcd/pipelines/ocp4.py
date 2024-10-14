@@ -777,17 +777,17 @@ class Ocp4Pipeline:
 
         records = record_log.get('build', [])
         operator_nvrs = []
-
+        operator_nvrs_map = {}
+        operator_deps = []
         for record in records:
             if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                 operator_nvrs.append(record['nvrs'].split(',')[0])
-        for record in records:
-            # If failed build has dependents, remove it operator bundle from list because olm_bundle job won't succeed
             if record['status'] != '0' and record.get('nvrs', None) and record.get('dependents', None):
-                for dep in record['dependents'].split(','):
-                    for record in records:
-                        if record['distgit'] == dep and record.get('nvrs', None):
-                            operator_nvrs.remove(record['nvrs'].split(',')[0])
+                operator_deps.extend([dep for dep in record['dependents'].split(',') if dep not in operator_deps])
+            operator_nvrs_map[record['distgit']] = record.get('nvrs')
+        for dep in operator_deps:
+            if dep in operator_nvrs_map and operator_nvrs_map[dep] in operator_nvrs:
+                operator_nvrs.remove(operator_nvrs_map[dep])
 
         await util.sync_images(
             version=self.version.stream,
