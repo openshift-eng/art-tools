@@ -539,4 +539,12 @@ class KonfluxImageBuilder:
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
+                except exceptions.ApiException as e:
+                    if e.status == 410:
+                        # If the last result is too old, an `ApiException` exception will be thrown with
+                        # `code` 410. In that case we have to recover by retrying without resource_version.
+                        self._logger.debug("%s: Resource version %s is too old. Recovering...", pipelinerun_name, resource_version)
+                        continue
+                    raise
+
         return await exectools.to_thread(_inner)
