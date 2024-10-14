@@ -37,6 +37,7 @@ KONFLUX_DEFAULT_PIPRLINE_DOCKER_BUILD_BUNDLE_PULLSPEC = "quay.io/konflux-ci/tekt
 KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test"   # FIXME: This is a temporary repo.
 KONFLUX_UI_HOST = "https://konflux.apps.stone-prod-p02.hjvn.p1.openshiftapps.com"
 KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
+MAX_KONFLUX_BUILD_QUEUE_SIZE = 10  # how many concurrent Konflux pipeline can we spawn?
 
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
