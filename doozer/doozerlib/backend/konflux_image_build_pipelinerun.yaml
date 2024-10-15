@@ -209,8 +209,8 @@ spec:
       runAfter:
         - clone-repository
       workspaces:
-        - name: basic-auth
-          workspace: git-auth
+      - name: git-basic-auth
+        workspace: git-auth
     - matrix:
         params:
         - name: PLATFORM
