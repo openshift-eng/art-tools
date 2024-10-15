@@ -10,7 +10,7 @@ from specfile import Specfile
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib import exectools
-from pyartcd import constants
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from elliottlib import util as elliottutil
@@ -109,13 +109,28 @@ class RebuildGolangRPMsPipeline:
             email = "aos-team-art@redhat.com"
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
 
+        failed_rpms = []
         for el_v, rpms in non_art_rpms_for_rebuild.items():
             for rpm in rpms:
                 try:
                     await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
                 except Exception as err:
                     _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
+                    failed_rpms.append(rpm)
                     continue
+
+        if failed_rpms:
+            await self.notify_failed_rpms(failed_rpms)
+
+    async def notify_failed_rpms(self, rpms: list):
+        slack_client = self.runtime.new_slack_client()
+        major, minor = self.ocp_version.split('.')  # 4.18 => 4, 18
+        channel = f'#art-release-{major}-{minor}'  # e.g. #art-release-4-18
+        slack_client.bind_channel(channel)
+        message = f'Following golang RPMs failed to rebuild in {self.ocp_version}:'
+        message += '\n'.join(rpms)
+        message += f'\nSee {jenkins.get_build_url()} for details'
+        await slack_client.say(message)
 
     def get_art_built_rpms(self):
         github_token = os.environ.get('GITHUB_TOKEN')
