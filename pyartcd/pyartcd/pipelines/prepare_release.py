@@ -758,9 +758,10 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
     async def set_advisory_dependencies(self, advisories):
         # dict keys should ship after values.
         blocked_by = {
-            'rpm': {'image', 'extras'},
+            'image': {'rpm'},
+            'extras': {'rpm'},
             'metadata': {'image', 'extras'},
-            'microshift': {'rpm', 'image'},
+            'microshift': {'image', 'rpm'},
         }
         for target_kind in blocked_by.keys():
             target_advisory_id = advisories.get(target_kind, 0)
