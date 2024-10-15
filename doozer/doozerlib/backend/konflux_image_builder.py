@@ -190,8 +190,12 @@ class KonfluxImageBuilder:
             raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
         build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
+
+        # Replace 'openshift-4-18-ose-installer-terraform' with '4-18-ose-installer-terraform'
+        formatted_pipelinerun_name = component_name.replace("openshift-", "", 1) if component_name.startswith("openshift-") else component_name
+
         pipelinerun_manifest = self._new_pipelinerun(
-            f"doozer-build-{component_name}-",
+            formatted_pipelinerun_name,
             app_name,
             component_name,
             git_url,
@@ -203,7 +207,7 @@ class KonfluxImageBuilder:
 
         if self._config.dry_run:
             pipelinerun_manifest = resource.ResourceInstance(dyn_client, pipelinerun_manifest)
-            pipelinerun_manifest.metadata.name = f"doozer-build-{component_name}-dry-run"
+            pipelinerun_manifest.metadata.name = f"{formatted_pipelinerun_name}-dry-run"
             self._logger.warning(f"[DRY RUN] [%s] Would have created PipelineRun: {pipelinerun_manifest.metadata.name}", metadata.distgit_key)
             return pipelinerun_manifest
 
