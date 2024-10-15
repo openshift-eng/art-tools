@@ -195,7 +195,7 @@ class KonfluxImageBuilder:
         formatted_pipelinerun_name = component_name.replace("openshift-", "", 1) if component_name.startswith("openshift-") else component_name
 
         pipelinerun_manifest = self._new_pipelinerun(
-            formatted_pipelinerun_name,
+            f"{formatted_pipelinerun_name}-",
             app_name,
             component_name,
             git_url,
