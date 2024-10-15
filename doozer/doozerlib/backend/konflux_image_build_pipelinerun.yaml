@@ -272,7 +272,7 @@ spec:
         resolver: git
         params:
         - name: url
-          value: https://github.com/openshift-priv/art-konflux-template.git
+          value: https://github.com/ashwindasr/art-konflux-template.git
         - name: revision
           value: main
         - name: pathInRepo
