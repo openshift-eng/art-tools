@@ -174,6 +174,8 @@ class KonfluxRebaser:
                 if prev_private_fix:
                     private_fix = True
 
+        uuid_tag = f"{version}-{self._runtime.uuid}"
+
         # Determine if parent images contain private fixes
         downstream_parents: Optional[List[str]] = None
         if "from" in metadata.config:
@@ -184,7 +186,6 @@ class KonfluxRebaser:
             failed_parents = [parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status]
             if failed_parents:
                 raise IOError(f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}")
-            uuid_tag = f"{version}-{self._runtime.uuid}"
             downstream_parents, parent_private_fix = self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
             # If any of the parent images are private, this image is private
             if parent_private_fix:
