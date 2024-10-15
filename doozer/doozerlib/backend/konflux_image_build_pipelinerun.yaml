@@ -271,8 +271,10 @@ spec:
       taskRef:
         resolver: git
         params:
-        - name: url
-          value: https://github.com/ashwindasr/art-konflux-template.git
+        - name: org
+          value: ashwindasr
+        - name: repo
+          value: art-konflux-template
         - name: revision
           value: main
         - name: pathInRepo
