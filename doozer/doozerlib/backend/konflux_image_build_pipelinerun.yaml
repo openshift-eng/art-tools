@@ -190,6 +190,27 @@ spec:
         workspace: git-auth
       - name: netrc
         workspace: netrc
+    - name: art-db-test
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: ashwindasr
+          - name: repo
+            value: art-konflux-template
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: custom-tasks/art-store-to-db.yaml
+          - name: token
+            value: ash-konflux-repo-token
+          - name: tokenKey
+            value: token
+      runAfter:
+        - clone-repository
+      workspaces:
+        - name: basic-auth
+          workspace: git-auth
     - matrix:
         params:
         - name: PLATFORM
@@ -267,36 +288,6 @@ spec:
         operator: in
         values:
         - "true"
-    - name: art-db-test
-      taskRef:
-        resolver: git
-        params:
-        - name: org
-          value: ashwindasr
-        - name: repo
-          value: art-konflux-template
-        - name: revision
-          value: main
-        - name: pathInRepo
-          value: custom-tasks/art-store-to-db.yaml
-        - name: token
-          value: ash-konflux-repo-token
-        - name: tokenKey
-          value: token
-      runAfter:
-      - build-image-index
-      when:
-      - input: $(tasks.init.results.build)
-        operator: in
-        values:
-          - "true"
-      - input: $(params.build-source-image)
-        operator: in
-        values:
-          - "true"
-      workspaces:
-      - name: basic-auth
-        workspace: git-auth
     - name: build-source-image
       params:
       - name: BINARY_IMAGE
