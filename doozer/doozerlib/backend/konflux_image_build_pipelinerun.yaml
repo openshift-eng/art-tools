@@ -208,9 +208,6 @@ spec:
             value: token
       runAfter:
         - clone-repository
-      workspaces:
-      - name: git-basic-auth
-        workspace: git-auth
     - matrix:
         params:
         - name: PLATFORM
