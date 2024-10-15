@@ -277,6 +277,10 @@ spec:
           value: main
         - name: pathInRepo
           value: custom-tasks/art-store-to-db.yaml
+        - name: token
+          value: ash-konflux-repo-token
+        - name: tokenKey
+          value: token
       runAfter:
       - build-image-index
       when:
