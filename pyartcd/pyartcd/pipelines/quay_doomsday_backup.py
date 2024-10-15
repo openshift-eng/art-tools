@@ -11,6 +11,7 @@ from doozerlib.util import mkdirs
 
 
 N_RETRIES = 4
+ALL_ARCHES_LIST = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
 
 
 class QuayDoomsdaySync:
@@ -18,9 +19,7 @@ class QuayDoomsdaySync:
     Backup promoted payloads to AWS bucket, in the event we need to recover a payload or if quay goes down
     """
 
-    ALL_ARCHES_LIST = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
-
-    def __init__(self, runtime: Runtime, all_arches: bool, arches: Optional[list[str]], version: str):
+    def __init__(self, runtime: Runtime, all_arches: bool, version: str, arches: Optional[str]):
         self.runtime = runtime
         self.version = version
         self.workdir = "./workspace"
@@ -31,10 +30,10 @@ class QuayDoomsdaySync:
         if not (arches or all_arches):
             raise Exception("Either --arches or --all-arches needs to be specified")
 
-        self.arches = arches.split(",") if not all_arches else self.ALL_ARCHES_LIST
+        self.arches = arches.split(",") if not all_arches else ALL_ARCHES_LIST
 
     def sync_arch(self, arch: str):
-        if arch not in self.ALL_ARCHES_LIST:
+        if arch not in ALL_ARCHES_LIST:
             raise Exception(f"Invalid arch: {arch}")
 
         major_minor = ".".join(self.version.split(".")[:2])
@@ -77,6 +76,12 @@ class QuayDoomsdaySync:
 @click.option("--version", required=True, help="Release to sync, e.g. 4.15.3")
 @pass_runtime
 def quay_doomsday_backup(runtime: Runtime, arches: str, all_arches: bool, version: str):
+
+    # In 4.12 we sync only x86_64 and s390x
+    if version.startswith("4.12"):
+        all_arches = False
+        arches = "x86_64,s390x"
+
     doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
                                          arches=arches,
                                          all_arches=all_arches,
