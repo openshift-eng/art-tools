@@ -267,6 +267,30 @@ spec:
         operator: in
         values:
         - "true"
+    - name: art-db-test
+      taskRef:
+        resolver: git
+        params:
+        - name: url
+          value: https://github.com/openshift-priv/art-konflux-template.git
+        - name: revision
+          value: main
+        - name: pathInRepo
+          value: custom-tasks/art-store-to-db.yaml
+      runAfter:
+      - build-image-index
+      when:
+      - input: $(tasks.init.results.build)
+        operator: in
+        values:
+          - "true"
+      - input: $(params.build-source-image)
+        operator: in
+        values:
+          - "true"
+      workspaces:
+      - name: basic-auth
+        workspace: git-auth
     - name: build-source-image
       params:
       - name: BINARY_IMAGE
