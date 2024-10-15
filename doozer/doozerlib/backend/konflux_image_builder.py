@@ -17,6 +17,7 @@ from kubernetes.client import Configuration
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
+from artcommonlib.exectools import limit_concurrency
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
@@ -64,6 +65,7 @@ class KonfluxImageBuilder:
         self._config = config
         self._logger = logger or LOGGER
 
+    @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
         """ Build a container image with Konflux. """
         metadata.build_status = False
