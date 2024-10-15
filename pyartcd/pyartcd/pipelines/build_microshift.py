@@ -471,7 +471,7 @@ class BuildMicroShiftPipeline:
         slack_thread = slack_response["message"]["ts"]
         if doozer_log_file.exists():
             await slack_client.upload_file(
-                file=doozer_log_file,
+                file=str(doozer_log_file),
                 filename="microshift-build.log",
                 initial_comment="Build logs",
                 thread_ts=slack_thread)
