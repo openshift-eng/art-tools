@@ -496,8 +496,9 @@ class BuildMicroShiftPipeline:
             raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build microshift-bootc image")
 
         # Rebase and build bootc image
-        release_name = util.get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
-        version, release = self.generate_microshift_version_release(release_name)
+        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
+        version = f"v{major}.{minor}.0"
+        release = f"{timestamp}.p?"
         rebase_cmd = [
             "doozer",
             "--group", self.group,
