@@ -472,6 +472,29 @@ class KonfluxImageBuilder:
             elif task["name"] == "apply-tags":
                 task["params"].append({"name": "ADDITIONAL_TAGS", "value": list(additional_tags)})
 
+        # Add a new custom task to store status of build after it is completed on Konflux
+        updated_tasks = []
+        for task in obj["spec"]["pipelineSpec"]["tasks"]:
+            if task["name"] == "build-images":
+                updated_tasks.append({
+                    "name": "art-db",
+                    "taskRef": {
+                        "resolver": "git",
+                        "params": [
+                            {"name": "org", "value": "openshift-priv"},
+                            {"name": "repo", "value": "art-konflux-template"},
+                            {"name": "revision", "value": "main"},
+                            {"name": "pathInRepo", "value": "custom-tasks/art-store-to-db.yaml"},
+                            {"name": "token", "value": "openshift-art-build-bot-read-only"},
+                            {"name": "tokenKey", "value": "token"},
+                        ]
+                    },
+                    "runAfter": ["build-image-index"],
+                })
+
+            updated_tasks.append(task)
+        obj["spec"]["pipelineSpec"]["tasks"] = updated_tasks
+
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
         return obj
 
