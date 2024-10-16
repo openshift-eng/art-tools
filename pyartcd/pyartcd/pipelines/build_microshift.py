@@ -95,6 +95,9 @@ class BuildMicroShiftPipeline:
             else:
                 await self._prepare_advisory(advisories['microshift'])
 
+        # TODO: this should only run for named assemblies
+        await self._rebase_and_build_bootc()
+
     async def _rebase_and_build_for_stream(self):
         # Do a sanity check
         if self.assembly_type != AssemblyTypes.STREAM:
@@ -312,7 +315,7 @@ class BuildMicroShiftPipeline:
 
     @staticmethod
     def generate_microshift_version_release(ocp_version: str, timestamp: Optional[str] = None):
-        """ Generate version and release strings for microshift rpm.
+        """ Generate version and release strings for microshift builds
         Example version-releases:
         - 4.12.42-202210011234
         - 4.13.0~rc.4-202210011234
@@ -477,6 +480,50 @@ class BuildMicroShiftPipeline:
                 thread_ts=slack_thread)
         else:
             await slack_client.say("Logs are not available.", thread_ts=slack_thread)
+
+    async def _rebase_and_build_bootc(self):
+        major, minor = isolate_major_minor_in_group(self.group)
+        # do not run for version < 4.18
+        if major < 4 or (major == 4 and minor < 18):
+            self._logger.info("Skipping bootc image build for version < 4.18")
+            return
+
+        kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+        if not kubeconfig:
+            raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build microshift-bootc image")
+
+        # Rebase and build bootc image
+        release_name = util.get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
+        version, release = self.generate_microshift_version_release(release_name)
+        rebase_cmd = [
+            "doozer",
+            "--group", self.group,
+            "--assembly", self.assembly,
+            "--latest-parent-version",
+            "-i", "microshift-bootc",
+            "beta:images:konflux:rebase",
+            "--version", version,
+            "--release", release,
+            "--message", f"Updating Dockerfile version and release {version}-{release}",
+        ]
+        if self.runtime.dry_run:
+            rebase_cmd.append("--dry-run")
+        else:
+            rebase_cmd.append("--push")
+        await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
+
+        build_cmd = [
+            "doozer",
+            "--group", self.group,
+            "--assembly", self.assembly,
+            "--latest-parent-version",
+            "-i", "microshift-bootc",
+            "beta:images:konflux:build",
+            "--konflux-kubeconfig", kubeconfig,
+        ]
+        if self.runtime.dry_run:
+            build_cmd.append("--dry-run")
+        await exectools.cmd_assert_async(build_cmd, env=self._doozer_env_vars)
 
 
 @cli.command("build-microshift")
