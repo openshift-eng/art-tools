@@ -166,8 +166,9 @@ class KonfluxImageBuilder:
         self._logger.info(f"[%s] Using application: {app['metadata']['name']}", metadata.distgit_key)
 
         # Ensure the component resource exists
-        # Openshift doesn't allow dots in any of its fields, so we replace them with dashes
-        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-")
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
+
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
