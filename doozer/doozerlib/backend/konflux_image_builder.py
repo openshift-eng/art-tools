@@ -191,11 +191,11 @@ class KonfluxImageBuilder:
         build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
 
-        # Replace 'openshift-4-18-ose-installer-terraform' with '4-18-ose-installer-terraform'
+        # 'openshift-4-18-ose-installer-terraform' -> '4-18-ose-installer-terraform'
         formatted_pipelinerun_name = component_name.removeprefix("openshift-")
 
         pipelinerun_manifest = self._new_pipelinerun(
-            f"{formatted_pipelinerun_name}-",
+            f"{formatted_pipelinerun_name}-",  # generate name needs a trailing dash
             app_name,
             component_name,
             git_url,
