@@ -192,7 +192,7 @@ class KonfluxImageBuilder:
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
 
         # Replace 'openshift-4-18-ose-installer-terraform' with '4-18-ose-installer-terraform'
-        formatted_pipelinerun_name = component_name.replace("openshift-", "", 1) if component_name.startswith("openshift-") else component_name
+        formatted_pipelinerun_name = component_name.removeprefix("openshift-")
 
         pipelinerun_manifest = self._new_pipelinerun(
             f"{formatted_pipelinerun_name}-",
