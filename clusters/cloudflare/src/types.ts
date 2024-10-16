@@ -1,5 +1,9 @@
-export type Env = {
-    [K in `BUCKET_${string}`]: R2Bucket;
+export interface Env {
+    AWS_ACCESS_KEY_ID: string;
+    AWS_SECRET_ACCESS_KEY: string;
+    BUCKET_bucketname: string;
+    ENTERPRISE_SERVICE_ACCOUNTS: string;
+    POCKETS_SERVICE_ACCOUNTS: string;
 };
 
 export interface SiteConfig {

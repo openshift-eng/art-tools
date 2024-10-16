@@ -1,6 +1,7 @@
 name = "openshift-mirror-list"
 main = "src/index.ts"
-compatibility_date = "2023-03-01"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
 
 workers_dev = true
 

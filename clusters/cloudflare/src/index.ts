@@ -1,7 +1,12 @@
 import { Env, SiteConfig } from './types';
 import { renderTemplFull } from './render';
 import { getSiteConfig } from './config';
-import { encode, decode } from 'base-64';
+import { AccessChecker  } from './checkAccess';
+import { Buffer } from "buffer";
+import * as crypto from 'crypto';
+
+const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
+const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
 
 async function listBucket(bucket: R2Bucket, options?: R2ListOptions): Promise<R2Objects> {
     // List all objects in the bucket, launch new request if list is truncated
@@ -52,22 +57,6 @@ async function downloadFile(bucket: R2Bucket, filePath: string): Promise<Respons
     return new Response(object.body, {
         headers,
     });
-}
-
-async function hmacCompare(secret: string, data: string): Promise<boolean> {
-    const encoder = new TextEncoder();
-    const key = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(secret),
-        { name: 'HMAC', hash: { name: 'SHA-256' } },
-        false,
-        ['sign', 'verify']
-    );
-
-    const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
-    const expectedSignature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
-
-    return signature === expectedSignature;
 }
 
 
@@ -161,12 +150,20 @@ export default {
 
             // Check if the URI is under enterprise or libra
             if (path.startsWith('/enterprise/') || path.startsWith('/libra/')) {
-                authorized = true
+                const accessChecker = await AccessChecker.create(env);
+                const isAuthorized = await accessChecker.checkEnterpriseAccess(username, password);
+                if (isAuthorized) {
+                    authorized = true
+                }
             }
 
             // Check if the URI is under pockets
             if (path.startsWith('/pockets/')) {
-                authorized = true
+                const accessChecker = await AccessChecker.create(env);
+                const isAuthorized = await accessChecker.checkPocketAccess(username, password);
+                if (isAuthorized) {
+                    authorized = true
+                }
             }
 
             if (!authorized) {
