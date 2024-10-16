@@ -506,6 +506,7 @@ class BuildMicroShiftPipeline:
             "--latest-parent-version",
             "-i", "microshift-bootc",
             # regardless of assembly cutoff time lock to HEAD in release branch
+            # also not passing this breaks the command since we try to use brew to find the appropriate commit
             "--lock-upstream", "microshift-bootc", "HEAD",
             "beta:images:konflux:rebase",
             "--version", version,
@@ -522,6 +523,9 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "--latest-parent-version",
             "-i", "microshift-bootc",
+            # regardless of assembly cutoff time lock to HEAD in release branch
+            # also not passing this breaks the command since we try to use brew to find the appropriate commit
+            "--lock-upstream", "microshift-bootc", "HEAD",
             "beta:images:konflux:build",
             "--konflux-kubeconfig", kubeconfig,
         ]
