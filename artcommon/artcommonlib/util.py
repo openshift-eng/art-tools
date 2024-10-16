@@ -1,7 +1,7 @@
 import logging
 from time import sleep
 from typing import OrderedDict, Optional, Tuple, Iterable, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 import asyncio
 
@@ -151,6 +151,20 @@ def get_assembly_release_date(assembly, group):
 
     except KeyError:
         return None
+
+
+def get_development_cutoff_schedule(group):
+    """
+    Check if there is a release that needs to ship this week.
+    Returns True if there is a release that needs to be prepared, False otherwise.
+    """
+    dev_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/schedule-tasks/?flags_and__in=dev&fields=path,date_finish', headers={'Accept': 'application/json'})
+    dev_schedules.raise_for_status()
+    for release in dev_schedules.json():
+        finish_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
+        if finish_date > date.today():
+            return finish_date <= date.today() + timedelta(days=7)
+    return False
 
 
 def get_inflight(assembly, group):
