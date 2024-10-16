@@ -488,7 +488,9 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     --brew-tag <tag> <product_version> example: --brew-tag rhaos-4.5-rhel-8-candidate OSE-4.5-RHEL-8 --brew-tag .. ..
     """
     runtime: Runtime = config.runtime
-    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True)
+    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True,
+                       # we load disabled to include microshift rpm which still could be pinned for assembly
+                       disabled=True)
     assembly = runtime.assembly
     koji_proxy = runtime.build_retrying_koji_client()
     koji_proxy.gssapi_login()
@@ -539,6 +541,14 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
         # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only collect the rpm builds specific to that assembly.
         tagged_builds = builder.from_tag(tag, inherit, assembly, event)
         component_builds.update(tagged_builds)
+
+        # microshift rpm is special as it builds in its own stream-type assembly named "microshift"
+        # And it builds for named assemblies after we promote
+        # We fetch the appropriate build from microshift assembly based on the given assembly brew event
+        # if it is pinned in the assembly, it will be overridden by the pinned build
+        microshift_build = builder.from_tag(tag, inherit, 'microshift', event, only=['microshift'])
+        component_builds.update(microshift_build)
+
         signable_components |= tagged_builds.keys()  # components from our tag are always signable
 
         # rpms pinned by "is" and group dependencies should take precedence over every build from the tag

@@ -57,9 +57,9 @@ class KonfluxImageBuilder:
     SUPPORTED_ARCHES = {
         # Only x86_64 is supported, until we are on the new cluster
         "x86_64": "linux/x86_64",
-        # "s390x": "linux/s390x",
-        # "ppc64le": "linux/ppc64le",
-        # "aarch64": "linux/arm64",
+        "s390x": "linux/s390x",
+        "ppc64le": "linux/ppc64le",
+        "aarch64": "linux/arm64",
     }
 
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
@@ -129,7 +129,11 @@ class KonfluxImageBuilder:
 
                     status = pipelinerun.status.conditions[0].status
                     outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches)
+                    if self._config.dry_run:
+                        self._logger.info("[%s] Dry run: Would have inserted build record in Konflux DB",
+                                          metadata.distgit_key)
+                    else:
+                        await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches)
 
                     if status != "True":
                         error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",

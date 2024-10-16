@@ -121,10 +121,15 @@ def plashet_config_for_major_minor(major, minor):
     }
 
 
-async def build_plashets(stream: str, release: str, assembly: str = 'stream',
+async def build_plashets(stream: str, release: str,
+                         assembly: str = 'stream',
+                         repos: Sequence[str] = (),
                          doozer_working: str = 'doozer-working',
                          data_path: str = constants.OCP_BUILD_DATA_URL,
-                         data_gitref: str = '', dry_run: bool = False, copy_links: bool = False) -> dict:
+                         data_gitref: str = '',
+                         copy_links: bool = False,
+                         dry_run: bool = False,
+                         ) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
     based on -candidate tags. Based on release state, those repos can be signed
@@ -133,6 +138,7 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
     :param stream: e.g. 4.14
     :param release: e.g. 202304181947.p?
     :param assembly: e.g. assembly name, defaults to 'stream'
+    :param repos: (optional) limit the repos to build to this list. If empty, build all repos. e.g. ['rhel-8-server-ose-rpms']
     :param doozer_working: Doozer working dir
     :param data_path: ocp-build-data fork to use
     :param data_gitref: Doozer data path git [branch / tag / sha] to use
@@ -168,7 +174,10 @@ async def build_plashets(stream: str, release: str, assembly: str = 'stream',
         logger.warning("Assembly name reset to 'stream' because assemblies are not enabled in ocp-build-data.")
 
     # Get plashet repos
-    group_repos = group_config.get('repos', None)
+    group_repos = group_config.get('repos', {}).keys()
+    if repos:
+        logger.info(f"Filtering plashet repos to only the given ones: {repos}")
+        group_repos = [repo for repo in group_repos if repo in repos]
     group_plashet_config = plashet_config_for_major_minor(major, minor)
     plashet_config = {repo: group_plashet_config[repo] for repo in group_plashet_config if repo in group_repos}
     logger.info("Building plashet repos: %s", ", ".join(plashet_config.keys()))

@@ -1,21 +1,16 @@
 import asyncio
-import json
 import logging
 import os
 import re
 import traceback
-from collections import namedtuple
-from datetime import datetime, timezone
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Dict, Iterable, List, Optional, Tuple, cast
-
 import click
+from collections import namedtuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
-from artcommonlib.release_util import isolate_assembly_in_release
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
@@ -28,7 +23,13 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_type, isolate_el_version_in_release, load_group_config, load_releases_config)
+from pyartcd.util import (get_assembly_type,
+                          isolate_el_version_in_release,
+                          load_group_config,
+                          load_releases_config,
+                          default_release_suffix,
+                          get_microshift_builds)
+from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -41,7 +42,8 @@ class BuildMicroShiftPipeline:
 
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
+    def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...],
+                 no_rebase: bool, no_advisory_prep: bool,
                  force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
@@ -49,6 +51,7 @@ class BuildMicroShiftPipeline:
         self.assembly_type = AssemblyTypes.STREAM
         self.payloads = payloads
         self.no_rebase = no_rebase
+        self.no_advisory_prep = no_advisory_prep
         self.force = force
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
@@ -91,7 +94,9 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_for_named_assembly()
             # Check if microshift advisory is defined in assembly
             if 'microshift' not in advisories:
-                self._logger.warning(f"Skipping advisory prep since microshift advisory is not defined in assembly {self.assembly}")
+                self._logger.info(f"Skipping advisory prep since microshift advisory is not defined in assembly {self.assembly}")
+            elif self.no_advisory_prep:
+                self._logger.info("Skipping advisory prep since --no-advisory-prep flag is set")
             else:
                 await self._prepare_advisory(advisories['microshift'])
 
@@ -161,7 +166,7 @@ class BuildMicroShiftPipeline:
                 await self.slack_client.say_in_thread(message)
                 nvrs = list(pinned_nvrs.values())
             else:
-                nvrs = await self._find_builds()
+                nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
 
         if nvrs:
             self._logger.info("Builds already exist: %s", nvrs)
@@ -311,48 +316,18 @@ class BuildMicroShiftPipeline:
         return result
 
     @staticmethod
-    def generate_microshift_version_release(ocp_version: str, timestamp: Optional[str] = None):
-        """ Generate version and release strings for microshift rpm.
+    def generate_microshift_version_release(ocp_version: str):
+        """ Generate version and release strings for microshift builds
         Example version-releases:
         - 4.12.42-202210011234
         - 4.13.0~rc.4-202210011234
         """
-        if not timestamp:
-            timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
         release_version = VersionInfo.parse(ocp_version)
         version = f"{release_version.major}.{release_version.minor}.{release_version.patch}"
         if release_version.prerelease is not None:
             version += f"~{release_version.prerelease.replace('-', '_')}"
-        release = f"{timestamp}.p?"
+        release = default_release_suffix()
         return version, release
-
-    async def _find_builds(self) -> List[str]:
-        """ Find microshift builds in Brew
-        :param release: release field for rebase
-        :return: NVRs
-        """
-        cmd = [
-            "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
-            "-r", "microshift",
-            "find-builds",
-            "-k", "rpm",
-            "--member-only",
-        ]
-        with TemporaryDirectory() as tmpdir:
-            path = f"{tmpdir}/out.json"
-            cmd.append(f"--json={path}")
-            await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
-            with open(path) as f:
-                result = json.load(f)
-
-        nvrs = cast(List[str], result["builds"])
-
-        # microshift builds are special in that they build for each assembly after payload is promoted
-        # and they include the assembly name in its build name
-        # so make sure found nvrs are related to assembly
-        return [n for n in nvrs if isolate_assembly_in_release(n) == self.assembly]
 
     async def _rebase_and_build_rpm(self, version, release: str, custom_payloads: Optional[Dict[str, str]]) -> List[str]:
         """ Rebase and build RPM
@@ -490,19 +465,28 @@ class BuildMicroShiftPipeline:
               help="[Multiple] Release payload to rebase against; Can be a nightly name or full pullspec")
 @click.option("--no-rebase", is_flag=True,
               help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose")
+@click.option("--no-advisory-prep", is_flag=True,
+              help="Skip preparing microshift advisory if applicable.")
 @click.option("--force", is_flag=True,
               help="(For named assemblies) Rebuild even if a build already exists")
+@click.option("--force-bootc", is_flag=True,
+              help="Rebuild microshift-bootc image even if a build already exists")
 @pass_runtime
 @click_coroutine
 async def build_microshift(runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
-                           no_rebase: bool, force: bool):
+                           no_rebase: bool, no_advisory_prep: bool, force: bool, force_bootc: bool):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     try:
         pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-                                           no_rebase=no_rebase, force=force, data_path=data_path, slack_client=slack_client)
+                                           no_rebase=no_rebase, no_advisory_prep=no_advisory_prep,
+                                           force=force, data_path=data_path, slack_client=slack_client)
         await pipeline.run()
+
+        bootc_pipeline = BuildMicroShiftBootcPipeline(runtime=runtime, group=group, assembly=assembly,
+                                                      force=force_bootc, data_path=data_path, slack_client=slack_client)
+        await bootc_pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift pipeline encountered error: {err}"
         reaction = None

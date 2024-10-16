@@ -4,15 +4,18 @@ import re
 import shutil
 import sys
 import tempfile
+import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Union, Iterable
+from typing import Dict, Optional, Union, Iterable, List, cast
+from tempfile import TemporaryDirectory
 
 import yaml
 
 import artcommonlib
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.release_util import isolate_assembly_in_release
 from artcommonlib.assembly import assembly_type
 from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
@@ -684,3 +687,28 @@ def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
             nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
         arch_nightlies[arch] = nightly
     return arch_nightlies
+
+
+async def get_microshift_builds(group, assembly, env):
+    cmd = [
+        "elliott",
+        "--group", group,
+        "--assembly", assembly,
+        "-r", "microshift",
+        "find-builds",
+        "-k", "rpm",
+        "--member-only",
+    ]
+    with TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/out.json"
+        cmd.append(f"--json={path}")
+        await exectools.cmd_assert_async(cmd, env=env)
+        with open(path) as f:
+            result = json.load(f)
+
+    nvrs = cast(List[str], result["builds"])
+
+    # microshift builds are special in that they build for each assembly after payload is promoted
+    # and they include the assembly name in its build name
+    # so make sure found nvrs are related to assembly
+    return [n for n in nvrs if isolate_assembly_in_release(n) == assembly]
