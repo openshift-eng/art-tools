@@ -99,8 +99,7 @@ class BuildMicroShiftPipeline:
             else:
                 await self._prepare_advisory(advisories['microshift'])
 
-        # TODO: this should only run for named assemblies
-        await self._rebase_and_build_bootc()
+            await self._rebase_and_build_bootc()
 
     async def _rebase_and_build_for_stream(self):
         # Do a sanity check
@@ -510,9 +509,7 @@ class BuildMicroShiftPipeline:
             "--release", release,
             "--message", f"Updating Dockerfile version and release {version}-{release}",
         ]
-        if self.runtime.dry_run:
-            rebase_cmd.append("--dry-run")
-        else:
+        if not self.runtime.dry_run:
             rebase_cmd.append("--push")
         await exectools.cmd_assert_async(rebase_cmd, env=self._doozer_env_vars)
 
