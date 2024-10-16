@@ -170,6 +170,13 @@ class KonfluxImageBuilder:
         component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-")
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
+        version = df.labels.get("version")
+        release = df.labels.get("release")
+        if not version or not release:
+            raise ValueError(f"[{metadata.distgit_key}] `version` and `release` labels are required.")
+        additional_tags = [
+            f"{metadata.image_name_short}-{version}-{release}"
+        ]
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
 
         component_manifest = self._new_component(
@@ -199,6 +206,7 @@ class KonfluxImageBuilder:
             git_branch,
             f"{dest_image_repo}:{dest_image_tag}",
             build_platforms,
+            additional_tags=additional_tags,
         )
 
         if self._config.dry_run:
@@ -412,7 +420,8 @@ class KonfluxImageBuilder:
     @staticmethod
     def _new_pipelinerun(generate_name: str, application_name: str, component_name: str,
                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret") -> dict:
+                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                         additional_tags: Sequence[str] = []) -> dict:
         https_url = art_util.convert_remote_git_to_https(git_url)
         # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
         template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
@@ -454,6 +463,8 @@ class KonfluxImageBuilder:
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             if task["name"] == "build-images":
                 task["timeout"] = "12h"
+            elif task["name"] == "apply-tags":
+                task["params"].append({"name": "ADDITIONAL_TAGS", "value": list(additional_tags)})
 
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
         return obj
