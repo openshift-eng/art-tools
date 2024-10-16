@@ -19,18 +19,12 @@ class QuayDoomsdaySync:
     Backup promoted payloads to AWS bucket, in the event we need to recover a payload or if quay goes down
     """
 
-    def __init__(self, runtime: Runtime, all_arches: bool, version: str, arches: Optional[str]):
+    def __init__(self, runtime: Runtime, version: str, arches: Optional[str]):
         self.runtime = runtime
         self.version = version
         self.workdir = "./workspace"
 
-        if arches and all_arches:
-            raise Exception("Cannot specify both --arches and --all-arches")
-
-        if not (arches or all_arches):
-            raise Exception("Either --arches or --all-arches needs to be specified")
-
-        self.arches = arches.split(",") if not all_arches else ALL_ARCHES_LIST
+        self.arches = arches.split(",") if arches else ALL_ARCHES_LIST
 
     def sync_arch(self, arch: str):
         if arch not in ALL_ARCHES_LIST:
@@ -70,20 +64,17 @@ class QuayDoomsdaySync:
             self.sync_arch(arch)
 
 
-@cli.command("quay-doomsday-backup", help="Run doomsday pipeline for the specified version and arches")
+@cli.command("quay-doomsday-backup", help="Run doomsday pipeline for the specified version and all arches unless --arches is specified")
 @click.option("--arches", required=False, help="Comma separated list of arches to sync")
-@click.option("--all-arches", is_flag=True, required=False, default=False, help="Sync all arches")
 @click.option("--version", required=True, help="Release to sync, e.g. 4.15.3")
 @pass_runtime
-def quay_doomsday_backup(runtime: Runtime, arches: str, all_arches: bool, version: str):
+def quay_doomsday_backup(runtime: Runtime, arches: str, version: str):
 
     # In 4.12 we sync only x86_64 and s390x
     if version.startswith("4.12"):
-        all_arches = False
         arches = "x86_64,s390x"
 
     doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
                                          arches=arches,
-                                         all_arches=all_arches,
                                          version=version)
     doomsday_pipeline.run()
