@@ -505,6 +505,8 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "--latest-parent-version",
             "-i", "microshift-bootc",
+            # regardless of assembly cutoff time lock to HEAD in release branch
+            "--lock-upstream", "microshift-bootc", "HEAD",
             "beta:images:konflux:rebase",
             "--version", version,
             "--release", release,
