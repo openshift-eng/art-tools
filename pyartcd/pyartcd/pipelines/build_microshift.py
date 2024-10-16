@@ -16,6 +16,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
 from artcommonlib.release_util import isolate_assembly_in_release
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
@@ -43,7 +44,8 @@ class BuildMicroShiftPipeline:
 
     def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...],
                  no_rebase: bool, no_advisory_prep: bool,
-                 force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
+                 force: bool, force_bootc: bool,
+                 data_path: str, slack_client, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -52,6 +54,7 @@ class BuildMicroShiftPipeline:
         self.no_rebase = no_rebase
         self.no_advisory_prep = no_advisory_prep
         self.force = force
+        self.force_bootc = force_bootc
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
@@ -485,15 +488,31 @@ class BuildMicroShiftPipeline:
             await slack_client.say("Logs are not available.", thread_ts=slack_thread)
 
     async def _rebase_and_build_bootc(self):
+        bootc_image_name = "microshift-bootc"
         major, minor = isolate_major_minor_in_group(self.group)
         # do not run for version < 4.18
         if major < 4 or (major == 4 and minor < 18):
             self._logger.info("Skipping bootc image build for version < 4.18")
             return
 
+        # check if an image build already exists in Konflux DB
+        if not self.force_bootc:
+            build = await runtime.konflux_db.get_latest_build(
+                name=bootc_image_name,
+                group=self.group,
+                assembly=self.assembly,
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                engine=Engine.KONFLUX,
+                artifact_type=ArtifactType.IMAGE,
+                el_target='el9'
+            )
+            if build:
+                self._logger.info("Bootc image build already exists: %s", build.nvr)
+                return
+
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         if not kubeconfig:
-            raise ValueError("KONFLUX_SA_KUBECONFIG environment variable is required to build microshift-bootc image")
+            raise ValueError(f"KONFLUX_SA_KUBECONFIG environment variable is required to build {bootc_image_name} image")
 
         # Rebase and build bootc image
         timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
@@ -504,10 +523,10 @@ class BuildMicroShiftPipeline:
             "--group", self.group,
             "--assembly", self.assembly,
             "--latest-parent-version",
-            "-i", "microshift-bootc",
+            "-i", bootc_image_name,
             # regardless of assembly cutoff time lock to HEAD in release branch
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
-            "--lock-upstream", "microshift-bootc", "HEAD",
+            "--lock-upstream", bootc_image_name, "HEAD",
             "beta:images:konflux:rebase",
             "--version", version,
             "--release", release,
@@ -522,10 +541,10 @@ class BuildMicroShiftPipeline:
             "--group", self.group,
             "--assembly", self.assembly,
             "--latest-parent-version",
-            "-i", "microshift-bootc",
+            "-i", bootc_image_name,
             # regardless of assembly cutoff time lock to HEAD in release branch
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
-            "--lock-upstream", "microshift-bootc", "HEAD",
+            "--lock-upstream", bootc_image_name, "HEAD",
             "beta:images:konflux:build",
             "--konflux-kubeconfig", kubeconfig,
         ]
@@ -549,17 +568,20 @@ class BuildMicroShiftPipeline:
               help="Skip preparing microshift advisory if applicable.")
 @click.option("--force", is_flag=True,
               help="(For named assemblies) Rebuild even if a build already exists")
+@click.option("--force-bootc", is_flag=True,
+              help="Rebuild microshift-bootc image even if a build already exists")
 @pass_runtime
 @click_coroutine
 async def build_microshift(runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
-                           no_rebase: bool, no_advisory_prep: bool, force: bool):
+                           no_rebase: bool, no_advisory_prep: bool, force: bool, force_bootc: bool):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     try:
         pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
                                            no_rebase=no_rebase, no_advisory_prep=no_advisory_prep,
-                                           force=force, data_path=data_path, slack_client=slack_client)
+                                           force=force, force_bootc=force_bootc,
+                                           data_path=data_path, slack_client=slack_client)
         await pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift pipeline encountered error: {err}"
