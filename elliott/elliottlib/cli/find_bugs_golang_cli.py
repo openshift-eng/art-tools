@@ -243,8 +243,8 @@ class FindBugsGolangCli:
             self._logger.info('Fetching latest accepted nightly...')
             # we fetch pending and rejected nightlies as well since
             # we only need to determine if image builds are complete and have the fix
-            nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=False,
-                                                allow_rejected=False)
+            nightlies = await find_rc_nightlies(self._runtime, arches={'x86_64'}, allow_pending=True,
+                                                allow_rejected=True)
             if len(nightlies['x86_64']) < 1:
                 raise ElliottFatalError("Could not find any accepted nightlies. Please investigate")
             self.pullspec = nightlies['x86_64'][0]['pullSpec']

@@ -117,6 +117,24 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
         el_nvr_map[el_version] = nvr
     return go_version, el_nvr_map
 
+async def move_bugs(self, cves: List[str] = None, nvrs: List[str] = None):
+    cmd = [
+        'elliott',
+        '--group', self.ocp_version,
+        '--assembly', 'stream',
+        'find-bugs:golang',
+        '--analyze',
+        '--update-tracker',
+    ]
+    if cves:
+        for cve in cves:
+            cmd.extend(['--cve-id', cve])
+    if nvrs:
+        for nvr in nvrs:
+            cmd.extend(['--fixed-in-nvr', nvr])
+    if self.runtime.dry_run:
+        cmd.append('--dry-run')
+    await exectools.cmd_assert_async(cmd)
 
 class UpdateGolangPipeline:
     def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str,

@@ -15,7 +15,8 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from elliottlib import util as elliottutil
 from pyartcd.pipelines.update_golang import (is_latest_and_available,
-                                             extract_and_validate_golang_nvrs)
+                                             extract_and_validate_golang_nvrs,
+                                             move_bugs)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,6 +122,8 @@ class RebuildGolangRPMsPipeline:
 
         if failed_rpms:
             await self.notify_failed_rpms(failed_rpms)
+
+        await move_bugs()
 
     async def notify_failed_rpms(self, rpms: list):
         slack_client = self.runtime.new_slack_client()
