@@ -124,10 +124,12 @@ class RebuildGolangRPMsPipeline:
         if failed_rpms:
             await self.notify_failed_rpms(failed_rpms)
 
-        args = {'dry_run': self.runtime.dry_run}
-        if self.cves:
-            args.update({'cves': self.cves, 'nvrs': self.go_nvrs})
-        await move_golang_bugs(**args)
+        await move_golang_bugs(
+            ocp_version=self.ocp_version,
+            cves=self.cves,
+            nvrs=self.go_nvrs if self.cves else None,
+            dry_run=self.runtime.dry_run,
+        )
 
     async def notify_failed_rpms(self, rpms: list):
         slack_client = self.runtime.new_slack_client()
