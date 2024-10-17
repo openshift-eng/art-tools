@@ -8,7 +8,8 @@ class TestBumpRelease(TestCase):
 
     def setUp(self):
         runtime = MagicMock()
-        self.pipeline = RebuildGolangRPMsPipeline(runtime, ocp_version="4.17", go_nvrs=["go1.16"], art_jira="JIRA-123")
+        self.pipeline = RebuildGolangRPMsPipeline(runtime, ocp_version="4.17", go_nvrs=["go1.16"], art_jira="JIRA-123",
+                                                  cves=None)
 
     def test_bump_up_case_1(self):
         fake_releases = "42.rhaos4.17.abcd"
