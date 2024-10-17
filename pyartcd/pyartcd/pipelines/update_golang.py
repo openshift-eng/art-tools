@@ -118,8 +118,13 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     return go_version, el_nvr_map
 
 
-async def move_golang_bugs(self, cves: List[str] = None, nvrs: List[str] = None,
-                           force_update_tracker: bool = False, dry_run: bool = False):
+async def move_golang_bugs(self,
+                           cves: List[str] = None,
+                           nvrs: List[str] = None,
+                           components: List[str] = None,
+                           force_update_tracker: bool = False,
+                           dry_run: bool = False,
+                           ):
     cmd = [
         'elliott',
         '--group', self.ocp_version,
@@ -134,6 +139,9 @@ async def move_golang_bugs(self, cves: List[str] = None, nvrs: List[str] = None,
     if nvrs:
         for nvr in nvrs:
             cmd.extend(['--fixed-in-nvr', nvr])
+    if components:
+        for component in components:
+            cmd.extend(['--component', component])
     if force_update_tracker:
         cmd.append('--force-update-tracker')
     if dry_run:
@@ -232,9 +240,10 @@ class UpdateGolangPipeline:
         _LOGGER.info("Updating streams.yml with found builder images")
         await self.update_golang_streams(go_version, builder_nvrs)
 
-        args = {'dry_run': self.runtime.dry_run}
+        args = {'dry_run': self.runtime.dry_run, 'components': [GOLANG_BUILDER_CVE_COMPONENT]}
         if self.cves:
-            args.update({'cves': self.cves, 'nvrs': self.go_nvrs, 'force_update_tracker': self.force_update_tracker})
+            args.update({'cves': self.cves, 'nvrs': self.go_nvrs,
+                         'force_update_tracker': self.force_update_tracker})
         await move_golang_bugs(**args)
 
     def get_existing_builders(self, el_nvr_map, go_version):
