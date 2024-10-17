@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import os
+import tempfile
 import typing
 from datetime import datetime, timezone, timedelta
 
 import click
-import dateutil.parser
 import yaml
-from typing import List, Tuple, cast
+from typing import cast
 
 import artcommonlib.util
 from artcommonlib import exectools
@@ -297,6 +297,9 @@ class ConfigScanSources:
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
+        # Check if there has been a config change since last build
+        await self.scan_for_config_changes(image_meta)
+
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
         Determine if the current upstream source commit hash
@@ -375,6 +378,66 @@ class ConfigScanSources:
                 image_meta,
                 RebuildHint(code=RebuildHintCode.LAST_BUILD_FAILED,
                             reason=f'It has been {rebuild_interval} hours since last failed build attempt'))
+
+    async def fetch_config_digest(self, build_record: KonfluxBuildRecord):
+        """
+        Given a Konflux build record, fetches the configuration digest associated with the rebase commit
+        associated with the build.
+        """
+
+        with tempfile.NamedTemporaryFile(delete=True) as temp_file:
+            config_digest = temp_file.name
+
+            # Download the config digest to the temporary file
+            await artcommonlib.util.download_file_from_github(
+                repository=build_record.rebase_repo_url,
+                branch=build_record.rebase_commitish,
+                path='.oit/config_digest',
+                token=self.github_token,
+                destination=config_digest)
+
+            # Read and return the content of the temporary file
+            with open(config_digest) as f:
+                return f.read()
+
+    async def scan_for_config_changes(self, image_meta: ImageMetadata):
+        try:
+            latest_build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+
+            # Look at the digest that created THIS build. What is in head does not matter.
+            prev_digest = await self.fetch_config_digest(latest_build_record)
+
+            # Compute the latest config digest
+            current_digest = image_meta.calculate_config_digest(self.runtime.group_config, self.runtime.streams)
+
+            if current_digest.strip() != prev_digest.strip():
+                self.logger.info('%s config_digest %s is differing from %s',
+                                 image_meta.distgit_key, prev_digest, current_digest)
+                # fetch latest commit message on branch for the image metadata file
+                with Dir(self.runtime.data_dir):
+                    path = f'images/{image_meta.config_filename}'
+                    rc, commit_message, _ = exectools.cmd_gather(f'git log -1 --format=%s -- {path}', strip=True)
+                    if rc != 0:
+                        raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir} for {path}')
+
+                if commit_message.lower().startswith('scan-sources:noop'):
+                    self.logger.info('Ignoring digest change since commit message indicates noop')
+                else:
+                    self.add_image_meta_change(image_meta,
+                                               RebuildHint(RebuildHintCode.CONFIG_CHANGE,
+                                                           'Metadata configuration change'))
+
+        except IOError:
+            # IOError is raised by fetch_cgit_file() when config_digest could not be found
+            self.logger.warning('config_digest not found for %s: skipping config check', image_meta.distgit_key)
+            return
+
+        except Exception as e:
+            # Something else went wrong: request a build
+            self.logger.info('%s config_digest cannot be retrieved: %s', image_meta.distgit_key, e)
+            self.add_image_meta_change(image_meta,
+                                       RebuildHint(RebuildHintCode.CONFIG_CHANGE,
+                                                   'Unable to retrieve config_digest'))
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.

@@ -1,5 +1,4 @@
 import io
-import os
 import pathlib
 
 import click
@@ -20,7 +19,7 @@ from artcommonlib import exectools
 from artcommonlib.format_util import yellow_print
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
-from doozerlib.cli import cli, pass_runtime
+from doozerlib.cli import cli, pass_runtime, click_coroutine
 from artcommonlib.git_helper import git_clone
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolver
@@ -545,8 +544,9 @@ def images_okg_check(runtime):
 @click.option('--add-label', default=[], multiple=True, help='Add a label to all open PRs (new and existing) - Requires being openshift-bot')
 @click.option('--non-master', default=False, is_flag=True, help='Acknowledge that this is a non-master branch and proceed anyway')
 @pass_runtime
-def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_version,
-                   draft_prs, moist_run, add_auto_labels, add_label, non_master):
+@click_coroutine
+async def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_version,
+                         draft_prs, moist_run, add_auto_labels, add_label, non_master):
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
     runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
@@ -736,7 +736,12 @@ def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_vers
 
         while True:  # Allows symlinks to be followed
             dockerfile_abs_path = component_source_path.joinpath(os.path.basename(dockerfile_path))
-            download_file_from_github(public_repo_url, public_branch, dockerfile_path, token=github_access_token, destination=dockerfile_abs_path)
+            await download_file_from_github(
+                repository=public_repo_url,
+                branch=public_branch,
+                path=dockerfile_path,
+                token=github_access_token,
+                destination=dockerfile_abs_path)
 
             content = dockerfile_abs_path.read_text()
             if len(content.strip().splitlines()) == 1:
