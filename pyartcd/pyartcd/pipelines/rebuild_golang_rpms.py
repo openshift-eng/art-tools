@@ -3,6 +3,7 @@ import koji
 import datetime
 import logging
 import os
+import asyncio
 from typing import List
 from ghapi.all import GhApi
 from specfile import Specfile
