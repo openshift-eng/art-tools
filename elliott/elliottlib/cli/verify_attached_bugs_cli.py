@@ -249,7 +249,7 @@ class BugValidator:
             try:
                 all_advisories_id = bug.all_advisory_ids()
             except ErrataException as e:
-                return f'Could not get advisories for bug {bug.id}: {e}'
+                return f'Failed to get advisories for bug {bug.id}: {e}'
             if len(all_advisories_id) > 1:
                 return f'Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}'
             return None
