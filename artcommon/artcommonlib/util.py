@@ -153,18 +153,23 @@ def get_assembly_release_date(assembly, group):
         return None
 
 
-def get_development_cutoff_schedule(group):
+def is_release_this_week(release_date):
     """
-    Check if there is a release that needs to ship this week.
-    Returns True if there is a release that needs to be prepared, False otherwise.
+    Check if release date is in the near week
+    """
+    return datetime.strptime(release_date, "%Y-%m-%d").date() <= date.today() + timedelta(days=7)
+
+
+def get_next_release_schedule(group):
+    """
+    Get next release name based on current date
     """
     dev_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/schedule-tasks/?flags_and__in=dev&fields=path,date_finish', headers={'Accept': 'application/json'})
     dev_schedules.raise_for_status()
     for release in dev_schedules.json():
-        finish_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
-        if finish_date > date.today():
-            return finish_date <= date.today() + timedelta(days=7)
-    return False
+        if datetime.strptime(release['date_finish'], "%Y-%m-%d").date() > date.today():
+            return release['date_finish']
+    return None
 
 
 def get_inflight(assembly, group):
