@@ -118,8 +118,7 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     return go_version, el_nvr_map
 
 
-async def move_golang_bugs(self,
-                           cves: List[str] = None,
+async def move_golang_bugs(cves: List[str] = None,
                            nvrs: List[str] = None,
                            components: List[str] = None,
                            force_update_tracker: bool = False,
