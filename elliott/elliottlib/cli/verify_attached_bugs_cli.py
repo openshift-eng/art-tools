@@ -5,6 +5,8 @@ from typing import Any, Dict, Iterable, List, Set, Tuple
 import click
 import logging
 
+from errata_tool import ErrataException
+
 from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
@@ -244,7 +246,10 @@ class BugValidator:
         logger.info(f'Checking {len(non_flaw_bugs)} bugs, if any bug is attached to multiple advisories')
 
         async def get_all_advisory_ids(bug):
-            all_advisories_id = bug.all_advisory_ids()
+            try:
+                all_advisories_id = bug.all_advisory_ids()
+            except ErrataException as e:
+                return f'Could not get advisories for bug {bug.id}: {e}'
             if len(all_advisories_id) > 1:
                 return f'Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}'
             return None
@@ -472,7 +477,13 @@ class BugValidator:
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
                     self._complain(message)
                 if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
-                    blocker_advisories = blocker.all_advisory_ids()
+                    try:
+                        blocker_advisories = blocker.all_advisory_ids()
+                    except ErrataException as e:
+                        message = f"Failed to get advisories for bug {blocker.id}: {e}"
+                        logger.error(message)
+                        self._complain(message)
+                        continue
                     if not blocker_advisories:
                         if self.output == 'text':
                             message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
