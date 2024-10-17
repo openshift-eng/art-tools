@@ -401,17 +401,14 @@ class FindBugsGolangCli:
                 if not fixed_in_version_go_db and not flaw_fixed_in:
                     self._logger.warning(f"{flaw_id} - Could not find fixed in versions in go vulnerability "
                                          "database and bugzilla.")
-                    # cve_table.add_row([flaw_id, cve_id, comp_in_title, "NOT FOUND", False])
                 elif fixed_in_version_go_db and flaw_fixed_in:
                     self._logger.warning(
                         f"{flaw_id} - Fixed in versions in go vulnerability database and bugzilla do not "
                         f"match. Go vulnerability database: {_fmt(fixed_in_version_go_db)}, "
                         f"Bugzilla: {_fmt(flaw_fixed_in)}.")
-                    # cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
                 elif not fixed_in_version_go_db and flaw_fixed_in:
                     self._logger.warning(f"{flaw_id} - Could not find fixed in versions in go vulnerability "
                                          f"database. Assuming CVE isn't fixed in stdlib.")
-                    # cve_table.add_row([flaw_id, cve_id, comp_in_title, _fmt(flaw_fixed_in), False])
                 else:
                     self._logger.warning(
                         f"{flaw_id} - Could not find fixed in versions in bugzilla, but found in go "
