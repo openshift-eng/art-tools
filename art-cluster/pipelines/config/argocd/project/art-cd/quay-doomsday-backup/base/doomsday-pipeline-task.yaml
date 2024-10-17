@@ -28,7 +28,7 @@ spec:
         source .venv/bin/activate 
         uv pip install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
 
-        artcd -vv quay-doomsday-backup --version $(params.version) --all-arches
+        artcd -vv quay-doomsday-backup --version $(params.version)
       securityContext:
         runAsGroup: 0
         runAsUser: 0
