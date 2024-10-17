@@ -287,7 +287,7 @@ class KonfluxDb:
         :param group: only builds of the specified group. e.g. 'openshift-4.18'
         :param assembly: only builds of the specified assembly. e.g. 'stream'
         :param source_repo: only builds of the specified source repository. e.g. https://github.com/openshift/microshift'
-        :param source_commit: only builds of the specified source commit
+        :param source_commit: only builds of the specified source commit (full SHA or short SHA)
         :param rebase_repo_url: only builds of the specified rebase repository. e.g. https://github.com/openshift-priv/microshift'
         :param art_job_url: only builds of the specified ART job URL.
         :param schema_level: only builds of the specified schema level. e.g. 1
@@ -331,7 +331,13 @@ class KonfluxDb:
         if source_repo:
             base_clauses.append(Column('source_repo', String) == source_repo)
         if source_commit:
-            base_clauses.append(Column('source_commit', String) == source_commit)
+            if len(source_commit) != 40 and len(source_commit) != 7:
+                raise ValueError('Invalid source commit: %s. Should be either full SHA (40 chars) or short SHA (7 chars)',
+                                 source_commit)
+            if len(source_commit) == 7:
+                base_clauses.append(Column('source_commit', String).like(f'{source_commit}%'))
+            else:
+                base_clauses.append(Column('source_commit', String) == source_commit)
         if rebase_repo_url:
             base_clauses.append(Column('rebase_repo_url', String) == rebase_repo_url)
         if art_job_url:
