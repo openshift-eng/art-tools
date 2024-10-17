@@ -281,7 +281,7 @@ def assembly_basis_event(releases_config: Model, assembly: str, strict: bool = F
     """
     if not assembly or not isinstance(releases_config, Model):
         if strict:
-            raise ValueError("given assembly not found in releases config")
+            raise ValueError(f"given assembly {assembly} not found in releases config")
         return None
 
     _check_recursion(releases_config, assembly)

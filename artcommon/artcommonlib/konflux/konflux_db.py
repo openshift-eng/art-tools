@@ -5,10 +5,11 @@ import inspect
 import logging
 import pprint
 import typing
+from typing import Optional
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, Integer
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -18,6 +19,9 @@ SCHEMA_LEVEL = 1
 
 
 class KonfluxDb:
+    MAX_RESULT_LIMIT = 10
+    DEFAULT_RESULT_LIMIT = 3
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.bq_client = bigquery.BigQueryClient()
@@ -233,9 +237,148 @@ class KonfluxDb:
                             name, group, outcome.value, assembly, el_target)
         return None
 
-    def from_result_row(self, row: Row) -> typing.Optional[KonfluxRecord]:
+    async def get_latest_build_alt(self,
+                                   engine: Optional[Engine] = Engine.KONFLUX,
+                                   name: Optional[str] = None,
+                                   group: Optional[str] = None,
+                                   assembly: Optional[str] = None,
+                                   source_repo: Optional[str] = None,
+                                   source_commit: Optional[str] = None,
+                                   rebase_repo_url: Optional[str] = None,
+                                   art_job_url: Optional[str] = None,
+                                   schema_level: Optional[int] = None,
+                                   embargoed: Optional[bool] = None,
+                                   outcome: Optional[KonfluxBuildOutcome] = KonfluxBuildOutcome.SUCCESS,
+                                   el_target: Optional[str] = None,
+                                   artifact_type: Optional[ArtifactType] = None,
+                                   completed_before: Optional[datetime] = None,
+                                   ) -> Optional[konflux_build_record.KonfluxBuildRecord]:
         """
-        Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
+        Return the latest build that matches the given parameters
+        """
+
+        builds = await self.list_builds(engine, name, group, assembly, source_repo, source_commit,
+                                        rebase_repo_url, art_job_url, schema_level, embargoed, outcome, el_target,
+                                        artifact_type, completed_before, {'limit': 1, 'order': ('start_time', 'desc')})
+        return builds[0] if builds else None
+
+    async def list_builds(self,
+                          engine: Optional[Engine | str] = Engine.KONFLUX,
+                          name: Optional[str] = None,
+                          group: Optional[str] = None,
+                          assembly: Optional[str] = None,
+                          source_repo: Optional[str] = None,
+                          source_commit: Optional[str] = None,
+                          rebase_repo_url: Optional[str] = None,
+                          art_job_url: Optional[str] = None,
+                          schema_level: Optional[int] = None,
+                          embargoed: Optional[bool] = None,
+                          outcome: Optional[KonfluxBuildOutcome | str] = KonfluxBuildOutcome.SUCCESS,
+                          el_target: Optional[str] = None,
+                          artifact_type: Optional[ArtifactType | str] = None,
+                          completed_before: Optional[datetime] = None,
+                          query_options: dict = None,
+                          ) -> Optional[list[konflux_build_record.KonfluxBuildRecord]]:
+        """
+        Return a list of builds that match the given parameters
+
+        :param engine: only builds of the specified engine. e.g. 'brew' / 'konflux'
+        :param name: only builds of the specified component. e.g. 'ironic'
+        :param group: only builds of the specified group. e.g. 'openshift-4.18'
+        :param assembly: only builds of the specified assembly. e.g. 'stream'
+        :param source_repo: only builds of the specified source repository. e.g. https://github.com/openshift/microshift'
+        :param source_commit: only builds of the specified source commit
+        :param rebase_repo_url: only builds of the specified rebase repository. e.g. https://github.com/openshift-priv/microshift'
+        :param art_job_url: only builds of the specified ART job URL.
+        :param schema_level: only builds of the specified schema level. e.g. 1
+        :param embargoed: only builds that are embargoed. e.g. True
+        :param outcome: only builds with specified outcome. e.g. 'success'
+        :param el_target: only builds of the specified rhel target. e.g. 'el8'
+        :param artifact_type: only builds of the specified artifact type. e.g. 'image'
+        :param completed_before: only builds completed before the specified timestamp. e.g. '2024-01-01T00:00:00Z'
+        :param query_options: additional options to pass to the query. e.g. {'limit': 1, 'order': ('start_time', 'desc')}
+        """
+
+        if not completed_before:
+            completed_before = datetime.now(tz=timezone.utc)
+
+        base_clauses = [
+            Column('end_time').isnot(None),
+            Column('end_time', DateTime) < completed_before
+        ]
+
+        if not query_options:
+            query_options = {}
+
+        order_by_opt = query_options.get('order', ('start_time', 'desc'))
+        if not len(order_by_opt) == 2 or order_by_opt[1] not in ['asc', 'desc']:
+            raise ValueError('Invalid order_by option: %s', order_by_opt)
+        if order_by_opt[1] == 'desc':
+            order_by_clause = Column(order_by_opt[0], quote=True).desc()
+        else:
+            order_by_clause = Column(order_by_opt[0], quote=True).asc()
+
+        limit = query_options.get('limit', self.DEFAULT_RESULT_LIMIT)
+        if limit > self.MAX_RESULT_LIMIT:
+            raise ValueError('Limit cannot exceed %s', self.MAX_RESULT_LIMIT)
+
+        if name:
+            base_clauses.append(Column('name', String) == name)
+        if group:
+            base_clauses.append(Column('group', String) == group)
+        if assembly:
+            base_clauses.append(Column('assembly', String) == assembly)
+        if source_repo:
+            base_clauses.append(Column('source_repo', String) == source_repo)
+        if source_commit:
+            base_clauses.append(Column('source_commit', String) == source_commit)
+        if rebase_repo_url:
+            base_clauses.append(Column('rebase_repo_url', String) == rebase_repo_url)
+        if art_job_url:
+            base_clauses.append(Column('art_job_url', String) == art_job_url)
+        if schema_level:
+            base_clauses.append(Column('schema_level', Integer) == schema_level)
+        if embargoed:
+            base_clauses.append(Column('embargoed', String) == str(embargoed))
+        if outcome:
+            base_clauses.append(Column('outcome', String) == str(outcome))
+        if el_target:
+            base_clauses.append(Column('el_target', String) == el_target)
+        if artifact_type:
+            base_clauses.append(Column('artifact_type', String) == str(artifact_type))
+        if engine:
+            base_clauses.append(Column('engine', String) == str(engine))
+
+        # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
+        # at most. This will let us reduce the amount of scanned data (and the BigQuery usage cost), as in the vast
+        # majority of cases we would find a build in the first 3-month interval.
+        builds = []
+        for window in range(12):
+            end_search = completed_before - window * 3 * timedelta(days=30)
+            start_search = end_search - 3 * timedelta(days=30)
+
+            where_clauses = copy.copy(base_clauses)
+            where_clauses.extend([
+                Column('start_time', DateTime) >= start_search,
+                Column('start_time', DateTime) < end_search,
+            ])
+
+            results = await self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=limit)
+
+            for row in results:
+                builds.append(self.from_result_row(row))
+                if len(builds) == limit:
+                    return builds
+
+        if not builds:
+            # If we got here, no builds have been found in the whole 36 months period
+            self.logger.warning('No builds found for %s in %s with status %s in assembly %s and target %s',
+                                name, group, outcome, assembly, el_target)
+        return builds
+
+    def from_result_row(self, row: Row) -> Optional[KonfluxRecord]:
+        """
+        Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxRecord object
         """
 
         try:
