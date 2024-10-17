@@ -27,7 +27,7 @@ LOGGER = logging.getLogger(__name__)
 
 class FindBugsGolangCli:
     def __init__(self, runtime: Runtime, pullspec: str, cve_ids: Tuple[str], tracker_ids: Tuple[str], analyze: bool,
-                 fixed_in_nvrs: Tuple[str], update_tracker: bool, art_jira: str, dry_run: bool):
+                 fixed_in_nvrs: Tuple[str], update_tracker: bool, force_update_tracker: bool, art_jira: str, dry_run: bool):
         self._runtime = runtime
         self._logger = LOGGER
         self.cve_ids = cve_ids
@@ -35,6 +35,7 @@ class FindBugsGolangCli:
         self.analyze = analyze
         self.fixed_in_nvrs = fixed_in_nvrs
         self.update_tracker = update_tracker
+        self.force_update_tracker = force_update_tracker
         self.art_jira = art_jira
         self.dry_run = dry_run
 
@@ -75,10 +76,6 @@ class FindBugsGolangCli:
         # or "golang 1.20" -> 1.20.0
         fixed_in_versions = re.findall(r'(\d+\.\d+\.\d+)', fixed_in)
         if not fixed_in_versions:
-            # TODO: Sometimes bugzilla do not have accurate fixed_in version values
-            # See if you can query https://pkg.go.dev/vuln/GO-2023-2375
-            # or https://cveawg.mitre.org/api/cve/CVE-2023-45287
-            # to get accurate affected versions information
             fixed_in_versions = re.findall(r'(\d+\.\d+)', fixed_in)
             if fixed_in_versions:
                 fixed_in_versions = {f"{v}.0" for v in fixed_in_versions}
@@ -290,6 +287,12 @@ class FindBugsGolangCli:
         else:
             return self._is_fixed(bug, tracker_fixed_in, self.go_nvr_map)
 
+    def move_to_qa_and_comment(self, bug: JIRABug, comment: str):
+        if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED']:
+            self.jira_tracker.update_bug_status(bug, 'ON_QA', comment=comment, noop=self.dry_run)
+        else:
+            self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
+
     async def run(self):
         logger = self._logger
 
@@ -481,7 +484,7 @@ class FindBugsGolangCli:
         if not bugs:
             exit(0)
 
-        fixed_bugs, unfixed_bugs = [], []
+        fixed_bugs, unfixed_bugs, updated_bugs = [], [], []
         for bug in bugs:
             component = bug.whiteboard_component
             logger.info(f"{bug.id} has security component: {component}")
@@ -505,24 +508,27 @@ class FindBugsGolangCli:
                 else:
                     fixed, comment = await self.is_fixed_rpm(bug, component, tracker_fixed_in=tracker_fixed_in)
 
+            art_ticket_message = ''
+            if self.art_jira:
+                art_ticket_message = f"Refer to {self.art_jira} for details."
             if fixed:
                 if self.update_tracker:
-                    message = ''
-                    if self.art_jira:
-                        message = f"Refer to {self.art_jira} for details."
-                    comment = f"{comment} {message}"
-                    if bug.status in ['New', 'ASSIGNED', 'POST', 'MODIFIED']:
-                        self.jira_tracker.update_bug_status(bug, 'ON_QA', comment=comment, noop=self.dry_run)
-                    else:
-                        self.jira_tracker.add_comment(bug.id, comment, private=True, noop=self.dry_run)
+                    comment = f"{comment} {art_ticket_message}"
+                    self.move_to_qa_and_comment(bug, comment)
+                    updated_bugs.append(bug.id)
                 fixed_bugs.append(bug.id)
+            elif self.force_update_tracker:
+                self.move_to_qa_and_comment(bug, art_ticket_message)
+                updated_bugs.append(bug.id)
             else:
                 unfixed_bugs.append(bug.id)
 
         if fixed_bugs:
-            self._logger.info(f'Fixed bugs: {sorted(fixed_bugs)}')
+            self._logger.info(f'Bugs determined to be fixed with current builds: {sorted(fixed_bugs)}')
         if unfixed_bugs:
-            self._logger.info(f'Not fixed / unsure bugs: {sorted(unfixed_bugs)}')
+            self._logger.info(f'Bugs determined to be not fixed with current builds: {sorted(unfixed_bugs)}')
+        if updated_bugs:
+            self._logger.info(f'Bugs updated: {sorted(updated_bugs)}')
 
 
 @cli.command("find-bugs:golang", short_help="Find, analyze and update golang tracker bugs")
@@ -541,6 +547,10 @@ class FindBugsGolangCli:
               is_flag=True,
               default=False,
               help="If a tracker bug is fixed then comment with analysis and move to ON_QA")
+@click.option("--force-update-tracker",
+              is_flag=True,
+              default=False,
+              help="Move to ON_QA even if tracker bug is not determined to be fixed")
 @click.option('--art-jira', help='Related ART Jira ticket for reference e.g. ART-1234')
 @click.option("--dry-run", "--noop",
               is_flag=True,
@@ -550,20 +560,33 @@ class FindBugsGolangCli:
 @click_coroutine
 async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker_ids,
                                analyze: bool, fixed_in_nvrs, update_tracker: bool,
+                               force_update_tracker: bool,
                                art_jira: str, dry_run: bool):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
+
     Pass in --cve-id to fetch bugs for specific CVE ID(s). Multiple CVE IDs can be
     specified e.g. "--cve-id CVE-A --cve-id CVE-B"
+
     Pass in --analyze to determine if found bugs are fixed.
+
     By default, fixed-in-golang-version is fetched from flaw bug metadata
+
     Pass in --fixed-in-nvr to specify that given CVE(s) are fixed in given golang NVR(s). Multiple NVRs can be
     specified e.g. "--fixed-in-nvr NVR1 --fixed-in-nvr NVR2"
+
     Bugs are compared with latest builds in `stream` assembly by default. Pass --assembly to specify.
+
     For openshift-golang-builder-container build, use --pullspec <payload_pullspec> to determine if fixed for builds in
     given pullspec
+
     Note: rpm trackers cannot be processed if --pullspec is used, for that rely on --assembly.
+
     --update-tracker: If a tracker bug is fixed then comment on it with analysis and move the bug state to ON_QA
+
+    --force-update-tracker: Move to ON_QA even if tracker bug is not determined to be fixed. This is useful in case of
+    bugs like openshift-golang-builder where we want to move the bug to ON_QA after or close to when mass rebuild is
+    triggered.
 
     # Fetch open golang tracker bugs in 4.14
 
@@ -587,6 +610,21 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker
     $ elliott -g openshift-4.14 find-bugs:golang --analyze --update-tracker --art-jira ART-1234 --dry-run
 
     """
+    if fixed_in_nvrs:
+        if not analyze:
+            raise click.BadParameter('Cannot use --fixed-in-nvr without --analyze')
+        if not cve_ids:
+            raise click.BadParameter('Cannot use --fixed-in-nvr without --cve-id')
+
+    if update_tracker and not analyze:
+        raise click.BadParameter('Cannot use --update-tracker without --analyze')
+
+    if force_update_tracker and not update_tracker:
+        raise click.BadParameter('Cannot use --force-update-tracker without --update-tracker')
+
+    if force_update_tracker and not cve_ids:
+        raise click.BadParameter('Cannot use --force-update-tracker without --cve-id')
+
     runtime.initialize(mode="both")
     if runtime.assembly != 'stream':
         if pullspec:
@@ -596,12 +634,6 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker
             release_name = get_release_name_for_assembly(runtime.group, releases_config,
                                                          runtime.assembly)
             pullspec = f'{pyartcd_constants.RELEASE_IMAGE_REPO}:{release_name}-x86_64'
-
-    if fixed_in_nvrs:
-        if not analyze:
-            raise click.BadParameter('Cannot use --fixed-in-nvr without --analyze')
-        if not cve_ids:
-            raise click.BadParameter('Cannot use --fixed-in-nvr without --cve-id')
 
     if cve_ids:
         cve_ids = tuple(c.upper() for c in cve_ids)
@@ -615,6 +647,7 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker
         analyze=analyze,
         fixed_in_nvrs=fixed_in_nvrs,
         update_tracker=update_tracker,
+        force_update_tracker=force_update_tracker,
         art_jira=art_jira,
         dry_run=dry_run
     )

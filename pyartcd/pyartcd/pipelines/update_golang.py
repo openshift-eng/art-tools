@@ -118,7 +118,8 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     return go_version, el_nvr_map
 
 
-async def move_golang_bugs(self, cves: List[str] = None, nvrs: List[str] = None):
+async def move_golang_bugs(self, cves: List[str] = None, nvrs: List[str] = None,
+                           force_update_tracker: bool = False, dry_run: bool = False):
     cmd = [
         'elliott',
         '--group', self.ocp_version,
@@ -133,20 +134,23 @@ async def move_golang_bugs(self, cves: List[str] = None, nvrs: List[str] = None)
     if nvrs:
         for nvr in nvrs:
             cmd.extend(['--fixed-in-nvr', nvr])
-    if self.runtime.dry_run:
+    if force_update_tracker:
+        cmd.append('--force-update-tracker')
+    if dry_run:
         cmd.append('--dry-run')
     await exectools.cmd_assert_async(cmd)
 
 
 class UpdateGolangPipeline:
     def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, cves: List[str],
-                 go_nvrs: List[str], art_jira: str, scratch: bool = False):
+                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, scratch: bool = False):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
         self.scratch = scratch
         self.ocp_version = ocp_version
         self.create_ticket = create_ticket
         self.cves = cves
+        self.force_update_tracker = force_update_tracker
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
@@ -228,7 +232,10 @@ class UpdateGolangPipeline:
         _LOGGER.info("Updating streams.yml with found builder images")
         await self.update_golang_streams(go_version, builder_nvrs)
 
-        await move_golang_bugs(self, self.cves, self.go_nvrs)
+        args = {'dry_run': self.runtime.dry_run}
+        if self.cves:
+            args.update({'cves': self.cves, 'nvrs': self.go_nvrs, 'force_update_tracker': self.force_update_tracker})
+        await move_golang_bugs(**args)
 
     def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -477,16 +484,24 @@ The new NVRs are:
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
-@click.option('--cves', help='CVE-IDs that are confirmed to be fixed with given nvrs (comma separated) e.g. CVE-2024-1234')
+@click.option('--cves', help='CVEs that are confirmed to be fixed in all given golang nvrs (comma separated). '
+                             'This will be used to fetch relevant Tracker bugs and move them to ON_QA state if '
+                             'determined to be fixed (nightly is found containing fixed builds). e.g. CVE-2024-1234')
+@click.option('--force-update-tracker', is_flag=True, default=False,
+              help='Force update found tracker bugs for the given CVEs, even if the latest nightly is not found containing fixed builds')
 @click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
 async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
-                        cves: str, confirm: bool, go_nvrs: List[str]):
+                        cves: str, force_update_tracker: bool, confirm: bool, go_nvrs: List[str]):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
     if cves:
         cves = cves.split(',')
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, cves, go_nvrs, art_jira, scratch).run()
+    if force_update_tracker and not cves:
+        raise ValueError('CVEs must be provided with --force-update-tracker')
+
+    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, cves, force_update_tracker,
+                               go_nvrs, art_jira, scratch).run()
