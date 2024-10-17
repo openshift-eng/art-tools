@@ -214,6 +214,7 @@ class BugzillaBug(Bug):
         return has_keywords or has_cve_in_summary
 
     def all_advisory_ids(self):
+        errata.sync_bugzilla_bug(self.id)
         return ErrataBug(self.id).all_advisory_ids
 
     def is_ocp_bug(self):
@@ -421,6 +422,7 @@ class JIRABug(Bug):
         return None
 
     def all_advisory_ids(self):
+        errata.sync_jira_issue(self.id)
         return ErrataJira(self.id).all_advisory_ids
 
     def creation_time_parsed(self):
