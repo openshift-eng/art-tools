@@ -16,18 +16,19 @@ from pyartcd.runtime import Runtime
 from elliottlib import util as elliottutil
 from pyartcd.pipelines.update_golang import (is_latest_and_available,
                                              extract_and_validate_golang_nvrs,
-                                             move_bugs)
+                                             move_golang_bugs)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class RebuildGolangRPMsPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, go_nvrs: List[str], force: bool = False,
-                 rpms: List[str] = None):
+    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, cves: List[str],
+                 go_nvrs: List[str], force: bool = False, rpms: List[str] = None):
         self.runtime = runtime
         self.ocp_version = ocp_version
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
+        self.cves = cves
         self.force = force
         self.rpms = rpms
         self.koji_session = koji.ClientSession(BREW_HUB)
@@ -123,7 +124,7 @@ class RebuildGolangRPMsPipeline:
         if failed_rpms:
             await self.notify_failed_rpms(failed_rpms)
 
-        await move_bugs()
+        await move_golang_bugs(self, self.cves, self.go_nvrs)
 
     async def notify_failed_rpms(self, rpms: list):
         slack_client = self.runtime.new_slack_client()
@@ -248,14 +249,17 @@ class RebuildGolangRPMsPipeline:
 @cli.command('rebuild-golang-rpms')
 @click.option('--ocp-version', required=True, help='OCP version to rebuild golang rpms for')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
+@click.option('--cves', help='CVE-IDs that are confirmed to be fixed with given nvrs (comma separated) e.g. CVE-2024-1234')
 @click.option('--force', help='Force rebuild rpms even if they are on given golang', is_flag=True)
 @click.option('--rpms', help='Only consider these rpm(s) for rebuild')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str, force: bool, rpms: str,
-                              go_nvrs: List[str]):
+async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str, cves: str,
+                              force: bool, rpms: str, go_nvrs: List[str]):
     if rpms:
-        rpms = [r for r in rpms.split(',')]
-    await RebuildGolangRPMsPipeline(runtime, ocp_version=ocp_version, art_jira=art_jira, force=force, rpms=rpms,
-                                    go_nvrs=go_nvrs).run()
+        rpms = rpms.split(',')
+    if cves:
+        cves = cves.split(',')
+    await RebuildGolangRPMsPipeline(runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves,
+                                    force=force, rpms=rpms, go_nvrs=go_nvrs).run()
