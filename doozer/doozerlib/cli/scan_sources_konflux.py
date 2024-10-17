@@ -62,6 +62,8 @@ class ConfigScanSources:
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
         if self.rebase_priv:
+            # TODO: to be removed once this job is the only one we use for scanning
+            raise DoozerFatalError('ocp4-scan for Konflux is not yet allowed to rebase into openshfit-priv!')
             self.rebase_into_priv()
 
         # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
