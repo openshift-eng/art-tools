@@ -127,7 +127,7 @@ async def move_golang_bugs(ocp_version: str,
                            ):
     cmd = [
         'elliott',
-        '--group', ocp_version,
+        '--group', f'openshift-{ocp_version}',
         '--assembly', 'stream',
         'find-bugs:golang',
         '--analyze',
