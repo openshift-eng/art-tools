@@ -1,12 +1,13 @@
 import re
 import time
 import logging
+import yaml
+import datetime
+
 from builtins import object
 from typing import Any, Optional, Tuple, Union, List
 
-import yaml
-from artcommonlib import build_util
-
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, Engine
 from artcommonlib import logutil
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
 from artcommonlib.model import Model, Missing
@@ -182,6 +183,57 @@ class Metadata(object):
         """
         split = self.branch().split('-')  # e.g. ['rhaos', '4.8', 'rhel', '8']
         return split[1]
+
+    def get_latest_build_art_db(self,
+                                default: Optional[Any] = -1,
+                                engine: Optional[Engine] = Engine.KONFLUX,
+                                assembly: Optional[str] = None,
+                                outcome: Optional[KonfluxBuildOutcome] = KonfluxBuildOutcome.SUCCESS,
+                                distgit_key: Optional[str] = None,
+                                el_target: Optional[Union[str, int]] = None,
+                                honor_is: bool = True,
+                                complete_before_event: Optional[int] = None
+                                ):
+        if not distgit_key:
+            distgit_key = self.distgit_key
+
+        el_ver = None
+        if el_target:
+            if isinstance(el_target, int):
+                el_ver = el_target
+            elif isinstance(el_target, str) and el_target.isdigit():
+                el_ver = int(el_target)
+            else:
+                el_ver = isolate_el_version_in_brew_tag(el_target)
+            if not el_ver:
+                raise ValueError(f'Unable to determine rhel version from specified el_target: {el_target}')
+        elif self.meta_type == 'image':
+            el_ver = self.branch_el_target()
+
+        if assembly is None:
+            assembly = self.runtime.assembly
+
+        if complete_before_event:
+            if complete_before_event < 0:
+                complete_before_event = None
+        else:
+            complete_before_event = assembly_basis_event(self.runtime.get_releases_config(), assembly)
+        complete_before_ts = None
+        if complete_before_event:
+            with self.runtime.pooled_koji_client_session(caching=True) as koji_api:
+                complete_before_ts = koji_api.getEvent(complete_before_event)['ts']
+                complete_before_ts = datetime.datetime.fromtimestamp(complete_before_ts, tz=datetime.timezone.utc)
+
+        return self.runtime.konflux_db.get_latest_build_alt(
+            engine=engine,
+            name=distgit_key,
+            artifact_type=ArtifactType(self.meta_type),
+            group=self.runtime.group,
+            assembly=assembly,
+            outcome=outcome,
+            el_target=f'el{el_ver}' if el_ver else None,
+            completed_before=complete_before_ts,
+        )
 
     def get_latest_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
                          build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
