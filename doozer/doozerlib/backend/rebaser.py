@@ -7,6 +7,7 @@ import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
+import asyncio
 
 import bashlex
 import bashlex.errors
@@ -141,7 +142,6 @@ class KonfluxRebaser:
             image_repo: str,
     ):
         """ Rebase the image in the build repository. """
-
         # Whether or not the source contains private fixes; None means we don't know yet
         private_fix = None
         if self.force_private_bit:  # --embargoed is set, force private_fix to True
@@ -248,13 +248,16 @@ class KonfluxRebaser:
             if self._runtime.latest_parent_version or self._runtime.assembly_basis_event:
                 parent_metadata = self._runtime.late_resolve_image(member)
                 if not parent_metadata:
-                    raise IOError(f"Parent image {member} is not found.")
-                build = self.konflux_db.get_latest_build(
+                    raise IOError(f"Metadata config for parent image {member} is not found.")
+
+                build = asyncio.run(self.konflux_db.get_latest_build(
                     name=parent_metadata.distgit_key,
                     assembly=self._runtime.assembly,
                     group=self._runtime.group,
                     el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX)
+                    engine=Engine.KONFLUX))
+                if not build:
+                    raise IOError(f"A build of parent image {member} is not found.")
                 return build.image_pullspec, build.embargoed
 
             return original_parent, False
@@ -1437,7 +1440,16 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                _, v, r = meta.get_latest_build_info()
+                build = asyncio.run(self.konflux_db.get_latest_build(
+                    name=meta.distgit_key,
+                    assembly=self._runtime.assembly,
+                    group=self._runtime.group,
+                    el_target=f'el{meta.branch_el_target()}',
+                    engine=Engine.KONFLUX))
+                if not build:
+                    raise ValueError(f'Could not find latest build for {meta.distgit_key}')
+                v = build.version
+                r = build.release
                 image_tag = '{}:{}-{}'.format(meta.image_name_short, v, r)
 
             if metadata.distgit_key != meta.distgit_key:
