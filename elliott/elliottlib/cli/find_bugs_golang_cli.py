@@ -26,11 +26,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 class FindBugsGolangCli:
-    def __init__(self, runtime: Runtime, pullspec: str, cve_ids: Tuple[str], tracker_ids: Tuple[str], analyze: bool,
+    def __init__(self, runtime: Runtime, pullspec: str, cve_ids: Tuple[str], components: Tuple[str],
+                 tracker_ids: Tuple[str], analyze: bool,
                  fixed_in_nvrs: Tuple[str], update_tracker: bool, force_update_tracker: bool, art_jira: str, dry_run: bool):
         self._runtime = runtime
         self._logger = LOGGER
         self.cve_ids = cve_ids
+        self.components = components
         self.tracker_ids = tracker_ids
         self.analyze = analyze
         self.fixed_in_nvrs = fixed_in_nvrs
@@ -328,7 +330,7 @@ class FindBugsGolangCli:
                 return False
 
             comp = b.whiteboard_component
-            if not comp:
+            if not comp or comp not in self.components:
                 return False
             not_art = ["sandboxed-containers"]
             if comp in not_art:
@@ -548,6 +550,8 @@ class FindBugsGolangCli:
               is_flag=True,
               default=False,
               help="Move to ON_QA even if tracker bug is not determined to be fixed")
+@click.option("--component", "components", multiple=True,
+              help="Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container")
 @click.option('--art-jira', help='Related ART Jira ticket for reference e.g. ART-1234')
 @click.option("--dry-run", "--noop",
               is_flag=True,
@@ -557,7 +561,7 @@ class FindBugsGolangCli:
 @click_coroutine
 async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker_ids,
                                analyze: bool, fixed_in_nvrs, update_tracker: bool,
-                               force_update_tracker: bool,
+                               force_update_tracker: bool, components: List[str],
                                art_jira: str, dry_run: bool):
     """Find golang security tracker bugs in jira and determine if they are fixed.
     Trackers are fetched from the OCPBUGS project
@@ -584,6 +588,9 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker
     --force-update-tracker: Move to ON_QA even if tracker bug is not determined to be fixed. This is useful in case of
     bugs like openshift-golang-builder where we want to move the bug to ON_QA after or close to when mass rebuild is
     triggered.
+
+    --component: Only operate on trackers for these JIRA Bug components e.g. openshift-golang-builder-container.
+    This is useful when using with --force-update-tracker to only operate on certain bugs.
 
     # Fetch open golang tracker bugs in 4.14
 
@@ -640,6 +647,7 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker
         runtime=runtime,
         pullspec=pullspec,
         cve_ids=cve_ids,
+        components=components,
         tracker_ids=tracker_ids,
         analyze=analyze,
         fixed_in_nvrs=fixed_in_nvrs,
