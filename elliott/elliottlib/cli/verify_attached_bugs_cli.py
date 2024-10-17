@@ -457,7 +457,7 @@ class BugValidator:
                                           'Closed'] and not (blocker.status == bug.status == "ON_QA"):
                     if self.output == 'text':
                         message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
-                            f"{blocker.id} which has status {blocker.status}"
+                            f"{blocker.id} which has status {blocker.status} and target release {blocker.target_release}"
                     elif self.output == 'slack':
                         message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
                                   f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}>"
@@ -486,8 +486,9 @@ class BugValidator:
                         continue
                     if not blocker_advisories:
                         if self.output == 'text':
-                            message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
-                                f"{blocker.id} which is on {blocker.status} but not attached to any advisory"
+                            message = (f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "
+                                       f"{blocker.id} which is on {blocker.status} and target release "
+                                       f"{blocker.target_release} but is not attached to any advisory")
                         elif self.output == 'slack':
                             message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
                                 f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
