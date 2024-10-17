@@ -111,17 +111,15 @@ class RebuildGolangRPMsPipeline:
             email = "aos-team-art@redhat.com"
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
 
-        failed_rpms = []
-        for el_v, rpms in non_art_rpms_for_rebuild.items():
-            for rpm in rpms:
-                try:
-                    await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-                except Exception as err:
-                    _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
-                    failed_rpms.append(rpm)
-                    continue
+        results = await asyncio.gather(*[
+            self.bump_and_rebuild_rpm(rpm, el_v, author, email)
+            for el_v, rpms in non_art_rpms_for_rebuild.items()
+            for rpm in rpms
+        ], return_exceptions=True)
 
+        failed_rpms = [rpm for rpm, result in zip(non_art_rpms_for_rebuild, results) if isinstance(result, Exception)]
         if failed_rpms:
+            _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
             await self.notify_failed_rpms(failed_rpms)
 
         await move_golang_bugs(
@@ -214,7 +212,7 @@ class RebuildGolangRPMsPipeline:
         await exectools.cmd_assert_async(cmd, cwd=rpm)
         cmd = 'git push'
         await exectools.cmd_assert_async(cmd, cwd=rpm)
-        cmd = 'rhpkg build --nowait'
+        cmd = 'rhpkg build'
         await exectools.cmd_assert_async(cmd, cwd=rpm)
 
     def get_rpms(self, el_v):
