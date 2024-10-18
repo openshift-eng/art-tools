@@ -112,11 +112,16 @@ class RebuildGolangRPMsPipeline:
             email = "aos-team-art@redhat.com"
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
 
-        results = await asyncio.gather(*[
-            self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-            for el_v, rpms in non_art_rpms_for_rebuild.items()
-            for rpm in rpms
-        ], return_exceptions=True)
+        # Bump and build sequentially per el version
+        # since distgit operations are not thread safe
+        # we do not want to conflict with the same rpm in different el versions
+        results = []
+        for el_v, rpms in non_art_rpms_for_rebuild.items():
+            el_results = await asyncio.gather(*[
+                self.bump_and_rebuild_rpm(rpm, el_v, author, email)
+                for rpm in rpms
+            ], return_exceptions=True)
+            results.extend(el_results)
 
         failed_rpms = [rpm for rpm, result in zip(non_art_rpms_for_rebuild, results) if isinstance(result, Exception)]
         if failed_rpms:
@@ -129,6 +134,9 @@ class RebuildGolangRPMsPipeline:
             nvrs=self.go_nvrs if self.cves else None,
             dry_run=self.runtime.dry_run,
         )
+
+        if failed_rpms:
+            raise ValueError(f'Error bumping and rebuilding these rpms: {failed_rpms}')
 
     async def notify_failed_rpms(self, rpms: list):
         slack_client = self.runtime.new_slack_client()
