@@ -117,8 +117,8 @@ class RebuildGolangRPMsPipeline:
             for el_v, rpms in non_art_rpms_for_rebuild.items()
             for rpm in rpms
         ], return_exceptions=True)
-
-        failed_rpms = [rpm for rpm, result in zip(non_art_rpms_for_rebuild, results) if isinstance(result, Exception)]
+        list_of_rpms = [rpm for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
+        failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
         if failed_rpms:
             _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
             await self.notify_failed_rpms(failed_rpms)
