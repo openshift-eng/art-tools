@@ -252,7 +252,7 @@ class BugValidator:
                 try:
                     sync_jira_issue(bug.id)
                 except Exception as e:
-                    return f'Failed to get advisories for bug {bug.id}: {e}'
+                    return f'Failed to sync bug {bug.id}: {e}'
             if len(all_advisories_id) > 1:
                 return f'Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}'
             return None
