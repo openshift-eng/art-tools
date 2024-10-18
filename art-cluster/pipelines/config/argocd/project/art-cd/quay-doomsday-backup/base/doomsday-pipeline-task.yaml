@@ -14,7 +14,7 @@ spec:
     - env:
         - name: DOCKER_CONFIG
           value: /tmp/.docker
-      image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:base
+      image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:latest
       name: run-script
       resources: {}
       script: |
@@ -27,8 +27,9 @@ spec:
         uv venv --system-site-packages --python 3.9  
         source .venv/bin/activate 
         uv pip install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
-
-        artcd -vv quay-doomsday-backup --version $(params.version) --all-arches
+        
+        touch artcd.toml	
+        artcd -vv --config artcd.toml quay-doomsday-backup --version $(params.version)
       securityContext:
         runAsGroup: 0
         runAsUser: 0
