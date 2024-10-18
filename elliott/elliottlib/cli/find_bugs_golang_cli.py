@@ -35,6 +35,7 @@ def get_cve_from_prodsec_db(cve_id):
         return None
     return data
 
+
 def get_fixed_in_version_go_db(go_vuln_id: str):
     go_vuln_db_api_url = f"https://vuln.go.dev/ID/{go_vuln_id}.json"
     res = requests.get(go_vuln_db_api_url)
@@ -45,6 +46,7 @@ def get_fixed_in_version_go_db(go_vuln_id: str):
             if r['type'] == "SEMVER":
                 return {Version.parse(e['fixed']) for e in r['events'] if e.get('fixed')}
     return None
+
 
 def get_cve_from_go_db(cve_id: str):
     pkg_go_dev_search_url = f"https://pkg.go.dev/search?q={cve_id}"
@@ -365,10 +367,11 @@ class FindBugsGolangCli:
         else:
             target_release = self.jira_tracker.target_release()
             tr = ','.join(target_release)
-            logger.info(f"Searching for open golang security trackers with target version {tr}")
+            logger.info(f"Searching for open security trackers with target version {tr}. "
+                        "Then will filter to just the golang CVEs and trackers")
 
-            exclude_status_clause = (f"and status not in ({', '.join(self.exclude_bug_statuses)}) " if
-            self.exclude_bug_statuses else "")
+            exclude_status_clause = (f"and status not in ({', '.join(self.exclude_bug_statuses)}) "
+                                     if self.exclude_bug_statuses else "")
 
             query = ('project = "OCPBUGS" '
                      'and statusCategory != done '
