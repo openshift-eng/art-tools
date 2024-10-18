@@ -162,41 +162,42 @@ class RebuildGolangRPMsPipeline:
 
     async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
         branch = f'rhaos-{self.ocp_version}-rhel-{el_v}'
+        dg_dir = f'{rpm}-{el_v}'
         # check if dir exists
-        if not os.path.isdir(rpm):
-            cmd = f'rhpkg clone --branch {branch} rpms/{rpm}'
+        if not os.path.isdir(dg_dir):
+            cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
             await exectools.cmd_assert_async(cmd)
         else:
-            await exectools.cmd_assert_async('git reset --hard', cwd=rpm)
-            await exectools.cmd_assert_async('git fetch --all', cwd=rpm)
-        await exectools.cmd_assert_async(f'git checkout {branch}', cwd=rpm)
-        await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=rpm)
+            await exectools.cmd_assert_async('git reset --hard', cwd=dg_dir)
+            await exectools.cmd_assert_async('git fetch --all', cwd=dg_dir)
+        await exectools.cmd_assert_async(f'git checkout {branch}', cwd=dg_dir)
+        await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=dg_dir)
 
         # get last commit message on this branch
         bump_msg = f'Bump and rebuild with latest golang, resolves {self.art_jira}'
-        rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=rpm)
+        rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=dg_dir)
         if rc != 0:
-            raise ValueError(f'Cannot get last commit message for {rpm}')
+            raise ValueError(f'Cannot get last commit message for {rpm} for {branch}')
         if bump_msg in commit_message:
-            _LOGGER.info(f'{rpm}/{branch} - Bump commit exists on branch, build in queue? skipping')
+            _LOGGER.info(f'{dg_dir}/{branch} - Bump commit exists on branch, build in queue? skipping')
             return
 
         # get all .spec files
-        specs = [f for f in os.listdir(rpm) if f.endswith('.spec')]
+        specs = [f for f in os.listdir(dg_dir) if f.endswith('.spec')]
         if len(specs) != 1:
-            raise ValueError(f'Expected to find only 1 .spec file in {rpm}, found: {specs}')
+            raise ValueError(f'Expected to find only 1 .spec file in {dg_dir}, found: {specs}')
 
-        spec = Specfile(os.path.join(rpm, specs[0]))
+        spec = Specfile(os.path.join(dg_dir, specs[0]))
 
-        _LOGGER.info(f'{rpm}/{branch} - Bumping release in specfile')
+        _LOGGER.info(f'{dg_dir}/{branch} - Bumping release in specfile')
 
-        _LOGGER.info(f'{rpm}/{branch} - Current release in specfile: {spec.release}')
+        _LOGGER.info(f'{dg_dir}/{branch} - Current release in specfile: {spec.release}')
 
         spec.release = self.bump_release(spec.release)
 
-        _LOGGER.info(f'{rpm}/{branch} - New release in specfile: {spec.release}')
+        _LOGGER.info(f'{dg_dir}/{branch} - New release in specfile: {spec.release}')
 
-        _LOGGER.info(f'{rpm}/{branch} - Adding changelog entry in specfile')
+        _LOGGER.info(f'{dg_dir}/{branch} - Adding changelog entry in specfile')
         spec.add_changelog_entry(
             bump_msg,
             author=author,
@@ -205,16 +206,16 @@ class RebuildGolangRPMsPipeline:
         )
 
         if self.runtime.dry_run:
-            _LOGGER.info(f"{rpm}/{branch} - Dry run, would've committed changes and triggered build")
+            _LOGGER.info(f"{dg_dir}/{branch} - Dry run, would've committed changes and triggered build")
             return
 
         spec.save()
         cmd = f'git commit -am "{bump_msg}"'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
+        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
         cmd = 'git push'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
+        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
         cmd = 'rhpkg build'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
+        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
 
     def get_rpms(self, el_v):
         # get all the go rpms from the candidate tag
