@@ -1436,7 +1436,7 @@ class KonfluxRebaser:
 
             meta = self._runtime.image_map.get(distgit, None)
             if meta:  # image is currently be processed
-                image_tag = f"{image_repo}:{meta.image_name_short}-{uuid_tag}"
+                image_tag = f"{meta.image_name_short}:{uuid_tag}"
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
