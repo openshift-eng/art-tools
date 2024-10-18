@@ -119,14 +119,6 @@ def sync_jira_issue(jira_issue_id):
     return ErrataConnector()._post("/api/v1/jra/refresh", data=[jira_issue_id])
 
 
-def sync_bugzilla_bug(bugzilla_bug_id):
-    """
-    Sync a bugzilla bug to advisory
-    Response code will return
-    """
-    return ErrataConnector()._post("/api/v1/bug/refresh", data=[bugzilla_bug_id])
-
-
 def remove_jira_issue(advisory_id, jira_issue_id):
     """
     Remove a jira issue from advisory
