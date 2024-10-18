@@ -234,7 +234,7 @@ class UpdateGolangPipeline:
             for el_v in missing_in:
                 await self._rebase(el_v, go_version)
             await asyncio.gather(*[
-                await self._build(el_v, go_version) for el_v in missing_in
+                self._rebase_and_build(el_v, go_version) for el_v in missing_in
             ])
 
             # Now all builders should be available in brew, try to fetch again
