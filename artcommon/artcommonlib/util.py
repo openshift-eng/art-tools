@@ -162,7 +162,7 @@ def is_release_this_week(release_date):
 
 def get_next_release_schedule(group):
     """
-    Get next release name based on current date
+    Get next release date based on current date
     """
     dev_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/schedule-tasks/?flags_and__in=dev&fields=path,date_finish', headers={'Accept': 'application/json'})
     dev_schedules.raise_for_status()

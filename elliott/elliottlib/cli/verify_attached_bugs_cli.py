@@ -9,6 +9,7 @@ from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import red_print
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import get_next_release_schedule, is_release_this_week
 from elliottlib import bzutil, constants
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
@@ -474,6 +475,10 @@ class BugValidator:
                 if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
                     blocker_advisories = blocker.all_advisory_ids()
                     if not blocker_advisories:
+                        # check if we need to release X+1 release this week
+                        major, minor = self.runtime.get_major_minor()
+                        if not is_release_this_week(get_next_release_schedule(f"openshift-{major}.{minor + 1}")):
+                            continue
                         if self.output == 'text':
                             message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
                                 f"{blocker.id} which is on {blocker.status} but not attached to any advisory"
