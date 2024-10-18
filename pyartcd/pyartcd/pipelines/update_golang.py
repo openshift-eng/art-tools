@@ -132,7 +132,6 @@ class UpdateGolangPipeline:
 
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
-        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._doozer_working_dir)
 
         self.github_token = os.environ.get('GITHUB_TOKEN')
         if not self.github_token:
@@ -341,6 +340,7 @@ class UpdateGolangPipeline:
         release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
+            f"--working-dir={self._doozer_working_dir}-{el_v}",
             "--group", branch,
             "images:rebase",
             "--version", version,
@@ -356,6 +356,7 @@ class UpdateGolangPipeline:
         branch = self.get_golang_branch(el_v, go_version)
         cmd = [
             "doozer",
+            f"--working-dir={self._doozer_working_dir}-{el_v}",
             "--group", branch,
             "images:build",
             "--repo-type", "unsigned",
