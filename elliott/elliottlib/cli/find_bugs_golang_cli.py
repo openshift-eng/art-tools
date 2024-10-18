@@ -330,12 +330,14 @@ class FindBugsGolangCli:
                 return False
 
             comp = b.whiteboard_component
-            if not comp or comp not in self.components:
+            if not comp or (self.components and comp not in self.components):
                 return False
             not_art = ["sandboxed-containers"]
             if comp in not_art:
                 return False
-            return not (comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT)
+            if comp.endswith("-container") and comp != constants.GOLANG_BUILDER_CVE_COMPONENT:
+                return False
+            return True
 
         bugs = [b for b in bugs if is_valid(b)]
         logger.info(f"Found {len(bugs)} bugs")
