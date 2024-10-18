@@ -27,8 +27,9 @@ spec:
         uv venv --system-site-packages --python 3.9  
         source .venv/bin/activate 
         uv pip install -e artcommon/ -e doozer/ -e elliott/ -e pyartcd/ -e ocp-build-data-validator/
-
-        artcd -vv quay-doomsday-backup --version $(params.version)
+        
+        touch artcd.toml	
+        artcd -vv --config artcd.toml quay-doomsday-backup --version $(params.version)
       securityContext:
         runAsGroup: 0
         runAsUser: 0
