@@ -190,6 +190,24 @@ spec:
         workspace: git-auth
       - name: netrc
         workspace: netrc
+    - name: art-db-test
+      taskRef:
+        resolver: git
+        params:
+          - name: org
+            value: ashwindasr
+          - name: repo
+            value: art-konflux-template
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: custom-tasks/art-store-to-db.yaml
+          - name: token
+            value: ash-konflux-repo-token
+          - name: tokenKey
+            value: token
+      runAfter:
+        - clone-repository
     - matrix:
         params:
         - name: PLATFORM
