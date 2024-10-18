@@ -480,11 +480,11 @@ class KonfluxImageBuilder:
                     "taskRef": {
                         "resolver": "git",
                         "params": [
-                            {"name": "org", "value": "ashwindasr"},
+                            {"name": "org", "value": "openshift-priv"},
                             {"name": "repo", "value": "art-konflux-template"},
                             {"name": "revision", "value": "main"},
                             {"name": "pathInRepo", "value": "custom-tasks/art-store-to-db.yaml"},
-                            {"name": "token", "value": "ash-konflux-repo-token"},
+                            {"name": "token", "value": "openshift-art-build-bot-read-only"},
                             {"name": "tokenKey", "value": "token"},
                         ]
                     },
