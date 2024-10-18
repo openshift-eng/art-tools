@@ -229,8 +229,12 @@ class UpdateGolangPipeline:
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
 
+            # rebase sequentially, since distgit operations are not thread safe
+            # fire builds in parallel
+            for el_v in missing_in:
+                await self._rebase(el_v, go_version)
             await asyncio.gather(*[
-                self._rebase_and_build(el_v, go_version) for el_v in missing_in
+                await self._build(el_v, go_version) for el_v in missing_in
             ])
 
             # Now all builders should be available in brew, try to fetch again
