@@ -234,7 +234,7 @@ class UpdateGolangPipeline:
             for el_v in missing_in:
                 await self._rebase(el_v, go_version)
             await asyncio.gather(*[
-                self._rebase_and_build(el_v, go_version) for el_v in missing_in
+                self._build(el_v, go_version) for el_v in missing_in
             ])
 
             # Now all builders should be available in brew, try to fetch again
@@ -416,10 +416,6 @@ class UpdateGolangPipeline:
         if self.scratch:
             cmd.append("--scratch")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
-
-    async def _rebase_and_build(self, el_v, go_version):
-        await self._rebase(el_v, go_version)
-        await self._build(el_v, go_version)
 
     @staticmethod
     def get_golang_branch(el_v, go_version):
