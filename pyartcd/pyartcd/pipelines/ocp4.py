@@ -739,8 +739,8 @@ class Ocp4Pipeline:
 
         cmd = [
             'elliott',
-            '--assembly', 'stream'
-            '--group=openshift', self.version.stream,
+            '--assembly', 'stream',
+            f'--group=openshift-{self.version.stream}',
             "find-bugs:golang",
             "--analyze",
             "--update-tracker"
