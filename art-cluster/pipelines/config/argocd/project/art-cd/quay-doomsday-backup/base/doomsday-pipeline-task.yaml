@@ -14,7 +14,7 @@ spec:
     - env:
         - name: DOCKER_CONFIG
           value: /tmp/.docker
-      image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:base
+      image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:latest
       name: run-script
       resources: {}
       script: |
