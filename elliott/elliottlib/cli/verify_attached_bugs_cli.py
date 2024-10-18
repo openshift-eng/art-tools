@@ -486,7 +486,7 @@ class BugValidator:
                         try:
                             sync_jira_issue(blocker.id)
                         except Exception as e:
-                            message = f"Failed to get advisories for bug {blocker.id}: {e}"
+                            message = f"Failed to sync bug {blocker.id}: {e}"
                             logger.error(message)
                             self._complain(message)
                             continue
