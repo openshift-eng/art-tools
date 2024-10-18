@@ -249,7 +249,7 @@ class Runtime(GroupRuntime):
             raise ElliottFatalError('The following images or rpms were either missing or filtered out: {}'.format(', '.join(missed_include)))
 
         strict_mode = True
-        if not self.assembly or self.assembly in ['stream', 'test']:
+        if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
             strict_mode = False
         self.assembly_type = assembly_type(self.get_releases_config(), self.assembly)
         self.assembly_basis_event = assembly_basis_event(self.get_releases_config(), self.assembly, strict=strict_mode)
