@@ -169,6 +169,10 @@ class KonfluxImageBuilder:
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
 
+        # 'openshift-4-18-ose-installer-terraform' -> '4-18-ose-installer-terraform'
+        # Kubernetes resources has a maximum character length of 63 characters.
+        component_name = component_name.removeprefix("openshift-")
+
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
         version = df.labels.get("version")
@@ -199,11 +203,8 @@ class KonfluxImageBuilder:
         build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
 
-        # 'openshift-4-18-ose-installer-terraform' -> '4-18-ose-installer-terraform'
-        formatted_pipelinerun_name = component_name.removeprefix("openshift-")
-
         pipelinerun_manifest = self._new_pipelinerun(
-            f"{formatted_pipelinerun_name}-",  # generate name needs a trailing dash
+            f"{component_name}-",  # generate name needs a trailing dash
             app_name,
             component_name,
             git_url,
@@ -216,7 +217,7 @@ class KonfluxImageBuilder:
 
         if self._config.dry_run:
             pipelinerun_manifest = resource.ResourceInstance(dyn_client, pipelinerun_manifest)
-            pipelinerun_manifest.metadata.name = f"{formatted_pipelinerun_name}-dry-run"
+            pipelinerun_manifest.metadata.name = f"{component_name}-dry-run"
             self._logger.warning(f"[DRY RUN] [%s] Would have created PipelineRun: {pipelinerun_manifest.metadata.name}", metadata.distgit_key)
             return pipelinerun_manifest
 
