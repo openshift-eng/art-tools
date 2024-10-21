@@ -169,9 +169,9 @@ class KonfluxImageBuilder:
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
 
-        # 'openshift-4-18-ose-installer-terraform' -> '4-18-ose-installer-terraform'
-        # Kubernetes resources has a maximum character length of 63 characters.
-        component_name = component_name.removeprefix("openshift-")
+        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
+        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
+        component_name = f"ose-{component_name.removeprefix('openshift-')}"
 
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
