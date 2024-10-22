@@ -578,3 +578,15 @@ def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     if you expect the image to change during the course of doozer's execution.
     """
     return oc_image_info(pull_spec, go_arch)
+
+
+def infer_assembly_type(custom, assembly_name):
+    # Infer assembly type
+    if custom:
+        return AssemblyTypes.CUSTOM
+    elif re.search(r'^[fr]c\.[0-9]+$', assembly_name):
+        return AssemblyTypes.CANDIDATE
+    elif re.search(r'^ec\.[0-9]+$', assembly_name):
+        return AssemblyTypes.PREVIEW
+    else:
+        return AssemblyTypes.STANDARD
