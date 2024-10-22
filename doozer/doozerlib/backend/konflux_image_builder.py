@@ -57,7 +57,7 @@ class KonfluxImageBuilder:
     SUPPORTED_ARCHES = {
         "x86_64": "linux/x86_64",
         "s390x": "linux/s390x",
-        "ppc64le": "linux-large/ppc64le",
+        "ppc64le": "linux/ppc64le",
         "aarch64": "linux/arm64",
     }
 
