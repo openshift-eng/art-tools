@@ -831,6 +831,21 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             new_issues[distgit_key] = issue
             print(f'A JIRA issue has been opened for {pr.html_url}: {issue.key}')
             connect_issue_with_pr(pr, issue.key)
+            try:
+                # Retrieve the value of the custom field
+                release_notes_text_cf_value = getattr(issue.fields, 'customfield_12317313', None)
+                release_notes_type_cf_value = getattr(issue.fields, 'customfield_12320850', None)
+
+                if release_notes_type_cf_value is None and release_notes_text_cf_value is None:
+                    # Data to update (e.g., changing the Release Notes Type and Release Notes Text)
+                    issue_update = {
+                        'customfield_12317313': 'N/A',  # customfield_12317313 is Release Notes Text in JIRA
+                        'customfield_12320850': {'value': 'Release Note Not Required'},  # customfield_12320850 is Release Notes Type in JIRA
+                    }
+                    # Now update the issue using the retrieved issue object
+                    issue.update(fields=issue_update)
+            except Exception as e:
+                print(f"An error occurred while updating the issue {issue.key}: {e}")
         else:
             new_issues[distgit_key] = 'NEW!'
             print(f'Would have created JIRA issue for {distgit_key} / {pr.html_url}:\n{fields}\n')

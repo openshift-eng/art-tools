@@ -3,6 +3,7 @@ import koji
 import datetime
 import logging
 import os
+import asyncio
 from typing import List
 from ghapi.all import GhApi
 from specfile import Specfile
@@ -15,18 +16,20 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from elliottlib import util as elliottutil
 from pyartcd.pipelines.update_golang import (is_latest_and_available,
-                                             extract_and_validate_golang_nvrs)
+                                             extract_and_validate_golang_nvrs,
+                                             move_golang_bugs)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class RebuildGolangRPMsPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, go_nvrs: List[str], force: bool = False,
-                 rpms: List[str] = None):
+    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, cves: List[str],
+                 go_nvrs: List[str], force: bool = False, rpms: List[str] = None):
         self.runtime = runtime
         self.ocp_version = ocp_version
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
+        self.cves = cves
         self.force = force
         self.rpms = rpms
         self.koji_session = koji.ClientSession(BREW_HUB)
@@ -109,18 +112,23 @@ class RebuildGolangRPMsPipeline:
             email = "aos-team-art@redhat.com"
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
 
-        failed_rpms = []
-        for el_v, rpms in non_art_rpms_for_rebuild.items():
-            for rpm in rpms:
-                try:
-                    await self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-                except Exception as err:
-                    _LOGGER.error(f'Error bumping and rebuilding {rpm}: {err}')
-                    failed_rpms.append(rpm)
-                    continue
-
+        results = await asyncio.gather(*[
+            self.bump_and_rebuild_rpm(rpm, el_v, author, email)
+            for el_v, rpms in non_art_rpms_for_rebuild.items()
+            for rpm in rpms
+        ], return_exceptions=True)
+        list_of_rpms = [rpm for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
+        failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
         if failed_rpms:
+            _LOGGER.error(f'Error bumping and rebuilding these rpms: {failed_rpms}')
             await self.notify_failed_rpms(failed_rpms)
+
+        await move_golang_bugs(
+            ocp_version=self.ocp_version,
+            cves=self.cves,
+            nvrs=self.go_nvrs if self.cves else None,
+            dry_run=self.runtime.dry_run,
+        )
 
     async def notify_failed_rpms(self, rpms: list):
         slack_client = self.runtime.new_slack_client()
@@ -154,41 +162,42 @@ class RebuildGolangRPMsPipeline:
 
     async def bump_and_rebuild_rpm(self, rpm, el_v, author, email):
         branch = f'rhaos-{self.ocp_version}-rhel-{el_v}'
+        dg_dir = f'{rpm}-{el_v}'
         # check if dir exists
-        if not os.path.isdir(rpm):
-            cmd = f'rhpkg clone --branch {branch} rpms/{rpm}'
+        if not os.path.isdir(dg_dir):
+            cmd = f'rhpkg clone --branch {branch} rpms/{rpm} {dg_dir}'
             await exectools.cmd_assert_async(cmd)
         else:
-            await exectools.cmd_assert_async('git reset --hard', cwd=rpm)
-            await exectools.cmd_assert_async('git fetch --all', cwd=rpm)
-        await exectools.cmd_assert_async(f'git checkout {branch}', cwd=rpm)
-        await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=rpm)
+            await exectools.cmd_assert_async('git reset --hard', cwd=dg_dir)
+            await exectools.cmd_assert_async('git fetch --all', cwd=dg_dir)
+        await exectools.cmd_assert_async(f'git checkout {branch}', cwd=dg_dir)
+        await exectools.cmd_assert_async('git reset --hard @{upstream}', cwd=dg_dir)
 
         # get last commit message on this branch
         bump_msg = f'Bump and rebuild with latest golang, resolves {self.art_jira}'
-        rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=rpm)
+        rc, commit_message, _ = await exectools.cmd_gather_async('git log -1 --format=%s', cwd=dg_dir)
         if rc != 0:
-            raise ValueError(f'Cannot get last commit message for {rpm}')
+            raise ValueError(f'Cannot get last commit message for {rpm} for {branch}')
         if bump_msg in commit_message:
-            _LOGGER.info(f'{rpm}/{branch} - Bump commit exists on branch, build in queue? skipping')
+            _LOGGER.info(f'{dg_dir}/{branch} - Bump commit exists on branch, build in queue? skipping')
             return
 
         # get all .spec files
-        specs = [f for f in os.listdir(rpm) if f.endswith('.spec')]
+        specs = [f for f in os.listdir(dg_dir) if f.endswith('.spec')]
         if len(specs) != 1:
-            raise ValueError(f'Expected to find only 1 .spec file in {rpm}, found: {specs}')
+            raise ValueError(f'Expected to find only 1 .spec file in {dg_dir}, found: {specs}')
 
-        spec = Specfile(os.path.join(rpm, specs[0]))
+        spec = Specfile(os.path.join(dg_dir, specs[0]))
 
-        _LOGGER.info(f'{rpm}/{branch} - Bumping release in specfile')
+        _LOGGER.info(f'{dg_dir}/{branch} - Bumping release in specfile')
 
-        _LOGGER.info(f'{rpm}/{branch} - Current release in specfile: {spec.release}')
+        _LOGGER.info(f'{dg_dir}/{branch} - Current release in specfile: {spec.release}')
 
         spec.release = self.bump_release(spec.release)
 
-        _LOGGER.info(f'{rpm}/{branch} - New release in specfile: {spec.release}')
+        _LOGGER.info(f'{dg_dir}/{branch} - New release in specfile: {spec.release}')
 
-        _LOGGER.info(f'{rpm}/{branch} - Adding changelog entry in specfile')
+        _LOGGER.info(f'{dg_dir}/{branch} - Adding changelog entry in specfile')
         spec.add_changelog_entry(
             bump_msg,
             author=author,
@@ -197,16 +206,16 @@ class RebuildGolangRPMsPipeline:
         )
 
         if self.runtime.dry_run:
-            _LOGGER.info(f"{rpm}/{branch} - Dry run, would've committed changes and triggered build")
+            _LOGGER.info(f"{dg_dir}/{branch} - Dry run, would've committed changes and triggered build")
             return
 
         spec.save()
         cmd = f'git commit -am "{bump_msg}"'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
+        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
         cmd = 'git push'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
-        cmd = 'rhpkg build --nowait'
-        await exectools.cmd_assert_async(cmd, cwd=rpm)
+        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
+        cmd = 'rhpkg build'
+        await exectools.cmd_assert_async(cmd, cwd=dg_dir)
 
     def get_rpms(self, el_v):
         # get all the go rpms from the candidate tag
@@ -245,14 +254,17 @@ class RebuildGolangRPMsPipeline:
 @cli.command('rebuild-golang-rpms')
 @click.option('--ocp-version', required=True, help='OCP version to rebuild golang rpms for')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
+@click.option('--cves', help='CVE-IDs that are confirmed to be fixed with given nvrs (comma separated) e.g. CVE-2024-1234')
 @click.option('--force', help='Force rebuild rpms even if they are on given golang', is_flag=True)
 @click.option('--rpms', help='Only consider these rpm(s) for rebuild')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str, force: bool, rpms: str,
-                              go_nvrs: List[str]):
+async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str, cves: str,
+                              force: bool, rpms: str, go_nvrs: List[str]):
     if rpms:
-        rpms = [r for r in rpms.split(',')]
-    await RebuildGolangRPMsPipeline(runtime, ocp_version=ocp_version, art_jira=art_jira, force=force, rpms=rpms,
-                                    go_nvrs=go_nvrs).run()
+        rpms = rpms.split(',')
+    if cves:
+        cves = cves.split(',')
+    await RebuildGolangRPMsPipeline(runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves,
+                                    force=force, rpms=rpms, go_nvrs=go_nvrs).run()

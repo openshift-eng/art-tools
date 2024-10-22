@@ -3,6 +3,7 @@ import koji
 import logging
 import re
 import os
+import asyncio
 import base64
 from typing import List
 from datetime import datetime, timezone
@@ -118,21 +119,53 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     return go_version, el_nvr_map
 
 
+async def move_golang_bugs(ocp_version: str,
+                           cves: List[str] = None,
+                           nvrs: List[str] = None,
+                           components: List[str] = None,
+                           force_update_tracker: bool = False,
+                           dry_run: bool = False,
+                           ):
+    cmd = [
+        'elliott',
+        '--group', f'openshift-{ocp_version}',
+        '--assembly', 'stream',
+        'find-bugs:golang',
+        '--analyze',
+        '--update-tracker',
+    ]
+    if cves:
+        for cve in cves:
+            cmd.extend(['--cve-id', cve])
+    if nvrs:
+        for nvr in nvrs:
+            cmd.extend(['--fixed-in-nvr', nvr])
+    if components:
+        for component in components:
+            cmd.extend(['--component', component])
+    if force_update_tracker:
+        cmd.append('--force-update-tracker')
+    if dry_run:
+        cmd.append('--dry-run')
+    await exectools.cmd_assert_async(cmd)
+
+
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, go_nvrs: List[str], art_jira: str,
-                 scratch: bool = False):
+    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, cves: List[str],
+                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, scratch: bool = False):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
         self.scratch = scratch
         self.ocp_version = ocp_version
         self.create_ticket = create_ticket
+        self.cves = cves
+        self.force_update_tracker = force_update_tracker
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
 
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
-        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self._doozer_working_dir)
 
         self.github_token = os.environ.get('GITHUB_TOKEN')
         if not self.github_token:
@@ -195,8 +228,10 @@ class UpdateGolangPipeline:
                          "Verifying builder branches are updated for building")
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
-                await self._rebase(el_v, go_version)
-                await self._build(el_v, go_version)
+
+            await asyncio.gather(*[
+                self._rebase_and_build(el_v, go_version) for el_v in missing_in
+            ])
 
             # Now all builders should be available in brew, try to fetch again
             builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
@@ -206,6 +241,15 @@ class UpdateGolangPipeline:
 
         _LOGGER.info("Updating streams.yml with found builder images")
         await self.update_golang_streams(go_version, builder_nvrs)
+
+        await move_golang_bugs(
+            ocp_version=self.ocp_version,
+            cves=self.cves,
+            nvrs=self.go_nvrs if self.cves else None,
+            components=[GOLANG_BUILDER_CVE_COMPONENT],
+            force_update_tracker=self.force_update_tracker,
+            dry_run=self.dry_run,
+        )
 
     def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -341,6 +385,7 @@ class UpdateGolangPipeline:
         release = datetime.now(tz=timezone.utc).strftime('%Y%m%d%H%M')
         cmd = [
             "doozer",
+            f"--working-dir={self._doozer_working_dir}-{el_v}",
             "--group", branch,
             "images:rebase",
             "--version", version,
@@ -356,6 +401,7 @@ class UpdateGolangPipeline:
         branch = self.get_golang_branch(el_v, go_version)
         cmd = [
             "doozer",
+            f"--working-dir={self._doozer_working_dir}-{el_v}",
             "--group", branch,
             "images:build",
             "--repo-type", "unsigned",
@@ -366,6 +412,10 @@ class UpdateGolangPipeline:
         if self.scratch:
             cmd.append("--scratch")
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars)
+
+    async def _rebase_and_build(self, el_v, go_version):
+        await self._rebase(el_v, go_version)
+        await self._build(el_v, go_version)
 
     @staticmethod
     def get_golang_branch(el_v, go_version):
@@ -454,13 +504,24 @@ The new NVRs are:
 @click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
               help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
+@click.option('--cves', help='CVEs that are confirmed to be fixed in all given golang nvrs (comma separated). '
+                             'This will be used to fetch relevant Tracker bugs and move them to ON_QA state if '
+                             'determined to be fixed (nightly is found containing fixed builds). e.g. CVE-2024-1234')
+@click.option('--force-update-tracker', is_flag=True, default=False,
+              help='Force update found tracker bugs for the given CVEs, even if the latest nightly is not found containing fixed builds')
 @click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
 async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
-                        confirm: bool, go_nvrs: List[str]):
+                        cves: str, force_update_tracker: bool, confirm: bool, go_nvrs: List[str]):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, go_nvrs, art_jira, scratch).run()
+    if cves:
+        cves = cves.split(',')
+    if force_update_tracker and not cves:
+        raise ValueError('CVEs must be provided with --force-update-tracker')
+
+    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, cves, force_update_tracker,
+                               go_nvrs, art_jira, scratch).run()

@@ -31,6 +31,7 @@ class Runtime:
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
         logger.addHandler(handler)
+        logger.propagate = False
         return logger
 
     @classmethod

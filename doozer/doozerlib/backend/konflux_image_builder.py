@@ -57,7 +57,7 @@ class KonfluxImageBuilder:
     SUPPORTED_ARCHES = {
         "x86_64": "linux/x86_64",
         "s390x": "linux/s390x",
-        "ppc64le": "linux/ppc64le",
+        "ppc64le": "linux-large/ppc64le",
         "aarch64": "linux/arm64",
     }
 
@@ -103,7 +103,7 @@ class KonfluxImageBuilder:
 
             # Start the build
             self._logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
-            retries = 3
+            retries = 5
             error = None
             for attempt in range(retries):
                 self._logger.info("[%s] Build attempt %s/%s", metadata.distgit_key, attempt + 1, retries)
@@ -166,10 +166,22 @@ class KonfluxImageBuilder:
         self._logger.info(f"[%s] Using application: {app['metadata']['name']}", metadata.distgit_key)
 
         # Ensure the component resource exists
-        # Openshift doesn't allow dots in any of its fields, so we replace them with dashes
-        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-")
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
+
+        # 'openshift-4-18-ose-installer-terraform' -> '4-18-ose-installer-terraform'
+        # Kubernetes resources has a maximum character length of 63 characters.
+        component_name = component_name.removeprefix("openshift-")
+
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
+        version = df.labels.get("version")
+        release = df.labels.get("release")
+        if not version or not release:
+            raise ValueError(f"[{metadata.distgit_key}] `version` and `release` labels are required.")
+        additional_tags = [
+            f"{metadata.image_name_short}-{version}-{release}"
+        ]
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
 
         component_manifest = self._new_component(
@@ -190,8 +202,9 @@ class KonfluxImageBuilder:
             raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
         build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
+
         pipelinerun_manifest = self._new_pipelinerun(
-            f"doozer-build-{component_name}-",
+            f"{component_name}-",  # generate name needs a trailing dash
             app_name,
             component_name,
             git_url,
@@ -199,11 +212,12 @@ class KonfluxImageBuilder:
             git_branch,
             f"{dest_image_repo}:{dest_image_tag}",
             build_platforms,
+            additional_tags=additional_tags,
         )
 
         if self._config.dry_run:
             pipelinerun_manifest = resource.ResourceInstance(dyn_client, pipelinerun_manifest)
-            pipelinerun_manifest.metadata.name = f"doozer-build-{component_name}-dry-run"
+            pipelinerun_manifest.metadata.name = f"{component_name}-dry-run"
             self._logger.warning(f"[DRY RUN] [%s] Would have created PipelineRun: {pipelinerun_manifest.metadata.name}", metadata.distgit_key)
             return pipelinerun_manifest
 
@@ -412,7 +426,8 @@ class KonfluxImageBuilder:
     @staticmethod
     def _new_pipelinerun(generate_name: str, application_name: str, component_name: str,
                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret") -> dict:
+                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                         additional_tags: Sequence[str] = []) -> dict:
         https_url = art_util.convert_remote_git_to_https(git_url)
         # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
         template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
@@ -454,6 +469,8 @@ class KonfluxImageBuilder:
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             if task["name"] == "build-images":
                 task["timeout"] = "12h"
+            elif task["name"] == "apply-tags":
+                task["params"].append({"name": "ADDITIONAL_TAGS", "value": list(additional_tags)})
 
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
         return obj
@@ -528,14 +545,11 @@ class KonfluxImageBuilder:
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
-                        status_message = status
                         try:
                             status = obj.status.conditions[0].status
-                            message = obj.status.conditions[0].message
-                            status_message = f"{status} {message}"
                         except AttributeError:
                             pass
-                        self._logger.info("PipelineRun %s status: %s.", pipelinerun_name, status_message)
+                        self._logger.info("PipelineRun %s status: %s.", pipelinerun_name, status)
                         if status not in ["Unknown", "Not Found"]:
                             return obj
                 except TimeoutError:
