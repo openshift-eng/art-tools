@@ -11,6 +11,7 @@ export interface SiteConfig {
     bucket: R2Bucket;
     public: string[];
     replace: {[prefix: string]: string;};
+    limit: number;
     desp: {[path: string]: string;};
     decodeURI?: boolean;
     legalInfo?: string;

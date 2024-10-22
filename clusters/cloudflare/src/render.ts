@@ -1,7 +1,7 @@
 import { svgs, cssStyle, defaultFavicon } from './static';
 import { SiteConfig } from './types';
 
-export var renderTemplFull = (files: R2Object[], folders: string[], path: string, config: SiteConfig) => {
+export var renderTemplFull = (files: R2Object[], folders: string[], path: string, cursor: string, config: SiteConfig) => {
     return `<!DOCTYPE html>
     <html>
     <head>
@@ -15,7 +15,7 @@ export var renderTemplFull = (files: R2Object[], folders: string[], path: string
     ${svgs}
     <header>
         <h1>
-            
+
                 <a href="/">${config.name}</a> /
                 <!-- breadcrumbs start -->${renderTemplBreadcrumbs(path)}
         </h1>
@@ -24,20 +24,21 @@ export var renderTemplFull = (files: R2Object[], folders: string[], path: string
             <div class="listing">
                 <table aria-describedby="summary">
                     <thead>
-                    <tr>
-                        <th class="hideable"></th>
-                        <th class="name">Name</th>
-                        <th class="description">Description</th>
-                        <th class="size">Size</th>
-                        <th class="date hideable">Modified</th>
-                        <th class="hideable"></th>
-                    </tr>
+                        <tr>
+                            <th class="hideable"></th>
+                            <th class="name">Name</th>
+                            <th class="description">Description</th>
+                            <th class="size">Size</th>
+                            <th class="date hideable">Modified</th>
+                            <th class="hideable"></th>
+                        </tr>
                     </thead>
                     <tbody>
-                    ${path === '/' ? '' : renderGoUp(path)}
-    <!-- folders start -->${renderTemplFolders(folders, config)}
-    <!-- files start -->${renderTemplFiles(files, config)}
-    </tbody>
+                        ${renderFirstLine(path, cursor)}
+                        ${renderTemplFolders(folders, config)}
+                        ${renderTemplFiles(files, config)}
+                        ${renderLastLine(cursor)}
+                    </tbody>
                 </table>
             </div>
         </main>
@@ -49,25 +50,57 @@ export var renderTemplFull = (files: R2Object[], folders: string[], path: string
     `;
 };
 
-var renderGoUp = (path: string) => {
-    if (path !== '') {
-        return `
-         <tr>
-                        <td class="hideable"></td>
-                        <td class="goup">
-                            <a href="..">
-                                Go up
-                            </a>
-                        </td>
-                        <td class="description">&mdash;</td>
-                        <td class="size">&mdash;</td>
-                        <td class="date hideable">&mdash;</td>
-                        <td class="hideable"></td>
-                    </tr>`;
+var renderPagination = (cursor: string) => {
+    if (cursor) {
+        return `<a href="?cursor=${cursor}">Next</a>`;
+    } else {
+        return '';
     }
+}
+
+var renderGoUp = (path: string) => {
+    if (path === '/' || path === '') {
+        return '';
+    }
+
+    if (path) {
+        return `<a href="..">Go up</a>`;
+    }
+
+    return '';
+}
+
+var renderFirstLine = (path: string, cursor: string) => {
+    if (path !== '' || cursor !== '') {
+        return `
+        <tr>
+            <td class="hideable"></td>
+            <td class="goup">${renderGoUp(path)}</td>
+            <td class="description">&mdash;</td>
+            <td class="size">&mdash;</td>
+            <td class="date hideable">&mdash;</td>
+            <td class="hideable">${renderPagination(cursor)}</td>
+        </tr>`;
+    }
+
     return '';
 };
 
+var renderLastLine = (cursor: string) => {
+    if (cursor !== '') {
+        return `
+        <tr>
+            <td class="hideable"></td>
+            <td class="goup"></td>
+            <td class="description"></td>
+            <td class="size"></td>
+            <td class="date hideable"></td>
+            <td class="hideable">${renderPagination(cursor)}</td>
+        </tr>`;
+    }
+
+    return '';
+};
 var renderTemplTitle = (siteTitle: string, path: string) => {
     if (path === '/') {
         return siteTitle;

@@ -14,6 +14,7 @@ export function getSiteConfig(env: Env, domain: string): SiteConfig | undefined 
                 '/pub/openshift-v4/clients/': '/pub/openshift-v4/x86_64/clients/',
                 '/pub/openshift-v4/dependencies/': '/pub/openshift-v4/x86_64/dependencies/',
             },
+            limit: 20,
             desp: {
                 '/': "Description of your website at default",
                 '/path': "Description of your website at /path",
@@ -23,7 +24,7 @@ export function getSiteConfig(env: Env, domain: string): SiteConfig | undefined 
 
             /// Decode URI when listing objects, useful when you have space or special characters in object key
             /// Recommended to enable it for new installations, but default to false for backward compatibility
-            decodeURI: true, 
+            decodeURI: true,
 
             /// [Optional] Legal information of your website
             /// Your local government (for example Mainland China) may requires you to put some legal info at footer

@@ -8,35 +8,23 @@ import * as crypto from 'crypto';
 const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
 const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
 
-async function listBucket(bucket: R2Bucket, options?: R2ListOptions): Promise<R2Objects> {
-    // List all objects in the bucket, launch new request if list is truncated
-    const objects: R2Object[] = [];
-    const delimitedPrefixes: string[] = [];
-
-    // delete limit, cursor in passed options
+async function listBucket(bucket: R2Bucket, options?: R2ListOptions, siteConfig: SiteConfig): Promise<R2Objects> {
     const requestOptions = {
         ...options,
-        limit: undefined,
-        cursor: undefined,
+        limit: siteConfig.limit,
     };
 
-    var cursor = undefined;
-    while (true) {
-        const index = await bucket.list({
-            ...requestOptions,
-            cursor,
-        });
-        objects.push(...index.objects);
-        delimitedPrefixes.push(...index.delimitedPrefixes);
-        if (!index.truncated) {
-            break;
-        }
-        cursor = index.cursor;
-    }
+    const listed = await bucket.list({
+        ...requestOptions,
+    });
+
+    let truncated = listed.truncated;
+    let cursor = truncated ? listed.cursor : undefined;
+
     return {
-        objects,
-        delimitedPrefixes,
-        truncated: false,
+        objects: listed.objects,
+        delimitedPrefixes: listed.delimitedPrefixes,
+        cursor: cursor,
     };
 }
 
@@ -71,7 +59,8 @@ function unauthorized(): Response {
 }
 
 function shouldReturnOriginResponse(originResponse: Response, siteConfig: SiteConfig): boolean {
-    const isNotEndWithSlash = originResponse.url.slice(-1) !== '/';
+    const isNotEndWithSlash = false; // TODO: Add logic
+    //const isNotEndWithSlash = originResponse.url.slice(-1) !== '/';
     const is404 = originResponse.status === 404;
     const isZeroByte = originResponse.headers.get('Content-Length') === '0';
     const overwriteZeroByteObject = (siteConfig.dangerousOverwriteZeroByteObject ?? false) && isZeroByte;
@@ -91,6 +80,8 @@ export default {
 
         const url = new URL(request.url);
         const domain = url.hostname;
+        const cursor = url.searchParams.get("cursor") || undefined;
+
         let path = url.pathname;
 
         const siteConfig = getSiteConfig(env, domain);
@@ -181,18 +172,22 @@ export default {
 
         const index = await listBucket(bucket, {
             prefix: objectKey,
+            cursor,
             delimiter: '/',
             include: ['httpMetadata', 'customMetadata'],
-        });
+        }, siteConfig);
+
         // filter out key===prefix, appears when dangerousOverwriteZeroByteObject===true
         const files = index.objects.filter((obj) => obj.key !== objectKey);
         const folders = index.delimitedPrefixes.filter((prefix) => prefix !== objectKey);
+
         // If no object found, return origin 404 response. Only return 404 because if there is a zero byte object,
         // user may want to show a empty folder.
         if (files.length === 0 && folders.length === 0 && originResponse.status === 404) {
             return originResponse;
         }
-        return new Response(renderTemplFull(files, folders, '/' + objectKey, siteConfig), {
+
+        return new Response(renderTemplFull(files, folders, '/' + objectKey, index.cursor, siteConfig), {
             headers: {
                 'Content-Type': 'text/html; charset=utf-8',
             },
