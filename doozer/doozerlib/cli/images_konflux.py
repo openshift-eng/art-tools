@@ -170,7 +170,8 @@ class KonfluxBuildCli:
 @cli.command("beta:images:konflux:build", short_help="Build images for the group.")
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', required=True, help='The namespace to use for Konflux cluster connections.')
+@click.option('--konflux-namespace', metavar='NAMESPACE', required=True, default=constants.KONFLUX_DEFAULT_TENANT,
+              help=f'The namespace to use for Konflux cluster connections. Defaults to {constants.KONFLUX_DEFAULT_TENANT}.')
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
