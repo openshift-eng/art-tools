@@ -446,6 +446,8 @@ class BugValidator:
 
     def _verify_blocking_bugs(self, blocking_bugs_for, is_attached=False):
         # complain about blocking bugs that aren't verified or shipped
+        major, minor = self.runtime.get_major_minor()
+        release_next_week = is_release_this_week(get_next_release_schedule(f"openshift-{major}.{minor + 1}"))
         for bug, blockers in blocking_bugs_for.items():
             for blocker in blockers:
                 message = str()
@@ -472,13 +474,9 @@ class BugValidator:
                         message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of bug " \
                             f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
                     self._complain(message)
-                if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
+                if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED'] and release_next_week:
                     blocker_advisories = blocker.all_advisory_ids()
                     if not blocker_advisories:
-                        # check if we need to release X+1 release this week
-                        major, minor = self.runtime.get_major_minor()
-                        if not is_release_this_week(get_next_release_schedule(f"openshift-{major}.{minor + 1}")):
-                            continue
                         if self.output == 'text':
                             message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
                                 f"{blocker.id} which is on {blocker.status} but not attached to any advisory"
