@@ -248,7 +248,7 @@ class BugValidator:
         async def get_all_advisory_ids(bug):
             try:
                 all_advisories_id = bug.all_advisory_ids()
-            except ErrataException as e:
+            except ErrataException:
                 try:
                     sync_jira_issue(bug.id)
                 except Exception as e:
@@ -482,7 +482,7 @@ class BugValidator:
                 if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
                     try:
                         blocker_advisories = blocker.all_advisory_ids()
-                    except ErrataException as e:
+                    except ErrataException:
                         try:
                             sync_jira_issue(blocker.id)
                         except Exception as e:

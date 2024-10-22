@@ -116,7 +116,7 @@ def sync_jira_issue(jira_issue_id):
     Sync a jira issue to advisory
     Response code will return
     """
-    return ErrataConnector()._post("/api/v1/jra/refresh", json=[jira_issue_id])
+    return ErrataConnector()._post("/api/v1/jira/refresh", json=[jira_issue_id])
 
 
 def remove_jira_issue(advisory_id, jira_issue_id):
