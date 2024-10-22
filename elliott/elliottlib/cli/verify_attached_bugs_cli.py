@@ -17,7 +17,7 @@ from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
 from elliottlib.util import minor_version_tuple
 from elliottlib.bzutil import Bug
-from elliottlib.errata import get_bug_ids
+from elliottlib.errata import get_bug_ids, sync_jira_issue
 from elliottlib.cli.attach_cve_flaws_cli import get_flaws
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsSweep, categorize_bugs_by_type
 from elliottlib.errata import is_advisory_editable
@@ -248,8 +248,11 @@ class BugValidator:
         async def get_all_advisory_ids(bug):
             try:
                 all_advisories_id = bug.all_advisory_ids()
-            except ErrataException as e:
-                return f'Failed to get advisories for bug {bug.id}: {e}'
+            except ErrataException:
+                try:
+                    sync_jira_issue(bug.id)
+                except Exception as e:
+                    return f'Failed to sync bug {bug.id}: {e}'
             if len(all_advisories_id) > 1:
                 return f'Bug <{bug.weburl}|{bug.id}> is attached in multiple advisories: {all_advisories_id}'
             return None
@@ -479,11 +482,14 @@ class BugValidator:
                 if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
                     try:
                         blocker_advisories = blocker.all_advisory_ids()
-                    except ErrataException as e:
-                        message = f"Failed to get advisories for bug {blocker.id}: {e}"
-                        logger.error(message)
-                        self._complain(message)
-                        continue
+                    except ErrataException:
+                        try:
+                            sync_jira_issue(blocker.id)
+                        except Exception as e:
+                            message = f"Failed to sync bug {blocker.id}: {e}"
+                            logger.error(message)
+                            self._complain(message)
+                            continue
                     if not blocker_advisories:
                         if self.output == 'text':
                             message = (f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "

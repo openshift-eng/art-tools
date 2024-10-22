@@ -111,6 +111,14 @@ def add_jira_issue(advisory_id, jira_issue_id):
     return ErrataConnector()._post(f"/api/v1/erratum/{advisory_id}/add_jira_issue", json={'jira_issue': jira_issue_id})
 
 
+def sync_jira_issue(jira_issue_id):
+    """
+    Sync a jira issue to advisory
+    Response code will return
+    """
+    return ErrataConnector()._post("/api/v1/jira/refresh", json=[jira_issue_id])
+
+
 def remove_jira_issue(advisory_id, jira_issue_id):
     """
     Remove a jira issue from advisory
