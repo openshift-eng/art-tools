@@ -203,6 +203,7 @@ class KonfluxImageBuilder:
         build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
 
+        nvr = "-".join(self.get_name_version_release(build_repo))
         pipelinerun_manifest = self._new_pipelinerun(
             f"{component_name}-",  # generate name needs a trailing dash
             app_name,
@@ -212,6 +213,7 @@ class KonfluxImageBuilder:
             git_branch,
             f"{dest_image_repo}:{dest_image_tag}",
             build_platforms,
+            nvr,
             additional_tags=additional_tags,
         )
 
@@ -274,6 +276,13 @@ class KonfluxImageBuilder:
             installed_packages.update(srpms)
         return sorted(installed_packages)
 
+    @staticmethod
+    def get_name_version_release(build_repo):
+        df_path = build_repo.local_dir.joinpath("Dockerfile")
+        df = DockerfileParser(str(df_path))
+
+        return df.labels['com.redhat.component'], df.labels['version'], df.labels['release']
+
     async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
         if not metadata.runtime.konflux_db:
             self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
@@ -290,9 +299,7 @@ class KonfluxImageBuilder:
             source_repo = df.labels['io.openshift.build.source-location']
             commitish = df.labels['io.openshift.build.commit.id']
 
-            component_name = df.labels['com.redhat.component']
-            version = df.labels['version']
-            release = df.labels['release']
+            component_name, version, release = self.get_name_version_release(build_repo)
             nvr = "-".join([component_name, version, release])
 
             pipelinerun_name = pipelinerun['metadata']['name']
@@ -426,7 +433,7 @@ class KonfluxImageBuilder:
     @staticmethod
     def _new_pipelinerun(generate_name: str, application_name: str, component_name: str,
                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                         build_platforms: Sequence[str], nvr: str, git_auth_secret: str = "pipelines-as-code-secret",
                          additional_tags: Sequence[str] = []) -> dict:
         https_url = art_util.convert_remote_git_to_https(git_url)
         # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
@@ -480,6 +487,7 @@ class KonfluxImageBuilder:
                     "name": "art-db",
                     "params": [
                         {"name": "IMAGE_URL", "value": "$(tasks.build-image-index.results.IMAGE_URL)"},
+                        {"name": "NVR", "value": nvr},
                     ],
                     "taskRef": {
                         "resolver": "git",
