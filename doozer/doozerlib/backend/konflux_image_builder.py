@@ -478,6 +478,9 @@ class KonfluxImageBuilder:
             if task["name"] == "build-images":
                 updated_tasks.append({
                     "name": "art-db",
+                    "params": [
+                        {"name": "IMAGE_URL", "value": "$(tasks.build-image-index.results.IMAGE_URL)"},
+                    ],
                     "taskRef": {
                         "resolver": "git",
                         "params": [
@@ -486,8 +489,7 @@ class KonfluxImageBuilder:
                             {"name": "revision", "value": "main"},
                             {"name": "pathInRepo", "value": "custom-tasks/art-store-to-db.yaml"},
                             {"name": "token", "value": "openshift-art-build-bot-read-only"},
-                            {"name": "tokenKey", "value": "token"},
-                            {"name": "IMAGE_URL", "value": "$(tasks.build-image-index.results.IMAGE_URL)"},
+                            {"name": "tokenKey", "value": "token"}
                         ]
                     },
                     "runAfter": ["build-image-index"],
