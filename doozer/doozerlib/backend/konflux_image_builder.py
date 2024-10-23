@@ -487,6 +487,7 @@ class KonfluxImageBuilder:
                             {"name": "pathInRepo", "value": "custom-tasks/art-store-to-db.yaml"},
                             {"name": "token", "value": "openshift-art-build-bot-read-only"},
                             {"name": "tokenKey", "value": "token"},
+                            {"name": "IMAGE_URL", "value": "$(tasks.build-image-index.results.IMAGE_URL)"},
                         ]
                     },
                     "runAfter": ["build-image-index"],
