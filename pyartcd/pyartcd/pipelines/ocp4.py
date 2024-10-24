@@ -646,10 +646,17 @@ class Ocp4Pipeline:
 
         records = record_log.get('build', [])
         operator_nvrs = []
-
+        operator_nvrs_map = {}
+        operator_deps = []
         for record in records:
             if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                 operator_nvrs.append(record['nvrs'].split(',')[0])
+            if record['status'] != '0' and record.get('nvrs', None) and record.get('dependents', None):
+                operator_deps.extend([dep for dep in record['dependents'].split(',') if dep not in operator_deps])
+            operator_nvrs_map[record['distgit']] = record.get('nvrs')
+        for dep in operator_deps:
+            if dep in operator_nvrs_map and operator_nvrs_map[dep] in operator_nvrs:
+                operator_nvrs.remove(operator_nvrs_map[dep])
 
         await util.sync_images(
             version=self.version.stream,
