@@ -383,15 +383,15 @@ class JIRABug(Bug):
 
         :returns: a string if a value is found, otherwise None
         """
+        # ART needs the ability to overwrite this field for ART's build pipeline with label "art:pscomponent:<component_name>
+        art_pscomponent_label = next((label for label in self.bug.fields.labels if label.startswith('art:pscomponent:')), None)
+        if art_pscomponent_label:
+            return art_pscomponent_label.removeprefix('art:pscomponent:').strip() or None
         if self.is_type_vulnerability():
             return getattr(self.bug.fields, JIRABugTracker.field_cve_component)
-        markers = [r'^art:pscomponent:\s*(\S+)', r'^pscomponent:\s*(\S+)']
-        for label in self.bug.fields.labels:
-            for marker in markers:
-                tmp = re.search(marker, label)
-                if tmp and len(tmp.groups()) == 1:
-                    component_name = tmp.groups()[0]
-                    return component_name
+        ps_component_label = next((label for label in self.bug.fields.labels if label.startswith('pscomponent:')), None)
+        if ps_component_label:
+            return ps_component_label.removeprefix('pscomponent:').strip() or None
         return None
 
     def _get_release_blocker(self):
