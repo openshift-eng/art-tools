@@ -45,13 +45,15 @@ class QuayDoomsdaySync:
         ]
 
         self.runtime.logger.info("Running mirror command: %s", mirror_cmd)
-        cmd_assert(mirror_cmd, realtime=True, retries=N_RETRIES)
+        cmd_assert(mirror_cmd, retries=N_RETRIES)
+        self.runtime.logger.info("Mirror command ran successfully")
         if self.runtime.dry_run:
             self.runtime.logger.info("[DRY RUN] Would have run %s", " ".join(aws_cmd))
         else:
             sleep(5)
             self.runtime.logger.info("Running aws command: %s", aws_cmd)
-            cmd_assert(aws_cmd, realtime=True, retries=N_RETRIES)
+            cmd_assert(aws_cmd, retries=N_RETRIES)
+            self.runtime.logger.info("AWS command ran successfully")
             sleep(5)
 
         if os.path.exists(path):
