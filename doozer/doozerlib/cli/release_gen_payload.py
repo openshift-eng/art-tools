@@ -1419,7 +1419,7 @@ class GenPayloadCli:
 
                         master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
                         if major != master_major or minor != master_minor:
-                            next_nightly_delay = timedelta(hours=12)
+                            next_nightly_delay = timedelta(hours=6)
                         else:
                             # More frequent nightlies for master
                             next_nightly_delay = timedelta(hours=6)
