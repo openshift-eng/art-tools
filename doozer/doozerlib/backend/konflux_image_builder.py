@@ -196,11 +196,13 @@ class KonfluxImageBuilder:
         self._logger.info(f"[%s] Using component: {component['metadata']['name']}", metadata.distgit_key)
 
         # Create a PipelineRun
-        arches = metadata.get_arches()
-        unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
-        if unsupported_arches:
-            raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
-        build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
+        # arches = metadata.get_arches()
+        # unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
+        # if unsupported_arches:
+        #     raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
+        # build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
+        # Wait to enable other arches until ART is on the new cluster
+        build_platforms = ["linux/x86_64"]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
 
         pipelinerun_manifest = self._new_pipelinerun(
