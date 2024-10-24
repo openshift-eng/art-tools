@@ -51,6 +51,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly=4.6.6', 'verify-bugs'])
         self.assertEqual(result.exit_code, 0)
 
+    @patch('artcommonlib.util.is_release_this_week', return_value=True)
     def test_verify_bugs_with_sweep_cli(self):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
@@ -93,6 +94,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
 
     @patch('elliottlib.cli.verify_attached_bugs_cli.BugValidator.verify_bugs_multiple_advisories')
     @patch('elliottlib.errata_async.AsyncErrataAPI._generate_auth_header')
+    @patch('artcommonlib.util.is_release_this_week', return_value=True)
     def test_verify_attached_bugs_cli_fail(self, *_):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize")
