@@ -10,6 +10,7 @@ export interface SiteConfig {
     name: string;
     bucket: R2Bucket;
     public: string[];
+    cgw: {[location: string]: string};
     replace: {[prefix: string]: string;};
     limit: number;
     desp: {[path: string]: string;};

@@ -3,10 +3,10 @@ import { Env, SiteConfig } from './types';
 export function getSiteConfig(env: Env, domain: string): SiteConfig | undefined {
     const configs: {[domain: string]: SiteConfig} = {
         'local': {
-            name: "Mirror",
+            name: 'Mirror',
             bucket: env.BUCKET_bucketname,
             public: [
-                "/pub/"
+                '/pub/'
             ],
             replace: {
                 '/pub/openshift-v4/amd64/': '/pub/openshift-v4/x86_64/',
@@ -14,13 +14,20 @@ export function getSiteConfig(env: Env, domain: string): SiteConfig | undefined 
                 '/pub/openshift-v4/clients/': '/pub/openshift-v4/x86_64/clients/',
                 '/pub/openshift-v4/dependencies/': '/pub/openshift-v4/x86_64/dependencies/',
             },
+            cgw: {
+                '/pub/cgw': 'https://developers.redhat.com/content-gateway/rest/mirror/pub/cgw',
+                '/pub/openshift-v4/clients/crc': 'https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/crc',
+                '/pub/openshift-v4/clients/mirror-registry': 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/mirror-registry',
+                '/pub/openshift-v4/clients/odo': 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/odo',
+                '/pub/openshift-v4/clients/helm': 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/helm',
+            },
             limit: 20,
             desp: {
-                '/': "Description of your website at default",
-                '/path': "Description of your website at /path",
-                '/path/to/file.txt': "Description of file /path/to/file.txt",
+                '/': 'Description of your website at default',
+                '/path': 'Description of your website at /path',
+                '/path/to/file.txt': 'Description of file /path/to/file.txt',
             },
-            showPoweredBy: false, // Set to false to hide the "Powered by" information at footer
+            showPoweredBy: false, // Set to false to hide the 'Powered by' information at footer
 
             /// Decode URI when listing objects, useful when you have space or special characters in object key
             /// Recommended to enable it for new installations, but default to false for backward compatibility
@@ -30,7 +37,7 @@ export function getSiteConfig(env: Env, domain: string): SiteConfig | undefined 
             /// Your local government (for example Mainland China) may requires you to put some legal info at footer
             /// and you can put it here.
             /// It will be treated as raw HTML.
-            // legalInfo: "Legal information of your website",
+            // legalInfo: 'Legal information of your website',
 
             /// [Optional] favicon, should be a URL to **PNG IMAGE**. Default to Cloudflare R2's logo
             // favicon: ''

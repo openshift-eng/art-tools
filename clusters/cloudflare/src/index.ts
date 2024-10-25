@@ -8,6 +8,24 @@ import * as crypto from 'crypto';
 const decode = (str: string):string => Buffer.from(str, 'base64').toString('binary');
 const encode = (str: string):string => Buffer.from(str, 'binary').toString('base64');
 
+// Proxy function to forward the request to the target URL
+async function proxyToTarget(request: Request, targetBase: string, remainingPath: string): Promise<Response> {
+    const targetUrl = `${targetBase}${remainingPath}`;
+
+    // Set up the new request
+    const proxyRequest = new Request(targetUrl, {
+        method: request.method,
+        headers: request.headers,
+        body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
+    });
+
+    // Fetch the response from the target URL
+    const response = await fetch(proxyRequest);
+
+    // Return the response to the client
+    return new Response(response.body, response);
+}
+
 async function listBucket(bucket: R2Bucket, options?: R2ListOptions, siteConfig: SiteConfig): Promise<R2Objects> {
     const requestOptions = {
         ...options,
@@ -59,8 +77,10 @@ function unauthorized(): Response {
 }
 
 function shouldReturnOriginResponse(originResponse: Response, siteConfig: SiteConfig): boolean {
-    const isNotEndWithSlash = false; // TODO: Add logic
-    //const isNotEndWithSlash = originResponse.url.slice(-1) !== '/';
+    // TODO: Add logic removing parameters from url and verifying that
+    // the path is a dir and not a file
+    // const isNotEndWithSlash = originResponse.url.slice(-1) !== '/';
+    const isNotEndWithSlash = false;
     const is404 = originResponse.status === 404;
     const isZeroByte = originResponse.headers.get('Content-Length') === '0';
     const overwriteZeroByteObject = (siteConfig.dangerousOverwriteZeroByteObject ?? false) && isZeroByte;
@@ -86,8 +106,14 @@ export default {
 
         const siteConfig = getSiteConfig(env, domain);
         if (!siteConfig) {
-            // TODO: Should send a email to notify the admin
             return originResponse;
+        }
+
+        // Proxy rule for CGW to Red Hat Content Gateway
+        for (const [path, targetBase] of Object.entries(siteConfig.cgw)) {
+            if (url.pathname.startsWith(path)) {
+                return proxyToTarget(request, targetBase, url.pathname.replace(path, ""));
+            }
         }
 
         // Prefixes that should be swapped on access
