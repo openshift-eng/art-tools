@@ -390,7 +390,7 @@ class Runtime(GroupRuntime):
         self.hotfix = False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
 
         if self.group_config.assemblies.enabled or self.enable_assemblies:
-            if re.fullmatch(r'[\w.]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
+            if re.fullmatch(r'[\w.-]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
                 raise ValueError('Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).')
         else:
             # If assemblies are not enabled for the group,
