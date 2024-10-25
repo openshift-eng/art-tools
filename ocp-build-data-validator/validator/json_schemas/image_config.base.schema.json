@@ -1120,7 +1120,21 @@
         "additionalProperties": false
       }
     },
-    "delivery": {}
+    "delivery": {},
+    "konflux": {
+      "description": "Konflux config",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "To enable/disable an image for konflux",
+          "type": "string",
+          "enum": [
+            "enabled",
+            "disabled"
+          ]
+        }
+      }
+    }
   },
   "additionalProperties": false
 }
