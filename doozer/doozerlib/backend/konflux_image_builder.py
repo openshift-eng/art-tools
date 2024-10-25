@@ -55,10 +55,11 @@ class KonfluxImageBuilder:
 
     # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/getting-started/multi-platform-builds.md
     SUPPORTED_ARCHES = {
+        # Only x86_64 is supported, until we are on the new cluster
         "x86_64": "linux/x86_64",
-        "s390x": "linux/s390x",
-        "ppc64le": "linux/ppc64le",
-        "aarch64": "linux/arm64",
+        # "s390x": "linux/s390x",
+        # "ppc64le": "linux/ppc64le",
+        # "aarch64": "linux/arm64",
     }
 
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
@@ -101,6 +102,14 @@ class KonfluxImageBuilder:
             if failed_parents:
                 raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
 
+            arches = metadata.get_arches()
+            unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
+            building_arches = list(set(arches) - unsupported_arches)
+            if unsupported_arches:
+                # TODO: Update once we are on the new cluster
+                # raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
+                self._logger.warning(f"[{metadata.distgit_key}] Skipping arches: {', '.join(unsupported_arches)}")
+
             # Start the build
             self._logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
             retries = 5
@@ -110,8 +119,8 @@ class KonfluxImageBuilder:
                 with client.ApiClient(configuration=cfg) as api_client:
                     dyn_client = DynamicClient(api_client)
 
-                    pipelinerun = await self._start_build(metadata, build_repo, dyn_client)
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING)
+                    pipelinerun = await self._start_build(metadata, build_repo, dyn_client, building_arches)
+                    await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches)
 
                     pipelinerun_name = pipelinerun['metadata']['name']
                     self._logger.info("[%s] Waiting for PipelineRun %s to complete...", metadata.distgit_key, pipelinerun_name)
@@ -120,7 +129,7 @@ class KonfluxImageBuilder:
 
                     status = pipelinerun.status.conditions[0].status
                     outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome)
+                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches)
 
                     if status != "True":
                         error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
@@ -148,7 +157,7 @@ class KonfluxImageBuilder:
                 await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
 
-    async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, dyn_client: DynamicClient):
+    async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, dyn_client: DynamicClient, building_arches: list):
         git_url = build_repo.https_url
         git_branch = build_repo.branch
         assert build_repo.commit_hash is not None, f"[{metadata.distgit_key}] git_commit is required for Konflux image build"
@@ -196,13 +205,7 @@ class KonfluxImageBuilder:
         self._logger.info(f"[%s] Using component: {component['metadata']['name']}", metadata.distgit_key)
 
         # Create a PipelineRun
-        # arches = metadata.get_arches()
-        # unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
-        # if unsupported_arches:
-        #     raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
-        # build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in arches]
-        # Wait to enable other arches until ART is on the new cluster
-        build_platforms = ["linux/x86_64"]
+        build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in building_arches]
         pipelineruns_api = await self._get_pipelinerun_api(dyn_client)
 
         pipelinerun_manifest = self._new_pipelinerun(
@@ -276,7 +279,7 @@ class KonfluxImageBuilder:
             installed_packages.update(srpms)
         return sorted(installed_packages)
 
-    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome):
+    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, building_arches):
         if not metadata.runtime.konflux_db:
             self._logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux '
                                  'DB.')
@@ -305,7 +308,7 @@ class KonfluxImageBuilder:
                 'version': version,
                 'release': release,
                 'el_target': f'el{isolate_el_version_in_release(release)}',
-                'arches': metadata.get_arches(),
+                'arches': building_arches,
                 'embargoed': 'p1' in release.split('.'),
                 'start_time': datetime.now(tz=timezone.utc),
                 'end_time': None,
@@ -343,7 +346,7 @@ class KonfluxImageBuilder:
                 start_time = pipelinerun.status.startTime
                 end_time = pipelinerun.status.completionTime
 
-                installed_packages = await self.get_installed_packages(image_pullspec, metadata.get_arches())
+                installed_packages = await self.get_installed_packages(image_pullspec, building_arches)
 
                 build_record_params.update({
                     'image_pullspec': image_pullspec,
