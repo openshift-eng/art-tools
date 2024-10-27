@@ -1,6 +1,6 @@
 import logging
 from typing import OrderedDict, Optional, Tuple, Iterable, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 import re
 import asyncio
 
@@ -142,6 +142,25 @@ def get_assembly_release_date(assembly, group):
 
     except KeyError:
         return None
+
+
+def is_release_this_week(release_date):
+    """
+    Check if release date is in the near week
+    """
+    return datetime.strptime(release_date, "%Y-%m-%d").date() <= date.today() + timedelta(days=7)
+
+
+def get_next_release_schedule(group):
+    """
+    Get next release date based on current date
+    """
+    dev_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/schedule-tasks/?flags_and__in=dev&fields=path,date_finish', headers={'Accept': 'application/json'})
+    dev_schedules.raise_for_status()
+    for release in dev_schedules.json():
+        if datetime.strptime(release['date_finish'], "%Y-%m-%d").date() > date.today():
+            return release['date_finish']
+    return None
 
 
 def get_inflight(assembly, group):
