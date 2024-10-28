@@ -21,7 +21,7 @@ export function getSiteConfig(env: Env, domain: string): SiteConfig | undefined 
                 '/pub/openshift-v4/clients/odo': 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/odo',
                 '/pub/openshift-v4/clients/helm': 'https://developers.redhat.com/content-gateway/rest/mirror2/pub/openshift-v4/clients/helm',
             },
-            limit: 20,
+            limit: 1000,
             desp: {
                 '/': 'Description of your website at default',
                 '/path': 'Description of your website at /path',
