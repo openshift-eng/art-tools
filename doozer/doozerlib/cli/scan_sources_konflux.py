@@ -267,6 +267,9 @@ class ConfigScanSources:
             image_names, latest_image_builds)))
 
     async def scan_images(self, image_names: typing.List[str]):
+        # Do not scan images that have been disabled for Konflux operations
+        image_names = filter(lambda name: self.runtime.image_map[name].config.konflux.mode != 'disabled', image_names)
+
         # Do not scan images that have already been requested for rebuild
         image_names = list(filter(lambda name: name not in self.changing_image_names, image_names))
 
@@ -276,6 +279,10 @@ class ConfigScanSources:
         await asyncio.gather(*[self.scan_image(image_name) for image_name in image_names])
 
     async def scan_image(self, image_name: str):
+        # Do not scan images that have already been requested for rebuild
+        if image_name in self.changing_image_names:
+            return
+
         self.logger.info(f'Scanning {image_name} for changes')
         image_meta = self.runtime.image_map[image_name]
 

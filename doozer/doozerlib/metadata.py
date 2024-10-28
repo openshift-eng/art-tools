@@ -190,6 +190,9 @@ class Metadata(object):
             # commit hash is only discovered at runtime. The source git URL is literal. If it does change somewhere in the assembly
             # definitions, that's fine. This assembly should find it when looking up the content.source.git.url from the metadata.
 
+    def __repr__(self):
+        return f'<{self.__class__.__name__} - {self.distgit_key}>'
+
     def determine_targets(self) -> List[str]:
         """ Determine Brew targets for building this component
         """
