@@ -164,10 +164,10 @@ export default {
 
             const [username, password] = auth_val_split;
             let authorized = false;
+            const accessChecker = await AccessChecker.create(env);
 
             // Check if the URI is under enterprise or libra
             if (path.startsWith('/enterprise/') || path.startsWith('/libra/')) {
-                const accessChecker = await AccessChecker.create(env);
                 const isAuthorized = await accessChecker.checkEnterpriseAccess(username, password);
                 if (isAuthorized) {
                     authorized = true
@@ -176,7 +176,6 @@ export default {
 
             // Check if the URI is under pockets
             if (path.startsWith('/pockets/')) {
-                const accessChecker = await AccessChecker.create(env);
                 const isAuthorized = await accessChecker.checkPocketAccess(username, password);
                 if (isAuthorized) {
                     authorized = true

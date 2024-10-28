@@ -1,6 +1,6 @@
 import { Env } from './types';
 import { SecretsManagerService } from './secretsManager';
-import * as crypto from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 
 let ENTERPRISE_SERVICE_ACCOUNTS: { [key: string]: string } | null = null;
 let POCKETS_SERVICE_ACCOUNTS: { [key: string]: string } | null = null;
@@ -71,23 +71,18 @@ export class AccessChecker {
         }
     }
 
-    // Check enterprise access 
+    // Check enterprise access
     public async checkEnterpriseAccess(username: string, password: string): Promise<boolean> {
         // Check if the username exists in the parsed object
         if (ENTERPRISE_SERVICE_ACCOUNTS && username in ENTERPRISE_SERVICE_ACCOUNTS) {
             const storedPassword = ENTERPRISE_SERVICE_ACCOUNTS[username];
+            const passwordHash = createHash('sha256').update(password).digest('hex');
 
-            // Ensure passwords are trimmed and normalized (if necessary)
-            const passwordBuffer = Buffer.from(password.trim());
-            const storedPasswordBuffer = Buffer.from(storedPassword.trim());
-
-            // Check if the lengths match before using timingSafeEqual
-            if (passwordBuffer.length !== storedPasswordBuffer.length) {
-                return false; // Immediately return unauthorized if lengths don't match
-            }
+            const passwordBuffer = Buffer.from(passwordHash);
+            const storedPasswordBuffer = Buffer.from(storedPassword);
 
             // Use crypto's timing-safe comparison
-            if (crypto.timingSafeEqual(passwordBuffer, storedPasswordBuffer)) {
+            if (timingSafeEqual(passwordBuffer, storedPasswordBuffer)) {
                 return true; // Authorized
             }
         }
@@ -100,18 +95,13 @@ export class AccessChecker {
         // Check if the username exists in the parsed object
         if (POCKETS_SERVICE_ACCOUNTS && username in POCKETS_SERVICE_ACCOUNTS) {
             const storedPassword = POCKETS_SERVICE_ACCOUNTS[username];
+            const passwordHash = createHash('sha256').update(password).digest('hex');
 
-            // Ensure passwords are trimmed and normalized (if necessary)
-            const passwordBuffer = Buffer.from(password.trim());
-            const storedPasswordBuffer = Buffer.from(storedPassword.trim());
-
-            // Check if the lengths match before using timingSafeEqual
-            if (passwordBuffer.length !== storedPasswordBuffer.length) {
-                return false; // Immediately return unauthorized if lengths don't match
-            }
+            const passwordBuffer = Buffer.from(passwordHash);
+            const storedPasswordBuffer = Buffer.from(storedPassword);
 
             // Use crypto's timing-safe comparison
-            if (crypto.timingSafeEqual(passwordBuffer, storedPasswordBuffer)) {
+            if (timingSafeEqual(passwordBuffer, storedPasswordBuffer)) {
                 return true; // Authorized
             }
         }
