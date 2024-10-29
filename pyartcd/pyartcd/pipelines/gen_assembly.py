@@ -34,7 +34,7 @@ class GenAssemblyPipeline:
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
                  custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
                  auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
-                 logger: Optional[logging.Logger] = None):
+                 ignore_non_x86_nightlies: bool, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -56,6 +56,7 @@ class GenAssemblyPipeline:
 
         self.previous_list = previous_list
         self.auto_previous = auto_previous
+        self.ignore_non_x86_nightlies = ignore_non_x86_nightlies
         self.pre_ga_mode = pre_ga_mode
         self._logger = logger or runtime.logger
         self._slack_client = self.runtime.new_slack_client()
@@ -97,11 +98,13 @@ class GenAssemblyPipeline:
             if self.custom and (self.auto_previous or self.previous_list or self.in_flight):
                 raise ValueError("Specifying previous list for a custom release is not allowed.")
 
-            if not self.skip_get_nightlies:
+            if self.skip_get_nightlies:
+                candidate_nightlies = self.nightlies
+            elif self.ignore_non_x86_nightlies:
+                candidate_nightlies = self._get_latest_accepted_nightly()
+            else:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()])
-            else:
-                candidate_nightlies = self.nightlies
 
             self._logger.info("Generating assembly definition...")
             assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
@@ -314,6 +317,7 @@ class GenAssemblyPipeline:
 @click.option('--previous', 'previous_list', metavar='EDGES', default=[], multiple=True, help='A list of releases that can upgrade to this release')
 @click.option('--auto-previous', 'auto_previous', is_flag=True, help='If specified, previous list is calculated from Cincinnati graph')
 @click.option('--skip-get-nightlies', 'skip_get_nightlies', is_flag=True, default=False, help='Skip get_nightlies_function (Use only for special cases)')
+@click.option('--ignore-non-x86-nightlies', 'ignore_non_x86_nightlies', is_flag=True, default=False, help='Ignore non-x86 nightlies, only get x86 nightly')
 @pass_runtime
 @click_coroutine
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
@@ -325,5 +329,5 @@ async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: s
                                    allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
                                    auto_trigger_build_sync=auto_trigger_build_sync,
                                    in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous,
-                                   pre_ga_mode=pre_ga_mode, skip_get_nightlies=skip_get_nightlies)
+                                   pre_ga_mode=pre_ga_mode, skip_get_nightlies=skip_get_nightlies, ignore_non_x86_nightlies=ignore_non_x86_nightlies)
     await pipeline.run()
