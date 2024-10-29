@@ -1,5 +1,5 @@
 import asyncio
-
+import requests
 import click
 import json
 import re
@@ -184,7 +184,7 @@ class GenAssemblyCli:
         if not self.nightlies and not self.standards:
             self._exit_with_error('At least one release (--nightly or --standard) must be specified')
 
-        #if len(self.runtime.arches) != len(self.nightlies) + len(self.standards) and not self.custom:
+        # if len(self.runtime.arches) != len(self.nightlies) + len(self.standards) and not self.custom:
         #    self._exit_with_error(f'Expected at least {len(self.runtime.arches)} nightlies; '
         #                          f'one for each group arch: {self.runtime.arches}')
 
@@ -241,10 +241,10 @@ class GenAssemblyCli:
         if not release_info.references.spec.tags:
             self._exit_with_error(f'Could not find any imagestream tags in release: {pullspec}')
 
-        if not release_info.displayVersions.machine-os.Version:
+        if not release_info["displayVersions"]["machine-os"]["Version"]:
             self._exit_with_error(f'Could not find machine-os version in release: {pullspec}')
         # get rhcos version eg. 417.94.202410250757-0
-        self.rhcos_version = release_info.displayVersions.machine-os.Version
+        self.rhcos_version = release_info["displayVersions"]["machine-os"]["Version"]
 
         for component_tag in release_info.references.spec.tags:
             payload_tag_name = component_tag.name  # e.g. "aws-ebs-csi-driver"
@@ -404,11 +404,6 @@ class GenAssemblyCli:
         major_minor = self.runtime.get_minor_version()
         rhcos_el_major = self.runtime.group_config.vars.RHCOS_EL_MAJOR
         rhcos_el_minor = self.runtime.group_config.vars.RHCOS_EL_MINOR
-        if rhcos_el_major > 8:
-            rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}-{rhcos_el_major}.{rhcos_el_minor}/builds/{rhcos_version}/{arch}/meta.json"
-        else:
-            rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}/builds/{rhcos_version}/{arch}/meta.json"
-        rhcos_meta_json = requests.get(rhcos_build_url).json()
 
         for arch in self.runtime.arches:
             if arch in self.rhcos_by_tag[self.primary_rhcos_tag]:
@@ -421,6 +416,11 @@ class GenAssemblyCli:
                                  'ignoring for custom assembly type.', self.primary_rhcos_tag, arch)
             else:
                 # get rhcos pullspecs for this arch from rhcos version
+                if rhcos_el_major > 8:
+                    rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}-{rhcos_el_major}.{rhcos_el_minor}/builds/{self.rhcos_version}/{arch}/meta.json"
+                else:
+                    rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}/builds/{self.rhcos_version}/{arch}/meta.json"
+                rhcos_meta_json = requests.get(rhcos_build_url).json()
                 for tag in rhcos.get_container_configs(self.runtime):
                     if tag.build_metadata_key not in rhcos_meta_json:
                         self._exit_with_error(f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}')

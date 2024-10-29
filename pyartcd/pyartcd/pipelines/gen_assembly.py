@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group
 from artcommonlib import exectools
 from doozerlib.cli.get_nightlies import rc_api_url
+from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
@@ -107,10 +108,22 @@ class GenAssemblyPipeline:
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()])
 
             self._logger.info("Generating assembly definition...")
-            assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
-            out = StringIO()
-            yaml.dump(assembly_definition, out)
-            self._logger.info("Generated assembly definition:\n%s", out.getvalue())
+            assembly_definition = await GenAssemblyCli(
+                runtime=self.runtime,
+                gen_assembly_name=self.assembly,
+                nightlies=candidate_nightlies,
+                standards=[],
+                custom=self.custom,
+                pre_ga_mode=self.pre_ga_mode,
+                in_flight=self.in_flight,
+                previous_list=self.previous_list,
+                auto_previous=self.auto_previous,
+                graph_url=constants.UPGRADE_GRAPH_URL,
+                graph_content_stable=None,
+                graph_content_candidate=None,
+                suggestions_url=constants.BUILD_SUGGESTIONS_URL,
+            ).run()
+            self._logger.info("Generated assembly definition:\n%s", assembly_definition)
 
             # Create a PR
             pr = await self._create_or_update_pull_request(assembly_definition)
@@ -132,27 +145,17 @@ class GenAssemblyPipeline:
             await self._slack_client.say(f"Error generating assembly definition for {self.assembly}", slack_thread)
             raise
 
-    async def _get_latest_accepted_nightly(self):
+     async def _get_latest_accepted_nightly(self):
         self._logger.info('Retrieving most recent accepted amd64 nightly...')
-
         major, minor = isolate_major_minor_in_group(self.group)
         tag_base = f'{major}.{minor}.0-0.nightly'
-        rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/tags"
-
+        rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/latest"
         async with aiohttp.ClientSession() as session:
             async with session.get(rc_endpoint) as response:
                 if response.status != 200:
                     self._logger.warning('Failed retrieving latest accepted nighly from %s', rc_endpoint)
                     return None
-
-                tags = (await response.json()).get('tags', [])
-                accepted_nightlies = list(filter(lambda tag: tag['phase'] == 'Accepted', tags))
-
-                if accepted_nightlies:
-                    return accepted_nightlies[0]['name']
-                else:
-                    self._logger.warning('No accepted nightly found')
-                    return None
+                return (await response.json()).get('name')
 
     async def _get_nightlies(self):
         """
@@ -183,39 +186,6 @@ class GenAssemblyPipeline:
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
         return out.strip().split()
 
-    async def _gen_assembly_from_releases(self, candidate_nightlies: Iterable[str]) -> OrderedDict:
-        """ Run doozer release:gen-assembly from-releases
-        :return: Assembly definition
-        """
-
-        cmd = [
-            "doozer",
-            "--group", self.group,
-            "--assembly", "stream",
-        ]
-        if self.arches:
-            cmd.append("--arches")
-            cmd.append(",".join(self.arches))
-        cmd.append("release:gen-assembly")
-        cmd.append(f"--name={self.assembly}")
-        cmd.append("from-releases")
-        for nightly in candidate_nightlies:
-            cmd.append(f"--nightly={nightly}")
-
-        if self.pre_ga_mode:
-            cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
-
-        if self.custom:
-            cmd.append("--custom")
-        else:
-            if self.in_flight:
-                cmd.append(f"--in-flight={self.in_flight}")
-            for previous in self.previous_list:
-                cmd.append(f"--previous={previous}")
-            if self.auto_previous:
-                cmd.append("--auto-previous")
-        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
-        return yaml.load(out)
 
     async def _create_or_update_pull_request(self, assembly_definition: OrderedDict):
         """
@@ -323,7 +293,7 @@ class GenAssemblyPipeline:
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
                        allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
                        auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
-                       previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool):
+                       previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool, ignore_non_x86_nightlies: bool):
     pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, data_path=data_path,
                                    nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
                                    allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,

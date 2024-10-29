@@ -48,3 +48,6 @@ UMB_BROKERS = {
 }
 
 GITHUB_OWNER = "openshift-eng"
+UPGRADE_GRAPH_URL = "https://api.openshift.com/api/upgrades_info/v1/graph"
+BUILD_SUGGESTIONS_URL = "https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/"
+RC_AMD64_URL = "https://amd64.ocp.releases.ci.openshift.org/api/v1/releasestream"
