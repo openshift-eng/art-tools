@@ -110,6 +110,13 @@ class KonfluxRebaser:
 
             dest_dir = self._base_dir.joinpath(metadata.qualified_key)
 
+            # Use a separate Dockerfile for konflux if required
+            # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
+            dockerfile_override = metadata.config.konflux.content.source.dockerfile
+            if dockerfile_override:
+                self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
+                metadata.config.content.source.dockerfile = dockerfile_override
+
             # Clone the build repository
             build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
             await build_repo.ensure_source(upcycle=self.upcycle)
