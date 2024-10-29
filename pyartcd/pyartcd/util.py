@@ -213,15 +213,15 @@ def get_changes(yaml_data: dict) -> dict:
 
     changes = {}
 
-    rpms = [rpm['name'] for rpm in yaml_data['rpms'] if rpm['changed']]
+    rpms = [rpm['name'] for rpm in yaml_data.get('rpms', []) if rpm['changed']]
     if rpms:
         changes['rpms'] = rpms
 
-    images = [image['name'] for image in yaml_data['images'] if image['changed']]
+    images = [image['name'] for image in yaml_data.get('images', []) if image['changed']]
     if images:
         changes['images'] = images
 
-    rhcos = [rhcos['name'] for rhcos in yaml_data['rhcos'] if rhcos['changed']]
+    rhcos = [rhcos['name'] for rhcos in yaml_data.get('rhcos', []) if rhcos['changed']]
     if rhcos:
         changes['rhcos'] = rhcos
 
