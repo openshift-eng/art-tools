@@ -102,7 +102,7 @@ class GenAssemblyPipeline:
             if self.skip_get_nightlies:
                 candidate_nightlies = self.nightlies
             elif self.ignore_non_x86_nightlies:
-                candidate_nightlies = self._get_latest_accepted_nightly()
+                candidate_nightlies = await self._get_latest_accepted_nightly()
             else:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()])
@@ -145,7 +145,7 @@ class GenAssemblyPipeline:
             await self._slack_client.say(f"Error generating assembly definition for {self.assembly}", slack_thread)
             raise
 
-     async def _get_latest_accepted_nightly(self):
+    async def _get_latest_accepted_nightly(self):
         self._logger.info('Retrieving most recent accepted amd64 nightly...')
         major, minor = isolate_major_minor_in_group(self.group)
         tag_base = f'{major}.{minor}.0-0.nightly'
