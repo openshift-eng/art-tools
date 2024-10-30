@@ -474,27 +474,28 @@ class ConfigScanSources:
             if not self.runtime.image_map.get(dep_key, None):
                 self.logger.warning("Image %s has unknown dependency %s. Is it excluded?",
                                     image_meta.distgit_key, dep_key)
-                return
+                continue
 
             # Is the dependency ever been built?
             dependency_build_record = self.latest_image_build_records_map.get(dep_key, None)
             if not dependency_build_record:
                 self.logger.warning('Dependency %s of image %s has never been built',
                                     dep_key, image_meta.distgit_key)
-                return
+                continue
 
             # Is the dependency build newer than the dependent's one?
             dep_rebase_time = isolate_timestamp_in_release(dependency_build_record.release)
             if not dep_rebase_time:  # no timestamp string in NVR?
                 self.logger.warning('Could not determine dependency rebase time from release %s',
                                     dependency_build_record.release)
-                return
+                continue
 
             dep_rebase_time = datetime.strptime(dep_rebase_time, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
             if dep_rebase_time > rebase_time:
                 self.add_image_meta_change(
                     image_meta,
                     RebuildHint(RebuildHintCode.DEPENDENCY_NEWER, 'Dependency has a newer build'))
+                break
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.
