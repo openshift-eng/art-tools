@@ -1,3 +1,4 @@
+import itertools
 from artcommonlib import exectools, gitdata
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
     assembly_streams_config
@@ -964,11 +965,12 @@ class Runtime(GroupRuntime):
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
 
-        for test_stream_name, stream_def in self.streams.items():
-            if stream_name == test_stream_name or ('aliases' in stream_def and stream_name in stream_def['aliases']):
-                return Model(dict_to_model=stream_def)
-
-        raise IOError("Unable to find definition for stream: %s" % stream_name)
+        matched_streams = list(itertools.islice(((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2))
+        if len(matched_streams) == 0:
+            raise IOError(f"Unable to find definition for stream '{stream_name}'")
+        if len(matched_streams) > 1:
+            raise IOError(f"Stream name is ambiguous. Found multiple streams with name '{stream_name}': {', '.join([s[0] for s in matched_streams])}")
+        return Model(dict_to_model=matched_streams[0][1])
 
     def get_stream_names(self):
         """
