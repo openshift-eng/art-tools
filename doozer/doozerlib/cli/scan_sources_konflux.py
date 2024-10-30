@@ -7,13 +7,16 @@ from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 import click
+import dateutil.parser
 import yaml
 from typing import cast
+
+from async_lru import alru_cache
 
 import artcommonlib.util
 from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine, KonfluxBuildOutcome
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.exceptions import DoozerFatalError
@@ -22,6 +25,7 @@ from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 from artcommonlib.release_util import isolate_timestamp_in_release
+from doozerlib.util import oc_image_info__caching_async
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -310,6 +314,9 @@ class ConfigScanSources:
         # Check for dependency changes
         await self.scan_dependency_changes(image_meta)
 
+        # Check for changes in builders
+        await self.scan_builders_changes(image_meta)
+
     @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
@@ -507,6 +514,109 @@ class ConfigScanSources:
                     image_meta,
                     RebuildHint(RebuildHintCode.DEPENDENCY_NEWER, 'Dependency has a newer build'))
                 break
+
+    @alru_cache
+    async def get_builder_build_nvr(self, builder_image_name: str):
+        """
+        Given a builder stream definition,
+        """
+
+        if "." in builder_image_name.split('/', 2)[0]:
+            # looks like full pullspec with domain name; e.g. "registry.redhat.io/ubi8/nodejs-12:1-45"
+            builder_image_url = builder_image_name
+        else:
+            # Assume this is a org/repo name relative to brew; e.g. "openshift/ose-base:ubi8"
+            builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
+
+        # Find and map the builder image NVR
+        latest_builder_image_info = Model(await oc_image_info__caching_async(builder_image_url))
+        builder_info_labels = latest_builder_image_info.config.config.Labels
+        builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'],
+                            builder_info_labels['release']]
+
+        if not all(builder_nvr_list):
+            raise IOError(f'Unable to find nvr in {builder_info_labels}')
+
+        builder_image_nvr = '-'.join(builder_nvr_list)
+
+        return builder_image_nvr
+
+    @alru_cache
+    async def get_builder_build_start_time(self, builder_build_nvr: str) -> typing.Optional[datetime]:
+        """
+        Given a builder pullspec, determine the build start time.
+        First check if the build is tracked inside the Konflux DB.
+        If it's not, query Brew API to get the Brew build result. Querying Brew API will eventually go away.
+        """
+
+        try:
+            # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
+            # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
+            # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
+            # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
+            # so an option might be to store this information in Redis
+            nvr_timestamp = datetime.strptime(isolate_timestamp_in_release(builder_build_nvr), "%Y%m%d%H%M%S")
+            start_search = datetime(nvr_timestamp.year, nvr_timestamp.month, nvr_timestamp.day)
+
+        except TypeError:
+            # Default search window: last 365 days
+            self.logger.warning('Could not extract timestamp from NVR %s', builder_build_nvr)
+            start_search = datetime.now() - timedelta(days=365)
+
+        builds = await self.runtime.konflux_db.search_builds_by_fields(
+            start_search=start_search,
+            where={'nvr': builder_build_nvr}
+        )
+        if builds:
+            return builds[0].start_time
+
+        # Builder build isn't tracked inside Konflux DB: look at Brew
+        with self.runtime.pooled_koji_client_session() as koji_api:
+            builder_brew_build = koji_api.getBuild(builder_build_nvr)
+            if builder_brew_build:
+                return dateutil.parser.parse(builder_brew_build['creation_time']).replace(tzinfo=timezone.utc)
+
+            # No builder build info?
+            self.logger.warning('Could not fetch build info for %s', builder_build_nvr)
+
+    @skip_check_if_changing
+    async def scan_builders_changes(self, image_meta: ImageMetadata):
+        """
+        Check whether non-member builder images have changed
+        """
+
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        builders = list(image_meta.config['from'].builder) or []
+        builders.append(image_meta.config['from'])
+
+        for builder in builders:
+            if builder.member:
+                # Member builder changes are already being propagated to descendants: skip
+                continue
+
+            # Resolve builder build NVR
+            if builder.image:
+                builder_image_name = builder.image
+            elif builder.stream:
+                builder_image_name = self.runtime.resolve_stream(builder.stream).image
+            else:
+                raise IOError(f'Unable to determine builder or parent image pullspec from {builder}')
+            builder_build_nvr = await self.get_builder_build_nvr(builder_image_name)
+
+            # Get the builder build start time
+            builder_build_start_time = await self.get_builder_build_start_time(builder_build_nvr)
+            if not builder_build_start_time:
+                continue
+
+            # If the builder build is newer, mark the image as changing
+            if build_record.start_time < builder_build_start_time:
+                self.logger.info(f'%s will be rebuilt because a builder or parent image has a newer build: %s',
+                                 image_meta.distgit_key, builder_build_nvr)
+                self.add_image_meta_change(
+                    image_meta, RebuildHint(RebuildHintCode.BUILDER_CHANGING,
+                                            f'A builder or parent image build {builder_build_nvr} is newer than latest '
+                                            f'{image_meta.distgit_key} build'))
+                return
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.
