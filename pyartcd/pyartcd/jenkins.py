@@ -26,6 +26,7 @@ class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     OCP4 = 'aos-cd-builds/build%2Focp4'
+    OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
@@ -269,6 +270,23 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
 
     return start_build(
         job=Jobs.OCP4,
+        params=params,
+        **kwargs
+    )
+
+
+def start_ocp4_konflux(build_version: str, assembly: str, image_list: list, **kwargs) -> Optional[str]:
+    params = {
+        'BUILD_VERSION': build_version,
+        'ASSEMBLY': assembly
+    }
+
+    # Build only changed images or none
+    if image_list:
+        params['IMAGE_LIST'] = ','.join(image_list)
+
+    return start_build(
+        job=Jobs.OCP4_KONFLUX,
         params=params,
         **kwargs
     )
