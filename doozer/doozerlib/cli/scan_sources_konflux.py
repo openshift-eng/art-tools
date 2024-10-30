@@ -20,6 +20,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
+from doozerlib.util import isolate_timestamp_in_release
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -307,6 +308,9 @@ class ConfigScanSources:
         # Check if there has been a config change since last build
         await self.scan_for_config_changes(image_meta)
 
+        # Check for dependency changes
+        await self.scan_dependency_changes(image_meta)
+
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
         Determine if the current upstream source commit hash
@@ -445,6 +449,53 @@ class ConfigScanSources:
             self.add_image_meta_change(image_meta,
                                        RebuildHint(RebuildHintCode.CONFIG_CHANGE,
                                                    'Unable to retrieve config_digest'))
+
+    async def scan_dependency_changes(self, image_meta: ImageMetadata):
+        # Get rebase time from image latest build record
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        rebase_time = isolate_timestamp_in_release(build_record.release)
+        if not rebase_time:  # no timestamp string in NVR?
+            self.logger.warning('No rebase timestamp string in %s, skipping dependency check', build_record.nvr)
+            return
+        rebase_time = datetime.strptime(rebase_time, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+
+        # Dependencies are parent images, builders of type member, and operands.
+        dependencies = image_meta.dependencies.copy()
+        base_image = image_meta.config['from'].member
+        if base_image:
+            dependencies.add(base_image)
+        for builder in image_meta.config['from'].builder:
+            if builder.member:
+                dependencies.add(builder.member)
+        self.logger.info('Checking dependencies of %s: %s', image_meta.distgit_key, ','.join(dependencies))
+
+        for dep_key in dependencies:
+            # Is the image dependency included in doozer --images list?
+            if not self.runtime.image_map.get(dep_key, None):
+                self.logger.warning("Image %s has unknown dependency %s. Is it excluded?",
+                                    image_meta.distgit_key, dep_key)
+                continue
+
+            # Is the dependency ever been built?
+            dependency_build_record = self.latest_image_build_records_map.get(dep_key, None)
+            if not dependency_build_record:
+                self.logger.warning('Dependency %s of image %s has never been built',
+                                    dep_key, image_meta.distgit_key)
+                continue
+
+            # Is the dependency build newer than the dependent's one?
+            dep_rebase_time = isolate_timestamp_in_release(dependency_build_record.release)
+            if not dep_rebase_time:  # no timestamp string in NVR?
+                self.logger.warning('Could not determine dependency rebase time from release %s',
+                                    dependency_build_record.release)
+                continue
+
+            dep_rebase_time = datetime.strptime(dep_rebase_time, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            if dep_rebase_time > rebase_time:
+                self.add_image_meta_change(
+                    image_meta,
+                    RebuildHint(RebuildHintCode.DEPENDENCY_NEWER, 'Dependency has a newer build'))
+                break
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.
