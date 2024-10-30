@@ -131,25 +131,15 @@ class GenAssemblyPipeline:
 
     async def _get_latest_accepted_nightly(self):
         self._logger.info('Retrieving most recent accepted amd64 nightly...')
-
         major, minor = isolate_major_minor_in_group(self.group)
         tag_base = f'{major}.{minor}.0-0.nightly'
-        rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/tags"
-
+        rc_endpoint = f"{rc_api_url(tag_base, 'amd64', self.private_nightlies)}/latest"
         async with aiohttp.ClientSession() as session:
             async with session.get(rc_endpoint) as response:
                 if response.status != 200:
                     self._logger.warning('Failed retrieving latest accepted nighly from %s', rc_endpoint)
                     return None
-
-                tags = (await response.json()).get('tags', [])
-                accepted_nightlies = list(filter(lambda tag: tag['phase'] == 'Accepted', tags))
-
-                if accepted_nightlies:
-                    return accepted_nightlies[0]['name']
-                else:
-                    self._logger.warning('No accepted nightly found')
-                    return None
+                return (await response.json()).get('name')
 
     async def _get_nightlies(self):
         """
