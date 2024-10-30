@@ -4,6 +4,7 @@ import os
 import tempfile
 import typing
 from datetime import datetime, timezone, timedelta
+from functools import wraps
 
 import click
 import yaml
@@ -44,7 +45,8 @@ class ConfigScanSources:
         self.dry_run = dry_run
 
         self.all_rpm_metas = set(runtime.rpm_metas())
-        self.all_image_metas = set(runtime.image_metas())
+        self.all_image_metas = set(filter(lambda meta: meta.enabled or (
+            meta.mode == 'disabled' and self.runtime.load_disabled), runtime.image_metas()))
         self.all_metas = self.all_rpm_metas.union(self.all_image_metas)
 
         self.changing_image_names = set()
@@ -277,30 +279,27 @@ class ConfigScanSources:
         # Store latest build records in a map, to reduce DB queries and execution time
         await self.find_latest_image_builds(image_names)
 
-        await asyncio.gather(*[self.scan_image(image_name) for image_name in image_names])
+        # Scan images for changes
+        scanning_image_metas = [self.runtime.image_map[image_name] for image_name in image_names]
+        await asyncio.gather(*[self.scan_image(image_meta) for image_meta in scanning_image_metas])
 
-    async def scan_image(self, image_name: str):
-        # Do not scan images that have already been requested for rebuild
-        if image_name in self.changing_image_names:
-            return
+    @staticmethod
+    def skip_check_if_changing(coro):
+        """
+        Do not scan images that have already been marked for rebuild
+        """
+        @wraps(coro)
+        async def inner(self, image_meta: ImageMetadata, *args, **kwargs):
+            if image_meta.distgit_key not in self.changing_image_names:
+                return await coro(self, image_meta, *args, **kwargs)
+            else:
+                self.logger.info('%s already marked as changed, skipping %s()', image_meta.distgit_key, coro.__name__)
 
-        self.logger.info(f'Scanning {image_name} for changes')
-        image_meta = self.runtime.image_map[image_name]
+        return inner
 
-        if not (image_meta.enabled or image_meta.mode == 'disabled' and self.runtime.load_disabled):
-            # Ignore disabled configs unless explicitly indicated
-            # An enabled image's dependents are always loaded.
-            return
-
-        # If the component has never been built, mark for rebuild
-        latest_build_record = self.latest_image_build_records_map.get(image_name, None)
-        if not latest_build_record:
-            self.add_image_meta_change(
-                image_meta,
-                RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                            reason=f'Component {image_name} has no latest build '
-                                   f'for assembly {self.runtime.assembly}'))
-            return
+    @skip_check_if_changing
+    async def scan_image(self, image_meta: ImageMetadata):
+        self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
@@ -311,13 +310,22 @@ class ConfigScanSources:
         # Check for dependency changes
         await self.scan_dependency_changes(image_meta)
 
+    @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
         Determine if the current upstream source commit hash
         has a downstream build associated with it.
         """
 
-        latest_build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        # Check if the component has ever been built
+        latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)
+        if not latest_build_record:
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
+                            reason=f'Component {image_meta.distgit_key} has no latest build '
+                                   f'for assembly {self.runtime.assembly}'))
+            return
 
         # We have no more "alias" source anywhere in ocp-build-data, and there's no such a thing as a distgit-only
         # component in Konflux; hence, assume that git is the only possible source for a component
@@ -351,6 +359,7 @@ class ConfigScanSources:
                             reason=f'Latest build {latest_build_record.nvr} does not match upstream commit build '
                                    f'{upstream_commit_build_record.nvr}; commit reverted?'))
 
+    @skip_check_if_changing
     async def handle_missing_upstream_commit_build(self, image_meta: ImageMetadata, upstream_commit_hash: str):
         """
         There is no build for this upstream commit. Two options to assess:
@@ -411,6 +420,7 @@ class ConfigScanSources:
             with open(config_digest) as f:
                 return f.read()
 
+    @skip_check_if_changing
     async def scan_for_config_changes(self, image_meta: ImageMetadata):
         try:
             latest_build_record = self.latest_image_build_records_map[image_meta.distgit_key]
@@ -450,6 +460,7 @@ class ConfigScanSources:
                                        RebuildHint(RebuildHintCode.CONFIG_CHANGE,
                                                    'Unable to retrieve config_digest'))
 
+    @skip_check_if_changing
     async def scan_dependency_changes(self, image_meta: ImageMetadata):
         # Get rebase time from image latest build record
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
