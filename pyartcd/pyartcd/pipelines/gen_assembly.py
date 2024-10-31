@@ -14,6 +14,7 @@ from ruamel.yaml import YAML
 
 from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group
 from artcommonlib import exectools
+from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 from doozerlib.cli.get_nightlies import rc_api_url
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -104,10 +105,22 @@ class GenAssemblyPipeline:
                 candidate_nightlies = self.nightlies
 
             self._logger.info("Generating assembly definition...")
-            assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
-            out = StringIO()
-            yaml.dump(assembly_definition, out)
-            self._logger.info("Generated assembly definition:\n%s", out.getvalue())
+            assembly_definition = await GenAssemblyCli(
+                runtime=self.runtime,
+                gen_assembly_name=self.assembly,
+                nightlies=candidate_nightlies,
+                standards=[],
+                custom=self.custom,
+                pre_ga_mode=self.pre_ga_mode,
+                in_flight=self.in_flight,
+                previous_list=self.previous_list,
+                auto_previous=self.auto_previous,
+                graph_url=constants.UPGRADE_GRAPH_URL,
+                graph_content_stable=None,
+                graph_content_candidate=None,
+                suggestions_url=constants.BUILD_SUGGESTIONS_URL,
+            ).run()
+            self._logger.info("Generated assembly definition:\n%s", assembly_definition)
 
             # Create a PR
             pr = await self._create_or_update_pull_request(assembly_definition)
@@ -169,40 +182,6 @@ class GenAssemblyPipeline:
 
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
         return out.strip().split()
-
-    async def _gen_assembly_from_releases(self, candidate_nightlies: Iterable[str]) -> OrderedDict:
-        """ Run doozer release:gen-assembly from-releases
-        :return: Assembly definition
-        """
-
-        cmd = [
-            "doozer",
-            "--group", self.group,
-            "--assembly", "stream",
-        ]
-        if self.arches:
-            cmd.append("--arches")
-            cmd.append(",".join(self.arches))
-        cmd.append("release:gen-assembly")
-        cmd.append(f"--name={self.assembly}")
-        cmd.append("from-releases")
-        for nightly in candidate_nightlies:
-            cmd.append(f"--nightly={nightly}")
-
-        if self.pre_ga_mode:
-            cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
-
-        if self.custom:
-            cmd.append("--custom")
-        else:
-            if self.in_flight:
-                cmd.append(f"--in-flight={self.in_flight}")
-            for previous in self.previous_list:
-                cmd.append(f"--previous={previous}")
-            if self.auto_previous:
-                cmd.append("--auto-previous")
-        _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None, env=self._doozer_env_vars)
-        return yaml.load(out)
 
     async def _create_or_update_pull_request(self, assembly_definition: OrderedDict):
         """
