@@ -169,18 +169,22 @@ class KonfluxImageBuilder:
             raise ValueError(f"[{metadata.distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
 
         # Ensure the Application resource exists
-        app_name = self._config.group_name.replace(".", "-")
+        group_name = self._config.group_name.replace(".", "-")
+        app_name = group_name
+        app_name = f"{app_name}-{metadata.runtime.assembly}"
         app_manifest = self._new_application(app_name, app_name)
         app = await self._create_or_patch(dyn_client, app_manifest)
         self._logger.info(f"[%s] Using application: {app['metadata']['name']}", metadata.distgit_key)
 
         # Ensure the component resource exists
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
-        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
+        # Since Component is a CRD, it has to be unique in the namespace. Also once a Component and Application is created, the branches that its linked to cannot be modified
+        # Hence prefixing the assembly and version to the component name to make it unique, eg: "stream-4-18-ose-etcd"
+        component_name = f"{metadata.runtime.assembly}-{group_name.removeprefix(f'openshift-')}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
 
-        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
-        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        component_name = f"ose-{component_name.removeprefix('openshift-')}"
+        # Kubernetes resources has a maximum character length of 63
+        assert len(app_name) <= 63
+        assert len(component_name) <= 63
 
         dest_image_repo = self._config.image_repo
         dest_image_tag = df.envs["__doozer_uuid_tag"]
