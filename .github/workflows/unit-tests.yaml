@@ -9,7 +9,7 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    container: fedora:latest
+    container: registry.access.redhat.com/ubi9/ubi:latest
     steps:
       - name: Install dependencies
         run: dnf install -y git clang rpm-python
