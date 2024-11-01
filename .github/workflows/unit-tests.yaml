@@ -12,7 +12,7 @@ jobs:
     container: fedora:latest
     steps:
       - name: Install dependencies
-        run: dnf install -y git clang
+        run: dnf install -y git clang rpm-python
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - name: Verify uv installation
