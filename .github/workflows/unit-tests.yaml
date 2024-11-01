@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
           set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
       - name: Install packages
-        run: dnf install -y gcc krb5-devel make glibc
+        run: dnf install -y gcc krb5-devel make glibc python3-rpm
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
