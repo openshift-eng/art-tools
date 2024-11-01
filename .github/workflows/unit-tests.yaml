@@ -23,10 +23,6 @@ jobs:
           set-safe-directory: ${{ env.GITHUB_WORKSPACE }}
       - name: Install packages
         run: dnf install -y gcc krb5-devel make glibc
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
       - name: Create venv and install dependencies
         run: make venv
       - name: Run tests
