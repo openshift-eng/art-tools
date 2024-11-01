@@ -12,7 +12,7 @@ jobs:
     container: registry.access.redhat.com/ubi9/ubi:latest
     steps:
       - name: Install dependencies
-        run: dnf install -y git clang rpm-python
+        run: dnf install -y git clang
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - name: Verify uv installation
