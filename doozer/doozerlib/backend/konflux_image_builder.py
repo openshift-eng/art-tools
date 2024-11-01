@@ -478,6 +478,24 @@ class KonfluxImageBuilder:
                 task["params"].append({"name": "ADDITIONAL_TAGS", "value": list(additional_tags)})
 
         obj["spec"]["params"].append({"name": "build-platforms", "value": list(build_platforms)})
+
+        # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
+        # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
+        obj["spec"]["taskRunSpecs"] = [{
+            "pipelineTaskName": "build-images",
+            "stepSpecs": [{
+                "name": "sbom-syft-generate",
+                "computeResources": {
+                    "requests": {
+                        "memory": "5Gi"
+                    },
+                    "limits": {
+                        "memory": "10Gi"
+                    }
+                }
+            }]
+        }]
+
         return obj
 
     async def _create_or_patch(self, dyn_client: DynamicClient, manifest: dict):
