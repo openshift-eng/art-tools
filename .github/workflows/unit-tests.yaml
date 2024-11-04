@@ -9,10 +9,10 @@ on:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    container: fedora:latest
+    container: registry.access.redhat.com/ubi9/ubi:latest
     steps:
-      - name: Install git
-        run: dnf install -y git
+      - name: Install dependencies
+        run: dnf install -y git clang
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - name: Verify uv installation
