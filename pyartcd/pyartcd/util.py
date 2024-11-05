@@ -648,7 +648,8 @@ async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=Fa
     await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
 
 
-async def get_signing_mode(group: str = None, assembly: str = None, group_config: dict = None) -> str:
+async def get_signing_mode(group: str = None, assembly: str = None, group_config: dict = None,
+                           doozer_data_path: str = constants.OCP_BUILD_DATA_URL, doozer_data_gitref: str = '') -> str:
     """
     If any arch is GA, use signed mode for everything
     This also includes EOL ones, that might be triggered manually
@@ -658,7 +659,7 @@ async def get_signing_mode(group: str = None, assembly: str = None, group_config
     if not group_config:
         assert group, 'Group must be specified in order to load group config'
         assert assembly, 'Assembly must be specified in order to load group config'
-        group_config = await load_group_config(group=group, assembly=assembly)
+        group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref)
 
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
     return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'

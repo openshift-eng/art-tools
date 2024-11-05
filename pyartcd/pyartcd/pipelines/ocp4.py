@@ -570,7 +570,9 @@ class Ocp4Pipeline:
 
         signing_mode = await util.get_signing_mode(
             group=f'openshift-{self.version.stream}',
-            assembly=self.assembly
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref
         )
 
         # Doozer command
