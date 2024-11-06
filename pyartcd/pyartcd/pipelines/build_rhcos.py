@@ -15,7 +15,7 @@ from requests.packages.urllib3.util.retry import Retry
 from typing import List, Dict, Tuple
 
 
-JENKINS_BASE_URL = "https://jenkins-rhcos.apps.ocp-virt.prod.psi.redhat.com"
+JENKINS_BASE_URL = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 
 # lifted verbatim from
 # https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
