@@ -1,9 +1,12 @@
+import click
 import json
 import logging
 import os
 import requests
 import asyncio
+import traceback
 from typing import Optional
+from ruamel.yaml import YAML
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
@@ -11,9 +14,8 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engin
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib import exectools
-from ruamel.yaml import YAML
-
 from pyartcd import constants, oc
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_type,
                           isolate_el_version_in_release,
@@ -38,6 +40,7 @@ class BuildMicroShiftBootcPipeline:
                  group: str,
                  assembly: str,
                  force: bool,
+                 force_plashet_sync: bool,
                  data_path: str,
                  slack_client,
                  logger: Optional[logging.Logger] = None):
@@ -45,6 +48,7 @@ class BuildMicroShiftBootcPipeline:
         self.group = group
         self.assembly = assembly
         self.force = force
+        self.force_plashet_sync = force_plashet_sync
         self.slack_client = slack_client
         self._logger = logger or runtime.logger
 
@@ -186,7 +190,7 @@ class BuildMicroShiftBootcPipeline:
                 self._logger.info(f"Plashet has the expected microshift nvr {expected_microshift_nvr}")
                 return False
 
-        rebuild_needed = await _rebuild_needed() or self.force
+        rebuild_needed = await _rebuild_needed() or self.force_plashet_sync
         if not rebuild_needed:
             self._logger.info("Skipping plashet sync for %s", microshift_plashet_name)
             return
@@ -214,8 +218,13 @@ class BuildMicroShiftBootcPipeline:
         if not self.force:
             build = await self.get_latest_bootc_build()
             if build:
-                self._logger.info("Bootc image build already exists: %s. Skipping image build", build.nvr)
+                self._logger.info("Bootc image build exists for assembly: %s. Will use that. To force a rebuild use --force",
+                                  build.nvr)
                 return build
+            else:
+                self._logger.info("Bootc image build does not exist for assembly. Will proceed to build")
+        else:
+            self._logger.info("Force flag is set. Forcing bootc image build")
 
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
         if not kubeconfig:
@@ -266,3 +275,35 @@ class BuildMicroShiftBootcPipeline:
 
         # now that build is complete, fetch it
         return await self.get_latest_bootc_build()
+
+
+@cli.command("build-microshift-bootc")
+@click.option("--data-path", metavar='BUILD_DATA', default=None,
+              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
+@click.option("-g", "--group", metavar='NAME', required=True,
+              help="The group of components on which to operate. e.g. openshift-4.9")
+@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
+              help="The name of an assembly to rebase & build for. e.g. 4.9.1")
+@click.option("--force", is_flag=True,
+              help="Rebuild even if a build already exists")
+@click.option("--force-plashet-sync", is_flag=True,
+              help="Force plashet sync even if it is not needed")
+@pass_runtime
+@click_coroutine
+async def build_microshift_bootc(runtime: Runtime, data_path: str, group: str, assembly: str, force: bool,
+                                 force_plashet_sync: bool):
+    # slack client is dry-run aware and will not send messages if dry-run is enabled
+    slack_client = runtime.new_slack_client()
+    slack_client.bind_channel(group)
+    try:
+        pipeline = BuildMicroShiftBootcPipeline(runtime=runtime, group=group, assembly=assembly,
+                                                force=force, force_plashet_sync=force_plashet_sync,
+                                                data_path=data_path,
+                                                slack_client=slack_client)
+        await pipeline.run()
+    except Exception as err:
+        slack_message = f"build-microshift-bootc pipeline encountered error: {err}"
+        error_message = slack_message + f"\n {traceback.format_exc()}"
+        runtime.logger.error(error_message)
+        await slack_client.say_in_thread(slack_message)
+        raise

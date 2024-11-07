@@ -29,7 +29,6 @@ from pyartcd.util import (get_assembly_type,
                           load_releases_config,
                           default_release_suffix,
                           get_microshift_builds)
-from pyartcd.pipelines.build_microshift_bootc import BuildMicroShiftBootcPipeline
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -43,15 +42,13 @@ class BuildMicroShiftPipeline:
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
     def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...],
-                 no_rebase: bool, no_advisory_prep: bool,
-                 force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
+                 no_rebase: bool, force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
         self.assembly_type = AssemblyTypes.STREAM
         self.payloads = payloads
         self.no_rebase = no_rebase
-        self.no_advisory_prep = no_advisory_prep
         self.force = force
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
@@ -95,8 +92,6 @@ class BuildMicroShiftPipeline:
             # Check if microshift advisory is defined in assembly
             if 'microshift' not in advisories:
                 self._logger.info(f"Skipping advisory prep since microshift advisory is not defined in assembly {self.assembly}")
-            elif self.no_advisory_prep:
-                self._logger.info("Skipping advisory prep since --no-advisory-prep flag is set")
             else:
                 await self._prepare_advisory(advisories['microshift'])
 
@@ -465,33 +460,26 @@ class BuildMicroShiftPipeline:
               help="[Multiple] Release payload to rebase against; Can be a nightly name or full pullspec")
 @click.option("--no-rebase", is_flag=True,
               help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose")
-@click.option("--no-advisory-prep", is_flag=True,
-              help="Skip preparing microshift advisory if applicable.")
 @click.option("--force", is_flag=True,
               help="(For named assemblies) Rebuild even if a build already exists")
-@click.option("--force-bootc", is_flag=True,
-              help="Rebuild microshift-bootc image even if a build already exists")
 @pass_runtime
 @click_coroutine
 async def build_microshift(runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
-                           no_rebase: bool, no_advisory_prep: bool, force: bool, force_bootc: bool):
+                           no_rebase: bool, force: bool):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     try:
         pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-                                           no_rebase=no_rebase, no_advisory_prep=no_advisory_prep,
-                                           force=force, data_path=data_path, slack_client=slack_client)
+                                           no_rebase=no_rebase, force=force, data_path=data_path,
+                                           slack_client=slack_client)
         await pipeline.run()
-
-        bootc_pipeline = BuildMicroShiftBootcPipeline(runtime=runtime, group=group, assembly=assembly,
-                                                      force=force_bootc, data_path=data_path, slack_client=slack_client)
-        await bootc_pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift pipeline encountered error: {err}"
         reaction = None
         error_message = slack_message + f"\n {traceback.format_exc()}"
         runtime.logger.error(error_message)
+        # Notify release-artists for non-STREAM type assemblies
         if assembly not in ["stream", "test", "microshift"]:
             slack_message += "\n@release-artists"
             reaction = "art-attention"
