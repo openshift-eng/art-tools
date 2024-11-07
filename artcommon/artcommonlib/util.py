@@ -148,7 +148,7 @@ def is_release_next_week(group):
     """
     Check if there release of group need to release in the near week
     """
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/schedule-tasks/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
         if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
