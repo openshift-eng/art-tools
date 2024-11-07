@@ -398,6 +398,7 @@ def start_microshift_sync(version: str, assembly: str, dry_run: bool, **kwargs):
         **kwargs
     )
 
+
 def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, **kwargs):
     return start_build(
         job=Jobs.BUILD_MICROSHIFT_BOOTC,
