@@ -41,8 +41,8 @@ class BuildMicroShiftPipeline:
 
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...],
-                 no_rebase: bool, force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
+    def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
+                 force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -471,15 +471,13 @@ async def build_microshift(runtime: Runtime, data_path: str, group: str, assembl
     slack_client.bind_channel(group)
     try:
         pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-                                           no_rebase=no_rebase, force=force, data_path=data_path,
-                                           slack_client=slack_client)
+                                           no_rebase=no_rebase, force=force, data_path=data_path, slack_client=slack_client)
         await pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift pipeline encountered error: {err}"
         reaction = None
         error_message = slack_message + f"\n {traceback.format_exc()}"
         runtime.logger.error(error_message)
-        # Notify release-artists for non-STREAM type assemblies
         if assembly not in ["stream", "test", "microshift"]:
             slack_message += "\n@release-artists"
             reaction = "art-attention"
