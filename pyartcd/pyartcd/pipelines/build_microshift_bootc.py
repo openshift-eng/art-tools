@@ -3,7 +3,6 @@ import logging
 import os
 import requests
 import asyncio
-from datetime import datetime, timezone
 from typing import Optional
 
 from artcommonlib.assembly import AssemblyTypes
@@ -14,7 +13,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib import exectools
 from ruamel.yaml import YAML
 
-from pyartcd import constants, oc, util
+from pyartcd import constants, oc
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_type,
                           isolate_el_version_in_release,
@@ -225,9 +224,8 @@ class BuildMicroShiftBootcPipeline:
         await self._build_plashet_for_bootc()
 
         # Rebase and build bootc image
-        timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
         version = f"v{major}.{minor}.0"
-        release = f"{timestamp}.p?"
+        release = default_release_suffix()
         rebase_cmd = [
             "doozer",
             "--group", self.group,

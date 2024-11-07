@@ -57,9 +57,9 @@ class KonfluxImageBuilder:
     SUPPORTED_ARCHES = {
         # Only x86_64 is supported, until we are on the new cluster
         "x86_64": "linux/x86_64",
-        "s390x": "linux/s390x",
-        "ppc64le": "linux/ppc64le",
-        "aarch64": "linux/arm64",
+        # "s390x": "linux/s390x",
+        # "ppc64le": "linux/ppc64le",
+        # "aarch64": "linux/arm64",
     }
 
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:

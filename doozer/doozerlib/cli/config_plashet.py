@@ -490,6 +490,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     runtime: Runtime = config.runtime
     runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True,
                        # we load disabled to include microshift rpm which still could be pinned for assembly
+                       # and eligible for plashet inclusion
                        disabled=True)
     assembly = runtime.assembly
     koji_proxy = runtime.build_retrying_koji_client()
