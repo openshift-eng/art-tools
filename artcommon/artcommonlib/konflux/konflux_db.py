@@ -180,10 +180,6 @@ class KonfluxDb:
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         """
 
-        if not completed_before:
-            completed_before = datetime.now(tz=timezone.utc)
-        self.logger.info('Searching for %s builds completed before %s', name, completed_before)
-
         # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
         # at most. This will let us reduce the amount of scanned data (and the BigQuery usage cost), as in the vast
         # majority of cases we would find a build in the first 3-month interval.
@@ -192,10 +188,15 @@ class KonfluxDb:
             Column('group', String) == group,
             Column('outcome', String) == str(outcome),
             Column('assembly', String) == assembly,
-            Column('end_time').isnot(None),
-            Column('end_time', DateTime) < completed_before
         ]
         order_by_clause = Column('start_time', quote=True).desc()
+
+        if completed_before:
+            self.logger.info('Searching for %s builds completed before %s', name, completed_before)
+            base_clauses.extend([
+                Column('end_time').isnot(None),
+                Column('end_time', DateTime) < completed_before
+            ])
 
         if el_target:
             base_clauses.append(Column('el_target', String) == el_target)
@@ -209,8 +210,9 @@ class KonfluxDb:
         for col_name, col_value in extra_patterns.items():
             base_clauses.append(Column(col_name, String).like(f"%{col_value}%"))
 
+        started_before = datetime.now(tz=timezone.utc) if not completed_before else completed_before
         for window in range(12):
-            end_search = completed_before - window * 3 * timedelta(days=30)
+            end_search = started_before - window * 3 * timedelta(days=30)
             start_search = end_search - 3 * timedelta(days=30)
 
             where_clauses = copy.copy(base_clauses)
