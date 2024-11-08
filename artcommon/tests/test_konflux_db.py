@@ -127,8 +127,17 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success')
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
+                                           "AND assembly = 'stream' "
+                                           f"AND start_time >= '{str(lower_bound)}' "
+                                           f"AND start_time < '{now}' "
+                                           "ORDER BY `start_time` DESC LIMIT 1")
+
+        query_mock.reset_mock()
+        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', completed_before=now)
+        query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
+                                           "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' AND end_time IS NOT NULL "
-                                           f"AND end_time < '{str(now)}' "
+                                           f"AND end_time < '{now}' "
                                            f"AND start_time >= '{str(lower_bound)}' "
                                            f"AND start_time < '{now}' "
                                            "ORDER BY `start_time` DESC LIMIT 1")
@@ -138,8 +147,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', extra_patterns=like)
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
-                                           "AND assembly = 'stream' AND end_time IS NOT NULL "
-                                           f"AND end_time < '{str(now)}' "
+                                           "AND assembly = 'stream' "
                                            f"AND `release` LIKE '%%b45ea65%%' "
                                            f"AND start_time >= '{str(lower_bound)}' "
                                            f"AND start_time < '{now}' "
@@ -153,16 +161,14 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         actual_calls = [query_mock.call_args_list[x][0][0] for x in range(0, 2)]
         self.assertIn(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                       "AND `group` = 'openshift-4.18' AND outcome = 'success' "
-                      "AND assembly = 'stream' AND end_time IS NOT NULL "
-                      f"AND end_time < '{str(now)}' "
+                      "AND assembly = 'stream' "
                       f"AND start_time >= '{str(lower_bound)}' "
                       f"AND start_time < '{now}' "
                       "ORDER BY `start_time` DESC LIMIT 1", actual_calls)
 
         self.assertIn(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ose-installer-artifacts' "
                       "AND `group` = 'openshift-4.18' AND outcome = 'success' "
-                      "AND assembly = 'stream' AND end_time IS NOT NULL "
-                      f"AND end_time < '{str(now)}' "
+                      "AND assembly = 'stream' "
                       f"AND start_time >= '{str(lower_bound)}' "
                       f"AND start_time < '{now}' "
                       "ORDER BY `start_time` DESC LIMIT 1", actual_calls)
