@@ -191,7 +191,24 @@
             "upstream_image_base!": {
               "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image_base"
             },
-            "upstream_image_base-": {}
+            "upstream_image_base-": {},
+            "upstream_image_mirror": {
+              "description": "Additional locations to push the image to",
+              "type": "array",
+              "items": {
+                  "type": "string",
+                  "minLength": 1
+              }
+            },
+            "upstream_image_mirror-": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image_mirror"
+            },
+            "upstream_image_mirror!": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image_mirror"
+            },
+            "upstream_image_mirror?": {
+              "$ref": "#/properties/source/properties/ci_alignment/properties/upstream_image_mirror"
+            }
           },
           "additionalProperties": false
         },
