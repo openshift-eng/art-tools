@@ -217,6 +217,7 @@ class KonfluxImageBuilder:
             git_branch,
             f"{dest_image_repo}:{dest_image_tag}",
             build_platforms,
+            skip_checks=self._config.skip_checks,
             additional_tags=additional_tags,
         )
 
@@ -432,7 +433,7 @@ class KonfluxImageBuilder:
     def _new_pipelinerun(generate_name: str, application_name: str, component_name: str,
                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
                          build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
-                         additional_tags: Sequence[str] = []) -> dict:
+                         additional_tags: Sequence[str] = [], skip_checks: bool = False) -> dict:
         https_url = art_util.convert_remote_git_to_https(git_url)
         # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
         template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
@@ -457,16 +458,17 @@ class KonfluxImageBuilder:
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
-        skip_checks_flag = False
+        skip_checks_flag = False  # Flag to insert the skip-checks param if it's missing
+        skip_checks_value = "true" if skip_checks else "false"  # value type in konflux is string
         for param in obj["spec"]["params"]:
             if param["name"] == "output-image":
                 param["value"] = output_image
             if param["name"] == "skip-checks":
-                param["value"] = "true"
+                param["value"] = skip_checks_value
                 skip_checks_flag = True
 
         if not skip_checks_flag:
-            obj["spec"]["params"].append({"name": "skip-checks", "value": "true"})
+            obj["spec"]["params"].append({"name": "skip-checks", "value": skip_checks_value})
 
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
