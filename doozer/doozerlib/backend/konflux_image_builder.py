@@ -47,6 +47,7 @@ class KonfluxImageBuilderConfig:
     context: Optional[str] = None
     namespace: Optional[str] = None
     image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
+    skip_checks: bool = False
     dry_run: bool = False
 
 

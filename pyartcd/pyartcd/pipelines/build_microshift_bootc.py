@@ -110,28 +110,36 @@ class BuildMicroShiftBootcPipeline:
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         ocp_dir = "ocp-dev-preview" if self.assembly_type == AssemblyTypes.PREVIEW else "ocp"
 
+        major, minor = self._ocp_version
         # This is where we sync microshift artifacts on mirror. Refer to microshift_sync job
         # The paths should be the same in both of these places
-        s3_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/{release_name}/{el_target}"
-        cmd = [
-            "aws", "s3", "sync",
-            "--no-progress",
-            "--exact-timestamps",
-            "--exclude", "*",
-            "--include", "bootc-pullspec.txt",
-            str(self._working_dir),
-            f"s3://art-srv-enterprise{s3_path}",
-        ]
-        if self.runtime.dry_run:
-            cmd.append("--dryrun")
-        await exectools.cmd_assert_async(cmd)
+        release_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/{release_name}/{el_target}"
+        latest_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/latest-{major}.{minor}/{el_target}"
+        cloudflare_endpoint_url = os.environ['CLOUDFLARE_ENDPOINT']
 
-        # Sync to Cloudflare as well
-        cmd.extend([
-            "--profile", "cloudflare",
-            "--endpoint-url", os.environ['CLOUDFLARE_ENDPOINT'],
-        ])
-        await exectools.cmd_assert_async(cmd)
+        async def _run_for(s3_path):
+            cmd = [
+                "aws", "s3", "sync",
+                "--no-progress",
+                "--exact-timestamps",
+                "--exclude", "*",
+                "--include", "bootc-pullspec.txt",
+                str(self._working_dir),
+                f"s3://art-srv-enterprise{s3_path}",
+            ]
+            if self.runtime.dry_run:
+                cmd.append("--dryrun")
+            await exectools.cmd_assert_async(cmd)
+
+            # Sync to Cloudflare as well
+            cmd.extend([
+                "--profile", "cloudflare",
+                "--endpoint-url", cloudflare_endpoint_url,
+            ])
+            await exectools.cmd_assert_async(cmd)
+
+        await _run_for(release_path)
+        await _run_for(latest_path)
 
     async def get_latest_bootc_build(self):
         bootc_image_name = "microshift-bootc"
