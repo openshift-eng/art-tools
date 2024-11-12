@@ -202,6 +202,10 @@ class BuildMicroShiftPipeline:
         if self.assembly_type not in [AssemblyTypes.STANDARD, AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             return
 
+        if self._ocp_version < (4, 18):
+            self._logger.info("Skipping build-microshift-bootc job for OCP version < 4.18")
+            return
+
         major, minor = self._ocp_version
         version = f'{major}.{minor}'
         try:
