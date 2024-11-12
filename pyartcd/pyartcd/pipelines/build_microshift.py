@@ -1,21 +1,16 @@
 import asyncio
-import json
 import logging
 import os
 import re
 import traceback
-from collections import namedtuple
-from datetime import datetime, timezone
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Dict, Iterable, List, Optional, Tuple, cast
-
 import click
+from collections import namedtuple
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
-from artcommonlib.release_util import isolate_assembly_in_release
+from artcommonlib.util import get_ocp_version_from_group
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
@@ -28,7 +23,12 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_type, isolate_el_version_in_release, load_group_config, load_releases_config)
+from pyartcd.util import (get_assembly_type,
+                          isolate_el_version_in_release,
+                          load_group_config,
+                          load_releases_config,
+                          default_release_suffix,
+                          get_microshift_builds)
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -89,9 +89,12 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_for_stream()
         else:
             await self._rebase_and_build_for_named_assembly()
+            await self._trigger_microshift_sync()
+            await self._trigger_build_microshift_bootc()
+
             # Check if microshift advisory is defined in assembly
             if 'microshift' not in advisories:
-                self._logger.warning(f"Skipping advisory prep since microshift advisory is not defined in assembly {self.assembly}")
+                self._logger.info(f"Skipping advisory prep since microshift advisory is not defined in assembly {self.assembly}")
             else:
                 await self._prepare_advisory(advisories['microshift'])
 
@@ -100,7 +103,7 @@ class BuildMicroShiftPipeline:
         if self.assembly_type != AssemblyTypes.STREAM:
             raise ValueError(f"Cannot process assembly type {self.assembly_type.value}")
 
-        major, minor = isolate_major_minor_in_group(self.group)
+        major, minor = self._ocp_version
         # rebase against nightlies
         # rpm version-release will be like `4.12.0~test-202201010000.p?`
         if self.no_rebase:
@@ -139,8 +142,6 @@ class BuildMicroShiftPipeline:
         if self.assembly_type == AssemblyTypes.STREAM:
             raise ValueError(f"Cannot process assembly type {self.assembly_type.value}")
 
-        major, minor = isolate_major_minor_in_group(self.group)
-
         # For named assemblies, check if builds are pinned or already exist
         nvrs = []
         pinned_nvrs = dict()
@@ -161,7 +162,7 @@ class BuildMicroShiftPipeline:
                 await self.slack_client.say_in_thread(message)
                 nvrs = list(pinned_nvrs.values())
             else:
-                nvrs = await self._find_builds()
+                nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
 
         if nvrs:
             self._logger.info("Builds already exist: %s", nvrs)
@@ -180,23 +181,43 @@ class BuildMicroShiftPipeline:
             message = f"PR to pin microshift build to the {self.assembly} assembly has been merged: {pr.html_url}"
             await self.slack_client.say_in_thread(message)
 
-        if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-            version = f'{major}.{minor}'
-            try:
-                if self.runtime.dry_run:
-                    self._logger.info("[DRY RUN] Would have triggered microshift_sync job for version %s and assembly %s",
-                                      version, self.assembly)
-                else:
-                    jenkins.start_microshift_sync(version=version, assembly=self.assembly)
+    async def _trigger_microshift_sync(self):
+        if self.assembly_type not in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            return
 
-                message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
-                          f"This will publish the microshift build to mirror"
-                await self.slack_client.say_in_thread(message)
-            except Exception as err:
-                self._logger.warning("Failed to trigger microshift_sync job: %s", err)
-                message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
-                          "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
-                await self.slack_client.say_in_thread(message)
+        major, minor = self._ocp_version
+        version = f'{major}.{minor}'
+        try:
+            jenkins.start_microshift_sync(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
+            message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
+                      f"This will publish the microshift build to mirror"
+            await self.slack_client.say_in_thread(message)
+        except Exception as err:
+            self._logger.error("Failed to trigger microshift_sync job: %s", err)
+            message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
+                      "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
+            await self.slack_client.say_in_thread(message)
+
+    async def _trigger_build_microshift_bootc(self):
+        if self.assembly_type not in [AssemblyTypes.STANDARD, AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+            return
+
+        if self._ocp_version < (4, 18):
+            self._logger.info("Skipping build-microshift-bootc job for OCP version < 4.18")
+            return
+
+        major, minor = self._ocp_version
+        version = f'{major}.{minor}'
+        try:
+            jenkins.start_build_microshift_bootc(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
+            message = f"build_microshift_bootc for version {version} and assembly {self.assembly} has been triggered\n" \
+                      f"This will build microshift-bootc and publish it's pullspec to mirror"
+            await self.slack_client.say_in_thread(message)
+        except Exception as err:
+            self._logger.error("Failed to trigger build-microshift-bootc job: %s", err)
+            message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
+                      "/job/aos-cd-builds/job/build%252Fbuild-microshift-bootc|build-microshift-bootc> manually."
+            await self.slack_client.say_in_thread(message)
 
     async def _prepare_advisory(self, microshift_advisory_id):
         await self.slack_client.say_in_thread(f"Start preparing microshift advisory for assembly {self.assembly}..")
@@ -311,48 +332,18 @@ class BuildMicroShiftPipeline:
         return result
 
     @staticmethod
-    def generate_microshift_version_release(ocp_version: str, timestamp: Optional[str] = None):
-        """ Generate version and release strings for microshift rpm.
+    def generate_microshift_version_release(ocp_version: str):
+        """ Generate version and release strings for microshift builds
         Example version-releases:
         - 4.12.42-202210011234
         - 4.13.0~rc.4-202210011234
         """
-        if not timestamp:
-            timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
         release_version = VersionInfo.parse(ocp_version)
         version = f"{release_version.major}.{release_version.minor}.{release_version.patch}"
         if release_version.prerelease is not None:
             version += f"~{release_version.prerelease.replace('-', '_')}"
-        release = f"{timestamp}.p?"
+        release = default_release_suffix()
         return version, release
-
-    async def _find_builds(self) -> List[str]:
-        """ Find microshift builds in Brew
-        :param release: release field for rebase
-        :return: NVRs
-        """
-        cmd = [
-            "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
-            "-r", "microshift",
-            "find-builds",
-            "-k", "rpm",
-            "--member-only",
-        ]
-        with TemporaryDirectory() as tmpdir:
-            path = f"{tmpdir}/out.json"
-            cmd.append(f"--json={path}")
-            await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
-            with open(path) as f:
-                result = json.load(f)
-
-        nvrs = cast(List[str], result["builds"])
-
-        # microshift builds are special in that they build for each assembly after payload is promoted
-        # and they include the assembly name in its build name
-        # so make sure found nvrs are related to assembly
-        return [n for n in nvrs if isolate_assembly_in_release(n) == self.assembly]
 
     async def _rebase_and_build_rpm(self, version, release: str, custom_payloads: Optional[Dict[str, str]]) -> List[str]:
         """ Rebase and build RPM

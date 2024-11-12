@@ -25,6 +25,7 @@ jenkins_client: Optional[Jenkins] = None
 class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
+    BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
@@ -386,12 +387,25 @@ def start_sync_for_ci(version: str, **kwargs):
     )
 
 
-def start_microshift_sync(version: str, assembly: str, **kwargs):
+def start_microshift_sync(version: str, assembly: str, dry_run: bool, **kwargs):
     return start_build(
         job=Jobs.MICROSHIFT_SYNC,
         params={
             'BUILD_VERSION': version,
-            'ASSEMBLY': assembly
+            'ASSEMBLY': assembly,
+            'DRY_RUN': dry_run
+        },
+        **kwargs
+    )
+
+
+def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, **kwargs):
+    return start_build(
+        job=Jobs.BUILD_MICROSHIFT_BOOTC,
+        params={
+            'BUILD_VERSION': version,
+            'ASSEMBLY': assembly,
+            'DRY_RUN': dry_run
         },
         **kwargs
     )

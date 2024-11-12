@@ -6,14 +6,12 @@ import pathlib
 import re
 import urllib.parse
 from collections import deque
-from contextlib import contextmanager
 from datetime import datetime
-from inspect import getframeinfo, stack
 from itertools import chain
 from os.path import abspath
 from pathlib import Path
 from sys import getsizeof, stderr
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import semver
 import yaml
@@ -31,8 +29,6 @@ try:
 except ImportError:
     pass
 
-from doozerlib import constants
-from doozerlib.exceptions import DoozerFatalError
 from functools import lru_cache
 
 DICT_EMPTY = object()
