@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 import click
 from artcommonlib import exectools
@@ -15,12 +15,13 @@ LOGGER = logging.getLogger(__name__)
 class KonfluxOcp4Pipeline:
     def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str],
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
-                 kubeconfig: Optional[str], skip_rebase: bool):
+                 kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
         self.runtime = runtime
         self.image_list = image_list
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.version = version
         self.kubeconfig = kubeconfig
+        self.arches = arches
         self.skip_rebase = skip_rebase
 
         group_param = f'--group=openshift-{version}'
@@ -37,6 +38,10 @@ class KonfluxOcp4Pipeline:
 
     async def rebase(self, version: str, input_release: str):
         cmd = self._doozer_base_command.copy()
+        if self.arches:
+            cmd.append("--arches")
+            cmd.append(",".join(self.arches))
+
         image_list = self.image_list or ''
         cmd.extend([
             '--latest-parent-version',
@@ -52,6 +57,10 @@ class KonfluxOcp4Pipeline:
 
     async def build(self):
         cmd = self._doozer_base_command.copy()
+        if self.arches:
+            cmd.append("--arches")
+            cmd.append(",".join(self.arches))
+
         image_list = self.image_list or ''
         cmd.extend([
             '--latest-parent-version',
@@ -93,10 +102,12 @@ class KonfluxOcp4Pipeline:
               help='Doozer data path git [branch / tag / sha] to use')
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
+@click.option("--arch", "arches", metavar="TAG", multiple=True,
+              help="(Optional) [MULTIPLE] Limit included arches to this list")
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, assembly: str, data_path: Optional[str], image_list: Optional[str],
-               version: str, data_gitref: Optional[str], kubeconfig: Optional[str], skip_rebase: bool):
+               version: str, data_gitref: Optional[str], kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-    await KonfluxOcp4Pipeline(runtime, assembly, data_path, image_list, version, data_gitref, kubeconfig, skip_rebase).run()
+    await KonfluxOcp4Pipeline(runtime, assembly, data_path, image_list, version, data_gitref, kubeconfig, skip_rebase, arches).run()
