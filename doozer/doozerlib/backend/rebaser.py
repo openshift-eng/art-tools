@@ -1380,6 +1380,15 @@ class KonfluxRebaser:
         with df_path.open('w', encoding="utf-8") as df:
             df.write("%s\n\n" % df_content)
             if labels:
+                additional_labels = {}
+
+                if "description" not in labels:
+                    additional_labels["description"] = labels.get("io.k8s.description", "Dummy Description")
+                if "summary" not in labels:
+                    additional_labels["summary"] = labels.get("io.k8s.description", "Dummy Summary")
+
+                labels.update(additional_labels)
+
                 df.write("LABEL")
                 for k, v in labels.items():
                     df.write(" \\\n")  # All but the last line should have line extension backslash "\"
