@@ -60,7 +60,7 @@ class KonfluxImageBuilder:
         "x86_64": "linux/x86_64",
         # "s390x": "linux/s390x",
         # "ppc64le": "linux/ppc64le",
-        # "aarch64": "linux/arm64",
+        "aarch64": "linux/arm64",
     }
 
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
@@ -104,6 +104,7 @@ class KonfluxImageBuilder:
                 raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
 
             arches = metadata.get_arches()
+
             unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
             building_arches = list(set(arches) - unsupported_arches)
             if unsupported_arches:
