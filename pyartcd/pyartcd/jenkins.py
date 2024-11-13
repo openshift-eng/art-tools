@@ -415,12 +415,8 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
     return start_build(
         job=Jobs.RHCOS_SYNC,
         params={
-            'FROM_RELEASE_TAG': release_tag_or_pullspec,
+            'RELEASE_TAG': release_tag_or_pullspec,
             'DRY_RUN': dry_run,
-            # job determines these based on FROM_RELEASE_TAG
-            'OCP_VERSION': 'auto',
-            'ARCH': 'auto',
-            'MIRROR_PREFIX': 'auto',
         },
         **kwargs
     )
