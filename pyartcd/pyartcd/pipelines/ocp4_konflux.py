@@ -5,8 +5,9 @@ from typing import Optional, Tuple
 import click
 from artcommonlib import exectools
 
-from pyartcd import constants, util
+from pyartcd import constants, util, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
@@ -110,4 +111,25 @@ async def ocp4(runtime: Runtime, assembly: str, data_path: Optional[str], image_
                version: str, data_gitref: Optional[str], kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
-    await KonfluxOcp4Pipeline(runtime, assembly, data_path, image_list, version, data_gitref, kubeconfig, skip_rebase, arches).run()
+
+    lock_identifier = jenkins.get_build_path()
+    if not lock_identifier:
+        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
+    pipeline = KonfluxOcp4Pipeline(
+        runtime=runtime,
+        assembly=assembly,
+        data_path=data_path,
+        image_list=image_list,
+        version=version,
+        data_gitref=data_gitref,
+        kubeconfig=kubeconfig,
+        skip_rebase=skip_rebase,
+        arches=arches)
+
+    await locks.run_with_lock(
+        coro=pipeline.run(),
+        lock=Lock.BUILD_KONFLUX,
+        lock_name=Lock.BUILD_KONFLUX.value.format(version=version),
+        lock_id=lock_identifier
+    )
