@@ -29,6 +29,7 @@ class Jobs(Enum):
     OCP4 = 'aos-cd-builds/build%2Focp4'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
+    OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
@@ -276,7 +277,8 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
     )
 
 
-def start_ocp4_konflux(build_version: str, assembly: str, image_list: list, **kwargs) -> Optional[str]:
+def start_ocp4_konflux(build_version: str, assembly: str, image_list: list,
+                       limit_arches: list = None, **kwargs) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly
@@ -285,6 +287,9 @@ def start_ocp4_konflux(build_version: str, assembly: str, image_list: list, **kw
     # Build only changed images or none
     if image_list:
         params['IMAGE_LIST'] = ','.join(image_list)
+    # Limit arches when requested
+    if limit_arches:
+        params['LIMIT_ARCHES'] = ','.join(limit_arches)
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
@@ -299,6 +304,17 @@ def start_ocp4_scan(version: str, **kwargs) -> Optional[str]:
     }
     return start_build(
         job=Jobs.OCP4_SCAN,
+        params=params,
+        **kwargs
+    )
+
+
+def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.OCP4_SCAN_KONFLUX,
         params=params,
         **kwargs
     )
