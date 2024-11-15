@@ -104,12 +104,12 @@ class BuildMicroShiftBootcPipeline:
             await self.sync_to_mirror(arch, bootc_build.el_target, f"{repo_url}@{digest}")
 
     async def is_microshift_for_release_in_latest(self, packages_path):
-        cmd = ["aws", "s3", "ls", packages_path]
+        cmd = ["aws", "s3", "ls", f"s3://art-srv-enterprise{packages_path}"]
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd)
         except Exception:
             return False
-        if self.microshift_nvr in out:
+        if out and self.microshift_nvr in out:
             return True
         return False
 
