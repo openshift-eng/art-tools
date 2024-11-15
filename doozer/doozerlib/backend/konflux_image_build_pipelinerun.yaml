@@ -23,6 +23,9 @@ spec:
     value: '{{revision}}'
   - name: output-image
     value: quay.io/redhat-user-workloads/crt-nshift-art-pipeli-tenant/ui-openshift-4-18/ui-ocp-4-18-base-rhel-9:{{revision}}
+  - name: build-platforms
+    value:
+    - linux/x86_64
   - name: dockerfile
     value: Dockerfile
   pipelineSpec:
@@ -233,7 +236,7 @@ spec:
         - name: name
           value: buildah-remote-oci-ta
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.2@sha256:0701fda689f7a8aa723aaffb4527e15782598f4268a6b505225d2a38db9897cf
+          value: quay.io/konflux-ci/tekton-catalog/task-buildah-remote-oci-ta:0.2@sha256:cfc8f89bc984ae8309df82ac15cc6e302832f48f51cc0bde56edb4f43e57ffcf
         - name: kind
           value: task
         resolver: bundles
@@ -380,7 +383,7 @@ spec:
         - name: name
           value: sast-snyk-check-oci-ta
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.2@sha256:dcab261bc2c287ce8b4ef02407afea5a54b79f78590ecda947494c05d39a3c15
+          value: quay.io/konflux-ci/tekton-catalog/task-sast-snyk-check-oci-ta:0.2@sha256:cd325a22a4384979ddc629e743e7bcda2a839513f4d34952cd954baa7ae25e4c
         - name: kind
           value: task
         resolver: bundles
@@ -402,7 +405,7 @@ spec:
         - name: name
           value: clamav-scan
         - name: bundle
-          value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.1@sha256:1981b5aa330a4d59f59d760e54a36ebd596948abf6a36e45e103d4fd82ecbcf3
+          value: quay.io/konflux-ci/tekton-catalog/task-clamav-scan:0.1@sha256:21c7d037df3b430fc5c21b932e2062d0b82b046f39a2dc965aba7dff7a9cfc57
         - name: kind
           value: task
         resolver: bundles
