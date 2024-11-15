@@ -105,7 +105,10 @@ class BuildMicroShiftBootcPipeline:
 
     async def is_microshift_for_release_in_latest(self, packages_path):
         cmd = ["aws", "s3", "ls", packages_path]
-        _, out, _ = await exectools.cmd_gather_async(cmd)
+        try:
+            _, out, _ = await exectools.cmd_gather_async(cmd)
+        except Exception:
+            return False
         if self.microshift_nvr in out:
             return True
         return False
