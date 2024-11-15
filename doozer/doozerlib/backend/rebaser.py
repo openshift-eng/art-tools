@@ -1382,10 +1382,12 @@ class KonfluxRebaser:
             if labels:
                 additional_labels = {}
 
+                if "io.k8s.description" not in labels:
+                    additional_labels["io.k8s.description"] = "Dummy description"
                 if "description" not in labels:
-                    additional_labels["description"] = labels.get("io.k8s.description", "Dummy Description")
+                    additional_labels["description"] = labels.get("io.k8s.description", "Dummy description")
                 if "summary" not in labels:
-                    additional_labels["summary"] = labels.get("io.k8s.description", "Dummy Summary")
+                    additional_labels["summary"] = labels.get("io.k8s.description", "Dummy summary")
 
                 labels.update(additional_labels)
 
