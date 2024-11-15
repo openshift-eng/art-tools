@@ -188,7 +188,8 @@ class BuildMicroShiftPipeline:
         major, minor = self._ocp_version
         version = f'{major}.{minor}'
         try:
-            jenkins.start_microshift_sync(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
+            jenkins.start_microshift_sync(version=version, assembly=self.assembly,
+                                          dry_run=self.runtime.dry_run, block_until_complete=True)
             message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
                       f"This will publish the microshift build to mirror"
             await self.slack_client.say_in_thread(message)
