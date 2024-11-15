@@ -1660,7 +1660,8 @@ class PromotePipeline:
             content += ("\n Note: Microshift advisory gets populated with build and bugs after the release payload has "
                         "been promoted on Release Controller. It will take a few hours for it to be ready and on QE.")
 
-        content += "\nThis release is NOT directly based on existing nightlies.\n"
+        content += ("\nThe nightlies used as reference for this release can be found in openshift-eng/ocp-build-data "
+                    "releases.yml file (in the corresponding release branch)\n")
         content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
                    f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
         content += f"\nJIRA ticket: {jira_link}\n"
