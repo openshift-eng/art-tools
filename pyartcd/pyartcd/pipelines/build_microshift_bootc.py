@@ -25,6 +25,7 @@ from pyartcd.util import (get_assembly_type,
                           get_release_name_for_assembly,
                           get_microshift_builds)
 from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
+from doozerlib.constants import ART_DEFAULT_IMAGE_REPO
 
 yaml = YAML(typ="rt")
 yaml.default_flow_style = False
@@ -271,6 +272,7 @@ class BuildMicroShiftBootcPipeline:
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
             "--lock-upstream", bootc_image_name, "HEAD",
             "beta:images:konflux:build",
+            "--image-repo", ART_DEFAULT_IMAGE_REPO,
             "--konflux-kubeconfig", kubeconfig,
             "--konflux-namespace", "ocp-art-tenant"
         ]
