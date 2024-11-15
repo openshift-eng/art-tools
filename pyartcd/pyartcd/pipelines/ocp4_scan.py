@@ -25,11 +25,11 @@ class Ocp4ScanPipeline:
         self.changes = {}
         self.issues = []
         self._doozer_working = self.runtime.working_dir / "doozer_working"
-        self.locked = True  # True by default; if not locked, run() will set it to False
+        self.skipped = True  # True by default; if not locked, run() will set it to False
 
     async def run(self):
         # If we get here, lock could be acquired
-        self.locked = False
+        self.skipped = False
         self.logger.info('Building: %s', self.version)
 
         # KUBECONFIG env var must be defined in order to scan sources
@@ -171,27 +171,26 @@ class Ocp4ScanPipeline:
 
 @cli.command('ocp4-scan')
 @click.option('--version', required=True, help='OCP version to scan')
-@click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (only allowed in dry-run mode)')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
-    lock = Lock.SCAN
-    lock_name = lock.value.format(version=version)
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
-
+async def ocp4_scan(runtime: Runtime, version: str):
     pipeline = Ocp4ScanPipeline(runtime, version)
     jenkins.init_jenkins()
 
-    if ignore_locks:
-        # Already checked by aos-cd-jobs, but you never know...
-        if not runtime.dry_run:
-            raise RuntimeError('--ignore-locks can only by used with --dry-run')
+    if runtime.dry_run:
         await pipeline.run()
 
     else:
+        lock = Lock.SCAN
+        lock_name = lock.value.format(version=version)
+        lock_identifier = jenkins.get_build_path()
+        if not lock_identifier:
+            runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
+        # Scheduled builds are already being skipped if the lock is already acquired.
+        # For manual builds, we need to check if the build and scan locks are already acquired,
+        # and skip the current build if that's the case.
+        # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
         async def run_with_build_lock():
             build_lock = Lock.BUILD
             build_lock_name = build_lock.value.format(version=version)
@@ -211,7 +210,5 @@ async def ocp4_scan(runtime: Runtime, version: str, ignore_locks: bool):
             skip_if_locked=True
         )
 
-    # This should not happen, as the schedule build already checked for existing locks
-    # It doesn't hurt to check once more though
-    if pipeline.locked:
+    if pipeline.skipped:
         jenkins.update_title(' [SKIPPED][LOCKED]')

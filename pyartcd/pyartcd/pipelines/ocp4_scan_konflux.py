@@ -124,19 +124,10 @@ class Ocp4ScanPipeline:
               help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--image-list', required=False,
               help='Comma/space-separated list to of images to scan, empty to scan all')
-@click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (only allowed in dry-run mode)')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref,
-                    image_list: str, ignore_locks: bool):
+async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str):
     jenkins.init_jenkins()
-
-    lock = Lock.SCAN_KONFLUX
-    lock_name = lock.value.format(version=version)
-    lock_identifier = jenkins.get_build_path()
-    if not lock_identifier:
-        runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
     pipeline = Ocp4ScanPipeline(
         runtime=runtime,
@@ -147,12 +138,16 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
         image_list=image_list,
     )
 
-    if ignore_locks:
-        if not runtime.dry_run:
-            raise RuntimeError('--ignore-locks can only by used with --dry-run')
+    if runtime.dry_run:
         await pipeline.run()
 
     else:
+        lock = Lock.SCAN_KONFLUX
+        lock_name = lock.value.format(version=version)
+        lock_identifier = jenkins.get_build_path()
+        if not lock_identifier:
+            runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,
         # and skip the current build if that's the case.
