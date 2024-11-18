@@ -160,7 +160,7 @@ class BuildMicroShiftBootcPipeline:
 
         # make sure that the latest path has the same microshift build as the given release assembly
         # only then sync the pullspec to the latest path
-        latest_packages_path = f"{latest_path}/os/Packages"
+        latest_packages_path = f"{latest_path}/os/Packages/"
         if await self.is_microshift_for_release_in_latest(latest_packages_path):
             await _run_for(latest_path)
         else:
