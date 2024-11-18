@@ -165,7 +165,8 @@ class BuildMicroShiftBootcPipeline:
             await _run_for(latest_path)
         else:
             self._logger.info(f"Skipping sync to {latest_path} since microshift build for assembly {self.assembly} "
-                              f"was not found in {latest_packages_path}. Make sure that microshift_sync job has run.")
+                              f"was not found in {latest_packages_path}. If {self.assembly} is the desired latest, "
+                              f"make sure that microshift_sync job has successfully completed for the assembly.")
 
     async def get_latest_bootc_build(self):
         bootc_image_name = "microshift-bootc"
