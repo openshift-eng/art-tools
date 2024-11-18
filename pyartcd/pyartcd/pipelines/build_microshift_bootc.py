@@ -82,6 +82,10 @@ class BuildMicroShiftBootcPipeline:
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"]
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
+
+        microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+        self.microshift_nvr = next(n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9)
+
         bootc_build = await self._rebase_and_build_bootc()
         if bootc_build:
             self._logger.info("Bootc image build: %s", bootc_build.nvr)
@@ -210,8 +214,6 @@ class BuildMicroShiftBootcPipeline:
                     raise ValueError(f"Expected to find microshift package in plashet.yml at"
                                      f" {url}, but could not find it. Use --force to rebuild plashet.")
 
-                microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
-                self.microshift_nvr = next(n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9)
                 if actual_nvr != self.microshift_nvr:
                     self._logger.info(f"Found nvr {actual_nvr} in plashet.yml is different from expected {self.microshift_nvr}. Plashet build is needed.")
                     return True
