@@ -1,4 +1,3 @@
-import glob
 import itertools
 import logging
 import os
@@ -13,6 +12,7 @@ import click
 import requests
 import yaml
 
+from artcommonlib.assembly import assembly_type, AssemblyTypes
 from artcommonlib.build_util import find_latest_builds
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
@@ -543,12 +543,14 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
         tagged_builds = builder.from_tag(tag, inherit, assembly, event)
         component_builds.update(tagged_builds)
 
-        # microshift rpm is special as it builds in its own stream-type assembly named "microshift"
-        # And it builds for named assemblies after we promote
-        # We fetch the appropriate build from microshift assembly based on the given assembly brew event
-        # if it is pinned in the assembly, it will be overridden by the pinned build
-        microshift_build = builder.from_tag(tag, inherit, 'microshift', event, only=['microshift'])
-        component_builds.update(microshift_build)
+        # For named assemblies, microshift rpm is built and pinned to the assembly after promotion
+        # To include this pinned rpm in our plashet sync, we have to
+        # first fetch a placeholder build of microshift from the "microshift" assembly (stream assembly equivalent for microshift)
+        # This build will be later be overridden by the pinned build from the assembly definition (if present)
+        current_assembly_type = assembly_type(runtime.releases_config, runtime.assembly)
+        if current_assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
+            microshift_build = builder.from_tag(tag, inherit, 'microshift', event, only=['microshift'])
+            component_builds.update(microshift_build)
 
         signable_components |= tagged_builds.keys()  # components from our tag are always signable
 
