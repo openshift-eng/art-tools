@@ -111,9 +111,11 @@ class BuildMicroShiftBootcPipeline:
         cmd = ["aws", "s3", "ls", f"s3://art-srv-enterprise{packages_path}"]
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd)
-        except Exception:
+        except ChildProcessError as ex:
+            self._logger.error(f"Could not inspect {packages_path} in S3: {ex}")
             return False
-        if out and self.microshift_nvr in out:
+        self._logger.info(out)
+        if self.microshift_nvr in out:
             return True
         return False
 
