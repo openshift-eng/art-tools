@@ -114,7 +114,7 @@ class BuildMicroShiftBootcPipeline:
         except ChildProcessError as ex:
             self._logger.error(f"Could not inspect {packages_path} in S3: {ex}")
             return False
-        self._logger.info(out)
+        self._logger.info(f"Directory contents: \n{out}")
         if self.microshift_nvr in out:
             return True
         return False
