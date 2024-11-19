@@ -4,11 +4,11 @@ import click
 import yaml
 
 from pyartcd import util, jenkins, locks
-from pyartcd import constants, exectools
+from pyartcd import constants
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-
+from artcommonlib import exectools
 
 class Ocp4ScanPipeline:
     def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list):
