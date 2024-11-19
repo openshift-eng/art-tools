@@ -625,6 +625,9 @@ async def mirror_to_s3(source: Union[str, Path], dest: str, exclude: Optional[st
     """
     Copy to AWS S3
     """
+    if exclude is None and include is not None:
+        raise ValueError("include without an exclude has no effect")
+
     cmd = ["aws", "s3", "sync", "--no-progress", "--exact-timestamps"]
     paths = ['--', f'{source}', f'{dest}']
     if exclude is not None:

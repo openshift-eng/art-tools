@@ -23,7 +23,8 @@ from pyartcd.util import (get_assembly_type,
                           load_releases_config,
                           default_release_suffix,
                           get_release_name_for_assembly,
-                          get_microshift_builds)
+                          get_microshift_builds,
+                          mirror_to_s3)
 from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
 from doozerlib.constants import ART_DEFAULT_IMAGE_REPO
 
@@ -114,29 +115,15 @@ class BuildMicroShiftBootcPipeline:
         # The paths should be the same in both of these places
         release_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/{release_name}/{el_target}"
         latest_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/latest-{major}.{minor}/{el_target}"
-        cloudflare_endpoint_url = os.environ['CLOUDFLARE_ENDPOINT']
 
         async def _run_for(s3_path):
-            cmd = [
-                "aws", "s3", "sync",
-                "--no-progress",
-                "--exact-timestamps",
-                "--exclude", "*",
-                "--include", "bootc-pullspec.txt",
-                str(self._working_dir),
-                f"s3://art-srv-enterprise{s3_path}",
-            ]
-            if self.runtime.dry_run:
-                cmd.append("--dryrun")
-            await exectools.cmd_assert_async(cmd)
-
-            # Sync to Cloudflare as well
-            cmd.extend([
-                "--profile", "cloudflare",
-                "--endpoint-url", cloudflare_endpoint_url,
-            ])
-            await exectools.cmd_assert_async(cmd)
-
+            await mirror_to_s3(
+                source=self._working_dir,
+                dest=f"s3://art-srv-enterprise{s3_path}",
+                exclude="*",
+                include="bootc-pullspec.txt",
+                dry_run=self.runtime.dry_run
+            )
         await _run_for(release_path)
         await _run_for(latest_path)
 
