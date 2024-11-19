@@ -28,6 +28,7 @@ PyYAML
 readme-renderer
 requests
 requests-toolbelt
+rpm
 ruamel.yaml
 schema
 SecretStorage
