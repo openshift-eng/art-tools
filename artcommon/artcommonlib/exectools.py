@@ -461,6 +461,9 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     else:
         cmd_list = cmd
 
+    # Remove any empty tokens from the command list
+    cmd_list = [token for token in cmd_list if token]
+
     span = trace.get_current_span()
     span.set_attribute("pyartcd.param.cmd", cmd_list)
 
@@ -509,6 +512,9 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
         cmd_list = shlex.split(cmd)
     else:
         cmd_list = cmd
+
+    # Remove any empty tokens from the command list
+    cmd_list = [token for token in cmd_list if token]
 
     span = trace.get_current_span()
     span.set_attribute("pyartcd.param.cmd", cmd_list)
