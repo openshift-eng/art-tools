@@ -10,6 +10,7 @@ from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from artcommonlib import exectools
 
+
 class Ocp4ScanPipeline:
     def __init__(self, runtime, version, data_path, assembly, data_gitref, image_list):
         self.runtime = runtime
