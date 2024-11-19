@@ -74,8 +74,6 @@ class BuildMicroShiftBootcPipeline:
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
 
     async def run(self):
-        # Make sure our api.ci token is fresh
-        await oc.registry_login(self.runtime)
         self.releases_config = await load_releases_config(
             group=self.group,
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"]

@@ -13,6 +13,17 @@ from artcommonlib.constants import RELEASE_SCHEDULES
 LOGGER = logging.getLogger(__name__)
 
 
+def flatten_list(names):
+    if not names:
+        return []
+    # split csv values
+    result = []
+    for n in names:
+        result.append([x for x in n.replace(' ', ',').split(',') if x != ''])
+    # flatten result and remove dupes using set
+    return list(set([y for x in result for y in x]))
+
+
 def remove_prefix(s: str, prefix: str) -> str:
     if s.startswith(prefix):
         return s[len(prefix):]

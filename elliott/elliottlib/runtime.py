@@ -16,6 +16,7 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
+from artcommonlib.util import flatten_list
 from elliottlib import brew, constants
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
@@ -177,18 +178,6 @@ class Runtime(GroupRuntime):
             self._logger.info("Using branch from group.yml: %s" % self.branch)
         else:
             self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
-
-        # Flattens a list like like [ 'x', 'y,z' ] into [ 'x.yml', 'y.yml', 'z.yml' ]
-        # for later checking we need to remove from the lists, but they are tuples. Clone to list
-        def flatten_list(names):
-            if not names:
-                return []
-            # split csv values
-            result = []
-            for n in names:
-                result.append([x for x in n.replace(' ', ',').split(',') if x != ''])
-            # flatten result and remove dupes
-            return list(set([y for x in result for y in x]))
 
         def filter_wip(n, d):
             return d.get('mode', 'enabled') in ['wip', 'enabled']

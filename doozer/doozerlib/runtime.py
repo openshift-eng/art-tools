@@ -1,14 +1,4 @@
 import itertools
-from artcommonlib import exectools, gitdata
-from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
-    assembly_streams_config
-from artcommonlib.model import Model, Missing
-from artcommonlib.pushd import Dir
-from doozerlib.record_logger import RecordLogger
-from doozerlib.source_resolver import SourceResolver
-
-from contextlib import contextmanager
-
 import os
 import tempfile
 import shutil
@@ -16,24 +6,30 @@ import atexit
 import datetime
 import yaml
 import click
-import traceback
 import urllib.parse
 import signal
 import io
 import pathlib
-from typing import Optional, List, Dict, Tuple, Union
 import time
 import re
-
+from typing import Optional, List, Dict, Tuple, Union
 from jira import JIRA
+from multiprocessing import Lock, RLock
+from contextlib import contextmanager
 
+from artcommonlib import exectools, gitdata
+from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
+    assembly_streams_config
+from artcommonlib.util import flatten_list
+from artcommonlib.model import Model, Missing
+from artcommonlib.pushd import Dir
 from artcommonlib.runtime import GroupRuntime
+from doozerlib.record_logger import RecordLogger
+from doozerlib.source_resolver import SourceResolver
 from doozerlib import dblib
-
 from doozerlib.image import ImageMetadata
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib import state
-from multiprocessing import Lock, RLock
 from doozerlib.repos import Repos
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import util
@@ -459,18 +455,6 @@ class Runtime(GroupRuntime):
                     self.source_resolver.register_source_alias(key, val)
 
         with Dir(self.group_dir):
-
-            # Flattens multiple comma/space delimited lists like [ 'x', 'y,z' ] into [ 'x', 'y', 'z' ]
-            def flatten_list(names):
-                if not names:
-                    return []
-                # split csv values
-                result = []
-                for n in names:
-                    result.append([x for x in n.replace(' ', ',').split(',') if x != ''])
-                # flatten result and remove dupes using set
-                return list(set([y for x in result for y in x]))
-
             def filter_wip(n, d):
                 return d.get('mode', 'enabled') in ['wip', 'enabled']
 
