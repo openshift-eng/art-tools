@@ -127,21 +127,19 @@ def is_future_release_date(date_str):
 
 def get_assembly_release_date(assembly, group):
     """
-    Get assembly release release date from release schedule API
-    """
-    assembly_release_date = None
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    Get assembly release release date from release schedule API.
 
+    :raises ValueError: If the assembly release date is not found
+    """
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     try:
         for release in release_schedules.json()['all_ga_tasks']:
             if assembly in release['name']:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-                break
-        return assembly_release_date
-
+                return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     except KeyError:
-        return None
+        pass
+    raise ValueError(f'Assembly release date not found for {assembly}')
 
 
 def is_release_next_week(group):
@@ -162,8 +160,6 @@ def get_inflight(assembly, group):
     """
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
-    if not assembly_release_date:
-        raise ValueError(f'Assembly release date not found for {assembly}')
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
