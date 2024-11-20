@@ -19,7 +19,7 @@ from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.git import GitRepository
-from doozerlib.brew import BuildStates
+from doozerlib.brew import BuildStates, watch_task_async
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from elliottlib import util as elliottutil
 
@@ -40,15 +40,9 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
     if nvr == latest_build[0]['nvr']:
         _LOGGER.info(f'{nvr} is the latest build in {build_tag}')
         return True
-
-    if el_v == 8 and 'module' in nvr:
-        _LOGGER.info(f'{nvr} is not the latest build in build tag {build_tag}. Since it is a module build, '
-                     f'we need to update tag inheritance. Use the flag --create-tagging-ticket to create a jira '
-                     'ticket to do that.')
-    else:
-        override_tag = f'rhaos-{ocp_version}-rhel-{el_v}-override'
-        _LOGGER.info(f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
-                     f'build and then run `brew regen-repo {build_tag}` to make it available.')
+    override_tag = f'rhaos-{ocp_version}-rhel-{el_v}-override'
+    _LOGGER.info(f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
+                 f'build and then run `brew regen-repo {build_tag}` to make it available.')
     return False
 
 
@@ -151,18 +145,18 @@ async def move_golang_bugs(ocp_version: str,
 
 
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, cves: List[str],
-                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, scratch: bool = False):
+    def __init__(self, runtime: Runtime, ocp_version: str, cves: List[str],
+                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, tag_builds: bool, scratch: bool = False):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
         self.scratch = scratch
         self.ocp_version = ocp_version
-        self.create_ticket = create_ticket
         self.cves = cves
         self.force_update_tracker = force_update_tracker
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
+        self.tag_builds = tag_builds
 
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
@@ -179,42 +173,12 @@ class UpdateGolangPipeline:
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
             title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
-            if self.create_ticket:
-                title_update += ' [create-ticket]'
             if self.dry_run:
                 title_update += ' [dry-run]'
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
 
-        # Do a sanity check for rhel8 module build
-        # a module build should never be tagged directly in override tag
-        # if it is, we should make sure it is available via module inheritance
-        # and then untag it from override tag
-        if 8 in el_nvr_map and 'module' in el_nvr_map[8]:
-            tag = f'rhaos-{self.ocp_version}-rhel-8-override'
-            package = parse_nvr(el_nvr_map[8])['name']
-            nvr = get_latest_nvr_in_tag(tag, package, self.koji_session)
-            if nvr:
-                raise ValueError(f'{nvr} is tagged in {tag}, please make sure it is available via module inheritance '
-                                 f'(brew list-tagged {tag} {package} --inherit). If not, use --create-tagging-ticket. '
-                                 f'Once it is available, untag it from the override tag (brew untag-build {tag} {nvr})')
-
-        # if requested, create ticket for tagging request
-        if self.create_ticket:
-            _LOGGER.info('Making sure that builds are not already tagged')
-            for el_v, nvr in el_nvr_map.items():
-                if is_latest_build(self.ocp_version, el_v, nvr, self.koji_session):
-                    raise ValueError(f'{nvr} is already the latest build, run '
-                                     'only with nvrs that are not latest or run without --create-tagging-ticket')
-
-            _LOGGER.info('Creating Jira ticket to tag golang builds in buildroots')
-            self.create_jira_ticket_for_el8(el_nvr_map, go_version)
-            return
-
-        cannot_proceed = False
-        for el_v, nvr in el_nvr_map.items():
-            if not await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
-                cannot_proceed = True
+        cannot_proceed = any(await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()]))
         if cannot_proceed:
             raise ValueError('Cannot proceed until all builds are tagged and available')
 
@@ -250,6 +214,52 @@ class UpdateGolangPipeline:
             force_update_tracker=self.force_update_tracker,
             dry_run=self.dry_run,
         )
+
+    async def process_build(self, el_v, nvr):
+        if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
+            return False
+        if not self.tag_builds:
+            return True
+        # Tag builds into override tag
+        self.tag_builds(el_v, nvr)
+        # Regen repo
+        if await self.regen_repo_with_complete(el_v):
+            _LOGGER.info("Regen-repo not success")
+            return False
+        # Wait for repo to be available (5 hours max)
+        for _ in range(30):
+            await asyncio.sleep(600)  # 10 minutes
+            if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
+                return True
+            _LOGGER.info("wait 10 mins...")
+        return True
+
+    def brew_login(self):
+        if not self.koji_session.logged_in:
+            _LOGGER.info("user logged out from session, login again")
+            self.koji_session.gssapi_login()
+
+    async def regen_repo_with_complete(self, el_v):
+        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-build'
+        self.brew_login()
+        task_id = self.koji_session.newRepo(build_tag)
+        _LOGGER.info(f"Regenerating repo for tag: {build_tag} with task {task_id}, waiting...")
+        return await watch_task_async(self.koji_session, _LOGGER.info, task_id)
+
+    def tag_builds(self, el_v, nvr):
+        build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-override'
+        self.brew_login()
+        if el_v == 8:
+            rhel8_module_tag = self.get_module_tag(nvr, el_v)
+            if rhel8_module_tag:
+                latest_rhel8_builds = self.koji_session.listTagged(rhel8_module_tag, latest=True, inherit=True)
+                # need to tag delve go-toolset golang 3 module builds
+                for el8_nvr in [b['nvr'] for b in latest_rhel8_builds]:
+                    self.koji_session.tagBuild(build_tag, el8_nvr)
+                    _LOGGER.info(f"Tagged {el8_nvr} with {build_tag} tag")
+        else:
+            self.koji_session.tagBuild(build_tag, nvr)
+            _LOGGER.info(f"Tagged {nvr} with {build_tag} tag")
 
     def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -462,47 +472,10 @@ class UpdateGolangPipeline:
         prefix = f'module-go-toolset-rhel{el_v}-'
         return next((t for t in tags if t.startswith(prefix) and not t.endswith('-build')), None)
 
-    def create_jira_ticket_for_el8(self, el_nvr_map, go_version):
-        # project = 'CWFCONF'
-        # labels = ['releng']
-        # components = ['BLD', 'cat-brew', 'prod-RHOSE']
-        # due_date = (datetime.datetime.today() + datetime.timedelta(days=3)).strftime('%Y/%m/%d')
-
-        nvr_list_string = ''
-        el_instructions = ''
-        for el_v, nvr in el_nvr_map.items():
-            nvr_list_string += f'- RHEL{el_v}: {nvr}\n'
-            el_instructions += f'For rhel{el_v}:\n'
-            if el_v == 8:
-                module_tag = self.get_module_tag(nvr, el_v)
-                if not module_tag:
-                    raise click.BadParameter(f'Cannot find module tag for {nvr}')
-                commit_link = "https://gitlab.cee.redhat.com/rcm/rcm-ansible/-/commit/e838f59751cebe86347e6a82252dec0a1593c735"
-                el_instructions += (f'- Update inheritance for each `rhaos-{self.ocp_version}-rhel-{el_v}-override` '
-                                    f'tag to include the module tag `{module_tag}`. This is usually done via a '
-                                    f'commit in rcm-ansible repo ({commit_link}). Please do not '
-                                    'directly tag the module build in the override tag.\n')
-            elif el_v in (7, 9):
-                el_instructions += f'- `brew tag rhaos-{self.ocp_version}-rhel-{el_v}-override {nvr}`\n'
-            el_instructions += f'- Run `brew regen-repo` for `rhaos-{self.ocp_version}-rhel-{el_v}-build`\n'
-
-        template = f'''OpenShift requests that buildroots for version {self.ocp_version} provide a new \
-golang compiler version {go_version} , reference: {self.art_jira}
-
-The new NVRs are:
-{nvr_list_string}
-{el_instructions}
-'''
-        title = f'Request Golang {go_version} for OCP {self.ocp_version}'
-        _LOGGER.info('Please create https://issues.redhat.com/browse/CWFCONF Jira ticket with \n'
-                     f'title: {title}\ncontent:\n{template}')
-
 
 @cli.command('update-golang')
 @click.option('--ocp-version', required=True, help='OCP version to update golang for, e.g. 4.16')
 @click.option('--scratch', is_flag=True, default=False, help='Build images in scratch mode')
-@click.option('--create-tagging-ticket', 'create_ticket', is_flag=True, default=False,
-              help='Create CWFCONF Jira ticket for tagging request')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
 @click.option('--cves', help='CVEs that are confirmed to be fixed in all given golang nvrs (comma separated). '
                              'This will be used to fetch relevant Tracker bugs and move them to ON_QA state if '
@@ -510,11 +483,12 @@ The new NVRs are:
 @click.option('--force-update-tracker', is_flag=True, default=False,
               help='Force update found tracker bugs for the given CVEs, even if the latest nightly is not found containing fixed builds')
 @click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
+@click.option('--tag-builds', is_flag=True, default=False, help='Confirm to tag builds with override tag if they are not tagged')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
-                        cves: str, force_update_tracker: bool, confirm: bool, go_nvrs: List[str]):
+async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, art_jira: str,
+                        cves: str, force_update_tracker: bool, confirm: bool, tag_builds: bool, go_nvrs: List[str]):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
@@ -523,5 +497,5 @@ async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, creat
     if force_update_tracker and not cves:
         raise ValueError('CVEs must be provided with --force-update-tracker')
 
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, cves, force_update_tracker,
-                               go_nvrs, art_jira, scratch).run()
+    await UpdateGolangPipeline(runtime, ocp_version, cves, force_update_tracker,
+                               go_nvrs, art_jira, tag_builds, scratch).run()
