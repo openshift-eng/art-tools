@@ -248,6 +248,28 @@ def isolate_pflag_in_release(release: str) -> Optional[str]:
 
     return None
 
+def isolate_components_in_release_tag(release_tag: str) -> (tuple[int], str, bool):
+    """
+    Given a release name (e.g. 4.8.0-0.nightly-s390x-2021-07-02-143555, 4.18.0-ec.3-x86_64),
+    return:
+     - The major.minor of the release (e.g. (4, 8))
+     - The brew CPU architecture name associated with the nightly (e.g. s390x, x86_64)
+     - Whether the release is from a private release controller.
+    :param release_tag: The name of the nightly to analyze
+    :return: (major_minor, brew_arch, is_private)
+    """
+    components = release_tag.split('-')
+    major_minor = tuple(int(x) for x in components[0].split('.')[:2])
+    is_private = ('priv' in components)
+    go_arch = None
+    for component in components:
+        if component in GO_ARCHES:
+            go_arch = component
+    if not go_arch:
+        go_arch = 'x86_64' # for historical reasons, amd64 is not included in the release name
+    brew_arch = brew_arch_for_go_arch(go_arch)
+    return major_minor, brew_arch, is_private
+
 
 def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     """
