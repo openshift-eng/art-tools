@@ -73,9 +73,9 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
 
         attached_trackers = []
         for bug_tracker in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
-            attached_trackers.extend(get_attached_trackers(advisory, bug_tracker, LOGGER))
+            attached_trackers.extend(get_attached_trackers(advisory, bug_tracker))
 
-        tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api, LOGGER)
+        tracker_flaws, flaw_bugs = get_flaws(flaw_bug_tracker, attached_trackers, brew_api)
 
         try:
             if flaw_bugs:
@@ -95,21 +95,20 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
     sys.exit(exit_code)
 
 
-def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker, logger: logging.Logger):
+def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker):
     # get attached bugs from advisory
     advisory_bug_ids = bug_tracker.advisory_bug_ids(advisory)
     if not advisory_bug_ids:
-        logger.info(f'Found 0 {bug_tracker.type} bugs attached')
+        LOGGER.info(f'Found 0 {bug_tracker.type} bugs attached')
         return []
 
     attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(advisory_bug_ids)
-    logger.info(f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
+    LOGGER.info(f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
                 f'{sorted([b.id for b in attached_tracker_bugs])}')
     return attached_tracker_bugs
 
 
-def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api,
-              logger: logging.Logger) -> (Dict, List):
+def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_api) -> (Dict, List):
     # validate and get target_release
     if not tracker_bugs:
         return {}, []  # Bug.get_target_release will panic on empty array
@@ -119,7 +118,7 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
         flaw_bug_tracker,
         brew_api
     )
-    logger.info(f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
+    LOGGER.info(f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
                 f' {sorted(flaw_tracker_map.keys())}')
 
     # current_target_release is digit.digit.[z|0]
@@ -128,16 +127,16 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     # for z-stream every flaw bug is considered first-fix
     # https://docs.engineering.redhat.com/display/PRODSEC/Security+errata+-+First+fix
     if current_target_release[-1] == 'z':
-        logger.info("Detected z-stream target release, every flaw bug is considered first-fix")
+        LOGGER.info("Detected z-stream target release, every flaw bug is considered first-fix")
         first_fix_flaw_bugs = [f['bug'] for f in flaw_tracker_map.values()]
     else:
-        logger.info("Detected GA release, applying first-fix filtering..")
+        LOGGER.info("Detected GA release, applying first-fix filtering..")
         first_fix_flaw_bugs = [
             flaw_bug_info['bug'] for flaw_bug_info in flaw_tracker_map.values()
             if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], current_target_release)
         ]
 
-    logger.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')
+    LOGGER.info(f'{len(first_fix_flaw_bugs)} out of {len(flaw_tracker_map)} flaw bugs considered "first-fix"')
     return tracker_flaws, first_fix_flaw_bugs
 
 
@@ -145,7 +144,7 @@ def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
     advisory_id = advisory.errata_id
     errata_config = runtime.get_errata_config()
     cve_boilerplate = errata_config['boilerplates']['cve']
-    advisory, updated = get_updated_advisory_rhsa(LOGGER, cve_boilerplate, advisory, flaw_bugs)
+    advisory, updated = get_updated_advisory_rhsa(cve_boilerplate, advisory, flaw_bugs)
     if not noop and updated:
         LOGGER.info("Updating advisory details %s", advisory_id)
         advisory.commit()
@@ -187,10 +186,9 @@ async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Errat
     await AsyncErrataUtils.associate_builds_with_cves(errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=dry_run)
 
 
-def get_updated_advisory_rhsa(logger: logging.Logger, cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
+def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
     """Given an advisory object, get updated advisory to RHSA
 
-    :param logger: logger object
     :param cve_boilerplate: cve template for rhsa
     :param advisory: advisory object to update
     :param flaw_bugs: Collection of flaw bug objects to be attached to the advisory
@@ -198,7 +196,7 @@ def get_updated_advisory_rhsa(logger: logging.Logger, cve_boilerplate: dict, adv
     """
     updated = False
     if not is_security_advisory(advisory):
-        logger.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
+        LOGGER.info('Advisory type is {}, converting it to RHSA'.format(advisory.errata_type))
         updated = True
         advisory.update(
             errata_type='RHSA',
@@ -226,15 +224,15 @@ def get_updated_advisory_rhsa(logger: logging.Logger, cve_boilerplate: dict, adv
     highest_impact = get_highest_security_impact(flaw_bugs)
     if highest_impact != advisory.security_impact:
         if constants.security_impact_map[advisory.security_impact] < constants.security_impact_map[highest_impact]:
-            logger.info(f'Adjusting advisory security impact from {advisory.security_impact} to {highest_impact}')
+            LOGGER.info(f'Adjusting advisory security impact from {advisory.security_impact} to {highest_impact}')
             advisory.update(security_impact=highest_impact)
             updated = True
         else:
-            logger.info(f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust')
+            LOGGER.info(f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust')
 
     if highest_impact not in advisory.topic:
         topic = cve_boilerplate['topic'].format(IMPACT=highest_impact)
-        logger.info('Topic updated to include impact of {}'.format(highest_impact))
+        LOGGER.info('Topic updated to include impact of {}'.format(highest_impact))
         advisory.update(topic=topic)
 
     return advisory, updated
