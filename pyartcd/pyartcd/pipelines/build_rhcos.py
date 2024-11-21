@@ -14,6 +14,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from typing import List, Dict, Tuple
 
+JENKINS_BASE_URL = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 
 # lifted verbatim from
 # https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
@@ -45,10 +46,6 @@ class BuildRhcosPipeline:
         self.api_token = None
         self._stream = None  # rhcos stream the version maps to
         self.dry_run = self.runtime.dry_run
-        self.jenkins_base_url = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
-        if self.version in ["4.15", "4.16", "4.17", "4.18", "4.19"]:
-            self.jenkins_base_url = 'https://jenkins-rhcos.apps.ocp-virt.prod.psi.redhat.com'
-
         self.request_session = requests.Session()
         retries = Retry(
             total=5, backoff_factor=1,
@@ -93,7 +90,7 @@ class BuildRhcosPipeline:
             if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins" and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
                 secret_maybe = base64.b64decode(s.model.data.token).decode('utf-8')
                 r = self.request_session.get(
-                    f"{self.jenkins_base_url}/me/api/json",
+                    f"{JENKINS_BASE_URL}/me/api/json",
                     headers={"Authorization": f"Bearer {secret_maybe}"},
                 )
                 if r.status_code == 200:
@@ -115,8 +112,9 @@ class BuildRhcosPipeline:
         ), [])
         return {p["name"]: p["value"] for p in parameters}
 
-    def build_url(self, job: str, number: int) -> str:
-        return f"{self.jenkins_base_url}/job/{job}/{number}/"
+    @staticmethod
+    def build_url(job: str, number: int) -> str:
+        return f"{JENKINS_BASE_URL}/job/{job}/{number}/"
 
     def query_existing_builds(self) -> List[Dict]:
         """Check if there are any existing builds for the given version. Returns builds in progress."""
@@ -125,7 +123,7 @@ class BuildRhcosPipeline:
             builds.extend(
                 dict(**b, job=job, parameters=self.build_parameters(b), url=self.build_url(job, b["number"]))
                 for b in self.request_session.get(
-                    f"{self.jenkins_base_url}/job/{job}/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]",
+                    f"{JENKINS_BASE_URL}/job/{job}/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]",
                 ).json()["builds"]
                 if b["result"] is None  # build is still running when it has no status
             )
@@ -164,7 +162,7 @@ class BuildRhcosPipeline:
         params = dict(STREAM=self.stream, EARLY_ARCH_JOBS="false")
         if self.new_build:
             params["FORCE"] = "true"
-        job_url = f"{self.jenkins_base_url}/job/build/buildWithParameters"
+        job_url = f"{JENKINS_BASE_URL}/job/build/buildWithParameters"
         if self.dry_run:
             print(f"Would've started build at url={job_url} with params={params}", file=sys.stderr)
             return {}
@@ -195,7 +193,7 @@ class BuildRhcosPipeline:
                 description=b["description"] or "[no description yet]",
                 result=b["result"],
             ) for b in self.request_session.get(
-                f"{self.jenkins_base_url}/job/{job}/api/json?tree=builds[number,description,result]"
+                f"{JENKINS_BASE_URL}/job/{job}/api/json?tree=builds[number,description,result]"
             ).json()["builds"]
             if b["number"] == number
         ), None)
