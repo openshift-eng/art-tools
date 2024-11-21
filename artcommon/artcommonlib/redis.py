@@ -86,17 +86,6 @@ def get_value_sync(conn: redis.client.Redis, key: str):
     return value
 
 
-@handle_connection_sync
-def get_value_sync(conn: redis.client.Redis, key: str):
-    """
-    Same as get_value(), but synchronous
-    """
-
-    value = conn.get(key)
-    logger.debug('Key %s has value %s', key, value)
-    return value
-
-
 @handle_connection
 async def set_value(conn: redis.asyncio.client.Redis, key: str, value):
     """
@@ -124,17 +113,6 @@ async def get_keys(conn: redis.asyncio.client.Redis, pattern: str):
     """
 
     keys = await conn.keys(pattern)
-    logger.debug('Found keys matching pattern %s: %s', pattern, ', '.join(keys))
-    return keys
-
-
-@handle_connection_sync
-def get_keys_sync(conn: redis.client.Redis, pattern: str):
-    """
-    Same as get_keys(), but synchronous
-    """
-
-    keys = conn.keys(pattern)
     logger.debug('Found keys matching pattern %s: %s', pattern, ', '.join(keys))
     return keys
 
