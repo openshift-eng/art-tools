@@ -534,6 +534,22 @@ class BugValidator:
         return k
 
     def _verify_blocking_bugs(self, blocking_bugs_for, is_attached=False):
+        def has_valid_status(blocker, bug):
+            """Check if blocker has invalid status in relation to bug"""
+            pending_statuses = ['VERIFIED', 'RELEASE_PENDING', 'Release Pending', 'Verified']
+            bugs_are_on_qa = bug.status == blocker.status == "ON_QA"
+            closed_statuses = ['CLOSED', 'Closed']
+            valid_closed_resolutions = ['CURRENTRELEASE', 'NEXTRELEASE', 'ERRATA', 'DUPLICATE', 'NOTABUG', 'WONTFIX',
+                                        'Done', 'Fixed', 'Done-Errata', 'Obsolete', 'Current Release', 'Errata',
+                                        'Next Release', "Won't Do", "Won't Fix", 'Duplicate', 'Duplicate Issue',
+                                        'Not a Bug']
+
+            if blocker.status in pending_statuses or bugs_are_on_qa:
+                return True
+            if blocker.status in closed_statuses and blocker.resolution in valid_closed_resolutions:
+                return True
+            return False
+
         parent_wrong_status_bugs = []
         parent_not_shipping_bugs = []
 
@@ -541,32 +557,11 @@ class BugValidator:
         major, minor = self.runtime.get_major_minor()
         for bug, blockers in blocking_bugs_for.items():
             for blocker in blockers:
-                message = str()
-                if blocker.status not in ['VERIFIED', 'RELEASE_PENDING', 'CLOSED', 'Release Pending', 'Verified',
-                                          'Closed'] and not (blocker.status == bug.status == "ON_QA"):
-                    if self.output == 'text':
-                        message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
-                            f"{blocker.id} which has status {blocker.status} and target release {blocker.target_release}"
-                    elif self.output == 'slack':
-                        message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
-                                  f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}>"
-                    self._complain(message)
+                if not has_valid_status(blocker, bug):
                     message = f"{bug.id} status={bug.status} is a backport of bug {blocker.id} status={blocker.status}"
+                    if blocker.resolution:
+                        message += f":{blocker.resolution}"
                     parent_wrong_status_bugs.append((bug.id, message))
-                if blocker.status in ['CLOSED', 'Closed'] and \
-                    blocker.resolution not in ['CURRENTRELEASE', 'NEXTRELEASE', 'ERRATA', 'DUPLICATE', 'NOTABUG', 'WONTFIX',
-                                               'Done', 'Fixed', 'Done-Errata', 'Obsolete',
-                                               'Current Release', 'Errata', 'Next Release',
-                                               "Won't Do", "Won't Fix",
-                                               'Duplicate', 'Duplicate Issue',
-                                               'Not a Bug']:
-                    if self.output == 'text':
-                        message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
-                            f"{blocker.id} which was CLOSED {blocker.resolution}"
-                    elif self.output == 'slack':
-                        message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of bug " \
-                            f"<{blocker.weburl}|{blocker.id}> which was CLOSED `{blocker.resolution}`"
-                    self._complain(message)
                 if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED'] and is_release_next_week(f"openshift-{major}.{minor + 1}"):
                     try:
                         blocker_advisories = blocker.all_advisory_ids()
@@ -575,24 +570,12 @@ class BugValidator:
                             sync_jira_issue(blocker.id)
                             blocker_advisories = blocker.all_advisory_ids()
                         except Exception as e:
-                            message = f"Failed to sync bug {blocker.id}: {e}"
-                            logger.error(message)
-                            self._complain(message)
+                            message = f"Failed to fetch advisories for bug {blocker.id}: {e}"
+                            self._complain(VerifyIssue(
+                                code=VerifyIssueCode.VALIDATION_ERROR,
+                                message=message
+                            ))
                             continue
-                    if not blocker_advisories:
-                        if self.output == 'text':
-                            message = (f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "
-                                       f"{blocker.id} which is on {blocker.status} and target release "
-                                       f"{blocker.target_release} but is not attached to any advisory")
-                        elif self.output == 'slack':
-                            message = f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " \
-                                f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}> which is not attached to any advisory"
-                        self._complain(message)
-                    message = (f"{bug.id} status={bug.status} is a backport of bug {blocker.id} "
-                               f"status={blocker.status} resolution={blocker.resolution}")
-                    parent_wrong_status_bugs.append((bug.id, message))
-                if is_attached and blocker.status in ['ON_QA', 'Verified', 'VERIFIED']:
-                    blocker_advisories = blocker.all_advisory_ids()
                     if not blocker_advisories:
                         message = f"{bug.id} is a backport of bug {blocker.id} status={blocker.status}"
                         parent_not_shipping_bugs.append((bug.id, message))

@@ -398,7 +398,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
                     still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
                     message = ('No attached builds found in advisories for tracker bugs (bug, package): '
                                f'{stringify(still_not_found_with_component)}. Either attach builds or explicitly include/exclude '
-                               f'the bug ids in the assembly definition')
+                               'the bug ids in the assembly definition')
                     issue = VerifyIssue(
                         code=VerifyIssueCode.TRACKER_BUGS_NO_BUILDS,
                         message=message
