@@ -87,23 +87,25 @@ def get_value_sync(conn: redis.client.Redis, key: str):
 
 
 @handle_connection
-async def set_value(conn: redis.asyncio.client.Redis, key: str, value):
+async def set_value(conn: redis.asyncio.client.Redis, key: str, value, expiry=None):
     """
     Sets value for a key
+
+    expiry optionally sets an expiry flag in seconds
     """
 
     logger.debug('Setting key %s to %s', key, value)
-    await conn.set(key, value)
+    await conn.set(key, value, ex=expiry)
 
 
 @handle_connection_sync
-def set_value_sync(conn: redis.client.Redis, key: str, value):
+def set_value_sync(conn: redis.client.Redis, key: str, value, expiry=None):
     """
     Same as set_value(), but synchronous
     """
 
     logger.debug('Setting key %s to %s', key, value)
-    conn.set(key, value)
+    conn.set(key, value, ex=expiry)
 
 
 @handle_connection
