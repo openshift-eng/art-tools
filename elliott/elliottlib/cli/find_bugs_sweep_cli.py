@@ -408,7 +408,7 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     if issues:
         if not permissive:
             logger.error("Found these issues with bugs:")
-            yaml.dump([i.to_dict() for i in issues], indent=2, sort_keys=False, width=float("inf"))
+            yaml.dump([i.to_dict() for i in issues], sys.stderr, indent=2, sort_keys=False, width=float("inf"))
             raise ElliottFatalError("Found issues with bugs which need to be fixed.")
     return bugs_by_type, issues
 
