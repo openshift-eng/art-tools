@@ -36,35 +36,6 @@ class TestUtil(unittest.TestCase):
         with self.assertRaises(Exception):
             brew_arch_for_go_arch("bogus")
 
-    def test_isolate_timestamp_in_release(self):
-        actual = util.isolate_timestamp_in_release("foo-4.7.0-202107021813.p0.g01c9f3f.el8")
-        expected = "202107021813"
-        self.assertEqual(actual, expected)
-
-        actual = util.isolate_timestamp_in_release("foo-container-v4.7.0-202107021907.p0.g8b4b094")
-        expected = "202107021907"
-        self.assertEqual(actual, expected)
-
-        actual = util.isolate_timestamp_in_release("foo-container-v4.7.0-202107021907.p0.g8b4b094")
-        expected = "202107021907"
-        self.assertEqual(actual, expected)
-
-        actual = util.isolate_timestamp_in_release("foo-container-v4.8.0-202106152230.p0.g25122f5.assembly.stream")
-        expected = "202106152230"
-        self.assertEqual(actual, expected)
-
-        actual = util.isolate_timestamp_in_release("foo-container-v4.7.0-1.p0.g8b4b094")
-        expected = None
-        self.assertEqual(actual, expected)
-
-        actual = util.isolate_timestamp_in_release("foo-container-v4.7.0-202199999999.p0.g8b4b094")
-        expected = None
-        self.assertEqual(actual, expected)
-
-        actual = util.isolate_timestamp_in_release("")
-        expected = None
-        self.assertEqual(actual, expected)
-
     def test_get_release_name_for_assembly(self):
         releases_config = Model({
             "releases": {

@@ -21,7 +21,7 @@ from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import isolate_timestamp_in_release
+from artcommonlib.release_util import isolate_timestamp_in_release
 
 DEFAULT_THRESHOLD_HOURS = 6
 
