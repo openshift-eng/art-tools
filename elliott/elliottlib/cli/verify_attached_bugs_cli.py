@@ -9,7 +9,6 @@ from errata_tool import ErrataException
 
 from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
-from artcommonlib.format_util import red_print
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import is_release_next_week
 from elliottlib import bzutil, constants
@@ -68,13 +67,13 @@ async def verify_attached_bugs_cli(runtime: Runtime, verify_bug_status: bool, ad
     """
     runtime.initialize()
     if advisories:
-        click.echo("WARNING: Cannot verify advisory bug sorting. To verify that bugs are attached to the "
-                   "correct release advisories, run with --assembly=<release>")
+        logger.warning("Cannot verify advisory bug sorting. To verify that bugs are attached to the "
+                       "correct release advisories, run with --assembly=<release>")
         advisory_id_map = {'?': a for a in advisories}
     else:
         advisory_id_map = runtime.get_default_advisories()
     if not advisory_id_map:
-        red_print("No advisories specified on command line or in [group.yml|releases.yml]")
+        logger.error("No advisories specified on command line or in [group.yml|releases.yml]")
         exit(1)
     await verify_attached_bugs(runtime, verify_bug_status, advisory_id_map, verify_flaws, no_verify_blocking_bugs, skip_multiple_advisories_check)
 
