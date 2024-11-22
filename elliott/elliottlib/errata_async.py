@@ -179,7 +179,7 @@ class AsyncErrataAPI:
             "is_active": is_active,
             "is_locked": is_locked,
         }
-        return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
+        return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)).get("data", {})
 
     async def update_batch(self,
                            batch_id: int,
@@ -190,7 +190,7 @@ class AsyncErrataAPI:
                            is_active: Optional[bool] = None,
                            is_locked: Optional[bool] = None):
         """ Update an existing batch.
-        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html
+        https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
 
         :param batch_id: Batch ID
         :param name: The batch name to update if not None
@@ -214,7 +214,7 @@ class AsyncErrataAPI:
             data["is_active"] = is_active
         if is_locked is not None:
             data["is_locked"] = is_locked
-        return await self._make_request(aiohttp.hdrs.METH_PUT, path, json=data)
+        return cast(Dict, await self._make_request(aiohttp.hdrs.METH_PUT, path, json=data)).get("data", {})
 
     async def change_batch_for_advisory(self, advisory: int, batch_id: Optional[int] = None):
         """ Change the batch association for an advisory.
@@ -228,7 +228,7 @@ class AsyncErrataAPI:
             data["batch_id"] = batch_id
         else:
             data["clear_batch"] = True
-        return await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)
+        return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
 
     async def create_advisory(self, product: str, release: str, errata_type: str,
                               advisory_synopsis: str, advisory_topic: str, advisory_description: str, advisory_solution: str,
