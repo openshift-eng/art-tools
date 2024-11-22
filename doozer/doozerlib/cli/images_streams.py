@@ -883,6 +883,11 @@ def images_streams_prs(runtime, github_access_token, bug, interstitial, ignore_c
     minor = runtime.group_config.vars['MINOR']
     interstitial = int(interstitial)
 
+    to_reconcile = runtime.group_config.reconciliation_prs.enabled
+    if to_reconcile is not Missing and not to_reconcile:
+        runtime.logger.warning(f'streams_prs_disabled is set in group.yml of {major}.{minor}; skipping PRs')
+        exit(0)
+
     master_major, master_minor = extract_version_fields(what_is_in_master(), at_least=2)
     if not ignore_ci_master and (major > master_major or minor > master_minor):
         # ART building a release before it is in master. Too early to open PRs.
