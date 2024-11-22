@@ -1,8 +1,11 @@
 import logging
 import os
+from enum import Enum
 from typing import Optional, Tuple
 
 import click
+import yaml
+
 from artcommonlib import exectools
 
 from pyartcd import constants, util, jenkins, locks
@@ -13,12 +16,24 @@ from pyartcd.runtime import Runtime
 LOGGER = logging.getLogger(__name__)
 
 
+class BuildStrategy(Enum):
+    ALL = 'all'
+    ONLY = 'only'
+    EXCLUDE = 'exclude'
+
+
+class BuildPlan:
+    def __init__(self):
+        self.build_strategy = BuildStrategy.ALL  # build all images or a subset
+        self.images_included = []  # include list for images to build
+        self.images_excluded = []  # exclude list for images to build
+
+
 class KonfluxOcp4Pipeline:
     def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str],
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
                  kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
         self.runtime = runtime
-        self.image_list = image_list
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.version = version
         self.kubeconfig = kubeconfig
@@ -37,16 +52,27 @@ class KonfluxOcp4Pipeline:
             group_param
         ]
 
+        self.build_plan = None
+        self.init_build_plan(image_list)
+
+    def image_param_from_build_plan(self):
+        if self.build_plan.build_strategy == BuildStrategy.ALL:
+            image_param = ''  # Doozer runtime will consider all images
+        elif self.build_plan.build_strategy == BuildStrategy.ONLY:
+            image_param = f'--images={",".join(self.build_plan.images_included)}'
+        else:
+            image_param = f'--exclude={",".join(self.build_plan.images_excluded)}'
+        return image_param
+
     async def rebase(self, version: str, input_release: str):
         cmd = self._doozer_base_command.copy()
         if self.arches:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
 
-        image_list = self.image_list or ''
         cmd.extend([
             '--latest-parent-version',
-            f'--images={image_list}',
+            self.image_param_from_build_plan(),
             'beta:images:konflux:rebase',
             f'--version={version}',
             f'--release={input_release}',
@@ -54,7 +80,30 @@ class KonfluxOcp4Pipeline:
         ])
         if not self.runtime.dry_run:
             cmd.append('--push')
-        await exectools.cmd_assert_async(cmd)
+
+        try:
+            await exectools.cmd_assert_async(cmd)
+
+        except ChildProcessError:
+            with open(f'{self._doozer_working}/state.yaml') as state_yaml:
+                state = yaml.safe_load(state_yaml)
+            failed_images = state['images:konflux:rebase'].get('failed-images', [])
+            if not failed_images:
+                raise  # Something else went wrong
+            LOGGER.warning('Following images failed to rebase and won\'t be built: %s', ','.join(failed_images))
+
+            if self.build_plan.build_strategy == BuildStrategy.ALL:
+                # Move from building all to excluding failed images
+                self.build_plan.build_strategy = BuildStrategy.EXCLUDE
+                self.build_plan.images_excluded = failed_images
+
+            elif self.build_plan.build_strategy == BuildStrategy.ONLY:
+                # Remove failed images from included ones
+                self.build_plan.images_included = [i for i in self.build_plan.images_included if i not in failed_images]
+
+            else:  # strategy = EXCLUDE
+                # Append failed images to excluded ones
+                self.build_plan.images_excluded.extend(failed_images)
 
     async def build(self):
         cmd = self._doozer_base_command.copy()
@@ -62,10 +111,13 @@ class KonfluxOcp4Pipeline:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
 
-        image_list = self.image_list or ''
+        if self.build_plan.build_strategy == BuildStrategy.ONLY and not self.build_plan.images_included:
+            LOGGER.warning('No images will be built')
+            return
+
         cmd.extend([
             '--latest-parent-version',
-            f'--images={image_list}',
+            self.image_param_from_build_plan(),
             'beta:images:konflux:build',
             "--konflux-namespace=ocp-art-tenant",
         ])
@@ -74,6 +126,22 @@ class KonfluxOcp4Pipeline:
         if self.runtime.dry_run:
             cmd.append('--dry-run')
         await exectools.cmd_assert_async(cmd)
+
+        LOGGER.info("All builds completed successfully")
+
+    def init_build_plan(self, image_list: str):
+        image_list = [image.strip() for image in image_list.split(',')]
+        self.build_plan = BuildPlan()
+
+        if not image_list:
+            self.build_plan.build_strategy = BuildStrategy.ALL
+            self.build_plan.images_included = []
+            self.build_plan.images_excluded = []
+
+        else:
+            self.build_plan.build_strategy = BuildStrategy.ONLY
+            self.build_plan.images_included = image_list
+            self.build_plan.images_excluded = []
 
     async def run(self):
         version = f"v{self.version}.0"
@@ -87,8 +155,6 @@ class KonfluxOcp4Pipeline:
 
         LOGGER.info(f"Building images for OCP {self.version} with release {input_release}")
         await self.build()
-
-        LOGGER.info("All builds completed successfully")
 
 
 @cli.command("beta:ocp4-konflux", help="A pipeline to build images with Konflux for OCP 4")
