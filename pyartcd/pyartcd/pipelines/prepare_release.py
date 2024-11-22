@@ -249,7 +249,7 @@ class PrepareReleasePipeline:
 
         if batch:
             # Update batch with advisories
-            advisories_for_main_batch = [ad for ad_type, ad in advisories.items() if ad_type != 'advance' and ad > 0]
+            advisories_for_main_batch = [ad for ad_type, ad in advisories.items() if ad > 0 and ad_type not in {'advance', 'microshift'}]
             await self._ensure_batch_advisories(self._errata_api, batch, advisories_for_main_batch, self.dry_run)
 
         if "advance" in advisories.keys():
