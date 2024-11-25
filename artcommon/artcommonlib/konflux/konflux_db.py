@@ -8,7 +8,7 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, func
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -137,7 +137,8 @@ class KonfluxDb:
 
         extra_patterns = extra_patterns if extra_patterns else {}
         for col_name, col_value in extra_patterns.items():
-            where_clauses.append(Column(col_name, String).like(f"%{col_value}%"))
+            regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
+            where_clauses.append(regexp_condition)
 
         order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
         order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()

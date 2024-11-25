@@ -120,6 +120,34 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
                 where={'name': 'ironic', 'group': 'openshift-4.18'},
                 order_by='start_time', sorting='ASC', limit=-1)
 
+        query_mock.reset_mock()
+        await self.db.search_builds_by_fields(
+            start_search=start_search,
+            extra_patterns={'name': 'installer'},
+            order_by='start_time', sorting='ASC', limit=10)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND REGEXP_CONTAINS(name, 'installer') ORDER BY `start_time` ASC LIMIT 10")
+
+        query_mock.reset_mock()
+        await self.db.search_builds_by_fields(
+            start_search=start_search,
+            extra_patterns={'name': '^ose-installer$'},
+            order_by='start_time', sorting='ASC', limit=10)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND REGEXP_CONTAINS(name, '^ose-installer$') ORDER BY `start_time` ASC LIMIT 10")
+
+        query_mock.reset_mock()
+        await self.db.search_builds_by_fields(
+            start_search=start_search,
+            extra_patterns={'name': 'installer', 'group': 'openshift'},
+            order_by='start_time', sorting='ASC', limit=10)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND REGEXP_CONTAINS(name, 'installer') AND REGEXP_CONTAINS(`group`, 'openshift')"
+            " ORDER BY `start_time` ASC LIMIT 10")
+
     @patch('artcommonlib.konflux.konflux_db.datetime')
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
     async def test_get_latest_build(self, query_mock, datetime_mock):
