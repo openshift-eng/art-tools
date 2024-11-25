@@ -25,6 +25,8 @@ spec:
     value: quay.io/redhat-user-workloads/crt-nshift-art-pipeli-tenant/ui-openshift-4-18/ui-ocp-4-18-base-rhel-9:{{revision}}
   - name: dockerfile
     value: Dockerfile
+  - name: image-expires-after
+    value: 6w
   pipelineSpec:
     description: |
       This pipeline is ideal for building multi-arch container images from a Containerfile while maintaining trust after pipeline customization.

@@ -466,15 +466,23 @@ class KonfluxImageBuilder:
 
         skip_checks_flag = False  # Flag to insert the skip-checks param if it's missing
         skip_checks_value = "true" if skip_checks else "false"  # value type in konflux is string
+        image_expires_after_flag = False  # Flag to insert the image-expires-after param if it's missing
+        image_expires_after_value = "6w"  # Keep images for 6 weeks
         for param in obj["spec"]["params"]:
             if param["name"] == "output-image":
                 param["value"] = output_image
             if param["name"] == "skip-checks":
                 param["value"] = skip_checks_value
                 skip_checks_flag = True
+            if param["name"] == "image-expires-after":
+                param["value"] = image_expires_after_value
+                skip_checks_flag = True
 
         if not skip_checks_flag:
             obj["spec"]["params"].append({"name": "skip-checks", "value": skip_checks_value})
+
+        if not image_expires_after_flag:
+            obj["spec"]["params"].append({"name": "image-expires-after", "value": image_expires_after_value})
 
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
