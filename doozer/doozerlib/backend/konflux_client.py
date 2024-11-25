@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from functools import lru_cache
 from typing import Dict, List, Optional, Sequence, Union, cast
 
 import jinja2
@@ -36,6 +37,10 @@ class KonfluxClient:
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
+
+    def close(self):
+        """ Close the client. """
+        self.api_client.close()
 
     @staticmethod
     def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
@@ -280,6 +285,16 @@ class KonfluxClient:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
+    @lru_cache
+    @staticmethod
+    def _get_pipelinerun_template():
+        """ Get the PipelineRun template."""
+        # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
+        template_path = files("doozerlib").joinpath("backend", "konflux_image_build_pipelinerun.yaml")
+        template_content = template_path.read_text()
+        template = jinja2.Template(template_content, autoescape=True)
+        return template
+
     @staticmethod
     def _new_pipelinerun_for_image_build(generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
@@ -288,9 +303,7 @@ class KonfluxClient:
         if additional_tags is None:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
-        # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
-        template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
-        template = jinja2.Template(template_content, autoescape=True)
+        template = KonfluxClient._get_pipelinerun_template()
         rendered = template.render({
             "source_url": https_url,
             "revision": commit_sha,
@@ -499,4 +512,4 @@ class KonfluxClient:
                         continue
                     raise
 
-        return await exectools.to_thread(_inner)
+        return await asyncio.to_thread(_inner)
