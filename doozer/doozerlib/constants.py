@@ -42,3 +42,5 @@ MAX_KONFLUX_BUILD_QUEUE_SIZE = 10  # how many concurrent Konflux pipeline can we
 
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
+
+ART_BUILD_HISTORY_URL = 'https://art-build-history-art-build-history.apps.artc2023.pc3z.p1.openshiftapps.com'
