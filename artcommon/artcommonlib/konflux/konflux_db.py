@@ -8,6 +8,7 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
+from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import Column, String, DateTime, func
 
 from artcommonlib import bigquery
@@ -110,7 +111,7 @@ class KonfluxDb:
 
     async def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
                                       where: typing.Dict[str, typing.Any] = None, extra_patterns: dict = None,
-                                      order_by: str = '', sorting: str = 'DESC', limit: int = None) -> list:
+                                      order_by: str = '', sorting: str = 'DESC', limit: int = None) -> RowIterator:
         """
         Execute a SELECT * from the BigQuery table.
 
@@ -149,7 +150,7 @@ class KonfluxDb:
             limit=limit)
 
         self.logger.debug('Found %s builds', results.total_rows)
-        return [self.from_result_row(result) for result in results]
+        return results
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
