@@ -125,7 +125,7 @@ class ImagesHealthPipeline:
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
 
-        return await self.runtime.konflux_db.search_builds_by_fields(
+        results = await self.runtime.konflux_db.search_builds_by_fields(
             start_search=self.start_search,
             where={
                 'name': image_meta.distgit_key,
@@ -135,6 +135,7 @@ class ImagesHealthPipeline:
             },
             order_by='start_time',
             limit=self.limit)
+        return [self.runtime.konflux_db.from_result_row(result) for result in results]
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")
