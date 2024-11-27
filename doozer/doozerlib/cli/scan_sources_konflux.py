@@ -565,7 +565,7 @@ class ConfigScanSources:
 
         builds = await self.runtime.konflux_db.search_builds_by_fields(
             start_search=start_search,
-            where={'nvr': builder_build_nvr}
+            where={'nvr': builder_build_nvr, **self.base_search_params}
         )
         if builds:
             return builds[0].start_time
