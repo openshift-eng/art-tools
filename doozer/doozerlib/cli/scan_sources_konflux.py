@@ -610,7 +610,7 @@ class ConfigScanSources:
 
             # If the builder build is newer, mark the image as changing
             if build_record.start_time < builder_build_start_time:
-                self.logger.info(f'%s will be rebuilt because a builder or parent image has a newer build: %s',
+                self.logger.info('%s will be rebuilt because a builder or parent image has a newer build: %s',
                                  image_meta.distgit_key, builder_build_nvr)
                 self.add_image_meta_change(
                     image_meta, RebuildHint(RebuildHintCode.BUILDER_CHANGING,
