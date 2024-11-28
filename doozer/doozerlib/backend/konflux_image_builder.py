@@ -63,6 +63,8 @@ class KonfluxImageBuilder:
         "aarch64": "linux/arm64",
     }
 
+    ART_FINALIZER = "openshift.io/art-db"
+
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
         self._config = config
         self._logger = logger or LOGGER
@@ -143,6 +145,14 @@ class KonfluxImageBuilder:
                     else:
                         metadata.build_status = True
                         break
+
+                    # Remove finalizer that we added to the PipelineRun, since we managed to store the status to DB
+                    finalizers = pipelinerun['metadata'].get('finalizers', [])
+                    if KonfluxImageBuilder.ART_FINALIZER in finalizers:
+                        finalizers.remove('openshift.io/art-db')
+                        pipelinerun['metadata']['finalizers'] = finalizers
+                        pipelinerun = await self._create_or_patch(dyn_client, pipelinerun, patch_only=True)
+                        self._logger.info(f"openshift.io/art-db Finalizer removed from PipelineRun {pipelinerun_name}")
             if not metadata.build_status and error:
                 raise error
         finally:
@@ -463,6 +473,7 @@ class KonfluxImageBuilder:
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
+        obj["metadata"]["finalizers"] = [KonfluxImageBuilder.ART_FINALIZER]
 
         skip_checks_flag = False  # Flag to insert the skip-checks param if it's missing
         skip_checks_value = "true" if skip_checks else "false"  # value type in konflux is string
@@ -514,7 +525,7 @@ class KonfluxImageBuilder:
 
         return obj
 
-    async def _create_or_patch(self, dyn_client: DynamicClient, manifest: dict):
+    async def _create_or_patch(self, dyn_client: DynamicClient, manifest: dict, patch_only: bool = False):
         name = manifest["metadata"]["name"]
         namespace = manifest["metadata"].get("namespace", self._config.namespace)
         api_version = manifest["apiVersion"]
@@ -535,7 +546,7 @@ class KonfluxImageBuilder:
             else:
                 self._logger.warning(f"[DRY RUN] Would have created {api_version}/{kind} {namespace}/{name}")
             return resource.ResourceInstance(dyn_client, manifest)
-        if found:
+        if found or patch_only:
             self._logger.info(f"Patching {api_version}/{kind} {namespace}/{name}")
             new = await exectools.to_thread(
                 api.patch,
