@@ -10,9 +10,8 @@ from typing import Iterable, Optional, OrderedDict, Tuple
 import aiohttp
 import click
 from ghapi.all import GhApi
-from ruamel.yaml import YAML
 
-from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group
+from artcommonlib.util import split_git_url, merge_objects, get_inflight, isolate_major_minor_in_group, yaml_handler
 from artcommonlib import exectools
 from doozerlib.cli.get_nightlies import rc_api_url
 from pyartcd import constants, jenkins
@@ -21,10 +20,7 @@ from pyartcd.git import GitRepository
 from pyartcd.jenkins import start_build_sync
 from pyartcd.runtime import Runtime
 
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = yaml_handler()
 
 
 class GenAssemblyPipeline:

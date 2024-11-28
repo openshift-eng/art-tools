@@ -15,13 +15,12 @@ from pathlib import Path
 from subprocess import PIPE
 from typing import Dict, List, Optional, Sequence, Tuple
 from jira.resources import Issue
-from ruamel.yaml import YAML
 from tenacity import retry, stop_after_attempt, wait_fixed
 from datetime import datetime, timedelta, timezone
 
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
-from artcommonlib.util import get_assembly_release_date
+from artcommonlib.util import get_assembly_release_date, yaml_handler
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
@@ -38,7 +37,7 @@ from pyartcd.util import (get_assembly_basis, get_assembly_type,
 
 
 _LOGGER = logging.getLogger(__name__)
-
+yaml = yaml_handler()
 
 class PrepareReleasePipeline:
     def __init__(
@@ -387,10 +386,6 @@ class PrepareReleasePipeline:
             return None
         async with aiofiles.open(path, "r") as f:
             content = await f.read()
-        yaml = YAML(typ="safe")
-        yaml.default_flow_style = False
-        yaml.preserve_quotes = True
-        yaml.width = 4096
         return yaml.load(content)
 
     @cached_property
@@ -504,10 +499,6 @@ class PrepareReleasePipeline:
             await self.clone_build_data(repo)
         async with aiofiles.open(repo / "group.yml", "r") as f:
             content = await f.read()
-        yaml = YAML(typ="safe")
-        yaml.default_flow_style = False
-        yaml.preserve_quotes = True
-        yaml.width = 4096
         return yaml.load(content)
 
     def check_blockers(self):
@@ -607,10 +598,6 @@ class PrepareReleasePipeline:
                 f.write(group_config)
         else:
             # update releases.yml (if we are operating on a non-stream assembly)
-            yaml = YAML(typ="rt")
-            yaml.default_flow_style = False
-            yaml.preserve_quotes = True
-            yaml.width = 4096
             async with aiofiles.open(repo / "releases.yml", "r") as f:
                 old = await f.read()
             releases_config = yaml.load(old)

@@ -34,6 +34,15 @@ def remove_suffix(s: str, suffix: str) -> str:
         return s[:]
 
 
+def yaml_handler():
+    yaml = YAML(typ="rt")
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    yaml.indent(mapping=2,sequence=4,offset=2)
+    return yaml
+
+
 def convert_remote_git_to_https(source_url: str):
     """
     Accepts a source git URL in ssh or https format and return it in a normalized

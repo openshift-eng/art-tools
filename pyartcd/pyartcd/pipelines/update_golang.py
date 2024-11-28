@@ -14,6 +14,7 @@ from artcommonlib.constants import BREW_HUB
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib import exectools
+from artcommonlib.util import yaml_handler
 from pyartcd import jenkins
 from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -24,11 +25,7 @@ from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from elliottlib import util as elliottutil
 
 _LOGGER = logging.getLogger(__name__)
-
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = yaml_handler()
 
 
 def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
