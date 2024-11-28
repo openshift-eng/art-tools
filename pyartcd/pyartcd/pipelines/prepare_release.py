@@ -419,7 +419,6 @@ class PrepareReleasePipeline:
                                                   release_name="RHOSE ASYNC - AUTO",
                                                   release_date=release_date,
                                                   description=batch_name)
-            batch = batch["data"]
             _LOGGER.info("Created errata batch id %s", int(batch["id"]))
         else:
             batch = batches[0]
