@@ -19,6 +19,7 @@ from opentelemetry.trace.propagation.tracecontext import \
 from opentelemetry.util.types import Attributes
 
 from doozerlib import __version__
+from artcommonlib import constants
 
 
 def new_tracker_provider(resource: Resource, exporter: SpanExporter):
@@ -39,13 +40,10 @@ def initialize_telemetry():
         ResourceAttributes.SERVICE_VERSION: __version__,
     })
 
-    otel_exporter_otlp_endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT')
+    otel_exporter_otlp_endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT', constants.OTEL_EXPORTER_OTLP_ENDPOINT)
     otel_exporter_otlp_headers = os.environ.get('OTEL_EXPORTER_OTLP_HEADERS')
-    if otel_exporter_otlp_endpoint:
-        exporter = OTLPSpanExporter(endpoint=otel_exporter_otlp_endpoint, headers=otel_exporter_otlp_headers)
-    else:
-        # OTEL_EXPORTER_OTLP_ENDPOINT is not defined; export to stderr
-        exporter = ConsoleSpanExporter(service_name="doozer", out=sys.stderr)
+
+    exporter = OTLPSpanExporter(endpoint=otel_exporter_otlp_endpoint, headers=otel_exporter_otlp_headers)
 
     tp = new_tracker_provider(resource, exporter)
     trace.set_tracer_provider(tp)
