@@ -395,6 +395,28 @@ class BuildSyncPipeline:
                     self.logger.info('Command failed: retrying, %s', e)
                     await asyncio.sleep(5)
 
+    def filter_assembly_issues(self) -> dict[str, dict[any, any]]:
+        """
+        Filters assembly issues with 'permitted: false' from assembly_report.yml.
+        """
+
+        # path to local assembly_report.yml
+        file_path = f'{GEN_PAYLOAD_ARTIFACTS_OUT_DIR}/assembly-report.yaml'
+
+        # Open and load the YAML file
+        with open(file_path, 'r') as file:
+            data = yaml.safe_load(file)
+
+        filtered_issues = {'assembly_issues': {}}
+
+        if 'assembly_issues' in data:
+            for component, issues in data['assembly_issues'].items():
+                filtered_data = [issue for issue in issues if not issue.get('permitted', False)]
+                if filtered_data:  # Add component only if there are valid issues
+                    filtered_issues['assembly_issues'][component] = filtered_data
+
+            return filtered_issues
+
     async def handle_failure(self):
         if self.assembly != 'stream':
             text_body = f"Build sync job [run]({self.job_run}) failed!"
@@ -417,9 +439,18 @@ class BuildSyncPipeline:
             raise
 
         # More than 2 failures: we need to notify ART and #forum-release before breaking the build
+        filtered_issues = self.filter_assembly_issues()
+
+        if filtered_issues['assembly_issues']:
+            report = yaml.safe_dump(filtered_issues)
+        else:
+            report = None
+
         slack_client = self.runtime.new_slack_client()
-        msg = f'Pipeline has failed to assemble release payload for {self.version} ' \
-              f'(assembly {self.assembly}) {fail_count} times.'
+        msg = f'''
+        Pipeline has failed to assemble release payload for {self.version} (assembly {self.assembly}) {fail_count} times.
+        ```{report}```
+        '''
 
         # TODO https://issues.redhat.com/browse/ART-5657
         if 10 <= fail_count <= 50:
