@@ -1,4 +1,5 @@
 import asyncio
+from functools import cached_property
 import json
 import logging
 import os
@@ -12,7 +13,7 @@ import semver
 from io import StringIO
 from pathlib import Path
 from subprocess import PIPE
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 from jira.resources import Issue
 from ruamel.yaml import YAML
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -89,7 +90,7 @@ class PrepareReleasePipeline:
             if default_advisories:
                 raise ValueError("default_advisories cannot be set for a non-stream assembly.")
 
-        self.release_date = date if date else get_assembly_release_date(assembly, group)
+        self.release_date = date or get_assembly_release_date(assembly, group)
         self.package_owner = package_owner or self.runtime.config["advisory"]["package_owner"]
         self._slack_client = slack_client
         self.working_dir = self.runtime.working_dir.absolute()
@@ -146,6 +147,8 @@ class PrepareReleasePipeline:
             _LOGGER.info("Checking Blocker Bugs for release %s...", self.release_name)
             self.check_blockers()
 
+        # advisories is a dictionary with keys as the impetus and values as the advisory number.
+        # If the value is -1, the advisory needs to be created.
         advisories = {}
         batch = None
 
@@ -156,62 +159,49 @@ class PrepareReleasePipeline:
                 advisories = group_config.get("advisories", {}).copy()
 
             if not self.skip_batch and assembly_type is AssemblyTypes.STANDARD:
-                # Create or reuse a batch for the release
-                errata_api = AsyncErrataAPI()
+                # Create a batch if it doesn't exist
                 batch_name = f"OCP {self.release_name}"
-                _LOGGER.info("Checking if batch '%s' exists...", batch_name)
-                batches = [b async for b in errata_api.get_batches(name=batch_name)]
-                if not batches:
-                    _LOGGER.info("Creating batch '%s'...", batch_name)
-                    batch = await errata_api.create_batch(name=batch_name,
-                                                          release_name="RHOSE ASYNC - AUTO",
-                                                          release_date=self.release_date,
-                                                          description=batch_name)
-                    batch = batch["data"]
-                    _LOGGER.info("Created errata batch id %s", int(batch["id"]))
-                else:
-                    batch = batches[0]
-                    _LOGGER.info("Found batch id %s", int(batch["id"]))
-                    # Update batch release date if needed
-                    batch_date = datetime.strptime(batch["attributes"]["release_date"], "%Y-%m-%d")
-                    expected_date = datetime.strptime(self.release_date, "%Y-%b-%d")
-                    if batch_date != expected_date:
-                        _LOGGER.info("Updating batch release date to %s...", self.release_date)
-                        await errata_api.update_batch(batch["id"], release_date=self.release_date)
-                        _LOGGER.info("Batch release date updated")
+                batch = await self._ensure_batch(self._errata_api, batch_name, self.release_date, dry_run=self.dry_run)
 
             is_ga = self.release_version[2] == 0
             advisory_type = "RHEA" if is_ga else "RHBA"
             for ad in advisories:
-                if advisories[ad] < 0:
-                    if ad in ["advance", "prerelease"]:
-                        release_date = None
-                        if ad == "advance":
-                            # Set release date of advance advisory to one week before GA
-                            # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
-                            ga_date = datetime.strptime(self.release_date, "%Y-%b-%d")
-                            one_week_before = ga_date - timedelta(days=7)
-                            release_date = one_week_before.strftime("%Y-%b-%d")
-                        elif ad == "prerelease":
-                            # Set release date of prerelease advisory to 3 days after when we prepare the release
-                            # it should not be a weekend
-                            today = datetime.now(tz=timezone.utc)
-                            release_date = today + timedelta(days=3)
-                            if release_date.weekday() == 5:  # Saturday
-                                release_date += timedelta(days=2)
-                            elif release_date.weekday() == 6:  # Sunday
-                                release_date += timedelta(days=1)
-                            release_date = release_date.strftime("%Y-%b-%d")
-                        advisories[ad] = self.create_advisory(advisory_type=advisory_type,
-                                                              art_advisory_key=ad,
-                                                              release_date=release_date)
-                        await self._slack_client.say_in_thread(
-                            f"{ad} advisory created with release date {release_date}")
-                        continue
+                if advisories[ad] >= 0:
+                    continue
+                if ad in ["advance", "prerelease"]:
+                    release_date = None
+                    if ad == "advance":
+                        # Set release date of advance advisory to one week before GA
+                        # Eg one week before '2024-Feb-07' should be '2024-Jan-31'
+                        ga_date = datetime.strptime(self.release_date, "%Y-%b-%d")
+                        one_week_before = ga_date - timedelta(days=7)
+                        release_date = one_week_before.strftime("%Y-%b-%d")
+                    elif ad == "prerelease":
+                        # Set release date of prerelease advisory to 3 days after when we prepare the release
+                        # it should not be a weekend
+                        today = datetime.now(tz=timezone.utc)
+                        release_date = today + timedelta(days=3)
+                        if release_date.weekday() == 5:  # Saturday
+                            release_date += timedelta(days=2)
+                        elif release_date.weekday() == 6:  # Sunday
+                            release_date += timedelta(days=1)
+                        release_date = release_date.strftime("%Y-%b-%d")
                     advisories[ad] = self.create_advisory(advisory_type=advisory_type,
                                                           art_advisory_key=ad,
-                                                          release_date=self.release_date,
-                                                          batch_id=batch["id"] if batch else 0)
+                                                          release_date=release_date)
+                    await self._slack_client.say_in_thread(
+                        f"{ad} advisory created with release date {release_date}")
+                    continue
+                batch_id = 0
+                if batch and ad != "microshift":
+                    # Set batch_id for advisories other than microshift
+                    batch_id = int(batch["id"])
+                    # Ensure that the batch is unlocked
+                    batch = await self._ensure_batch_status(self._errata_api, batch, lock=False, dry_run=self.dry_run)
+                advisories[ad] = self.create_advisory(advisory_type=advisory_type,
+                                                      art_advisory_key=ad,
+                                                      release_date=self.release_date,
+                                                      batch_id=batch_id)
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
 
         jira_issue_key = group_config.get("release_jira")
@@ -259,42 +249,8 @@ class PrepareReleasePipeline:
 
         if batch:
             # Update batch with advisories
-            current_advisories_in_batch = {int(ad["id"]) for ad in batch.get("relationships", {}).get("errata", [])}
-            expected_advisories_in_batch = {ad for ad_type, ad in advisories.items() if ad_type != 'advance' and ad > 0}
-            if current_advisories_in_batch != expected_advisories_in_batch:
-                if batch.get("attributes", {}).get("is_locked"):
-                    _LOGGER.info(f"Batch {batch['id']} is locked. Unlocking it...")
-                    if not self.runtime.dry_run:
-                        batch = await errata_api.update_batch(batch["id"], is_locked=False)
-                        _LOGGER.info(f"Batch {batch['id']} unlocked")
-                    else:
-                        _LOGGER.warning("[DRY RUN] Would have unlocked batch %s", batch["id"])
-                # Remove advisories that should not be in the batch
-                api_calls = []
-                advisories_to_remove = current_advisories_in_batch - expected_advisories_in_batch
-                for ad in advisories_to_remove:
-                    api_calls.append(errata_api.change_batch_for_advisory(ad, None))
-                # Add advisories that are not in the batch
-                advisories_to_add = expected_advisories_in_batch - current_advisories_in_batch
-                for ad in advisories_to_add:
-                    api_calls.append(errata_api.change_batch_for_advisory(ad, batch["id"]))
-                # Execute all API calls
-                if not self.runtime.dry_run:
-                    _LOGGER.info(f"Removing advisories {advisories_to_remove} from batch {batch['id']} and adding advisories {advisories_to_add} to batch {batch['id']}")
-                    await asyncio.gather(*api_calls)
-                    _LOGGER.info(f"Advisories updated in batch {batch['id']}")
-                else:
-                    _LOGGER.warning("[DRY RUN] Would have removed advisories %s from batch %s and added advisories %s to batch %s",
-                                    advisories_to_remove, batch["id"], advisories_to_add, batch["id"])
-
-                # Lock batch
-                if not batch.get("attributes", {}).get("is_locked"):
-                    _LOGGER.info(f"Locking batch {batch['id']}...")
-                    if not self.runtime.dry_run:
-                        await errata_api.update_batch(batch["id"], is_locked=True)
-                        _LOGGER.info(f"Batch {batch['id']} locked")
-                    else:
-                        _LOGGER.warning("[DRY RUN] Would have locked batch %s", batch["id"])
+            advisories_for_main_batch = [ad for ad_type, ad in advisories.items() if ad > 0 and ad_type not in {'advance', 'microshift'}]
+            await self._ensure_batch_advisories(self._errata_api, batch, advisories_for_main_batch, self.dry_run)
 
         if "advance" in advisories.keys():
             # Make sure that the advisory is in editable mode
@@ -436,6 +392,111 @@ class PrepareReleasePipeline:
         yaml.preserve_quotes = True
         yaml.width = 4096
         return yaml.load(content)
+
+    @cached_property
+    def _errata_api(self):
+        return AsyncErrataAPI()
+
+    @staticmethod
+    async def _ensure_batch(errata_api: AsyncErrataAPI,
+                            batch_name: str, release_date: str, dry_run: bool = False):
+        """ Ensure that the batch exists and has the correct release date
+
+        :param errata_api: Errata API object
+        :param batch_name: Name of the batch
+        :param release_date: Release date
+        :return: Batch object
+        """
+        # Get batch from Errata
+        if dry_run:
+            _LOGGER.warning("[DRY RUN] Would have created batch %s", batch_name)
+            return {"id": -1}
+        _LOGGER.info("Checking if batch '%s' exists...", batch_name)
+        batches = [b async for b in errata_api.get_batches(name=batch_name)]
+        if not batches:
+            _LOGGER.info("Creating batch '%s'...", batch_name)
+            batch = await errata_api.create_batch(name=batch_name,
+                                                  release_name="RHOSE ASYNC - AUTO",
+                                                  release_date=release_date,
+                                                  description=batch_name)
+            _LOGGER.info("Created errata batch id %s", int(batch["id"]))
+        else:
+            batch = batches[0]
+            _LOGGER.info("Found batch id %s", int(batch["id"]))
+            # Update batch release date if needed
+            batch_date = datetime.strptime(batch["attributes"]["release_date"], "%Y-%m-%d")
+            expected_date = datetime.strptime(release_date, "%Y-%b-%d")
+            if batch_date != expected_date:
+                _LOGGER.info("Updating batch release date to %s...", expected_date)
+                await errata_api.update_batch(batch["id"], release_date=release_date)
+                _LOGGER.info("Batch release date updated")
+        return batch
+
+    @staticmethod
+    async def _ensure_batch_status(errata_api: AsyncErrataAPI, batch: Dict, lock: bool, dry_run: bool = False):
+        """ Ensure that the batch is locked or unlocked
+
+        :param errata_api: Errata API object
+        :param batch: Batch object
+        :param lock: Lock status
+        :param dry_run: Dry run flag
+        :return: Batch object
+        """
+        locked = bool(batch.get("attributes", {}).get("is_locked", False))
+        if locked == lock:
+            return batch
+        if locked:
+            _LOGGER.info(f"Batch {batch['id']} is locked. Unlocking it...")
+        else:
+            _LOGGER.info(f"Batch {batch['id']} is unlocked. Locking it...")
+        if dry_run:
+            if lock:
+                _LOGGER.warning("[DRY RUN] Would have locked batch %s", batch["id"])
+            else:
+                _LOGGER.warning("[DRY RUN] Would have unlocked batch %s", batch["id"])
+            return
+        batch = await errata_api.update_batch(batch["id"], is_locked=lock)
+        if lock:
+            _LOGGER.info(f"Batch {batch['id']} locked")
+        else:
+            _LOGGER.info(f"Batch {batch['id']} unlocked")
+        return batch
+
+    @staticmethod
+    async def _ensure_batch_advisories(errata_api: AsyncErrataAPI, batch: Dict, advisories: Sequence[int], dry_run: bool = False):
+        """
+        Ensure that the batch contains the correct advisories and is locked.
+        This will remove any advisories that are not in the list and add any that are missing.
+
+        :param errata_api: Errata API object
+        :param batch: Batch object
+        :param advisories: List of advisory IDs
+        :param dry_run: Dry run flag
+        """
+        current_advisories_in_batch = {int(ad["id"]) for ad in batch.get("relationships", {}).get("errata", [])}
+        expected_advisories_in_batch = set(advisories)
+        if current_advisories_in_batch != expected_advisories_in_batch:
+            # Unlock batch if the batch is currently locked
+            await PrepareReleasePipeline._ensure_batch_status(errata_api, batch, lock=False, dry_run=dry_run)
+            # Remove advisories that should not be in the batch
+            api_calls = []
+            advisories_to_remove = current_advisories_in_batch - expected_advisories_in_batch
+            for ad in advisories_to_remove:
+                api_calls.append(errata_api.change_batch_for_advisory(ad, None))
+            # Add advisories that are not in the batch
+            advisories_to_add = expected_advisories_in_batch - current_advisories_in_batch
+            for ad in advisories_to_add:
+                api_calls.append(errata_api.change_batch_for_advisory(ad, batch["id"]))
+            # Execute all API calls
+            if not dry_run:
+                _LOGGER.info(f"Removing advisories {advisories_to_remove} from batch {batch['id']} and adding advisories {advisories_to_add} to batch {batch['id']}")
+                await asyncio.gather(*api_calls)
+                _LOGGER.info(f"Advisories updated in batch {batch['id']}")
+            else:
+                _LOGGER.warning("[DRY RUN] Would have removed advisories %s from batch %s and added advisories %s to batch %s",
+                                advisories_to_remove, batch["id"], advisories_to_add, batch["id"])
+        # Lock batch if it was unlocked
+        await PrepareReleasePipeline._ensure_batch_status(errata_api, batch, lock=True, dry_run=dry_run)
 
     async def load_group_config(self) -> Dict:
         repo = self.working_dir / "ocp-build-data-push"

@@ -147,14 +147,15 @@ async def move_golang_bugs(ocp_version: str,
 
 
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, cves: List[str],
-                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, tag_builds: bool, scratch: bool = False):
+    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, cves: List[str],
+                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, tag_builds: bool, scratch: bool = False, force_image_build: bool = False):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
         self.scratch = scratch
         self.ocp_version = ocp_version
         self.cves = cves
         self.force_update_tracker = force_update_tracker
+        self.force_image_build = force_image_build
         self.go_nvrs = go_nvrs
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
@@ -187,7 +188,10 @@ class UpdateGolangPipeline:
         _LOGGER.info('All builds are tagged and available!')
 
         # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
-        builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+        builder_nvrs: dict() = {}
+        if not self.force_image_build:
+            builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
+
         if len(builder_nvrs) != len(el_nvr_map):  # builders not found for all rhel versions
             missing_in = el_nvr_map.keys() - builder_nvrs.keys()
             _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
@@ -467,10 +471,11 @@ class UpdateGolangPipeline:
 @click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
 @click.option('--tag-builds', is_flag=True, default=False, help='Confirm to tag builds with override tag if they are not tagged')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
+@click.option('--force-image-build', is_flag=True, default=False, help='Rebuild golang builder image regardless of if one exists')
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, art_jira: str,
-                        cves: str, force_update_tracker: bool, confirm: bool, tag_builds: bool, go_nvrs: List[str]):
+async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
+                        cves: str, force_update_tracker: bool, confirm: bool, tag_builds: bool, go_nvrs: List[str], force_image_build: bool):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
@@ -479,5 +484,5 @@ async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, art_j
     if force_update_tracker and not cves:
         raise ValueError('CVEs must be provided with --force-update-tracker')
 
-    await UpdateGolangPipeline(runtime, ocp_version, cves, force_update_tracker,
-                               go_nvrs, art_jira, tag_builds, scratch).run()
+    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, cves, force_update_tracker,
+                               go_nvrs, art_jira, tag_builds, scratch, force_image_build).run()

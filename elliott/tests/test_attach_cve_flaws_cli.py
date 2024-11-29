@@ -30,7 +30,6 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         ]
 
         attach_cve_flaws_cli.get_updated_advisory_rhsa(
-            Mock(),
             boilerplate,
             advisory,
             flaw_bugs

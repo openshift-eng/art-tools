@@ -8,7 +8,8 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime
+from google.cloud.bigquery.table import RowIterator
+from sqlalchemy import Column, String, DateTime, func
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -109,8 +110,8 @@ class KonfluxDb:
             await asyncio.gather(*(loop.run_in_executor(pool, self.add_build, build) for build in builds))
 
     async def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
-                                      where: typing.Dict[str, typing.Any] = None, order_by: str = '',
-                                      sorting: str = 'DESC', limit: int = None) -> list:
+                                      where: typing.Dict[str, typing.Any] = None, extra_patterns: dict = None,
+                                      order_by: str = '', sorting: str = 'DESC', limit: int = None) -> RowIterator:
         """
         Execute a SELECT * from the BigQuery table.
 
@@ -121,33 +122,35 @@ class KonfluxDb:
         Return a (possibly empty) list of results
         """
 
-        query = f'SELECT * FROM `{self.bq_client.table_ref}`'
-        query += f" WHERE `start_time` > '{start_search}'"
+        where_clauses = [
+            Column('start_time', DateTime) >= start_search,
+        ]
+
         if end_search:
-            query += f" AND `start_time` < '{end_search}'"
+            where_clauses.append(Column('start_time', DateTime) < end_search)
 
-        where_clauses = []
-        where = where if where is not None else {}
-        for name, value in where.items():
-            if value is not None:
-                where_clauses.append(f"`{name}` = '{value}'")
+        where = where if where else {}
+        for col_name, col_value in where.items():
+            if col_value is not None:
+                where_clauses.append(Column(col_name, String) == col_value)
             else:
-                where_clauses.append(f"`{name}` IS NULL")
-        if where_clauses:
-            query += ' AND '
-            query += ' AND '.join(where_clauses)
+                where_clauses.append(Column(col_name, String).is_(None))
 
-        if order_by:
-            query += f' ORDER BY `{order_by}` {sorting}'
+        extra_patterns = extra_patterns if extra_patterns else {}
+        for col_name, col_value in extra_patterns.items():
+            regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
+            where_clauses.append(regexp_condition)
 
-        if limit is not None:
-            assert isinstance(limit, int)
-            assert limit >= 0, 'LIMIT expects a non-negative integer literal or parameter '
-            query += f' LIMIT {limit}'
+        order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
+        order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()
 
-        results = await self.bq_client.query_async(query)
+        results = await self.bq_client.select(
+            where_clauses=where_clauses,
+            order_by_clause=order_by_clause,
+            limit=limit)
+
         self.logger.debug('Found %s builds', results.total_rows)
-        return [self.from_result_row(result) for result in results]
+        return results
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',

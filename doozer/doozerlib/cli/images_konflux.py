@@ -79,6 +79,7 @@ class KonfluxRebaseCli:
                 failed_images.append(image_name)
                 LOGGER.error(f"Failed to rebase {image_name}: {result}")
         if failed_images:
+            runtime.state['images:konflux:rebase'] = {'failed-images': failed_images}
             raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
         LOGGER.info("Rebase complete")
 

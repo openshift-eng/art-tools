@@ -42,37 +42,40 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         start_search = datetime(2024, 9, 23, 9, 0, 0, 0)
         await self.db.search_builds_by_fields(start_search=start_search, where={})
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00' "
+            "ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         end_search = start_search + timedelta(days=7)
         await self.db.search_builds_by_fields(start_search=start_search, end_search=end_search, where={})
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `start_time` < '2024-09-30 09:00:00'")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND start_time < '2024-09-30 09:00:00' ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(start_search=start_search, where=None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00' "
+            "ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(start_search=start_search,
                                               where={'name': 'ironic', 'group': 'openshift-4.18'})
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `name` = 'ironic' AND `group` = 'openshift-4.18'")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND name = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(start_search=start_search, where={'name': None})
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00' AND `name` IS NULL")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00' AND name IS NULL"
+            " ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(start_search=start_search, where={'name': None, 'group': None})
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `name` IS NULL AND `group` IS NULL")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND name IS NULL AND `group` IS NULL ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(
@@ -80,8 +83,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time')
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` DESC")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND name = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(
@@ -89,8 +92,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time', sorting='ASC')
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND name = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(
@@ -98,8 +101,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time', sorting='ASC', limit=0)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 0")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND name = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 0")
 
         query_mock.reset_mock()
         await self.db.search_builds_by_fields(
@@ -107,8 +110,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time', sorting='ASC', limit=10)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE `start_time` > '2024-09-23 09:00:00'"
-            " AND `name` = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 10")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND name = 'ironic' AND `group` = 'openshift-4.18' ORDER BY `start_time` ASC LIMIT 10")
 
         query_mock.reset_mock()
         with self.assertRaises(AssertionError):
@@ -116,6 +119,34 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
                 start_search=start_search,
                 where={'name': 'ironic', 'group': 'openshift-4.18'},
                 order_by='start_time', sorting='ASC', limit=-1)
+
+        query_mock.reset_mock()
+        await self.db.search_builds_by_fields(
+            start_search=start_search,
+            extra_patterns={'name': 'installer'},
+            order_by='start_time', sorting='ASC', limit=10)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND REGEXP_CONTAINS(name, 'installer') ORDER BY `start_time` ASC LIMIT 10")
+
+        query_mock.reset_mock()
+        await self.db.search_builds_by_fields(
+            start_search=start_search,
+            extra_patterns={'name': '^ose-installer$'},
+            order_by='start_time', sorting='ASC', limit=10)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND REGEXP_CONTAINS(name, '^ose-installer$') ORDER BY `start_time` ASC LIMIT 10")
+
+        query_mock.reset_mock()
+        await self.db.search_builds_by_fields(
+            start_search=start_search,
+            extra_patterns={'name': 'installer', 'group': 'openshift'},
+            order_by='start_time', sorting='ASC', limit=10)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00'"
+            " AND REGEXP_CONTAINS(name, 'installer') AND REGEXP_CONTAINS(`group`, 'openshift')"
+            " ORDER BY `start_time` ASC LIMIT 10")
 
     @patch('artcommonlib.konflux.konflux_db.datetime')
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')

@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBuildRecord
 from doozerlib import Runtime
 from doozerlib.cli import cli, pass_runtime, click_coroutine
+from doozerlib.constants import ART_BUILD_HISTORY_URL
 
 DELTA_DAYS = 7  # look at latest 7 days
 
@@ -24,7 +25,7 @@ class ImagesHealthPipeline:
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
 
     def generate_art_dash_history_link(self, dg_name):
-        base_url = "https://art-dash.engineering.redhat.com/dashboard/build/history"
+        base_url = f"{ART_BUILD_HISTORY_URL}/search"
 
         # Validating essential parameters
         if not dg_name or not self.runtime or not self.runtime.group_config or not self.runtime.group_config.name:
@@ -34,7 +35,12 @@ class ImagesHealthPipeline:
 
         params = {
             "group": self.runtime.group_config.name,
-            "dg_name": formatted_dg_name,
+            "name": f'^{formatted_dg_name}$',
+            "engine": "brew",
+            "assembly": "stream",
+            "outcome": "both",
+            "art-job-url": "",
+            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}'
         }
 
         query_string = urllib.parse.urlencode(params)
@@ -119,7 +125,7 @@ class ImagesHealthPipeline:
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
 
-        return await self.runtime.konflux_db.search_builds_by_fields(
+        results = await self.runtime.konflux_db.search_builds_by_fields(
             start_search=self.start_search,
             where={
                 'name': image_meta.distgit_key,
@@ -129,6 +135,7 @@ class ImagesHealthPipeline:
             },
             order_by='start_time',
             limit=self.limit)
+        return [self.runtime.konflux_db.from_result_row(result) for result in results]
 
 
 @cli.command("images:health", short_help="Create a health report for this image group (requires DB read)")

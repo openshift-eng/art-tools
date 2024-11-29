@@ -177,14 +177,17 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
             logger.info(f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
                         f"cutoff time {utc_ts}...")
             qualified_bugs = []
+            unqualified_bugs = []
             for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
                 qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(chunk_of_bugs, find_bugs_obj.status,
                                                                                sweep_cutoff_timestamp,
                                                                                verbose=runtime.debug)
                 qualified_bugs.extend(qualified_bugs_chunk)
                 not_qualified = {b.id for b in chunk_of_bugs} - {b.id for b in qualified_bugs_chunk}
-                logger.info(f"These bugs did not qualify cutoff time {utc_ts}: {sorted(not_qualified)}")
-            logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}...")
+                unqualified_bugs.extend(list(not_qualified))
+            if unqualified_bugs:
+                logger.debug(f"These bugs did not qualify cutoff time {utc_ts}: {sorted(unqualified_bugs)}")
+            logger.info(f"{len(qualified_bugs)} of {len(bugs)} bugs are qualified for the cutoff time {utc_ts}")
             bugs = qualified_bugs
 
         # filter bugs that have been swept into other advisories
@@ -192,9 +195,9 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
         attached_bugs = await bug_tracker.filter_attached_bugs(bugs)
         if attached_bugs:
             attached_bug_ids = {b.id for b in attached_bugs}
-            logger.warning("Filtered following bugs have been attached to other advisories: %s",
-                           sorted(attached_bug_ids))
+            logger.debug(f"Bugs attached to other advisories: {sorted(attached_bug_ids)}")
             bugs = [b for b in bugs if b.id not in attached_bug_ids]
+            logger.info(f"Filtered {len(attached_bugs)} bugs since they are attached to other advisories")
 
     included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     if included_bug_ids & excluded_bug_ids:
