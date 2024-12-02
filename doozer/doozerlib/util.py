@@ -15,6 +15,8 @@ from typing import Dict, List, Optional, Union
 
 import semver
 import yaml
+from async_lru import alru_cache
+from tenacity import retry, wait_fixed, stop_after_attempt
 
 import artcommonlib
 from artcommonlib import exectools
@@ -556,6 +558,30 @@ def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     if you expect the image to change during the course of doozer's execution.
     """
     return oc_image_info(pull_spec, go_arch)
+
+
+@retry(reraise=True, wait=wait_fixed(3), stop=stop_after_attempt(3))
+async def oc_image_info_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+    """
+    Returns a Dict of the parsed JSON output of `oc image info` for the specified
+    pullspec. Filter by os because images can be multi-arch manifest lists
+    (which cause oc image info to throw an error if not filtered).
+
+    Use oc_image_info__caching if you think the image won't change during the course of doozer's execution.
+    """
+    cmd = ['oc', 'image', 'info', f'--filter-by-os={go_arch}', '-o', 'json', pull_spec]
+    _, out, _ = await exectools.cmd_gather_async(cmd)
+    return json.loads(out)
+
+
+@alru_cache
+async def oc_image_info__caching_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+    """
+    Returns a Dict of the parsed JSON output of `oc image info` for the specified
+    pullspec. This function will cache that output per pullspec, so do not use it
+    if you expect the image to change during the course of doozer's execution.
+    """
+    return await oc_image_info_async(pull_spec, go_arch)
 
 
 def infer_assembly_type(custom, assembly_name):
