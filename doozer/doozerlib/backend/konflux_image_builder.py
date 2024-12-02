@@ -281,6 +281,8 @@ class KonfluxImageBuilder:
             return source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
+        if None in results:
+            raise ChildProcessError("Could get data from SBOM")
         installed_packages = set()
         for srpms in results:
             installed_packages.update(srpms)
