@@ -72,6 +72,10 @@
                     "stream": {
                       "type": "string",
                       "minLength": 1
+                    },
+                    "member": {
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
                   "additionalProperties": false
