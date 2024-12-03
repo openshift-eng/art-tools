@@ -231,7 +231,7 @@ class KonfluxRebaser:
         if os.path.exists(docker_ignore_path):
             self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
             with open(docker_ignore_path, "a") as file:
-                file.write("!/.oit/**")
+                file.write("\n!/.oit/**")
 
     def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """ Resolve the parent images for the given image metadata."""
