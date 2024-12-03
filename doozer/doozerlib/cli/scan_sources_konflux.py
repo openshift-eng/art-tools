@@ -567,8 +567,8 @@ class ConfigScanSources:
             start_search=start_search,
             where={'nvr': builder_build_nvr, **self.base_search_params}
         )
-        if builds:
-            return builds[0].start_time
+        if builds.total_rows > 0:
+            return next(builds).start_time
 
         # Builder build isn't tracked inside Konflux DB: look at Brew
         with self.runtime.pooled_koji_client_session() as koji_api:
