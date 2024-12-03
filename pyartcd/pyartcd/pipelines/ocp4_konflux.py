@@ -168,13 +168,16 @@ class KonfluxOcp4Pipeline:
 @click.option('--data-gitref', required=False, default='',
               help='Doozer data path git [branch / tag / sha] to use')
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
+@click.option('--ignore-locks', is_flag=True, default=False,
+              help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] Limit included arches to this list")
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, assembly: str, data_path: Optional[str], image_list: Optional[str],
-               version: str, data_gitref: Optional[str], kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
+               version: str, data_gitref: Optional[str], kubeconfig: Optional[str], ignore_locks: bool,
+               skip_rebase: bool, arches: Tuple[str, ...]):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
@@ -193,9 +196,12 @@ async def ocp4(runtime: Runtime, assembly: str, data_path: Optional[str], image_
         skip_rebase=skip_rebase,
         arches=arches)
 
-    await locks.run_with_lock(
-        coro=pipeline.run(),
-        lock=Lock.BUILD_KONFLUX,
-        lock_name=Lock.BUILD_KONFLUX.value.format(version=version),
-        lock_id=lock_identifier
-    )
+    if ignore_locks:
+        await pipeline.run()
+    else:
+        await locks.run_with_lock(
+            coro=pipeline.run(),
+            lock=Lock.BUILD_KONFLUX,
+            lock_name=Lock.BUILD_KONFLUX.value.format(version=version),
+            lock_id=lock_identifier
+        )
