@@ -223,7 +223,7 @@ class KonfluxRebaser:
 
         self._update_dockerignore(build_repo.local_dir)
 
-    def _update_dockerignore(self,path):
+    def _update_dockerignore(self, path):
         """
         If a .dockerignore file exists, we need to update it to allow .oit dir
         """
