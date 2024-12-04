@@ -124,7 +124,7 @@ class KonfluxBuildCli:
         runtime: Runtime,
         konflux_kubeconfig: Optional[str],
         konflux_context: Optional[str],
-        konflux_namespace: Optional[str],
+        konflux_namespace: str,
         image_repo: str,
         skip_checks: bool,
         dry_run: bool,
@@ -182,7 +182,7 @@ class KonfluxBuildCli:
 @click_coroutine
 async def images_konflux_build(
         runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-        konflux_namespace: Optional[str], image_repo: str, skip_checks: bool, dry_run: bool):
+        konflux_namespace: str, image_repo: str, skip_checks: bool, dry_run: bool):
     cli = KonfluxBuildCli(
         runtime=runtime, konflux_kubeconfig=konflux_kubeconfig,
         konflux_context=konflux_context, konflux_namespace=konflux_namespace,
