@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import sys
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 import click
 import koji
@@ -381,20 +381,30 @@ def _json_dump(as_json, unshipped_builds, kind, tag_pv_map):
                 json.dump(json_data, json_file, indent=4, sort_keys=True)
 
 
-def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
+def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession, tag_pv_map: Optional[Dict[str, str]] = None) -> Set[Union[str, int]]:
     """ Finds shipped builds
     :param builds: list of Brew build IDs or NVRs
     :param brew_session: Brew session
+    :param tag_pv_map: mapping of Brew tags to Errata product versions
     :return: a set of shipped Brew build IDs or NVRs
     """
     shipped_ids = set()
     tag_lists = brew.get_builds_tags(build_ids, brew_session)
-    released_tag_pattern = re.compile(r"^RH[BSE]A-.+-released$")  # https://issues.redhat.com/browse/ART-3277
-    for build_id, tags in zip(build_ids, tag_lists):
-        # a shipped build with OCP Errata should have a Brew tag ending with `-released`, like `RHBA-2020:2713-released`
-        shipped = any(map(lambda tag: released_tag_pattern.match(tag["name"]), tags))
-        if shipped:
-            shipped_ids.add(build_id)
+    # If tag_pv_map is None, we use the old approach described in ART-3277 to find shipped builds
+    if tag_pv_map is None:
+        released_tag_pattern = re.compile(r"^RH[BSE]A-.+-released$")  # https://issues.redhat.com/browse/ART-3277
+        for build_id, tags in zip(build_ids, tag_lists):
+            # a shipped build with OCP Errata should have a Brew tag ending with `-released`, like `RHBA-2020:2713-released`
+            shipped = any(map(lambda tag: released_tag_pattern.match(tag["name"]), tags))
+            if shipped:
+                shipped_ids.add(build_id)
+    else:
+        # If tag_pv_map is provided, we assume that tags without the `-candidate` suffix are singals for shipped builds.
+        shipped_tags = {tag.removesuffix("-candidate") for tag in tag_pv_map if tag.endswith("-candidate")}
+        for build_id, tags in zip(build_ids, tag_lists):
+            tag_names = {tag["name"] for tag in tags}
+            if tag_names & shipped_tags:
+                shipped_ids.add(build_id)
     return shipped_ids
 
 
@@ -525,7 +535,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
         LOGGER.info("Including all builds that may have been shipped previously")
     else:
         LOGGER.info("Filtering out shipped builds - except the ones that have been pinned in the assembly")
-        shipped = _find_shipped_builds([b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs], brew_session)
+        shipped = _find_shipped_builds([b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs], brew_session, tag_pv_map)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
     LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are qualified.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
