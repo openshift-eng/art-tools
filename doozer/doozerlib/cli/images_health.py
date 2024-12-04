@@ -104,7 +104,7 @@ class ImagesHealthPipeline:
             if latest_success_idx == -1:
                 # No success record was found
                 msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
-            else:
+            elif latest_success_idx > 1:
                 msg += (f'Last {self.url_text(latest_success_bi_task_url, "success")} '
                         f'was {latest_success_idx} attempts ago')
 
