@@ -53,8 +53,8 @@ class KonfluxImageBuilder:
     SUPPORTED_ARCHES = {
         # Only x86_64 is supported, until we are on the new cluster
         "x86_64": "linux/x86_64",
-        # "s390x": "linux/s390x",
-        # "ppc64le": "linux/ppc64le",
+        "s390x": "linux/s390x",
+        "ppc64le": "linux/ppc64le",
         "aarch64": "linux/arm64",
     }
 
@@ -100,9 +100,7 @@ class KonfluxImageBuilder:
             unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
             building_arches = list(set(arches) - unsupported_arches)
             if unsupported_arches:
-                # TODO: Update once we are on the new cluster
-                # raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
-                logger.warning(f"Skipping arches: {', '.join(unsupported_arches)}")
+                raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
 
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
