@@ -640,9 +640,21 @@ class ConfigScanSources:
             self.add_assessment_reason(descendant_meta, RebuildHint(RebuildHintCode.ANCESTOR_CHANGING,
                                                                     f'Ancestor {meta.distgit_key} is changing'))
 
+    def is_image_enabled(self, image_name: str) -> bool:
+        image_meta = self.runtime.image_map[image_name]
+        mode = image_meta.config.konflux.mode
+        enabled = mode != 'disabled' and mode != 'wip'
+        if not enabled:
+            self.logger.warning('Excluding image %s from the report as it is not enabled in Konflux', image_name)
+        return enabled
+
     def generate_report(self):
         image_results = []
         changing_image_names = [name for name in self.changing_image_names]
+
+        # Filter out images that are disabled or wip at the konflux level
+        changing_image_names = list(filter(lambda image_name: self.is_image_enabled(image_name), changing_image_names))
+
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_names
