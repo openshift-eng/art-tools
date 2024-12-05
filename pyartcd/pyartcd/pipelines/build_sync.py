@@ -446,12 +446,6 @@ class BuildSyncPipeline:
         else:
             report = None
 
-        slack_client = self.runtime.new_slack_client()
-        msg = f'''
-        Pipeline has failed to assemble release payload for {self.version} (assembly {self.assembly}) {fail_count} times.
-        ```{report}```
-        '''
-
         # TODO https://issues.redhat.com/browse/ART-5657
         if 10 <= fail_count <= 50:
             art_notify_frequency = 5
@@ -472,14 +466,21 @@ class BuildSyncPipeline:
 
         # Spam ourselves a little more often than forum-ocp-release
         if fail_count % art_notify_frequency == 0:
-            slack_client.bind_channel(f'openshift-{self.version}')
-            await slack_client.say(msg)
+            await self.notify_failures(f'openshift-{self.version}', report, fail_count)
 
         if fail_count % forum_release_notify_frequency == 0:
             # For GA releases, let forum-ocp-release know why no new builds
             phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config['software_lifecycle']['phase'])
             if phase == SoftwareLifecyclePhase.RELEASE:
-                slack_client.bind('#forum-ocp-release').say(msg)
+                await self.notify_failures('#forum-ocp-release', report, fail_count)
+
+    async def notify_failures(self, channel, assembly_report, fail_count):
+        msg = (f'Pipeline has failed to assemble release payload for {self.version} '
+               f'(assembly {self.assembly}) {fail_count} times.')
+        self.slack_client.bind(channel)
+        slack_response = await self.slack_client.say(msg)
+        slack_thread = slack_response["message"]["ts"]
+        await self.slack_client.say(f'```{assembly_report}```', slack_thread)
 
 
 @cli.command('build-sync')
