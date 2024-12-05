@@ -300,20 +300,45 @@ class UpdateGolangPipeline:
         streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
         go_latest = group_content['vars']['GO_LATEST']
+        go_previous = group_content['vars'].get('GO_PREVIOUS', None)
         update_streams = update_group = False
-        # This is to bump golang for GO_LATEST
-        for el_v, builder_nvr in builder_nvrs:
-            parsed_nvr = parse_nvr(builder_nvr)
-            latest_go = streams_content[f'rhel-{el_v}-golang']['image']
-            new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-            for stream in streams_content:
-                if stream['image'] == latest_go:
-                    stream['image'] = new_latest_go
-                    update_streams = True
-            if go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
+        # This is to bump minor golang for GO_LATEST
+        if go_version == go_latest:
+            for el_v, builder_nvr in builder_nvrs:
+                parsed_nvr = parse_nvr(builder_nvr)
+                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
+                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                for stream in streams_content:
+                    if stream['image'] == latest_go:
+                        stream['image'] = new_latest_go
+                        update_streams = True
+        # This is to bump minor golang for GO_PREVIOUS
+        elif go_version == go_previous:
+            for el_v, builder_nvr in builder_nvrs:
+                parsed_nvr = parse_nvr(builder_nvr)
+                latest_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image']
+                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                for stream in streams_content:
+                    if stream['image'] == latest_go:
+                        stream['image'] = new_latest_go
+                        update_streams = True
+        # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
+        elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
+            for el_v, builder_nvr in builder_nvrs:
+                parsed_nvr = parse_nvr(builder_nvr)
+                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
+                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
+                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                for stream, info in streams_content.items():
+                    if info['image'] == latest_go:
+                        info['image'] = new_latest_go
+                    if info['image'] == previous_go:
+                        info['image'] = latest_go
                 group_content['vars']['GO_LATEST'] = go_version
                 group_content['vars']['GO_EXTRA'] = go_version
-                update_group = True
+                if go_previous:
+                    group_content['vars']['GO_PREVIOUS'] = go_latest
+                update_streams = update_group = True
         # save changes and create pr
         if update_streams:
             if self.dry_run:
