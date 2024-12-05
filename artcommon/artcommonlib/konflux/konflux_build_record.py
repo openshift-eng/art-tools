@@ -45,7 +45,7 @@ class KonfluxRecord:
     def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
                  source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
                  start_time: datetime = None, end_time: datetime = None,
-                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX,
+                 engine: Engine = Engine.KONFLUX,
                  image_pullspec: str = '', image_tag: str = '',
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
@@ -65,7 +65,6 @@ class KonfluxRecord:
         self.rebase_commitish = rebase_commitish
         self.start_time = start_time
         self.end_time = end_time
-        self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
         self.engine = engine if isinstance(engine, Engine) else Engine(engine)
         self.image_pullspec = image_pullspec
         self.image_tag = image_tag
@@ -157,7 +156,7 @@ class KonfluxBuildRecord(KonfluxRecord):
                  ingestion_time: datetime = None, record_id: str = '', build_id: str = None, nvr: str = None):
 
         super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
-                         rebase_commitish, start_time, end_time, artifact_type, engine, image_pullspec, image_tag,
+                         rebase_commitish, start_time, end_time, engine, image_pullspec, image_tag,
                          outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
 
         self.el_target = el_target
@@ -165,6 +164,7 @@ class KonfluxBuildRecord(KonfluxRecord):
         self.installed_packages = installed_packages
         self.parent_images = parent_images
         self.embargoed = embargoed
+        self.artifact_type = artifact_type if isinstance(artifact_type, ArtifactType) else ArtifactType(artifact_type)
         self.init_uuids(record_id, build_id, nvr)
 
 
@@ -174,7 +174,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
     def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
                  source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
                  start_time: datetime = None, end_time: datetime = None,
-                 artifact_type: ArtifactType = ArtifactType.IMAGE, engine: Engine = Engine.KONFLUX,
+                 engine: Engine = Engine.KONFLUX,
                  image_pullspec: str = '', image_tag: str = '',
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
@@ -182,7 +182,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
                  record_id: str = '', build_id: str = None, nvr: str = None):
 
         super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
-                         rebase_commitish, start_time, end_time, artifact_type, engine, image_pullspec, image_tag,
+                         rebase_commitish, start_time, end_time, engine, image_pullspec, image_tag,
                          outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
