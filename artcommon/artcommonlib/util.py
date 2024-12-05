@@ -34,7 +34,17 @@ def remove_suffix(s: str, suffix: str) -> str:
         return s[:]
 
 
-def yaml_handler():
+def new_roundtrip_yaml_handler():
+    """
+    Creates and returns a configured YAML handler with specific formatting settings.
+    Returns:
+        YAML: A YAML handler configured with:
+            - round-trip (rt) mode for preserving comments and formatting
+            - disabled flow style for better readability
+            - preserved quotes
+            - 4096 character line width
+            - custom indentation (2 spaces for mappings, 4 for sequences)
+    """
     yaml = YAML(typ="rt")
     yaml.default_flow_style = False
     yaml.preserve_quotes = True

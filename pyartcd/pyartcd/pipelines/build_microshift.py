@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, yaml_handler
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
@@ -29,7 +29,7 @@ from pyartcd.util import (get_assembly_type,
                           default_release_suffix,
                           get_microshift_builds)
 
-yaml = yaml_handler()
+yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftPipeline:

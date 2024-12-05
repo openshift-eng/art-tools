@@ -8,7 +8,7 @@ import traceback
 from typing import Optional
 
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, yaml_handler
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.arch_util import brew_arch_for_go_arch
@@ -26,7 +26,7 @@ from pyartcd.util import (get_assembly_type,
 from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
 from doozerlib.constants import ART_DEFAULT_IMAGE_REPO
 
-yaml = yaml_handler()
+yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftBootcPipeline:

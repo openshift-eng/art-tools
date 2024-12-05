@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib.model import Model
-from artcommonlib.util import get_assembly_release_date, yaml_handler
+from artcommonlib.util import get_assembly_release_date, new_roundtrip_yaml_handler
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
@@ -37,7 +37,7 @@ from pyartcd.util import (get_assembly_basis, get_assembly_type,
 
 
 _LOGGER = logging.getLogger(__name__)
-yaml = yaml_handler()
+yaml = new_roundtrip_yaml_handler()
 
 class PrepareReleasePipeline:
     def __init__(
