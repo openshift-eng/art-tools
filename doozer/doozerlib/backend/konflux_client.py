@@ -196,7 +196,14 @@ class KonfluxClient:
         api_version, kind, name, namespace = self._extract_manifest_metadata(manifest)
         resource = await self._get(api_version, kind, name, namespace, strict=False)
         if not resource:
-            return await self._create(manifest)
+            try:
+                return await self._create(manifest)
+            except exceptions.ConflictError as e:
+                if "already exists" in e.summary():
+                    # This indicates this resource has been created by another process; ignore the error
+                    LOGGER.debug("Error creating %s/%s %s/%s because it already exists; ignoring", api_version, kind, namespace, name)
+                    return await self._get(api_version, kind, name, namespace, strict=True)
+                raise
         return await self._patch(manifest)
 
     async def _create_or_replace(self, manifest: dict):
