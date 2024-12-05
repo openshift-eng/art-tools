@@ -71,6 +71,10 @@ class AssemblyIssueCode(Enum):
     # promoted after embargoed lift, then permit can be added
     EMBARGOED_CONTENT = 10
 
+    # If a kernel included in rhcos or images has the early-kernel-stop-ship tag,
+    # this code will be emitted:
+    UNSHIPPABLE_KERNEL = 11
+
 
 class AssemblyIssue:
     """

@@ -104,7 +104,7 @@ class AssemblyInspector:
                 tag_names = {tag["name"] for tag in self.brew_session.listTags(brew.KojiWrapperOpts(caching=True), build=rpm_build["id"])}
                 # If the rpm is tagged into the stop-ship tag, it is never permissible
                 if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
-                    issues.append(AssemblyIssue(f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}', component=component, code=AssemblyIssueCode.IMPERMISSIBLE))
+                    issues.append(AssemblyIssue(f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}', component=component, code=AssemblyIssueCode.UNSHIPPABLE_KERNEL))
                     continue
         return issues
 
