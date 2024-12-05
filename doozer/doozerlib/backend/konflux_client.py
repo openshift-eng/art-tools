@@ -22,7 +22,8 @@ class KonfluxClient:
     """
     KonfluxClient is a client for interacting with the Konflux API.
     """
-    # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/getting-started/multi-platform-builds.md
+    # https://konflux.pages.redhat.com/docs/users/getting-started/multi-platform-builds.html
+    # The arch to Konflux VM name mapping. The specs for each of the VMs can be seen in the doc link shared above.
     SUPPORTED_ARCHES = {
         "x86_64": "linux/x86_64",
         "s390x": "linux/s390x",
@@ -385,6 +386,7 @@ class KonfluxClient:
         commit_sha: str,
         target_branch: str,
         output_image: str,
+        vm_override: dict,
         building_arches: Sequence[str],
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
@@ -400,6 +402,7 @@ class KonfluxClient:
         :param git_url: The git URL.
         :param commit_sha: The commit SHA.
         :param target_branch: The target branch.
+        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param output_image: The output image.
         :param building_arches: The architectures to build.
         :param git_auth_secret: The git auth secret.
@@ -411,7 +414,9 @@ class KonfluxClient:
         if unsupported_arches:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
 
-        build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in building_arches]
+        # If vm_override is not one and an override exists for a particular arch, use that. Otherwise, use the default
+        build_platforms = [vm_override[arch] if vm_override and arch in vm_override else self.SUPPORTED_ARCHES[arch] for arch in building_arches]
+
         pipelinerun_manifest = self._new_pipelinerun_for_image_build(
             generate_name,
             namespace,
