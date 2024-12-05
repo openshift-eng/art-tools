@@ -253,7 +253,6 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('rebase_commitish', 'STRING', 'REQUIRED'),
             SchemaField('start_time', 'TIMESTAMP', 'REQUIRED'),
             SchemaField('end_time', 'TIMESTAMP', 'REQUIRED'),
-            SchemaField('artifact_type', 'STRING', 'REQUIRED'),
             SchemaField('engine', 'STRING', 'REQUIRED'),
             SchemaField('image_pullspec', 'STRING', 'REQUIRED'),
             SchemaField('image_tag', 'STRING', 'REQUIRED'),
