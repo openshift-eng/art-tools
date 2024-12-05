@@ -352,8 +352,6 @@ class KonfluxClient:
                 case "build-images":
                     task["timeout"] = "12h"
                 case "apply-tags":
-                    # microshift-bootc times out after the default '2h' for the apply-tags task. So increasing to '4h'
-                    task["timeout"] = "4h"
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
