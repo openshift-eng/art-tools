@@ -10,11 +10,10 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
-from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -30,10 +29,7 @@ from pyartcd.util import (get_assembly_type,
                           default_release_suffix,
                           get_microshift_builds)
 
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftPipeline:

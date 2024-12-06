@@ -8,16 +8,13 @@ from typing import Dict
 import click
 from ghapi.all import GhApi
 from artcommonlib import exectools
+from artcommonlib.util import new_roundtrip_yaml_handler
 from pyartcd import jenkins, constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.runtime import Runtime
-from ruamel.yaml import YAML
 
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = new_roundtrip_yaml_handler()
 
 
 class ReviewCVPPipeline:
