@@ -161,7 +161,8 @@ class PrepareReleasePipeline:
             if not self.skip_batch and assembly_type is AssemblyTypes.STANDARD:
                 # Create a batch if it doesn't exist
                 batch_name = f"OCP {self.release_name}"
-                batch = await self._ensure_batch(self._errata_api, batch_name, self.release_date, dry_run=self.dry_run)
+                errata_config = await self.load_errata_config()
+                batch = await self._ensure_batch(self._errata_api, errata_config['release'], batch_name, self.release_date, dry_run=self.dry_run)
 
             is_ga = self.release_version[2] == 0
             advisory_type = "RHEA" if is_ga else "RHBA"
@@ -398,7 +399,7 @@ class PrepareReleasePipeline:
         return AsyncErrataAPI()
 
     @staticmethod
-    async def _ensure_batch(errata_api: AsyncErrataAPI,
+    async def _ensure_batch(errata_api: AsyncErrataAPI, release_name: str,
                             batch_name: str, release_date: str, dry_run: bool = False):
         """ Ensure that the batch exists and has the correct release date
 
@@ -416,7 +417,7 @@ class PrepareReleasePipeline:
         if not batches:
             _LOGGER.info("Creating batch '%s'...", batch_name)
             batch = await errata_api.create_batch(name=batch_name,
-                                                  release_name="RHOSE ASYNC - AUTO",
+                                                  release_name=release_name,
                                                   release_date=release_date,
                                                   description=batch_name)
             _LOGGER.info("Created errata batch id %s", int(batch["id"]))
@@ -503,6 +504,18 @@ class PrepareReleasePipeline:
         if not repo.exists():
             await self.clone_build_data(repo)
         async with aiofiles.open(repo / "group.yml", "r") as f:
+            content = await f.read()
+        yaml = YAML(typ="safe")
+        yaml.default_flow_style = False
+        yaml.preserve_quotes = True
+        yaml.width = 4096
+        return yaml.load(content)
+
+    async def load_errata_config(self) -> Dict:
+        repo = self.working_dir / "ocp-build-data-push"
+        if not repo.exists():
+            await self.clone_build_data(repo)
+        async with aiofiles.open(repo / "erratatool.yml", "r") as f:
             content = await f.read()
         yaml = YAML(typ="safe")
         yaml.default_flow_style = False
