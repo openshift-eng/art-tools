@@ -300,7 +300,7 @@ class UpdateGolangPipeline:
         streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
         go_latest = group_content['vars']['GO_LATEST']
-        go_previous = group_content['vars']['GO_PREVIOUS']
+        go_previous = group_content['vars'].get('GO_PREVIOUS', None)
         update_streams = update_group = False
         # This is to bump minor golang for GO_LATEST
         if go_version == go_latest:
@@ -327,7 +327,7 @@ class UpdateGolangPipeline:
             for el_v, builder_nvr in builder_nvrs:
                 parsed_nvr = parse_nvr(builder_nvr)
                 latest_go = streams_content[f'rhel-{el_v}-golang']['image']
-                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image']
+                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for stream, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -336,7 +336,8 @@ class UpdateGolangPipeline:
                         info['image'] = latest_go
                 group_content['vars']['GO_LATEST'] = go_version
                 group_content['vars']['GO_EXTRA'] = go_version
-                group_content['vars']['GO_PREVIOUS'] = go_latest
+                if go_previous:
+                    group_content['vars']['GO_PREVIOUS'] = go_latest
                 update_streams = update_group = True
         # save changes and create pr
         if update_streams:
