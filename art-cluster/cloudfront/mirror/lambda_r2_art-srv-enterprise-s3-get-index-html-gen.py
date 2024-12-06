@@ -413,7 +413,7 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
         if entry_count < entry_offset:
             continue
 
-        size_bytes = -1  ## is a folder
+        size_bytes = -1  # is a folder
         size_pretty = '&mdash;'
         last_modified = '-'
         last_modified_human_readable = '-'

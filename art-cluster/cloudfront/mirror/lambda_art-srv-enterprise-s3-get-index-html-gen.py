@@ -412,7 +412,7 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
         if entry_count < entry_offset:
             continue
 
-        size_bytes = -1  ## is a folder
+        size_bytes = -1  # is a folder
         size_pretty = '&mdash;'
         last_modified = '-'
         last_modified_human_readable = '-'
@@ -481,10 +481,9 @@ def lambda_handler(event, context):
         print(event)
 
     bucket_name = 'art-srv-enterprise'
-    s3 = boto3.resource('s3', region_name='us-east-1')
+    s3 = boto3.resource('s3', region_name='us-east-1')  # noqa: F841
     s3_conn = boto3.client('s3')
     request = event['Records'][0]['cf']['request']
-    headers = request['headers']
     uri = request.get('uri', '')
     query_string = request.get('querystring', '')
     query_components = parse_qs(query_string)

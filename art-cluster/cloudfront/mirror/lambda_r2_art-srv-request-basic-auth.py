@@ -210,7 +210,6 @@ def lambda_handler(event: Dict, context: Dict):
                 if s3_result.get('CommonPrefixes', []) or s3_result.get('Contents', []):
                     # If there are "sub-directories" or "files" in this directory, redirect with a trailing slash
                     # So that the user will get a directory listing.
-                    host = request['headers']['host'][0]['value']
                     # Otherwise, maybe the caller entered a directory name without
                     # a trailing slash and it is not found. Make another attempt with a
                     # trailing slash which should trigger the lookup of uri/index.html
