@@ -509,10 +509,6 @@ class PrepareReleasePipeline:
             await self.clone_build_data(repo)
         async with aiofiles.open(repo / "erratatool.yml", "r") as f:
             content = await f.read()
-        yaml = YAML(typ="safe")
-        yaml.default_flow_style = False
-        yaml.preserve_quotes = True
-        yaml.width = 4096
         return yaml.load(content)
 
     def check_blockers(self):
