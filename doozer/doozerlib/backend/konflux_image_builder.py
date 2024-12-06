@@ -209,6 +209,7 @@ class KonfluxImageBuilder:
             building_arches=building_arches,
             additional_tags=additional_tags,
             skip_checks=self._config.skip_checks,
+            vm_override=metadata.config.get("konflux", {}).get("vm_override")
         )
 
         logger.info(f"Created PipelineRun: {self.build_pipeline_url(pipelinerun)}")
