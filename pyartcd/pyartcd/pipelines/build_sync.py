@@ -477,7 +477,7 @@ class BuildSyncPipeline:
     async def notify_failures(self, channel, assembly_report, fail_count):
         msg = (f'Pipeline has failed to assemble release payload for {self.version} '
                f'(assembly {self.assembly}) {fail_count} times.')
-        self.slack_client.bind(channel)
+        self.slack_client.bind_channel(channel)
         slack_response = await self.slack_client.say(msg)
         slack_thread = slack_response["message"]["ts"]
         await self.slack_client.say(f'```{assembly_report}```', slack_thread)
