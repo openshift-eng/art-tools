@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 import requests
 from tenacity import retry, wait_fixed, stop_after_attempt
-
+from ruamel.yaml import YAML
 from artcommonlib.constants import RELEASE_SCHEDULES
 
 LOGGER = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def new_roundtrip_yaml_handler():
     yaml.default_flow_style = False
     yaml.preserve_quotes = True
     yaml.width = 4096
-    yaml.indent(mapping=2,sequence=4,offset=2)
+    yaml.indent(mapping=2, sequence=4, offset=2)
     return yaml
 
 

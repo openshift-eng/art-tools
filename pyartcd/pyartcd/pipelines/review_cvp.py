@@ -16,6 +16,7 @@ from pyartcd.runtime import Runtime
 
 yaml = new_roundtrip_yaml_handler()
 
+
 class ReviewCVPPipeline:
     def __init__(self, runtime: Runtime, group: str, assembly: str) -> None:
         self.runtime = runtime

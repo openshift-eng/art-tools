@@ -39,6 +39,7 @@ from pyartcd.util import (get_assembly_basis, get_assembly_type,
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
 
+
 class PrepareReleasePipeline:
     def __init__(
         self,
