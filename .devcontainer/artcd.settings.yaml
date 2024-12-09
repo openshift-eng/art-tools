@@ -1,0 +1,25 @@
+[advisory]
+assigned_to = "openshift-qe-errata@redhat.com"
+manager = "art@redhat.com"
+package_owner = "art@redhat.com"
+
+[build_config]
+ocp_build_data_url = "https://github.com/openshift-eng//ocp-build-data.git"
+ocp_build_data_repo_push_url = "git@github.com:openshift-eng//ocp-build-data.git"
+
+[email]
+smtp_server = "smtp.corp.redhat.com"
+from = "aos-art-automation@redhat.com"
+reply_to = "aos-team-art@redhat.com"
+cc = ["aos-art-automation@redhat.com"]
+qe_notification_recipients_ocp4=["lgarciaa@redhat.com"]
+qe_notification_recipients_ocp3=["lgarciaa@redhat.com"]
+promote_image_list_recipients = ["lgarciaas@redhat.com"]
+promote_complete_recipients = ['lgarciaa@redhat.com']
+
+[jira]
+url = "https://issues.redhat.com"
+
+[jira.templates]
+ocp4 = "ART-4223"
+ocp3 = "ART-4234"
