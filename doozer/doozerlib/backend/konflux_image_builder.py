@@ -95,16 +95,10 @@ class KonfluxImageBuilder:
             if failed_parents:
                 raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
 
-            arches = metadata.get_arches()
-
-            unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
-            building_arches = list(set(arches) - unsupported_arches)
-            if unsupported_arches:
-                raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
-
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
             retries = 3
+            building_arches = metadata.get_arches()
             error = None
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
