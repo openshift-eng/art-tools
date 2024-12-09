@@ -42,6 +42,11 @@ Some teams that traditionally had ART publishing their clients to mirror.openshi
 
 This was achieved by adding the CGW domain as an origin for our cloudfront distribution. This allows us to, for example, proxy a request to cloudfront for /pub/openshift-v4/clients/crc to pull content from https://developers.redhat.com/content-gateway/rest/mirror/pub/openshift-v4/clients/crc/ . This is another case where even if content is written to our s3 bucket, it will not be visible to users of cloudfront.
 
+### Providing Credentials
+ART should not provide accounts for individuals. Only service accounts associated with teams or partner groups. Transfer of credentials should be performed using either:
+1. Verified GPG key encryption.
+2. Bitwarden "Send" to one of the requesting party.
+
 ### Backup and restore
 The art-srv-enterprise bucket has S3 versioning enabled. This means that deleted files can be restored if it is done quickly. There is a lifecycle rule that will permanently delete these files after 30 days.
 
