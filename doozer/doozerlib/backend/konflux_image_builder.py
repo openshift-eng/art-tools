@@ -9,6 +9,8 @@ from typing import Optional, cast
 
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from packageurl import PackageURL
+
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
@@ -232,11 +234,19 @@ class KonfluxImageBuilder:
             sbom_contents = json.loads(stdout)
             source_rpms = set()
             for x in sbom_contents["components"]:
-                if x["bom-ref"].startswith("pkg:rpm"):
-                    for i in x["properties"]:
-                        if i["name"] == "syft:metadata:sourceRpm":
-                            source_rpms.add(i["value"].rstrip(".src.rpm"))
-                            break
+                # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
+                # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
+                # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
+                # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
+                # so filter them out
+                if x.get("purl", '').startswith("pkg:"):
+                    purl = PackageURL.from_string(x["purl"])
+                    # right now, we only care about rpms
+                    if purl.type == "rpm":
+                        # get the source rpm
+                        source_rpm = purl.qualifiers.get("upstream", None)
+                        if source_rpm:
+                            source_rpms.add(source_rpm.rstrip(".src.rpm"))
             return source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
