@@ -239,7 +239,7 @@ class KonfluxImageBuilder:
                 # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
                 # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
                 # so filter them out
-                if x["purl"].startswith("pkg:"):
+                if x.get("purl", '').startswith("pkg:"):
                     purl = PackageURL.from_string(x["purl"])
                     # right now, we only care about rpms
                     if purl.type == "rpm":
