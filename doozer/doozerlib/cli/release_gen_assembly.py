@@ -1,5 +1,5 @@
 import asyncio
-
+import requests
 import click
 import json
 import re
@@ -12,6 +12,7 @@ from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from doozerlib import util
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib import brew
@@ -145,6 +146,7 @@ class GenAssemblyCli:
         # A set of package_names whose NVRs are not correctly sourced by the estimated basis_event
         self.force_is: Set[str] = set()
         self.primary_rhcos_tag: str = ''
+        self.rhcos_version = ''
         self.final_previous_list: List[VersionInfo] = []
 
         # Infer assembly type
@@ -182,10 +184,6 @@ class GenAssemblyCli:
 
         if not self.nightlies and not self.standards:
             self._exit_with_error('At least one release (--nightly or --standard) must be specified')
-
-        if len(self.runtime.arches) != len(self.nightlies) + len(self.standards) and not self.custom:
-            self._exit_with_error(f'Expected at least {len(self.runtime.arches)} nightlies; '
-                                  f'one for each group arch: {self.runtime.arches}')
 
         if self.auto_previous and self.previous_list:
             self._exit_with_error('Cannot use `--previous` and `--auto-previous` at the same time.')
@@ -239,6 +237,10 @@ class GenAssemblyCli:
 
         if not release_info.references.spec.tags:
             self._exit_with_error(f'Could not find any imagestream tags in release: {pullspec}')
+        if not release_info["displayVersions"]["machine-os"]["Version"]:
+            self._exit_with_error(f'Could not find machine-os version in release: {pullspec}')
+        # get rhcos version eg. 417.94.202410250757-0
+        self.rhcos_version = release_info["displayVersions"]["machine-os"]["Version"]
 
         for component_tag in release_info.references.spec.tags:
             payload_tag_name = component_tag.name  # e.g. "aws-ebs-csi-driver"
@@ -395,6 +397,9 @@ class GenAssemblyCli:
     def _get_rhcos_container(self):
         # We should have found an RHCOS container for each architecture in the group for a standard assembly
         self.primary_rhcos_tag = rhcos.get_primary_container_name(self.runtime)
+        major_minor = self.runtime.get_minor_version()
+        rhcos_el_major = self.runtime.group_config.vars.RHCOS_EL_MAJOR
+        rhcos_el_minor = self.runtime.group_config.vars.RHCOS_EL_MINOR
 
         for arch in self.runtime.arches:
             if arch in self.rhcos_by_tag[self.primary_rhcos_tag]:
@@ -406,8 +411,20 @@ class GenAssemblyCli:
                 self.logger.info('Did not find RHCOS "%s" image for active group architecture: %s; '
                                  'ignoring for custom assembly type.', self.primary_rhcos_tag, arch)
             else:
-                self._exit_with_error(
-                    f'Did not find RHCOS "{self.primary_rhcos_tag}" image for active group architecture: {arch}')
+                if not self.rhcos_version:
+                    self._exit_with_error(f"Did not find RHCOS {self.primary_rhcos_tag} image for active group architecture: {arch}")
+                # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
+                if rhcos_el_major > 8:
+                    rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}-{rhcos_el_major}.{rhcos_el_minor}/builds/{self.rhcos_version}/{arch}/meta.json"
+                else:
+                    rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}/builds/{self.rhcos_version}/{arch}/meta.json"
+                rhcos_meta_json = requests.get(rhcos_build_url).json()
+                for tag in rhcos.get_container_configs(self.runtime):
+                    if tag.build_metadata_key not in rhcos_meta_json:
+                        self._exit_with_error(f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}')
+                    rhcos_image = rhcos_meta_json[tag.build_metadata_key]
+                    self.rhcos_by_tag[tag.name][arch] = f"{rhcos_image['image']}@{rhcos_image['digest']}"
+                    self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
 
     def _select_rpms(self):
         """
