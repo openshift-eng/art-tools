@@ -1,7 +1,6 @@
 import os
 from typing import Optional
 import click
-from time import sleep
 import shutil
 import asyncio
 from tenacity import AsyncRetrying, stop_after_attempt
@@ -59,11 +58,11 @@ class QuayDoomsdaySync:
                 self.runtime.logger.info("[DRY RUN] [%s] Would have run %s", arch, " ".join(aws_cmd))
                 self.runtime.logger.info("[DRY RUN] [%s] Would have messaged slack", arch)
             else:
-                sleep(5)
+                await asyncio.sleep(5)
                 self.runtime.logger.info("[%s] Running aws command: %s", arch, aws_cmd)
                 await retry(cmd_assert_async, aws_cmd)
                 self.runtime.logger.info("[%s] AWS command ran successfully", arch)
-                sleep(5)
+                await asyncio.sleep(5)
 
                 await self.slack_client.say_in_thread(f":white_check_mark: Successfully synced {self.version}-{arch}")
 
@@ -85,7 +84,8 @@ class QuayDoomsdaySync:
         mkdirs(self.workdir)
 
         if not self.runtime.dry_run:
-            await self.slack_client.say_in_thread(f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:")
+            slack_response = await self.slack_client.say_in_thread(f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:")
+            main_msg_ts = slack_response["message"]["ts"]
         else:
             self.runtime.logger.info("[DRY RUN] Would have messaged slack")
 
@@ -95,7 +95,7 @@ class QuayDoomsdaySync:
         # Report the results to Slack
         if not self.runtime.dry_run:
             if all(results):
-                await self.slack_client.say_in_thread(":done_it_is: All arches synced successfully", broadcast=True)
+                await self.slack_client.add_reaction(reaction="done_it_is", message_ts=main_msg_ts)
             else:
                 await self.slack_client.say_in_thread(":x: Failed to sync some arches", broadcast=True)
         else:
