@@ -144,13 +144,25 @@ class KonfluxOcp4Pipeline:
             self.build_plan.images_included = image_list
             self.build_plan.images_excluded = []
 
-    async def initialize(self):
+    def initialize(self):
         jenkins.init_jenkins()
         jenkins.update_title(f' - {self.version}')
+
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
 
+        if self.build_plan.build_strategy == BuildStrategy.ALL:
+            jenkins.update_title('[MASS REBUILD]')
+        else:  # BuildStrategy.ONLY
+            n_images = len(self.build_plan.images_included)
+            if n_images <= 10:
+                jenkins.update_description(f'Images: building {", ".join(self.build_plan.images_included)}.<br/>')
+            else:
+                jenkins.update_description(f'Images: building {n_images} images.<br/>')
+
     async def run(self):
+        self.initialize()
+
         version = f"v{self.version}.0"
         input_release = util.default_release_suffix()
 
