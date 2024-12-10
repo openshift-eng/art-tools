@@ -65,6 +65,10 @@ class KonfluxImageBuilder:
         self._logger = logger or LOGGER
         self._konflux_client = KonfluxClient.from_kubeconfig(config.namespace, config.kubeconfig, config.context, config.dry_run)
 
+        for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
+            if secret not in os.environ:
+                raise EnvironmentError(f"Missing required environment variable {secret}")
+
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
         """ Build a container image with Konflux. """
@@ -228,7 +232,9 @@ class KonfluxImageBuilder:
                 "download",
                 "sbom",
                 image_pullspec,
-                "--platform", f"linux/{go_arch}"
+                "--platform", f"linux/{go_arch}",
+                "--registry-username", f"{os.environ['KONFLUX_ART_IMAGES_USERNAME']}",
+                "--registry-password", f"{os.environ['KONFLUX_ART_IMAGES_PASSWORD']}",
             ]
             _, stdout, _ = await exectools.cmd_gather_async(cmd)
             sbom_contents = json.loads(stdout)
