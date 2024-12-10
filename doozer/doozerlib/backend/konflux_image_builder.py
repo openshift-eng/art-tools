@@ -236,7 +236,11 @@ class KonfluxImageBuilder:
                 "--registry-username", f"{os.environ['KONFLUX_ART_IMAGES_USERNAME']}",
                 "--registry-password", f"{os.environ['KONFLUX_ART_IMAGES_PASSWORD']}",
             ]
-            _, stdout, _ = await exectools.cmd_gather_async(cmd)
+            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
+
+            if rc != 0:
+                raise ChildProcessError("cosign command failed to download SBOM")
+
             sbom_contents = json.loads(stdout)
             source_rpms = set()
             for x in sbom_contents["components"]:
