@@ -19,6 +19,13 @@ async function proxyToTarget(request: Request, targetBase: string, remainingPath
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
     });
 
+    const allowedHosts = ["mirror.openshift.com"];
+    const urlObj = new URL(targetUrl);
+
+    if (!allowedHosts.includes(urlObj.hostname)) {
+        throw new Error("Invalid target URL");
+    }
+
     // Fetch the response from the target URL
     const response = await fetch(proxyRequest);
 
