@@ -34,6 +34,7 @@ class KonfluxOcp4Pipeline:
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
                  kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
         self.runtime = runtime
+        self.assembly = assembly
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.version = version
         self.kubeconfig = kubeconfig
@@ -142,6 +143,12 @@ class KonfluxOcp4Pipeline:
             self.build_plan.build_strategy = BuildStrategy.ONLY
             self.build_plan.images_included = image_list
             self.build_plan.images_excluded = []
+
+    async def initialize(self):
+        jenkins.init_jenkins()
+        jenkins.update_title(f' - {self.version}')
+        if self.assembly.lower() == "test":
+            jenkins.update_title(" [TEST]")
 
     async def run(self):
         version = f"v{self.version}.0"
