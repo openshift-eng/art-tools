@@ -42,15 +42,26 @@ class SlackClient:
         else:
             raise ValueError(f"Invalid channel_or_release value: {channel_or_release}")
 
-    async def say_in_thread(self, message: str, reaction: Optional[str] = None):
+    async def get_channel_id(self):
+        """
+        Get ID of the currently bound channel
+        """
+        # Can only get private channel ids for now to avoid longer waiting caused by request ratelimit
+        response = await self._client.conversations_list(types="private_channel", limit=999)
+        for channel in response.data["channels"]:
+            if channel["name"] == self.channel.strip("#"):
+                return channel["id"]
+        _LOGGER.error("Unable to get ID of channel %s", self.channel)
+
+    async def say_in_thread(self, message: str, reaction: Optional[str] = None, broadcast: bool = False):
         if not self._thread_ts:
             response_data = await self.say(message, thread_ts=None, reaction=reaction)
             self._thread_ts = response_data["ts"]
             return response_data
         else:
-            return await self.say(message, thread_ts=self._thread_ts, reaction=reaction)
+            return await self.say(message, thread_ts=self._thread_ts, reaction=reaction, broadcast=broadcast)
 
-    async def say(self, message: str, thread_ts: Optional[str] = None, reaction: Optional[str] = None):
+    async def say(self, message: str, thread_ts: Optional[str] = None, reaction: Optional[str] = None, broadcast: bool = False):
         attachments = []
         if self.build_url:
             attachments.append({
@@ -62,7 +73,7 @@ class SlackClient:
             return {"message": {"ts": "fake"}, "ts": "fake"}
         response = await self._client.chat_postMessage(channel=self.channel, text=message, thread_ts=thread_ts,
                                                        username=self.as_user, link_names=True, attachments=attachments,
-                                                       icon_emoji=self.icon_emoji, reply_broadcast=False)
+                                                       icon_emoji=self.icon_emoji, reply_broadcast=broadcast)
         # https://api.slack.com/methods/reactions.add
         if reaction:
             await self._client.reactions_add(
@@ -93,4 +104,13 @@ class SlackClient:
             content=content,
             filename=filename,
             thread_ts=thread_ts)
+        return response.data
+
+    async def add_reaction(self, reaction: str, message_ts: str):
+        reaction = reaction.strip(":")
+        channel_id = await self.get_channel_id()
+        if channel_id is None:
+            _LOGGER.error("Unable to add reaction to message with timestamp %s", message_ts)
+            return
+        response = await self._client.reactions_add(channel=channel_id, name=reaction, timestamp=message_ts)
         return response.data
