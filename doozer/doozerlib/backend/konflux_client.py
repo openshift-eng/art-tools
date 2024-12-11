@@ -3,10 +3,11 @@ import logging
 from typing import Dict, List, Optional, Sequence, Union, cast
 
 import jinja2
+import requests
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
-from importlib_resources import files
+from functools import lru_cache
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -296,9 +297,15 @@ class KonfluxClient:
         if additional_tags is None:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
-        # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
-        template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
-        template = jinja2.Template(template_content, autoescape=True)
+
+        @lru_cache()
+        def _get_plr_template():
+            response = requests.get(constants.KONFLUX_PlR_TEMPLATE_URL)
+
+            return response.text
+
+        plr_template = _get_plr_template()
+        template = jinja2.Template(plr_template, autoescape=True)
         rendered = template.render({
             "source_url": https_url,
             "revision": commit_sha,
