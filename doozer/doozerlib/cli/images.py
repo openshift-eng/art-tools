@@ -39,14 +39,19 @@ def images_clone(runtime, clone_upstreams):
 
 
 @cli.command("images:list", help="List of distgits being selected.")
+@click.option('--count', default=False, is_flag=True, help='Print just the count of images')
 @pass_runtime
-def images_list(runtime):
+def images_list(runtime, count):
     runtime.initialize(clone_distgits=False)
+    images_count = len(runtime.image_metas())
+    if count:
+        click.echo(images_count)
+        return
     click.echo("------------------------------------------")
     for image in runtime.image_metas():
         click.echo(image.qualified_name)
     click.echo("------------------------------------------")
-    click.echo("%s images" % len(runtime.image_metas()))
+    click.echo("%s images" % images_count)
 
 
 @cli.command("images:push-distgit", short_help="Push all distgist repos in working-dir.")
