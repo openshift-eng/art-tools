@@ -10,6 +10,8 @@ services:
     - ${HOME:-}${USERPROFILE:-}/.ssh:/home/dev/.ssh:ro,cached,z
     - ${HOME:-}${USERPROFILE:-}/.docker:/home/dev/.docker:ro,cached,z
     - ./doozer.settings.yaml:/home/dev/.config/doozer/settings.yaml:ro,cached,z
+    - ./artcd.settings.yaml:/home/dev/.config/artcd/settings.yaml:ro,cached,z
+    - ./elliott.settings.yaml:/home/dev/.config/elliott/settings.yaml:ro,cached,z
     - ../artcommon/configs/krb5-redhat.conf:/etc/krb5.conf.d/krb5-redhat.conf:ro,cached,z
     - ./brewkoji.conf:/etc/koji.conf.d/brewkoji.conf:ro,cached,z
     - dev-doozer-working-dir:/workspaces/doozer-working-dir:delegated,z
