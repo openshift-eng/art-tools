@@ -12,10 +12,19 @@ const encode = (str: string):string => Buffer.from(str, 'binary').toString('base
 async function proxyToTarget(request: Request, targetBase: string, remainingPath: string): Promise<Response> {
     const targetUrl = `${targetBase}${remainingPath}`;
 
+    // Filter headers
+    const allowedHeaders = ["Content-Type", "Authorization", "Accept"];
+    const filteredHeaders = new Headers();
+    request.headers.forEach((value, key) => {
+        if (allowedHeaders.includes(key)) {
+            filteredHeaders.set(key, value);
+        }
+    });
+
     // Set up the new request
     const proxyRequest = new Request(targetUrl, {
         method: request.method,
-        headers: request.headers,
+        headers: filteredHeaders,
         body: request.method !== "GET" && request.method !== "HEAD" ? request.body : null,
     });
 
@@ -64,7 +73,6 @@ async function downloadFile(bucket: R2Bucket, filePath: string): Promise<Respons
         headers,
     });
 }
-
 
 function unauthorized(): Response {
     return new Response('Unauthorized', {
