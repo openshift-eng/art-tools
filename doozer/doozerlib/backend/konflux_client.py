@@ -359,7 +359,7 @@ class KonfluxClient:
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             match task["name"]:
                 case "build-images":
-                    task["timeout"] = "12h"
+                    task["timeout"] = "6h"
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
 
