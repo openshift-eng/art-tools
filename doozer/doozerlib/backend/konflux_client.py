@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from functools import lru_cache
 from typing import Dict, List, Optional, Sequence, Union, cast
 
 import jinja2
-import requests
+from aiohttp import ClientSession
+from async_lru import alru_cache
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
@@ -290,6 +292,17 @@ class KonfluxClient:
         return await self._create_or_replace(component)
 
     @staticmethod
+    @alru_cache
+    async def _get_pipelinerun_template():
+        """ Get the PipelineRun template."""
+        async with ClientSession() as http_client:
+            async with http_client.get(constants.KONFLUX_PlR_TEMPLATE_URL) as response:
+                response.raise_for_status()
+                template_content = await response.text()
+        template = jinja2.Template(template_content, autoescape=True)
+        return template
+
+    @staticmethod
     def _new_pipelinerun_for_image_build(generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                          git_url: str, commit_sha: str, target_branch: str, output_image: str,
                                          build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
@@ -298,14 +311,7 @@ class KonfluxClient:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
 
-        @lru_cache()
-        def _get_plr_template():
-            response = requests.get(constants.KONFLUX_PlR_TEMPLATE_URL)
-
-            return response.text
-
-        plr_template = _get_plr_template()
-        template = jinja2.Template(plr_template, autoescape=True)
+        template = KonfluxClient._get_pipelinerun_template()
         rendered = template.render({
             "source_url": https_url,
             "revision": commit_sha,
