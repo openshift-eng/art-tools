@@ -168,7 +168,7 @@ class KonfluxOcp4Pipeline:
             if n_images == 1:
                 jenkins.update_title(f'[{self.build_plan.images_included[0]}]')
             else:
-                jenkins.update_title(f'[{len(self.build_plan.images_included[0])} images]')
+                jenkins.update_title(f'[{n_images} images]')
 
             if n_images <= 10:
                 jenkins.update_description(f'Images: building {", ".join(self.build_plan.images_included)}.<br/>')
