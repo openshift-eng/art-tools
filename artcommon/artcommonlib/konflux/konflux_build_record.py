@@ -84,6 +84,9 @@ class KonfluxRecord:
         self.build_id = None
         self.nvr = None
 
+    def __repr__(self):
+        return self.nvr
+
     def init_uuids(self, record_id, build_id, nvr):
         # These fields must be computed in the child class, otherwise we would be hashing incomplete types into UUIDs
         self.record_id = record_id if record_id else self.generate_record_id()
