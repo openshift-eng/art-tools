@@ -39,7 +39,7 @@ ART_DEFAULT_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
 KONFLUX_UI_HOST = "https://konflux.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
 KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
 MAX_KONFLUX_BUILD_QUEUE_SIZE = 25  # how many concurrent Konflux pipeline can we spawn per OCP version?
-KONFLUX_PlR_TEMPLATE_URL = "https://raw.githubusercontent.com/openshift-priv/art-konflux-template/refs/heads/main/.tekton/art-konflux-template-push.yaml"  # Konflux PipelineRun (PLR) template
+KONFLUX_PlR_TEMPLATE_URL = "https://raw.githubusercontent.com/{owner}/art-konflux-template/refs/heads/{branch_name}/.tekton/art-konflux-template-push.yaml"  # Konflux PipelineRun (PLR) template
 
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
