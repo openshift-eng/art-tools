@@ -238,6 +238,34 @@ class KonfluxDb:
                             name, group, outcome.value, assembly, el_target)
         return None
 
+    async def get_build_record_by_nvr(self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.Optional[KonfluxRecord]:
+        """ Get a build record by NVR.
+
+        :param nvr: The NVR of the build.
+        :param outcome: The outcome of the build.
+        :param strict: If True, raise an exception if the build record is not found.
+        :return: The build record; None if the build record is not found.
+        :raise: IOError if the build record is not found and strict is True.
+        """
+        where = {"nvr": nvr, "outcome": str(outcome)}
+        started_before = datetime.now(tz=timezone.utc)
+        for window in range(12):
+            end_search = started_before - window * 3 * timedelta(days=30)
+            start_search = end_search - 3 * timedelta(days=30)
+            results = await self.search_builds_by_fields(
+                start_search=start_search, end_search=end_search,
+                where=where, limit=1)
+            try:
+                return self.from_result_row(next(results))
+            except StopIteration:
+                # No builds found in current window, shift to the earlier one
+                continue
+        # If we got here, no builds have been found in the whole 36 months period
+        if strict:
+            raise IOError(f"Build record with NVR {nvr} not found.")
+        self.logger.warning('No builds found for NVR %s', nvr)
+        return None
+
     def from_result_row(self, row: Row) -> typing.Optional[KonfluxRecord]:
         """
         Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
