@@ -156,7 +156,7 @@ class KonfluxDb:
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
                                 el_target: str = None, artifact_type: ArtifactType = None,
                                 engine: Engine = None, completed_before: datetime = None)\
-            -> typing.List[konflux_build_record.KonfluxBuildRecord]:
+            -> typing.List[konflux_build_record.KonfluxRecord]:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
         """
@@ -167,8 +167,9 @@ class KonfluxDb:
 
     async def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
                                assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
-                               engine: Engine = None, completed_before: datetime = None, extra_patterns: dict = {}) \
-            -> typing.Optional[konflux_build_record.KonfluxBuildRecord]:
+                               engine: Engine = None, completed_before: datetime = None, extra_patterns: dict = {},
+                               strict: bool = False) \
+            -> typing.Optional[konflux_build_record.KonfluxRecord]:
         """
         Search for the latest Konflux build information in BigQuery.
 
@@ -181,6 +182,8 @@ class KonfluxDb:
         :param engine: 'brew' | 'konflux'
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
+        :param strict: If True, raise an exception if the build record is not found.
+        :return: The latest build record; None if the build record is not found.
         """
 
         # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
@@ -234,6 +237,8 @@ class KonfluxDb:
                 continue
 
         # If we got here, no builds have been found in the whole 36 months period
+        if strict:
+            raise ValueError(f"Build record for {name} not found.")
         self.logger.warning('No builds found for %s in %s with status %s in assembly %s and target %s',
                             name, group, outcome.value, assembly, el_target)
         return None
