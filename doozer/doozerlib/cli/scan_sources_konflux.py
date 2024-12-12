@@ -359,7 +359,7 @@ class ConfigScanSources:
 
         # Does most recent build match the one from the latest upstream commit?
         # If it doesn't, mark for rebuild
-        if latest_build_record.nvr != upstream_commit_build_record.nvr:
+        if latest_build_record.commitish != upstream_commit_hash:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
