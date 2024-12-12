@@ -30,13 +30,13 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         await self.repo.commit("commit message")
         run_git.assert_any_await(["-C", "/path/to/repo", "add", "."])
         run_git.assert_any_await(["-C", "/path/to/repo", "commit", "-m", "commit message"])
-        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "rev-parse", "HEAD"])
+        gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "rev-parse", "HEAD"], check=False)
         self.assertEqual(self.repo.commit_hash, "deadbeef")
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_push(self, run_git: AsyncMock):
         await self.repo.push()
-        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "push", "origin", self.repo.branch])
+        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "push", '--follow-tags', "origin", "HEAD"])
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")
