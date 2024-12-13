@@ -64,7 +64,7 @@ class KonfluxImageBuilder:
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
         self._config = config
         self._logger = logger or LOGGER
-        self._konflux_client = KonfluxClient.from_kubeconfig(config.namespace, config.kubeconfig, config.context, config.dry_run, config.plr_template)
+        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run, plr_template=config.plr_template)
 
         for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
             if secret not in os.environ:
