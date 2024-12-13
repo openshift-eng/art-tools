@@ -2,16 +2,14 @@ import asyncio
 import logging
 import traceback
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union, cast
+from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
 
 import click
 from artcommonlib.konflux.konflux_build_record import (
-    Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord)
+    ArtifactType, Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord)
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Missing
 from artcommonlib.telemetry import start_as_current_span_async
-from opentelemetry import trace
-
 from doozerlib import constants
 from doozerlib.backend.konflux_image_builder import (KonfluxImageBuilder,
                                                      KonfluxImageBuilderConfig)
@@ -24,6 +22,7 @@ from doozerlib.cli import (cli, click_coroutine, option_commit_message,
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
+from opentelemetry import trace
 
 TRACER = trace.get_tracer(__name__)
 LOGGER = logging.getLogger(__name__)
@@ -228,6 +227,84 @@ class KonfluxBundleCli:
         self.skip_checks = skip_checks
         self.release = release
 
+    async def get_operator_builds(self):
+        """ Get build records for the given operator nvrs or latest build records for all operators.
+
+        :return: A dictionary of operator name to build records.
+        """
+        runtime = self.runtime
+        assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
+        assert runtime.assembly is not None, "assembly is not initialized. Doozer bug?"
+        dgk_records: Dict[str, KonfluxBuildRecord] = {}  # operator name to build records
+        if self.operator_nvrs:
+            # Get build records for the given operator nvrs
+            LOGGER.info("Fetching given nvrs from Konflux DB...")
+            records = await runtime.konflux_db.get_build_records_by_nvrs(self.operator_nvrs)
+            for record in records:
+                assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
+                dgk_records[record.name] = record
+            # Load image metas for the given operators
+            runtime.images = list(dgk_records.keys())
+            runtime.initialize(mode='images', clone_distgits=False)
+            for dkg in dgk_records.keys():
+                metadata = runtime.image_map[dkg]
+                if not metadata.is_olm_operator:
+                    raise DoozerFatalError(f"Operator {dkg} does not have 'update-csv' config")
+        else:
+            # Get latest build records for all specified operators
+            runtime.initialize(mode='images', clone_distgits=False)
+            LOGGER.info("Fetching latest operator builds from Konflux DB...")
+            operator_metas: List[ImageMetadata] = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
+            records = await runtime.konflux_db.get_latest_builds(
+                names=[metadata.distgit_key for metadata in operator_metas],
+                group=runtime.group,
+                assembly=runtime.assembly,
+                artifact_type=ArtifactType.IMAGE,
+                engine=Engine.KONFLUX,
+                strict=True,
+            )
+            for metadata, record in zip(operator_metas, records):
+                assert record is not None and isinstance(record, KonfluxBuildRecord)
+                dgk_records[metadata.distgit_key] = record
+        return dgk_records
+
+    async def _rebase_and_build(
+            self,
+            rebaser: KonfluxOlmBundleRebaser,
+            builder: KonfluxOlmBundleBuilder,
+            db_for_bundles: KonfluxDb,
+            image_meta: ImageMetadata,
+            operator_build: KonfluxBuildRecord):
+        logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
+        runtime = self.runtime
+        assembly = runtime.assembly
+        input_release = self.release
+        if not self.force or not input_release:
+            logger.info("Checking if a previous bundle build exists...")
+            bundle_build = await db_for_bundles.get_latest_build(
+                name=image_meta.get_olm_bundle_short_name(),
+                group=runtime.group,
+                assembly=assembly,
+                engine=Engine.KONFLUX,
+                strict=False,
+            )
+            if bundle_build is not None:
+                logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
+                if not self.force:
+                    logger.info("Skipping because --force is not set")
+                    return
+                input_release = str(int(bundle_build.release) + 1)
+                logger.info("Force rebuild requested because --force is set; release string will be %s", input_release)
+            else:
+                input_release = "1"
+                logger.info("No previous bundle build found; a new bundle build will be created with release string %s", input_release)
+
+        logger.info("Rebasing OLM bundle...")
+        await rebaser.rebase(image_meta, operator_build, input_release)
+        logger.info("Building OLM bundle...")
+        await builder.build(image_meta)
+        logger.info("Bundle build complete")
+
     @start_as_current_span_async(TRACER, "images:konflux:bundle")
     async def run(self):
         runtime = self.runtime
@@ -242,52 +319,7 @@ class KonfluxBundleCli:
         konflux_db = runtime.konflux_db
         konflux_db.bind(KonfluxBuildRecord)
 
-        dgk_records = {}
-        if self.operator_nvrs:
-            # Get build records for the given operator nvrs
-            LOGGER.info("Fetching given nvrs from Konflux DB...")
-            tasks = []
-            for nvr in self.operator_nvrs:
-                tasks.append(asyncio.create_task(konflux_db.get_build_record_by_nvr(nvr=nvr, strict=True)))
-            records = cast(List[Union[KonfluxBuildRecord, Exception]], await asyncio.gather(*tasks, return_exceptions=True))
-            errors = [(nvr, record) for nvr, record in zip(self.operator_nvrs, records) if isinstance(record, Exception)]
-            if errors:
-                raise DoozerFatalError(f"Failed to fetch NVRs from Konflux DB: {errors}")
-            for nvr, record in zip(self.operator_nvrs, records):
-                assert record is not None and isinstance(record, KonfluxBuildRecord)
-                dgk_records[record.name] = record
-            # Load image metas for the given operators
-            runtime.images = list(dgk_records.keys())
-            runtime.initialize(mode='images', clone_distgits=False)
-            for dkg in dgk_records.keys():
-                metadata = runtime.image_map[dkg]
-                if not metadata.is_olm_operator:
-                    raise DoozerFatalError(f"Operator {dkg} does not have 'update-csv' config")
-        else:
-            # Get latest build records for all specified operators
-            runtime.initialize(mode='images', clone_distgits=False)
-            LOGGER.info("Fetching latest operator builds from Konflux DB...")
-            operator_metas: List[ImageMetadata] = []
-            tasks = []
-            for metadata in runtime.ordered_image_metas():
-                if not metadata.is_olm_operator:
-                    if runtime.images:
-                        LOGGER.warning(f"Skipping non-OLM operator {metadata.distgit_key}")
-                    continue
-                operator_metas.append(metadata)
-                tasks.append(asyncio.create_task(konflux_db.get_latest_build(
-                    name=metadata.distgit_key,
-                    assembly=assembly,
-                    group=self.runtime.group,
-                    el_target=f'el{metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX, strict=True)))
-            records = await asyncio.gather(*tasks, return_exceptions=True)
-            errors = [(meta.distgit_key, record) for meta, record in zip(operator_metas, records) if isinstance(record, Exception)]
-            if errors:
-                raise DoozerFatalError(f"Failed to fetch latest builds from Konflux DB: {errors}")
-            for metadata, record in zip(operator_metas, records):
-                assert record is not None and isinstance(record, KonfluxBuildRecord)
-                dgk_records[metadata.distgit_key] = record
+        dgk_records = await self.get_operator_builds()
 
         assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
         assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
@@ -319,48 +351,18 @@ class KonfluxBundleCli:
             dry_run=self.dry_run,
         )
 
-        async def _rebase_and_build(image_meta: ImageMetadata, operator_build: KonfluxBuildRecord):
-            logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
-            input_release = self.release
-            if not self.force or not input_release:
-                logger.info("Checking if a previous bundle build exists...")
-                bundle_build = await db_for_bundles.get_latest_build(
-                    name=image_meta.get_olm_bundle_short_name(),
-                    group=runtime.group,
-                    assembly=assembly,
-                    engine=Engine.KONFLUX,
-                    strict=False,
-                )
-                if bundle_build is not None:
-                    logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
-                    if not self.force:
-                        logger.info("Skipping because --force is not set")
-                        return
-                    input_release = str(int(bundle_build.release) + 1)
-                    logger.info("Force rebuild requested because --force is set; release string will be %s", input_release)
-                else:
-                    input_release = "1"
-                    logger.info("No previous bundle build found; a new bundle build will be created with release string %s", input_release)
-
-            logger.info("Rebasing OLM bundle...")
-            await rebaser.rebase(image_meta, operator_build, input_release)
-            logger.info("Building OLM bundle...")
-            await builder.build(image_meta)
-
         tasks = []
         for dkg, record in dgk_records.items():
             image_meta = runtime.image_map[dkg]
-            tasks.append(asyncio.create_task(_rebase_and_build(image_meta, record)))
+            tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, db_for_bundles, image_meta, record)))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_tasks = []
         for dgk, result in zip(dgk_records, results):
-            image_meta = runtime.image_map[dkg]
             if isinstance(result, Exception):
-                image_name = image_meta.distgit_key
-                failed_tasks.append(image_name)
+                failed_tasks.append(dgk)
                 stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
-                LOGGER.error(f"Failed to rebase/build  OLM bundle for {image_name}: {result}; {stack_trace}")
+                LOGGER.error(f"Failed to rebase/build OLM bundle for {dgk}: {result}; {stack_trace}")
         if failed_tasks:
             raise DoozerFatalError(f"Failed to rebase/build bundles: {failed_tasks}")
         LOGGER.info("Build complete")

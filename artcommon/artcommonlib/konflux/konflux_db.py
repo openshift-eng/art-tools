@@ -16,6 +16,8 @@ from artcommonlib.konflux import konflux_build_record
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord, Engine
 
 SCHEMA_LEVEL = 1
+DEFAULT_SEARCH_WINDOW = 90
+DEFAULT_SEARCH_DAYS = 360  # By default, search for the last 360 days of data
 
 
 class KonfluxDb:
@@ -109,67 +111,109 @@ class KonfluxDb:
         with concurrent.futures.ThreadPoolExecutor() as pool:
             await asyncio.gather(*(loop.run_in_executor(pool, self.add_build, build) for build in builds))
 
-    async def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
-                                      where: typing.Dict[str, typing.Any] = None, extra_patterns: dict = None,
-                                      order_by: str = '', sorting: str = 'DESC', limit: int = None) -> RowIterator:
+    async def search_builds_by_fields(
+            self,
+            start_search: typing.Optional[datetime] = None,
+            end_search: typing.Optional[datetime] = None,
+            window_size: int = DEFAULT_SEARCH_WINDOW,
+            where: typing.Optional[typing.Dict[str, typing.Any]] = None,
+            extra_patterns: typing.Optional[dict] = None,
+            order_by: str = '',
+            sorting: str = 'DESC',
+            limit: typing.Optional[int] = None,
+    ):
         """
         Execute a SELECT * from the BigQuery table.
 
         "where" is an optional dictionary that maps names and values to define a WHERE clause.
-        "start_search" is a lower bound to be applied to the partitioning field `start_time`.
-        "end_search" can optionally be provided as an upper bound for the same field.
+        "start_search" is a lower bound to be applied to the partitioning field `start_time`. If None, the search starts 360 days ago.
+        "end_search" can optionally be provided as an upper bound for the same field. If None, the search ends now.
+        "window_size" is the number of days to search in each iteration. If 0, the whole period is searched at once.
+        "extra_patterns" is an optional dictionary that maps names and values to define extra patterns to be matched.
+        "order_by" is the column to order by.
+        "sorting" is the sorting order.
+        "limit" is the maximum number of results to return. None for no limit.
 
-        Return a (possibly empty) list of results
+        Return a generator that yields KonfluxRecord objects.
         """
 
-        where_clauses = [
-            Column('start_time', DateTime) >= start_search,
-        ]
+        if start_search and end_search and start_search >= end_search:
+            raise ValueError(f"start_search {start_search} must be earlier than end_search {end_search}")
+        end_search = end_search or datetime.now(tz=timezone.utc)
+        start_search = start_search or end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
+        if window_size < 0:
+            raise ValueError(f"search_window {window_size} must be a non-negative integer")
+        elif window_size == 0:
+            # If window_size is 0, search the whole period at once
+            window_size = (end_search - start_search).days
 
-        if end_search:
-            where_clauses.append(Column('start_time', DateTime) < end_search)
-
-        where = where if where else {}
+        base_clauses = []
+        where = where or {}
         for col_name, col_value in where.items():
             if col_value is not None:
-                where_clauses.append(Column(col_name, String) == col_value)
+                base_clauses.append(Column(col_name, String) == col_value)
             else:
-                where_clauses.append(Column(col_name, String).is_(None))
-
-        extra_patterns = extra_patterns if extra_patterns else {}
+                base_clauses.append(Column(col_name, String).is_(None))
+        extra_patterns = extra_patterns or {}
         for col_name, col_value in extra_patterns.items():
             regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
-            where_clauses.append(regexp_condition)
+            base_clauses.append(regexp_condition)
 
         order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
         order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()
 
-        results = await self.bq_client.select(
-            where_clauses=where_clauses,
-            order_by_clause=order_by_clause,
-            limit=limit)
+        # Table is partitioned by start_time. Perform an iterative search within given days of windows, going back to start_search
+        total_rows = 0
+        for window in range(0, (end_search - start_search).days, window_size):
+            end_window = end_search - timedelta(days=window)
+            start_window = max(end_window - timedelta(days=window_size), start_search)
+            where_clauses = base_clauses + [Column('start_time', DateTime) >= start_window, Column('start_time', DateTime) < end_window]
+            rows = await self.bq_client.select(
+                where_clauses=where_clauses,
+                order_by_clause=order_by_clause,
+                limit=limit-total_rows if limit is not None else None)
+            self.logger.debug('Found %s builds in batch %s', rows.total_rows, (window // window_size) + 1)
+            for row in rows:
+                total_rows += 1
+                yield self.from_result_row(row)
+                if limit is not None and total_rows >= limit:
+                    return
 
-        self.logger.debug('Found %s builds', results.total_rows)
-        return results
-
-    async def get_latest_builds(self, names: typing.List[str], group: str,
-                                outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
-                                el_target: str = None, artifact_type: ArtifactType = None,
-                                engine: Engine = None, completed_before: datetime = None)\
-            -> typing.List[konflux_build_record.KonfluxRecord]:
+    async def get_latest_builds(
+            self,
+            names: typing.List[str],
+            group: str,
+            outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+            assembly: str = 'stream',
+            el_target: typing.Optional[str] = None,
+            artifact_type: typing.Optional[ArtifactType] = None,
+            engine: typing.Optional[Engine] = None,
+            completed_before: typing.Optional[datetime] = None,
+            extra_patterns: dict = {},
+            strict: bool = False,
+    ) -> typing.List[typing.Optional[KonfluxRecord]]:
         """
         For a list of component names, run get_latest_build() in a concurrent pool executor.
         """
 
         return await asyncio.gather(*[
-            self.get_latest_build(name, group, outcome, assembly, el_target, artifact_type, engine, completed_before)
+            self.get_latest_build(name, group, outcome, assembly, el_target, artifact_type, engine, completed_before,
+                                  extra_patterns, strict)
             for name in names])
 
-    async def get_latest_build(self, name: str, group: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-                               assembly: str = 'stream', el_target: str = None, artifact_type: ArtifactType = None,
-                               engine: Engine = None, completed_before: datetime = None, extra_patterns: dict = {},
-                               strict: bool = False) \
-            -> typing.Optional[konflux_build_record.KonfluxRecord]:
+    async def get_latest_build(
+            self,
+            name: str,
+            group: str,
+            outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+            assembly: str = 'stream',
+            el_target: typing.Optional[str] = None,
+            artifact_type: typing.Optional[ArtifactType] = None,
+            engine: typing.Optional[Engine] = None,
+            completed_before: typing.Optional[datetime] = None,
+            extra_patterns: dict = {},
+            strict: bool = False,
+    ) -> typing.Optional[KonfluxRecord]:
         """
         Search for the latest Konflux build information in BigQuery.
 
@@ -182,8 +226,9 @@ class KonfluxDb:
         :param engine: 'brew' | 'konflux'
         :param completed_before: cut off timestamp for builds completion time
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
-        :param strict: If True, raise an exception if the build record is not found.
+        :param strict: If True, raise an IOError if the build record is not found.
         :return: The latest build record; None if the build record is not found.
+        :raise: IOError if the build record is not found and strict is True.
         """
 
         # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
@@ -216,15 +261,15 @@ class KonfluxDb:
         for col_name, col_value in extra_patterns.items():
             base_clauses.append(Column(col_name, String).like(f"%{col_value}%"))
 
-        started_before = datetime.now(tz=timezone.utc) if not completed_before else completed_before
-        for window in range(12):
-            end_search = started_before - window * 3 * timedelta(days=30)
-            start_search = end_search - 3 * timedelta(days=30)
-
+        end_search = datetime.now(tz=timezone.utc) if not completed_before else completed_before
+        start_search = end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
+        for window in range(0, (end_search - start_search).days, DEFAULT_SEARCH_WINDOW):
+            end_window = end_search - timedelta(days=window)
+            start_window = max(end_window - timedelta(days=DEFAULT_SEARCH_WINDOW), start_search)
             where_clauses = copy.copy(base_clauses)
             where_clauses.extend([
-                Column('start_time', DateTime) >= start_search,
-                Column('start_time', DateTime) < end_search,
+                Column('start_time', DateTime) >= start_window,
+                Column('start_time', DateTime) < end_window,
             ])
 
             results = await self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
@@ -238,44 +283,16 @@ class KonfluxDb:
 
         # If we got here, no builds have been found in the whole 36 months period
         if strict:
-            raise ValueError(f"Build record for {name} not found.")
+            raise IOError(f"Build record for {name} not found.")
         self.logger.warning('No builds found for %s in %s with status %s in assembly %s and target %s',
                             name, group, outcome.value, assembly, el_target)
         return None
 
-    async def get_build_record_by_nvr(self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.Optional[KonfluxRecord]:
-        """ Get a build record by NVR.
-
-        :param nvr: The NVR of the build.
-        :param outcome: The outcome of the build.
-        :param strict: If True, raise an exception if the build record is not found.
-        :return: The build record; None if the build record is not found.
-        :raise: IOError if the build record is not found and strict is True.
-        """
-        where = {"nvr": nvr, "outcome": str(outcome)}
-        started_before = datetime.now(tz=timezone.utc)
-        for window in range(12):
-            end_search = started_before - window * 3 * timedelta(days=30)
-            start_search = end_search - 3 * timedelta(days=30)
-            results = await self.search_builds_by_fields(
-                start_search=start_search, end_search=end_search,
-                where=where, limit=1)
-            try:
-                return self.from_result_row(next(results))
-            except StopIteration:
-                # No builds found in current window, shift to the earlier one
-                continue
-        # If we got here, no builds have been found in the whole 36 months period
-        if strict:
-            raise IOError(f"Build record with NVR {nvr} not found.")
-        self.logger.warning('No builds found for NVR %s', nvr)
-        return None
-
-    def from_result_row(self, row: Row) -> typing.Optional[KonfluxRecord]:
+    def from_result_row(self, row: Row) -> KonfluxRecord:
         """
         Given a google.cloud.bigquery.table.Row object, construct and return a KonfluxBuild object
         """
-
+        assert self.record_cls is not None, 'DB client is not bound to a table'
         try:
             return self.record_cls(**{
                 field: (row[field])
@@ -286,3 +303,42 @@ class KonfluxDb:
             self.logger.error('Could not construct a %s object from result row %s: %s',
                               self.record_cls.__name__, row, e)
             raise
+
+    async def get_build_record_by_nvr(self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.Optional[KonfluxRecord]:
+        """ Get a build record by NVR.
+        Note that this function only searches for the build record in the last 3 years.
+
+        :param nvr: The NVR of the build.
+        :param outcome: The outcome of the build.
+        :param strict: If True, raise an exception if the build record is not found.
+        :return: The build record; None if the build record is not found.
+        :raise: IOError if the build record is not found and strict is True.
+        """
+        where = {"nvr": nvr, "outcome": str(outcome)}
+        result = await anext(self.search_builds_by_fields(where=where, limit=1), None)
+        if result:
+            return result
+        # If we got here, no builds have been found in the whole 3-year period
+        if strict:
+            raise IOError(f"Build record with NVR {nvr} not found.")
+        self.logger.warning('No builds found for NVR %s', nvr)
+        return None
+
+    async def get_build_records_by_nvrs(self, nvrs: typing.Sequence[str], outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.List[KonfluxRecord]:
+        """ Get build records by NVRS.
+        Note that this function only searches for the build records in the last 3 years.
+
+        :param nvrs: The NVRS of the builds.
+        :param outcome: The outcome of the builds.
+        :return: The build records.
+        """
+        nvrs = list(nvrs)
+        tasks = [asyncio.create_task(self.get_build_record_by_nvr(nvr=nvr, outcome=outcome, strict=strict)) for nvr in nvrs]
+        records = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [(nvr, record) for nvr, record in zip(nvrs, records) if isinstance(record, BaseException)]
+        if errors:
+            error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in errors)}"
+            if strict:
+                raise IOError(error_message)
+            self.logger.warning(error_message)
+        return typing.cast(typing.List[KonfluxRecord], records)

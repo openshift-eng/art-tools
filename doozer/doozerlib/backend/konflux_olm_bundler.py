@@ -249,7 +249,7 @@ class KonfluxOlmBundleRebaser:
         # Get image infos for all found images
         for pullspec, (namespace, image_short_name, image_tag) in references.items():
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-            image_info_tasks.append(asyncio.create_task(util.oc_image_info_async__caching(build_pullspec)))
+            image_info_tasks.append(asyncio.create_task(util.oc_image_info__caching_async(build_pullspec)))
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content
@@ -389,7 +389,7 @@ class KonfluxOlmBundleBuilder:
         self.skip_checks = skip_checks
         self.dry_run = dry_run
         self._logger = logger
-        self._konflux_client = KonfluxClient.from_kubeconfig(self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, self.dry_run)
+        self._konflux_client = KonfluxClient.from_kubeconfig(self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, plr_template=None, dry_run=self.dry_run)
 
     async def build(self, metadata: ImageMetadata):
         """ Build a bundle with Konflux. """
