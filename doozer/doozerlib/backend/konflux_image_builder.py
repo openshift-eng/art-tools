@@ -219,12 +219,12 @@ class KonfluxImageBuilder:
         return self._konflux_client.build_pipeline_url(pipelinerun)
 
     @staticmethod
-    async def get_installed_packages(image_pullspec, arches) -> list:
+    async def get_installed_packages(image_pullspec, arches, logger) -> list:
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
-        async def _get_for_arch(arch):
+        async def _get_for_arch(arch, logger):
             go_arch = go_arch_for_brew_arch(arch)
 
             cmd = [
@@ -250,16 +250,20 @@ class KonfluxImageBuilder:
                 # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
                 # so filter them out
                 if x.get("purl", '').startswith("pkg:"):
-                    purl = PackageURL.from_string(x["purl"])
-                    # right now, we only care about rpms
-                    if purl.type == "rpm":
-                        # get the source rpm
-                        source_rpm = purl.qualifiers.get("upstream", None)
-                        if source_rpm:
-                            source_rpms.add(source_rpm.rstrip(".src.rpm"))
+                    try:
+                        purl = PackageURL.from_string(x["purl"])
+                        # right now, we only care about rpms
+                        if purl.type == "rpm":
+                            # get the source rpm
+                            source_rpm = purl.qualifiers.get("upstream", None)
+                            if source_rpm:
+                                source_rpms.add(source_rpm.rstrip(".src.rpm"))
+                    except ValueError:
+                        logger.warning(f"Failed to get SBOM contents of {x['name']}")
+                        continue
             return source_rpms
 
-        results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
+        results = await asyncio.gather(*(_get_for_arch(arch, logger) for arch in arches))
         for arch, result in zip(arches, results):
             if not result:
                 raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
@@ -335,7 +339,7 @@ class KonfluxImageBuilder:
                 start_time = pipelinerun.status.startTime
                 end_time = pipelinerun.status.completionTime
 
-                installed_packages = await self.get_installed_packages(image_pullspec, building_arches)
+                installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
 
                 build_record_params.update({
                     'image_pullspec': image_pullspec,
