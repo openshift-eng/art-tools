@@ -40,7 +40,7 @@ class KonfluxClient:
         self._logger = logger
 
         plr_template_owner, plr_template_branch = plr_template.split("@") if plr_template else ["openshift-priv", "main"]
-        self.konflux_plr_template_url = constants.KONFLUX_PlR_TEMPLATE_URL.format(owner=plr_template_owner, branch=plr_template_branch)
+        self.konflux_plr_template_url = constants.KONFLUX_PlR_TEMPLATE_URL.format(owner=plr_template_owner, branch_name=plr_template_branch)
 
     @staticmethod
     def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], plr_template: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
