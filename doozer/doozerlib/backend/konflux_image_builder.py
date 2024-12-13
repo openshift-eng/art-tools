@@ -258,8 +258,8 @@ class KonfluxImageBuilder:
                             source_rpm = purl.qualifiers.get("upstream", None)
                             if source_rpm:
                                 source_rpms.add(source_rpm.rstrip(".src.rpm"))
-                    except ValueError:
-                        logger.warning(f"Failed to get SBOM contents of {x['name']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
             return source_rpms
 
