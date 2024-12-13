@@ -54,6 +54,8 @@ class GroupRuntime(ABC):
         self._logger = logging.getLogger('artcommonlib')
 
     def initialize_konxflux_db(self):
+        if self.konflux_db:
+            return  # already initialized
         try:
             self.konflux_db = KonfluxDb()
             self._logger.info('Konflux DB initialized ')

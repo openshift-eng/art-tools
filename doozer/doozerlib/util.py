@@ -550,29 +550,6 @@ def oc_image_info(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     return json.loads(out)
 
 
-@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(3))
-async def oc_image_info_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. Use oc_image_info__caching if you do not believe the image will change
-    during the course of doozer's execution.
-    """
-    # Filter by os because images can be multi-arch manifest lists (which cause oc image info to throw an error if not filtered).
-    cmd = ['oc', 'image', 'info', f'--filter-by-os={go_arch}', '-o', 'json', pull_spec]
-    _, out, _ = await exectools.cmd_gather_async(cmd)
-    return json.loads(out)
-
-
-@alru_cache(maxsize=1000)
-async def oc_image_info_async__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
-    """
-    Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This function will cache that output per pullspec, so do not use it
-    if you expect the image to change during the course of doozer's execution.
-    """
-    return await oc_image_info_async(pull_spec, go_arch)
-
-
 @lru_cache(maxsize=1000)
 def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     """
