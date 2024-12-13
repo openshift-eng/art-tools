@@ -61,6 +61,7 @@ class ConfigScanSources:
         self.base_search_params = {
             'group': self.runtime.group,
             'assembly': self.runtime.assembly,  # to let test ocp4-scan in non-stream assemblies, e.g. 'test'
+            'engine': Engine.KONFLUX.value,
         }
 
         self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
@@ -268,7 +269,6 @@ class ConfigScanSources:
         self.logger.info('Gathering latest image build records information...')
         latest_image_builds = await self.runtime.konflux_db.get_latest_builds(
             names=image_names,
-            engine=Engine.KONFLUX,
             **self.base_search_params)
         self.latest_image_build_records_map.update((zip(
             image_names, latest_image_builds)))
