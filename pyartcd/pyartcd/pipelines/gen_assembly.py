@@ -101,7 +101,7 @@ class GenAssemblyPipeline:
             if self.skip_get_nightlies:
                 candidate_nightlies = self.nightlies
             elif self.ignore_non_x86_nightlies:
-                candidate_nightlies = await self._get_latest_accepted_nightly()
+                candidate_nightlies = [await self._get_latest_accepted_nightly()]
             else:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
                     *[self._get_nightlies(), self._get_latest_accepted_nightly()])
@@ -119,7 +119,7 @@ class GenAssemblyPipeline:
             message = (f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
                        f"The inflight release is {self.in_flight}")
             if not self.skip_get_nightlies:
-                if latest_nightly not in candidate_nightlies:
+                if not self.ignore_non_x86_nightlies and latest_nightly not in candidate_nightlies:
                     message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
             else:
                 message += '\n\n:warning: note that `gen-assembly` was run with `--skip-get-nightlies`'
