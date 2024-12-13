@@ -48,7 +48,7 @@ class EnumEncoder(json.JSONEncoder):
 class KonfluxOcp4Pipeline:
     def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str], image_build_strategy: Optional[str],
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
-                 kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...]):
+                 kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...], plr_template: str):
         self.runtime = runtime
         self.assembly = assembly
         self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
@@ -56,6 +56,7 @@ class KonfluxOcp4Pipeline:
         self.kubeconfig = kubeconfig
         self.arches = arches
         self.skip_rebase = skip_rebase
+        self.plr_template = plr_template
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -141,6 +142,8 @@ class KonfluxOcp4Pipeline:
         ])
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
+        if self.plr_template:
+            cmd.extend(['--plr_template', self.plr_template])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
         await exectools.cmd_assert_async(cmd)
@@ -232,11 +235,13 @@ class KonfluxOcp4Pipeline:
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] Limit included arches to this list")
+@click.option('--plr-template', required=False, default='',
+              help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template')
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional[str], assembly: str,
                data_path: Optional[str], version: str, data_gitref: Optional[str], kubeconfig: Optional[str],
-               ignore_locks: bool, skip_rebase: bool, arches: Tuple[str, ...]):
+               ignore_locks: bool, skip_rebase: bool, arches: Tuple[str, ...], plr_template: str):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
@@ -254,7 +259,8 @@ async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional
         data_gitref=data_gitref,
         kubeconfig=kubeconfig,
         skip_rebase=skip_rebase,
-        arches=arches)
+        arches=arches,
+        plr_template=plr_template)
 
     if ignore_locks:
         await pipeline.run()
