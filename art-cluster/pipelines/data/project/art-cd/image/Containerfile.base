@@ -5,7 +5,7 @@ LABEL name="openshift-art/artcd-base" \
   maintainer="OpenShift Team Automated Release Tooling <aos-team-art@redhat.com>"
 
 # Trust Red Hat IT Root CA certificates and add repos
-RUN curl -fLo /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem https://certs.corp.redhat.com/certs/2022-IT-Root-CA.pem \
+RUN curl -fLo /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem \
  && update-ca-trust extract
 
 # Copy repository configurations for software installations
