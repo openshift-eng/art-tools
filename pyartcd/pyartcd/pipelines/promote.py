@@ -448,7 +448,11 @@ class PromotePipeline:
                     for arch, pullspec in pullspecs.items():
                         if arch == "multi":
                             continue
-                        jenkins.start_rhcos_sync(pullspec, dry_run=self.runtime.dry_run)
+
+                        # '4.19.0-ec.0-aarch64' from 'quay.io/openshift-release-dev/ocp-release:4.19.0-ec.0-aarch64'
+                        # Since rhocs_sync does not take the quay URL as prefix
+                        short_name = pullspec.split(":")[-1]
+                        jenkins.start_rhcos_sync(short_name, dry_run=self.runtime.dry_run)
 
         except Exception as err:
             self._logger.exception(err)
