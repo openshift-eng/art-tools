@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from google.cloud.bigquery import SchemaField
 
@@ -271,3 +271,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         ]
         self.db.bind(KonfluxBundleBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)
+
+    @patch("artcommonlib.konflux.konflux_db.KonfluxDb.search_builds_by_fields")
+    async def test_get_build_record_by_nvr(self, search_builds_by_fields_mock: MagicMock):
+        search_builds_by_fields_mock.return_value.__anext__.return_value = KonfluxBundleBuildRecord(nvr='ironic-1.2.3-4.el8')
+        nvr = 'ironic-1.2.3-4.el8'
+        build = await self.db.get_build_record_by_nvr('ironic-1.2.3-4.el8')
+        self.assertEqual(build.nvr, nvr)
+        search_builds_by_fields_mock.assert_called_once_with(where={'nvr': nvr, 'outcome': str(KonfluxBuildOutcome.SUCCESS)}, limit=1)
