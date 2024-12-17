@@ -6,7 +6,6 @@ import re
 from datetime import datetime, timezone
 from functools import cached_property, lru_cache
 from pathlib import Path
-import traceback
 from typing import Dict, Optional, Sequence, Tuple, cast
 
 import aiofiles
@@ -102,7 +101,7 @@ class KonfluxOlmBundleRebaser:
 
     async def _rebase_dir(self, metadata: ImageMetadata, operator_dir: Path, bundle_dir: Path, input_release: str):
         """ Rebase an operator directory with Konflux. """
-        csv_config = metadata.config['update-csv']
+        csv_config = metadata.config.get('update-csv')
         if not csv_config:
             raise ValueError(f"[{metadata.distgit_key}] No update-csv config found in the operator's metadata")
         if not csv_config.get('manifests-dir'):
@@ -117,6 +116,9 @@ class KonfluxOlmBundleRebaser:
         operator_bundle_dir = operator_manifests_dir.joinpath(csv_config['bundle-dir'])
         bundle_manifests_dir = bundle_dir.joinpath("manifests")
 
+        if not next(operator_bundle_dir.iterdir(), None):
+            raise FileNotFoundError(f"[{metadata.distgit_key}] No files found in bundle directory {operator_bundle_dir.relative_to(self.base_dir)}")
+
         # Read the operator's Dockerfile
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
         operator_component = operator_df.labels.get('com.redhat.component')
@@ -129,14 +131,12 @@ class KonfluxOlmBundleRebaser:
         # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
         file_path = glob.glob(f'{operator_manifests_dir}/*package.yaml')[0]
-        async with aiofiles.open(file_path, mode='r') as f:
+        async with aiofiles.open(file_path, 'r') as f:
             package_yaml = yaml.safe_load(await f.read())
         package_name = package_yaml['packageName']
         channel_name = str(package_yaml['channels'][0]['name'])
 
         # Copy the operator's manifests to the bundle directory
-        if not next(operator_bundle_dir.iterdir(), None):
-            raise FileNotFoundError(f"[{metadata.distgit_key}] No files found in bundle directory {operator_bundle_dir.relative_to(self.base_dir)}")
         bundle_manifests_dir.mkdir(parents=True, exist_ok=True)
         # Iterate through all bundle manifests files, replacing any image reference tag by its
         # corresponding SHA.
@@ -307,7 +307,7 @@ class KonfluxOlmBundleRebaser:
         stable_channel = "stable"
         # see: issues.redhat.com/browse/ART-3107
         if self._group_config.operator_channel_stable in ['default', 'extra']:
-            override_channel = ','.join({channel_name, stable_channel})
+            override_channel = ','.join((channel_name, stable_channel))
         if self._group_config.operator_channel_stable == 'default':
             override_default = stable_channel
         tags = {
@@ -463,7 +463,8 @@ class KonfluxOlmBundleBuilder:
     async def _start_build(self, metadata: ImageMetadata, bundle_build_repo: BuildRepo, image_repo: str, namespace: str,
                            skip_checks: bool = False, additional_tags: Optional[Sequence[str]] = None):
         """ Start a build with Konflux. """
-        assert bundle_build_repo.commit_hash is not None, "Bundle repository must have a commit hash to build"
+        if not bundle_build_repo.commit_hash:
+            raise IOError("Bundle repository must have a commit to build. Did you rebase?")
         konflux_client = self._konflux_client
         if additional_tags is None:
             additional_tags = []
@@ -494,13 +495,13 @@ class KonfluxOlmBundleBuilder:
         # Start a PipelineRun
         component_name = bundle_df.labels.get('com.redhat.component')
         if not component_name:
-            raise ValueError(f"{metadata.distgit_key}: Label 'com.redhat.component' is not set. Did you run rebase?")
+            raise IOError(f"{metadata.distgit_key}: Label 'com.redhat.component' is not set. Did you run rebase?")
         version = bundle_df.labels.get('version')
         if not version:
-            raise ValueError(f"{metadata.distgit_key}: Label 'version' is not set. Did you run rebase?")
+            raise IOError(f"{metadata.distgit_key}: Label 'version' is not set. Did you run rebase?")
         release = bundle_df.labels.get('release')
         if not release:
-            raise ValueError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
+            raise IOError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
         nvr = f"{component_name}-{version}-{release}"
         logger.info(f"Building bundle {nvr}...")
         pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
@@ -543,7 +544,7 @@ class KonfluxOlmBundleBuilder:
             release = df.labels['release']
             nvr = "-".join([component_name, version, release])
 
-            pipelinerun_name = pipelinerun['metadata']['name']
+            pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
 
             # Load .oit files
@@ -595,16 +596,16 @@ class KonfluxOlmBundleBuilder:
 
                     build_record_params.update({
                         'image_pullspec': image_pullspec,
-                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
-                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
+                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                         'image_tag': image_digest.removeprefix('sha256:'),
                     })
                 case KonfluxBuildOutcome.FAILURE:
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime
                     build_record_params.update({
-                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
-                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
+                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                     })
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)

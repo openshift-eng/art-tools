@@ -184,6 +184,7 @@ class BuildRepo:
         :param local_dir: The local directory containing the build source repository.
         :param logger: A logger object to use for logging messages
         :return: A BuildRepo object
+        :raises FileNotFoundError: If the local directory is not a git repository
         """
         local_dir = Path(local_dir)
         if not local_dir.joinpath(".git").exists():
