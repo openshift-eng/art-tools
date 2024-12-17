@@ -66,9 +66,10 @@ class KonfluxImageBuilder:
         self._logger = logger or LOGGER
         self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run, plr_template=config.plr_template)
 
-        for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
-            if secret not in os.environ:
-                raise EnvironmentError(f"Missing required environment variable {secret}")
+        if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
+            for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
+                if secret not in os.environ:
+                    raise EnvironmentError(f"Missing required environment variable {secret}")
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
@@ -219,8 +220,7 @@ class KonfluxImageBuilder:
     def build_pipeline_url(self, pipelinerun):
         return self._konflux_client.build_pipeline_url(pipelinerun)
 
-    @staticmethod
-    async def get_installed_packages(image_pullspec, arches, logger) -> list:
+    async def get_installed_packages(self, image_pullspec, arches, logger) -> list:
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
@@ -234,9 +234,14 @@ class KonfluxImageBuilder:
                 "sbom",
                 image_pullspec,
                 "--platform", f"linux/{go_arch}",
-                "--registry-username", f"{os.environ['KONFLUX_ART_IMAGES_USERNAME']}",
-                "--registry-password", f"{os.environ['KONFLUX_ART_IMAGES_PASSWORD']}",
             ]
+
+            if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
+                cmd += [
+                    "--registry-username", f"{os.environ['KONFLUX_ART_IMAGES_USERNAME']}",
+                    "--registry-password", f"{os.environ['KONFLUX_ART_IMAGES_PASSWORD']}",
+                ]
+
             rc, stdout, _ = await exectools.cmd_gather_async(cmd)
 
             if rc != 0:
