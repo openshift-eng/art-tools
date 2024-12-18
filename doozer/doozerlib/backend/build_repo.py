@@ -1,10 +1,14 @@
+import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional, Union
+from typing import List, Optional, Sequence, Union, cast
 
 from artcommonlib import git_helper, exectools
 from artcommonlib import util as art_util
+from doozerlib import constants
+from doozerlib.image import ImageMetadata
+from doozerlib.source_resolver import SourceResolution
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,7 +21,7 @@ class BuildRepo:
                  url: str,
                  branch: Optional[str],
                  local_dir: Union[str, Path],
-                 logger: Optional[logging.Logger]) -> None:
+                 logger: Optional[logging.Logger] = None) -> None:
         """ Initialize a BuildRepo object.
         :param url: The URL of the build source repository.
         :param branch: The branch of the build source repository to clone. None to not switch to any branch.

@@ -425,6 +425,7 @@ class KonfluxClient:
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
+        :param pipelinerun_template_url: The URL to the PipelineRun template.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
