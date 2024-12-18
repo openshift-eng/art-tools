@@ -50,12 +50,13 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         _get_certificate_account_name.return_value = "fake-service-account"
         umb = AsyncUMBClient.return_value
         receiver = umb.subscribe.return_value
-
-        async def iter_messages():
-            for item in range(3):
-                yield f"message-{item}"
-            return
-        receiver.iter_messages.side_effect = iter_messages
+        receiver.iter_messages = MagicMock()
+        fake_messages = [
+            MagicMock(
+                headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
+                body="")
+        ]
+        receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         signatory = AsyncSignatory(uri, cert_file, key_file, sig_keyname="test", requestor="fake-requestor", subscription_name="fake-subscription")
         await signatory.start()
         umb.subscribe.assert_awaited_once_with("/queue/Consumer.fake-service-account.fake-subscription.VirtualTopic.eng.robosignatory.art.sign", "fake-subscription")
@@ -69,16 +70,13 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         signatory = AsyncSignatory(uri, cert_file, key_file, sig_keyname="test", requestor="fake-requestor", subscription_name="fake-subscription")
         receiver = signatory._receiver = MagicMock(id="fake-subscription")
         datetime.utcnow.return_value = datetime(2023, 1, 2, 0, 0, 0)
-
-        async def iter_messages():
-            messages = [
-                MagicMock(
-                    headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                    body="")
-            ]
-            for item in messages:
-                yield item
-        receiver.iter_messages.side_effect = iter_messages
+        receiver.iter_messages = MagicMock()
+        fake_messages = [
+            MagicMock(
+                headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
+                body="")
+        ]
+        receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         umb = AsyncUMBClient.return_value
 
         await signatory._handle_messages()
@@ -94,16 +92,13 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         signatory = AsyncSignatory(uri, cert_file, key_file, sig_keyname="test", requestor="fake-requestor", subscription_name="fake-subscription")
         receiver = signatory._receiver = MagicMock(id="fake-subscription")
         datetime.utcnow.return_value = datetime(2023, 1, 1, 0, 1, 0)
-
-        async def iter_messages():
-            messages = [
-                MagicMock(
-                    headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                    body="")
-            ]
-            for item in messages:
-                yield item
-        receiver.iter_messages.side_effect = iter_messages
+        receiver.iter_messages = MagicMock()
+        fake_messages = [
+            MagicMock(
+                headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
+                body=json.dumps({"msg": {"request_id": "invalid-request-id"}}))
+        ]
+        receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         umb = AsyncUMBClient.return_value
 
         await signatory._handle_messages()
@@ -120,16 +115,13 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         receiver = signatory._receiver = MagicMock(id="fake-subscription")
         datetime.utcnow.return_value = datetime(2023, 1, 1, 0, 1, 0)
         signatory._requests["fake-request-id"] = asyncio.get_event_loop().create_future()
-
-        async def iter_messages():
-            messages = [
-                MagicMock(
-                    headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                    body=json.dumps({"msg": {"request_id": "fake-request-id"}}))
-            ]
-            for item in messages:
-                yield item
-        receiver.iter_messages.side_effect = iter_messages
+        receiver.iter_messages = MagicMock()
+        fake_messages = [
+            MagicMock(
+                headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
+                body=json.dumps({"msg": {"request_id": "fake-request-id"}}))
+        ]
+        receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         umb = AsyncUMBClient.return_value
 
         await signatory._handle_messages()

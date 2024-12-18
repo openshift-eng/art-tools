@@ -405,7 +405,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         load_releases_config.assert_awaited_once_with(group='openshift-4.10',
                                                       data_path='https://example.com/ocp-build-data.git')
 
-    @patch("pyartcd.locks.run_with_lock")
+    @patch("pyartcd.locks.run_with_lock", new_callable=MagicMock)
     @patch("pyartcd.pipelines.promote.PromotePipeline.sign_artifacts")
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.jenkins.start_cincinnati_prs")
@@ -443,7 +443,13 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
     @patch("pyartcd.pipelines.promote.PromotePipeline.create_cincinnati_prs")
     async def test_run_with_standard_assembly(self, create_cincinnati_prs: AsyncMock, send_promote_complete_email: Mock, get_image_stream: AsyncMock, load_group_config: AsyncMock,
                                               load_releases_config: AsyncMock, get_release_image_info: AsyncMock,
-                                              build_release_image: AsyncMock, start_cincinnati_prs: Mock, *_):
+                                              build_release_image: AsyncMock, start_cincinnati_prs: Mock,
+                                              from_url: Mock, sign_artifacts: AsyncMock, run_with_lock: AsyncMock):
+        def fake_run_with_lock(*args, **kwargs):
+            async def inner():
+                return await kwargs["coro"]
+            return inner()
+        run_with_lock.side_effect = fake_run_with_lock
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -507,6 +513,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.wait_for_stable.assert_any_await("4.10.99", "ppc64le", "4-stable-ppc64le")
         pipeline.wait_for_stable.assert_any_await("4.10.99", "aarch64", "4-stable-arm64")
         pipeline.send_image_list_email.assert_awaited_once_with("4.10.99", 2, ANY)
+        sign_artifacts.assert_awaited_once_with("4.10.99", "ocp", ANY, [])
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
