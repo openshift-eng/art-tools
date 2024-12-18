@@ -1,12 +1,14 @@
 import unittest
+import sys
 from unittest import TestCase
 from unittest.mock import MagicMock
 from pyartcd.pipelines.rebuild_golang_rpms import RebuildGolangRPMsPipeline
 
-
 class TestBumpRelease(TestCase):
 
     def setUp(self):
+        if "specfile" not in sys.modules:
+            self.skipTest("specfile is only available on Linux")
         runtime = MagicMock()
         self.pipeline = RebuildGolangRPMsPipeline(runtime, ocp_version="4.17", go_nvrs=["go1.16"], art_jira="JIRA-123",
                                                   cves=None)

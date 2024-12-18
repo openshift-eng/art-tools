@@ -6,7 +6,6 @@ import os
 import asyncio
 from typing import List
 from ghapi.all import GhApi
-from specfile import Specfile
 
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
@@ -19,12 +18,19 @@ from pyartcd.pipelines.update_golang import (is_latest_and_available,
                                              extract_and_validate_golang_nvrs,
                                              move_golang_bugs)
 
+try:
+    from specfile import Specfile  # Linux only
+except ImportError:
+    pass
+
 _LOGGER = logging.getLogger(__name__)
 
 
 class RebuildGolangRPMsPipeline:
     def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, cves: List[str],
                  go_nvrs: List[str], force: bool = False, rpms: List[str] = None):
+        if "Specfile" not in globals():
+            raise RuntimeError("This pipeline requires the 'specfile' module, which is only available on Linux")
         self.runtime = runtime
         self.ocp_version = ocp_version
         self.go_nvrs = go_nvrs
