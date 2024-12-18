@@ -24,6 +24,21 @@
                       "required": [
                         "stream!"
                       ]
+                    },
+                    {
+                      "required": [
+                        "member"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "member?"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "member!"
+                      ]
                     }
                   ]
                 }
