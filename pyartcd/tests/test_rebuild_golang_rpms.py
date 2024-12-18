@@ -4,6 +4,7 @@ from unittest import TestCase
 from unittest.mock import MagicMock
 from pyartcd.pipelines.rebuild_golang_rpms import RebuildGolangRPMsPipeline
 
+
 class TestBumpRelease(TestCase):
 
     def setUp(self):
