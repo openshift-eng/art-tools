@@ -305,6 +305,19 @@ class ConfigScanSources:
     async def scan_image(self, image_meta: ImageMetadata):
         self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
 
+        # Check if the component has ever been built
+        latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)
+        if not latest_build_record:
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
+                            reason=f'Component {image_meta.distgit_key} has no latest build '
+                                   f'for assembly {self.runtime.assembly}'))
+            return
+
+        # Check for changes in image arches
+        self.scan_arch_changes(image_meta)
+
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
@@ -318,21 +331,30 @@ class ConfigScanSources:
         await self.scan_builders_changes(image_meta)
 
     @skip_check_if_changing
+    def scan_arch_changes(self, image_meta: ImageMetadata):
+        """
+        Check if all arches the image should be built for are present in latest build record
+        """
+        target_arches = set(image_meta.get_arches())
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        build_arches = set(build_record.arches)
+
+        if target_arches != build_arches:
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(
+                    RebuildHintCode.ARCHES_CHANGE,
+                    f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
+            )
+
+    @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
         Determine if the current upstream source commit hash
         has a downstream build associated with it.
         """
 
-        # Check if the component has ever been built
-        latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)
-        if not latest_build_record:
-            self.add_image_meta_change(
-                image_meta,
-                RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                            reason=f'Component {image_meta.distgit_key} has no latest build '
-                                   f'for assembly {self.runtime.assembly}'))
-            return
+        latest_build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
         # We have no more "alias" source anywhere in ocp-build-data, and there's no such a thing as a distgit-only
         # component in Konflux; hence, assume that git is the only possible source for a component
