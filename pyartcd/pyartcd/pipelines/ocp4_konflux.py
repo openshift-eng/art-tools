@@ -143,7 +143,7 @@ class KonfluxOcp4Pipeline:
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.plr_template:
-            cmd.extend(['--plr_template', self.plr_template])
+            cmd.extend(['--plr-template', self.plr_template])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
         await exectools.cmd_assert_async(cmd)
