@@ -101,7 +101,7 @@ class ImagesHealthPipeline:
                    f'({self.url_text(latest_attempt_build_url, "jenkins job")}); ')
 
             # The latest attempt was a failure
-            if latest_success_idx == -1:
+            if latest_success_idx == -1 and len(builds) > 1:
                 # No success record was found
                 msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
             elif latest_success_idx > 1:
