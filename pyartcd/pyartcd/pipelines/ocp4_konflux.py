@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -51,7 +52,6 @@ class KonfluxOcp4Pipeline:
                  kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...], plr_template: str):
         self.runtime = runtime
         self.assembly = assembly
-        self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.version = version
         self.kubeconfig = kubeconfig
         self.arches = arches
@@ -65,7 +65,7 @@ class KonfluxOcp4Pipeline:
         self._doozer_base_command = [
             'doozer',
             f'--assembly={assembly}',
-            f'--working-dir={self._doozer_working}',
+            f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
             group_param
         ]
@@ -103,7 +103,7 @@ class KonfluxOcp4Pipeline:
             await exectools.cmd_assert_async(cmd)
 
         except ChildProcessError:
-            with open(f'{self._doozer_working}/state.yaml') as state_yaml:
+            with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
                 state = yaml.safe_load(state_yaml)
             failed_images = state['images:konflux:rebase'].get('failed-images', [])
             if not failed_images:
@@ -152,7 +152,7 @@ class KonfluxOcp4Pipeline:
 
     async def init_build_plan(self):
         # Get number of images in current group
-        shutil.rmtree(self._doozer_working, ignore_errors=True)
+        shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
         _, out, _ = await exectools.cmd_gather_async([*self._doozer_base_command.copy(), 'images:list'])
         # Last line looks like this: "219 images"
         self.build_plan.active_image_count = int(out.splitlines()[-1].split(' ')[0].strip())
@@ -200,6 +200,13 @@ class KonfluxOcp4Pipeline:
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
 
+    async def clean_up(self):
+        LOGGER.info('Cleaning up Doozer source dirs')
+        await asyncio.gather(*[
+            self.runtime.cleanup_sources('sources'),
+            self.runtime.cleanup_sources('konflux_build_sources'),
+        ])
+
     async def run(self):
         await self.initialize()
 
@@ -214,6 +221,8 @@ class KonfluxOcp4Pipeline:
 
         LOGGER.info(f"Building images for OCP {self.version} with release {input_release}")
         await self.build()
+
+        await self.clean_up()
 
 
 @cli.command("beta:ocp4-konflux", help="A pipeline to build images with Konflux for OCP 4")

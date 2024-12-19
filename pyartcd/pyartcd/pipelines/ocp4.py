@@ -83,7 +83,6 @@ class Ocp4Pipeline:
         self.comment_on_pr = comment_on_pr
         self.copy_links = copy_links
 
-        self._doozer_working = os.path.abspath(f'{self.runtime.working_dir / "doozer_working"}')
         self.data_path = data_path
         self.data_gitref = data_gitref
         self.success_nvrs = []
@@ -98,7 +97,7 @@ class Ocp4Pipeline:
         self._doozer_base_command = [
             'doozer',
             f'--assembly={assembly}',
-            f'--working-dir={self._doozer_working}',
+            f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
             group_param
         ]
@@ -111,7 +110,7 @@ class Ocp4Pipeline:
         If assembly != 'stream' and assemblies not enabled for <version>, raise an error
         """
 
-        shutil.rmtree(self._doozer_working, ignore_errors=True)
+        shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
         cmd = self._doozer_base_command.copy()
         cmd.extend(['config:read-group', '--default=False', 'assemblies.enabled'])
         _, out, err = await exectools.cmd_gather_async(cmd)
@@ -132,7 +131,7 @@ class Ocp4Pipeline:
         """
 
         # version.branch
-        shutil.rmtree(self._doozer_working, ignore_errors=True)
+        shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
         cmd = self._doozer_base_command.copy()
         cmd.extend(['config:read-group', 'branch'])
         _, out, _ = await exectools.cmd_gather_async(cmd)
@@ -153,7 +152,7 @@ class Ocp4Pipeline:
         """
 
         # build_plan.active_image_count
-        shutil.rmtree(self._doozer_working, ignore_errors=True)
+        shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
         cmd = self._doozer_base_command.copy()
         cmd.append('images:list')
         _, out, _ = await exectools.cmd_gather_async(cmd)  # Last line looks like this: "219 images"
@@ -222,7 +221,7 @@ class Ocp4Pipeline:
         return await util.is_build_permitted(
             version=self.version.stream,
             data_path=self.data_path,
-            doozer_working=self._doozer_working,
+            doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref)
 
     async def _initialize(self):
@@ -360,7 +359,7 @@ class Ocp4Pipeline:
             self._handle_rpm_build_failures()
 
         try:
-            with open(f'{self._doozer_working}/record.log', 'r') as file:
+            with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
                 record_log: dict = record_util.parse_record_log(file)
 
             success_map = record_util.get_successful_rpms(record_log, full_record=True)
@@ -375,7 +374,7 @@ class Ocp4Pipeline:
             self.runtime.logger.error(f"Failed to get successfully build RPM NVRs: {e}")
 
     def _handle_rpm_build_failures(self):
-        with open(f'{self._doozer_working}/record.log', 'r') as file:
+        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
             record_log: dict = record_util.parse_record_log(file)
 
         failed_map = record_util.get_failed_rpms(record_log)
@@ -397,7 +396,7 @@ class Ocp4Pipeline:
         automation_state: str = await util.get_freeze_automation(
             version=self.version.stream,
             doozer_data_path=self.data_path,
-            doozer_working=self._doozer_working,
+            doozer_working=self.runtime.doozer_working,
             doozer_data_gitref=self.data_gitref
         )
         self.runtime.logger.info('Automation freeze for %s: %s', self.version.stream, automation_state)
@@ -434,7 +433,7 @@ class Ocp4Pipeline:
                 stream=self.version.stream,
                 release=self.version.release,
                 assembly=self.assembly,
-                doozer_working=self._doozer_working,
+                doozer_working=self.runtime.doozer_working,
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
                 dry_run=self.runtime.dry_run,
@@ -489,7 +488,7 @@ class Ocp4Pipeline:
 
         except ChildProcessError:
             # Get a list of images that failed to rebase
-            with open(f'{self._doozer_working}/state.yaml') as state_yaml:
+            with open(f'{self.runtime.doozer_working}/state.yaml') as state_yaml:
                 state = yaml.safe_load(state_yaml)
             failed_images = list(
                 dict(
@@ -511,19 +510,19 @@ class Ocp4Pipeline:
 
         util.notify_dockerfile_reconciliations(
             version=self.version.stream,
-            doozer_working=self._doozer_working,
+            doozer_working=self.runtime.doozer_working,
             mail_client=self._mail_client
         )
 
         # TODO: if a non-required rebase fails, notify ART and the image owners
         util.notify_bz_info_missing(
             version=self.version.stream,
-            doozer_working=self._doozer_working,
+            doozer_working=self.runtime.doozer_working,
             mail_client=self._mail_client
         )
 
     def _handle_image_build_failures(self):
-        with open(f'{self._doozer_working}/record.log', 'r') as file:
+        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
             record_log: dict = record_util.parse_record_log(file)
 
         failed_map = record_util.get_failed_builds(record_log, full_record=True)
@@ -554,7 +553,7 @@ class Ocp4Pipeline:
         else:
             util.mail_build_failure_owners(
                 failed_builds=failed_map,
-                doozer_working=self._doozer_working,
+                doozer_working=self.runtime.doozer_working,
                 mail_client=self._mail_client,
                 default_owner=self.mail_list_failure
             )
@@ -599,7 +598,7 @@ class Ocp4Pipeline:
         # break CI builds for most upstream components if we don't catch it before we push. So we use apiserver as
         # bellweather to make sure that the current builder image is good enough. We can still break CI (e.g. pushing a
         # bad ruby-25 image along with this push, but it will not be a catastrophic event like breaking the apiserver.
-        with open(f'{self._doozer_working}/record.log', 'r') as file:
+        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
             record_log: dict = record_util.parse_record_log(file)
 
         success_map = record_util.get_successful_builds(record_log, full_record=True)
@@ -643,7 +642,7 @@ class Ocp4Pipeline:
 
         self.runtime.logger.info('Syncing built images')
 
-        with open(f'{self._doozer_working}/record.log', 'r') as file:
+        with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
             record_log: dict = record_util.parse_record_log(file)
 
         records = record_log.get('build', [])
@@ -764,7 +763,7 @@ class Ocp4Pipeline:
         if self.runtime.dry_run or (not self.build_plan.build_rpms and not self.build_plan.build_images):
             record_log = {}  # Nothing was actually built
         else:
-            with open(f'{self._doozer_working}/record.log', 'r') as file:
+            with open(f'{self.runtime.doozer_working}/record.log', 'r') as file:
                 record_log: dict = record_util.parse_record_log(file)
         metrics = record_log.get('image_build_metrics', None)
 
@@ -850,6 +849,7 @@ class Ocp4Pipeline:
 
         # All good
         self._report_success()
+        await self.runtime.cleanup_sources('sources')
 
 
 @cli.command("ocp4",
