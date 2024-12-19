@@ -461,10 +461,12 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
     else:
         cmd_list = cmd
 
+    # Remove any empty tokens from the command list
+    cmd_list = [token for token in cmd_list if token]
+
     span = trace.get_current_span()
     span.set_attribute("pyartcd.param.cmd", cmd_list)
 
-    logger.info("Executing:cmd_gather_async %s", cmd_list)
     # capture stdout and stderr if they are not set in kwargs
     if "stdout" not in kwargs:
         kwargs["stdout"] = asyncio.subprocess.PIPE
@@ -472,13 +474,17 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
         kwargs["stderr"] = asyncio.subprocess.PIPE
 
     # Propagate trace context to subprocess
-    env = kwargs.get("env", {})
     carrier = {}
     TraceContextTextMapPropagator().inject(carrier)
     if "traceparent" in carrier:
+        env = kwargs.get("env")
+        if env is None:
+            # Per Popen doc, a None env means "inheriting the current process’ environment".
+            # To inject the trace context, we need to copy the current environment.
+            env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
-        kwargs["env"] = env
 
+    logger.info("Executing:cmd_gather_async %s", cmd_list)
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
     stdout, stderr = await proc.communicate()
     stdout = stdout.decode() if stdout else ""
@@ -507,17 +513,22 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
     else:
         cmd_list = cmd
 
+    # Remove any empty tokens from the command list
+    cmd_list = [token for token in cmd_list if token]
+
     span = trace.get_current_span()
     span.set_attribute("pyartcd.param.cmd", cmd_list)
 
     # Propagate trace context to subprocess
-    env = kwargs.get("env", {})
     carrier = {}
     TraceContextTextMapPropagator().inject(carrier)
     if "traceparent" in carrier:
+        env = kwargs.get("env")
+        if env is None:
+            # Per Popen doc, a None env means "inheriting the current process’ environment".
+            # To inject the trace context, we need to copy the current environment.
+            env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
-        logger.warning("Pass TRACEPARENT %s", env["TRACEPARENT"])
-        kwargs["env"] = env
 
     logger.info("Executing:cmd_assert_async %s", cmd_list)
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)

@@ -79,6 +79,7 @@ class KonfluxRebaseCli:
                 failed_images.append(image_name)
                 LOGGER.error(f"Failed to rebase {image_name}: {result}")
         if failed_images:
+            runtime.state['images:konflux:rebase'] = {'failed-images': failed_images}
             raise DoozerFatalError(f"Failed to rebase images: {failed_images}")
         LOGGER.info("Rebase complete")
 
@@ -123,16 +124,20 @@ class KonfluxBuildCli:
         runtime: Runtime,
         konflux_kubeconfig: Optional[str],
         konflux_context: Optional[str],
-        konflux_namespace: Optional[str],
+        konflux_namespace: str,
         image_repo: str,
+        skip_checks: bool,
         dry_run: bool,
+        plr_template,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
         self.konflux_namespace = konflux_namespace
         self.image_repo = image_repo
+        self.skip_checks = skip_checks
         self.dry_run = dry_run
+        self.plr_template = plr_template
 
     @start_as_current_span_async(TRACER, "images:konflux:build")
     async def run(self):
@@ -148,7 +153,9 @@ class KonfluxBuildCli:
             context=self.konflux_context,
             namespace=self.konflux_namespace,
             image_repo=self.image_repo,
+            skip_checks=self.skip_checks,
             dry_run=self.dry_run,
+            plr_template=self.plr_template
         )
         builder = KonfluxImageBuilder(config=config)
         tasks = []
@@ -172,14 +179,17 @@ class KonfluxBuildCli:
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', required=True, help='The namespace to use for Konflux cluster connections.')
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
+@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option('--plr-template', required=False, default='',
+              help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template')
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
         runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-        konflux_namespace: Optional[str], image_repo: str, dry_run: bool):
+        konflux_namespace: str, image_repo: str, skip_checks: bool, dry_run: bool, plr_template):
     cli = KonfluxBuildCli(
         runtime=runtime, konflux_kubeconfig=konflux_kubeconfig,
         konflux_context=konflux_context, konflux_namespace=konflux_namespace,
-        image_repo=image_repo, dry_run=dry_run)
+        image_repo=image_repo, skip_checks=skip_checks, dry_run=dry_run, plr_template=plr_template)
     await cli.run()

@@ -4,15 +4,18 @@ import re
 import shutil
 import sys
 import tempfile
+import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Union, Iterable
+from typing import Dict, Optional, Union, Iterable, List, cast
+from tempfile import TemporaryDirectory
 
 import yaml
 
 import artcommonlib
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.release_util import isolate_assembly_in_release
 from artcommonlib.assembly import assembly_type
 from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
@@ -648,7 +651,8 @@ async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=Fa
     await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
 
 
-async def get_signing_mode(group: str = None, assembly: str = None, group_config: dict = None) -> str:
+async def get_signing_mode(group: str = None, assembly: str = None, group_config: dict = None,
+                           doozer_data_path: str = constants.OCP_BUILD_DATA_URL, doozer_data_gitref: str = '') -> str:
     """
     If any arch is GA, use signed mode for everything
     This also includes EOL ones, that might be triggered manually
@@ -658,7 +662,7 @@ async def get_signing_mode(group: str = None, assembly: str = None, group_config
     if not group_config:
         assert group, 'Group must be specified in order to load group config'
         assert assembly, 'Assembly must be specified in order to load group config'
-        group_config = await load_group_config(group=group, assembly=assembly)
+        group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref)
 
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
     return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'
@@ -684,3 +688,28 @@ def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
             nightly = f"registry.ci.openshift.org/ocp{arch_suffix}/release{arch_suffix}:{nightly}"
         arch_nightlies[arch] = nightly
     return arch_nightlies
+
+
+async def get_microshift_builds(group, assembly, env):
+    cmd = [
+        "elliott",
+        "--group", group,
+        "--assembly", assembly,
+        "-r", "microshift",
+        "find-builds",
+        "-k", "rpm",
+        "--member-only",
+    ]
+    with TemporaryDirectory() as tmpdir:
+        path = f"{tmpdir}/out.json"
+        cmd.append(f"--json={path}")
+        await exectools.cmd_assert_async(cmd, env=env)
+        with open(path) as f:
+            result = json.load(f)
+
+    nvrs = cast(List[str], result["builds"])
+
+    # microshift builds are special in that they build for each assembly after payload is promoted
+    # and they include the assembly name in its build name
+    # so make sure found nvrs are related to assembly
+    return [n for n in nvrs if isolate_assembly_in_release(n) == assembly]

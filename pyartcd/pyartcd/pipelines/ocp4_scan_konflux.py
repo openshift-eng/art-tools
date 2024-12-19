@@ -3,10 +3,12 @@ import logging
 import click
 import yaml
 
-from pyartcd import util, jenkins
-from pyartcd import constants, exectools
+from pyartcd import util, jenkins, locks
+from pyartcd import constants
 from pyartcd.cli import cli, pass_runtime, click_coroutine
+from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from artcommonlib import exectools
 
 
 class Ocp4ScanPipeline:
@@ -22,8 +24,13 @@ class Ocp4ScanPipeline:
         self._doozer_working = self.runtime.working_dir / "doozer_working"
         self.changes = {}
 
+        self.skipped = True  # True by default; if not locked, run() will set it to False
+
     async def run(self):
+        # If we get here, lock could be acquired
+        self.skipped = False
         scan_info = f'Scanning version {self.version}, assembly {self.assembly}, data path {self.data_path}'
+
         if self.data_gitref:
             scan_info += f'@{self.data_gitref}'
         self.logger.info(scan_info)
@@ -117,23 +124,52 @@ class Ocp4ScanPipeline:
               help='Doozer data path git [branch / tag / sha] to use')
 @click.option('--image-list', required=False,
               help='Comma/space-separated list to of images to scan, empty to scan all')
-@click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (only allowed in dry-run mode)')
 @pass_runtime
 @click_coroutine
-async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref,
-                    image_list: str, ignore_locks: bool):
+async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str):
     jenkins.init_jenkins()
 
-    # TODO handle locks
-    if ignore_locks and not runtime.dry_run:
-        raise RuntimeError('--ignore-locks can only by used with --dry-run')
-
-    await Ocp4ScanPipeline(
+    pipeline = Ocp4ScanPipeline(
         runtime=runtime,
         version=version,
         assembly=assembly,
         data_path=data_path,
         data_gitref=data_gitref,
         image_list=image_list,
-    ).run()
+    )
+
+    if runtime.dry_run:
+        await pipeline.run()
+
+    else:
+        lock = Lock.SCAN_KONFLUX
+        lock_name = lock.value.format(version=version)
+        lock_identifier = jenkins.get_build_path()
+        if not lock_identifier:
+            runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+
+        # Scheduled builds are already being skipped if the lock is already acquired.
+        # For manual builds, we need to check if the build and scan locks are already acquired,
+        # and skip the current build if that's the case.
+        # Should that happen, signal it by appending a [SKIPPED][LOCKED] to the build title
+        async def run_with_build_lock():
+            build_lock = Lock.BUILD_KONFLUX
+            build_lock_name = build_lock.value.format(version=version)
+            await locks.run_with_lock(
+                coro=pipeline.run(),
+                lock=build_lock,
+                lock_name=build_lock_name,
+                lock_id=lock_identifier,
+                skip_if_locked=True
+            )
+
+        await locks.run_with_lock(
+            coro=run_with_build_lock(),
+            lock=lock,
+            lock_name=lock_name,
+            lock_id=lock_identifier,
+            skip_if_locked=True
+        )
+
+    if pipeline.skipped:
+        jenkins.update_title(' [SKIPPED][LOCKED]')

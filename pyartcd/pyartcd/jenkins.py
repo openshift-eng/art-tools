@@ -25,9 +25,11 @@ jenkins_client: Optional[Jenkins] = None
 class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
+    BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
     OCP4_KONFLUX = 'aos-cd-builds/build%2Focp4-konflux'
     OCP4_SCAN = 'aos-cd-builds/build%2Focp4_scan'
+    OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
@@ -275,7 +277,8 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
     )
 
 
-def start_ocp4_konflux(build_version: str, assembly: str, image_list: list, **kwargs) -> Optional[str]:
+def start_ocp4_konflux(build_version: str, assembly: str, image_list: list,
+                       limit_arches: list = None, **kwargs) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly
@@ -284,6 +287,9 @@ def start_ocp4_konflux(build_version: str, assembly: str, image_list: list, **kw
     # Build only changed images or none
     if image_list:
         params['IMAGE_LIST'] = ','.join(image_list)
+    # Limit arches when requested
+    if limit_arches:
+        params['LIMIT_ARCHES'] = ','.join(limit_arches)
 
     return start_build(
         job=Jobs.OCP4_KONFLUX,
@@ -298,6 +304,17 @@ def start_ocp4_scan(version: str, **kwargs) -> Optional[str]:
     }
     return start_build(
         job=Jobs.OCP4_SCAN,
+        params=params,
+        **kwargs
+    )
+
+
+def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:
+    params = {
+        'VERSION': version,
+    }
+    return start_build(
+        job=Jobs.OCP4_SCAN_KONFLUX,
         params=params,
         **kwargs
     )
@@ -386,12 +403,25 @@ def start_sync_for_ci(version: str, **kwargs):
     )
 
 
-def start_microshift_sync(version: str, assembly: str, **kwargs):
+def start_microshift_sync(version: str, assembly: str, dry_run: bool, **kwargs):
     return start_build(
         job=Jobs.MICROSHIFT_SYNC,
         params={
             'BUILD_VERSION': version,
-            'ASSEMBLY': assembly
+            'ASSEMBLY': assembly,
+            'DRY_RUN': dry_run
+        },
+        **kwargs
+    )
+
+
+def start_build_microshift_bootc(version: str, assembly: str, dry_run: bool, **kwargs):
+    return start_build(
+        job=Jobs.BUILD_MICROSHIFT_BOOTC,
+        params={
+            'BUILD_VERSION': version,
+            'ASSEMBLY': assembly,
+            'DRY_RUN': dry_run
         },
         **kwargs
     )
@@ -401,12 +431,8 @@ def start_rhcos_sync(release_tag_or_pullspec: str, dry_run: bool, **kwargs) -> O
     return start_build(
         job=Jobs.RHCOS_SYNC,
         params={
-            'FROM_RELEASE_TAG': release_tag_or_pullspec,
+            'RELEASE_TAG': release_tag_or_pullspec,
             'DRY_RUN': dry_run,
-            # job determines these based on FROM_RELEASE_TAG
-            'OCP_VERSION': 'auto',
-            'ARCH': 'auto',
-            'MIRROR_PREFIX': 'auto',
         },
         **kwargs
     )

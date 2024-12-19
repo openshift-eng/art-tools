@@ -4,15 +4,19 @@ import os
 import tempfile
 import typing
 from datetime import datetime, timezone, timedelta
+from functools import wraps
 
 import click
+import dateutil.parser
 import yaml
 from typing import cast
+
+from async_lru import alru_cache
 
 import artcommonlib.util
 from artcommonlib import exectools
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine, KonfluxBuildOutcome
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.exceptions import DoozerFatalError
@@ -20,7 +24,8 @@ from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import isolate_timestamp_in_release
+from artcommonlib.release_util import isolate_timestamp_in_release
+from doozerlib.util import oc_image_info__caching_async
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -44,7 +49,8 @@ class ConfigScanSources:
         self.dry_run = dry_run
 
         self.all_rpm_metas = set(runtime.rpm_metas())
-        self.all_image_metas = set(runtime.image_metas())
+        self.all_image_metas = set(filter(lambda meta: meta.enabled or (
+            meta.mode == 'disabled' and self.runtime.load_disabled), runtime.image_metas()))
         self.all_metas = self.all_rpm_metas.union(self.all_image_metas)
 
         self.changing_image_names = set()
@@ -55,6 +61,7 @@ class ConfigScanSources:
         self.base_search_params = {
             'group': self.runtime.group,
             'assembly': self.runtime.assembly,  # to let test ocp4-scan in non-stream assemblies, e.g. 'test'
+            'engine': Engine.KONFLUX.value,
         }
 
         self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
@@ -262,7 +269,6 @@ class ConfigScanSources:
         self.logger.info('Gathering latest image build records information...')
         latest_image_builds = await self.runtime.konflux_db.get_latest_builds(
             names=image_names,
-            engine=Engine.KONFLUX,
             **self.base_search_params)
         self.latest_image_build_records_map.update((zip(
             image_names, latest_image_builds)))
@@ -277,30 +283,40 @@ class ConfigScanSources:
         # Store latest build records in a map, to reduce DB queries and execution time
         await self.find_latest_image_builds(image_names)
 
-        await asyncio.gather(*[self.scan_image(image_name) for image_name in image_names])
+        # Scan images for changes
+        scanning_image_metas = [self.runtime.image_map[image_name] for image_name in image_names]
+        await asyncio.gather(*[self.scan_image(image_meta) for image_meta in scanning_image_metas])
 
-    async def scan_image(self, image_name: str):
-        # Do not scan images that have already been requested for rebuild
-        if image_name in self.changing_image_names:
-            return
+    @staticmethod
+    def skip_check_if_changing(coro):
+        """
+        Do not scan images that have already been marked for rebuild
+        """
+        @wraps(coro)
+        async def inner(self, image_meta: ImageMetadata, *args, **kwargs):
+            if image_meta.distgit_key not in self.changing_image_names:
+                return await coro(self, image_meta, *args, **kwargs)
+            else:
+                self.logger.info('%s already marked as changed, skipping %s()', image_meta.distgit_key, coro.__name__)
 
-        self.logger.info(f'Scanning {image_name} for changes')
-        image_meta = self.runtime.image_map[image_name]
+        return inner
 
-        if not (image_meta.enabled or image_meta.mode == 'disabled' and self.runtime.load_disabled):
-            # Ignore disabled configs unless explicitly indicated
-            # An enabled image's dependents are always loaded.
-            return
+    @skip_check_if_changing
+    async def scan_image(self, image_meta: ImageMetadata):
+        self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
 
-        # If the component has never been built, mark for rebuild
-        latest_build_record = self.latest_image_build_records_map.get(image_name, None)
+        # Check if the component has ever been built
+        latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)
         if not latest_build_record:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                            reason=f'Component {image_name} has no latest build '
+                            reason=f'Component {image_meta.distgit_key} has no latest build '
                                    f'for assembly {self.runtime.assembly}'))
             return
+
+        # Check for changes in image arches
+        self.scan_arch_changes(image_meta)
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
@@ -311,6 +327,27 @@ class ConfigScanSources:
         # Check for dependency changes
         await self.scan_dependency_changes(image_meta)
 
+        # Check for changes in builders
+        await self.scan_builders_changes(image_meta)
+
+    @skip_check_if_changing
+    def scan_arch_changes(self, image_meta: ImageMetadata):
+        """
+        Check if all arches the image should be built for are present in latest build record
+        """
+        target_arches = set(image_meta.get_arches())
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        build_arches = set(build_record.arches)
+
+        if target_arches != build_arches:
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(
+                    RebuildHintCode.ARCHES_CHANGE,
+                    f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
+            )
+
+    @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
         Determine if the current upstream source commit hash
@@ -344,13 +381,14 @@ class ConfigScanSources:
 
         # Does most recent build match the one from the latest upstream commit?
         # If it doesn't, mark for rebuild
-        if latest_build_record.nvr != upstream_commit_build_record.nvr:
+        if latest_build_record.commitish != upstream_commit_hash:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
                             reason=f'Latest build {latest_build_record.nvr} does not match upstream commit build '
                                    f'{upstream_commit_build_record.nvr}; commit reverted?'))
 
+    @skip_check_if_changing
     async def handle_missing_upstream_commit_build(self, image_meta: ImageMetadata, upstream_commit_hash: str):
         """
         There is no build for this upstream commit. Two options to assess:
@@ -411,6 +449,7 @@ class ConfigScanSources:
             with open(config_digest) as f:
                 return f.read()
 
+    @skip_check_if_changing
     async def scan_for_config_changes(self, image_meta: ImageMetadata):
         try:
             latest_build_record = self.latest_image_build_records_map[image_meta.distgit_key]
@@ -450,6 +489,7 @@ class ConfigScanSources:
                                        RebuildHint(RebuildHintCode.CONFIG_CHANGE,
                                                    'Unable to retrieve config_digest'))
 
+    @skip_check_if_changing
     async def scan_dependency_changes(self, image_meta: ImageMetadata):
         # Get rebase time from image latest build record
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
@@ -497,6 +537,109 @@ class ConfigScanSources:
                     RebuildHint(RebuildHintCode.DEPENDENCY_NEWER, 'Dependency has a newer build'))
                 break
 
+    @alru_cache
+    async def get_builder_build_nvr(self, builder_image_name: str):
+        """
+        Given a builder stream definition,
+        """
+
+        if "." in builder_image_name.split('/', 2)[0]:
+            # looks like full pullspec with domain name; e.g. "registry.redhat.io/ubi8/nodejs-12:1-45"
+            builder_image_url = builder_image_name
+        else:
+            # Assume this is a org/repo name relative to brew; e.g. "openshift/ose-base:ubi8"
+            builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
+
+        # Find and map the builder image NVR
+        latest_builder_image_info = Model(await oc_image_info__caching_async(builder_image_url))
+        builder_info_labels = latest_builder_image_info.config.config.Labels
+        builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'],
+                            builder_info_labels['release']]
+
+        if not all(builder_nvr_list):
+            raise IOError(f'Unable to find nvr in {builder_info_labels}')
+
+        builder_image_nvr = '-'.join(builder_nvr_list)
+
+        return builder_image_nvr
+
+    @alru_cache
+    async def get_builder_build_start_time(self, builder_build_nvr: str) -> typing.Optional[datetime]:
+        """
+        Given a builder pullspec, determine the build start time.
+        First check if the build is tracked inside the Konflux DB.
+        If it's not, query Brew API to get the Brew build result. Querying Brew API will eventually go away.
+        """
+
+        try:
+            # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
+            # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
+            # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
+            # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
+            # so an option might be to store this information in Redis
+            nvr_timestamp = datetime.strptime(isolate_timestamp_in_release(builder_build_nvr), "%Y%m%d%H%M%S")
+            start_search = datetime(nvr_timestamp.year, nvr_timestamp.month, nvr_timestamp.day)
+
+        except TypeError:
+            # Default search window: last 365 days
+            self.logger.warning('Could not extract timestamp from NVR %s', builder_build_nvr)
+            start_search = datetime.now() - timedelta(days=365)
+
+        builds = await self.runtime.konflux_db.search_builds_by_fields(
+            start_search=start_search,
+            where={'nvr': builder_build_nvr, **self.base_search_params}
+        )
+        if builds.total_rows > 0:
+            return next(builds).start_time
+
+        # Builder build isn't tracked inside Konflux DB: look at Brew
+        with self.runtime.pooled_koji_client_session() as koji_api:
+            builder_brew_build = koji_api.getBuild(builder_build_nvr)
+            if builder_brew_build:
+                return dateutil.parser.parse(builder_brew_build['creation_time']).replace(tzinfo=timezone.utc)
+
+            # No builder build info?
+            self.logger.warning('Could not fetch build info for %s', builder_build_nvr)
+
+    @skip_check_if_changing
+    async def scan_builders_changes(self, image_meta: ImageMetadata):
+        """
+        Check whether non-member builder images have changed
+        """
+
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        builders = list(image_meta.config['from'].builder) or []
+        builders.append(image_meta.config['from'])
+
+        for builder in builders:
+            if builder.member:
+                # Member builder changes are already being propagated to descendants: skip
+                continue
+
+            # Resolve builder build NVR
+            if builder.image:
+                builder_image_name = builder.image
+            elif builder.stream:
+                builder_image_name = self.runtime.resolve_stream(builder.stream).image
+            else:
+                raise IOError(f'Unable to determine builder or parent image pullspec from {builder}')
+            builder_build_nvr = await self.get_builder_build_nvr(builder_image_name)
+
+            # Get the builder build start time
+            builder_build_start_time = await self.get_builder_build_start_time(builder_build_nvr)
+            if not builder_build_start_time:
+                continue
+
+            # If the builder build is newer, mark the image as changing
+            if build_record.start_time < builder_build_start_time:
+                self.logger.info('%s will be rebuilt because a builder or parent image has a newer build: %s',
+                                 image_meta.distgit_key, builder_build_nvr)
+                self.add_image_meta_change(
+                    image_meta, RebuildHint(RebuildHintCode.BUILDER_CHANGING,
+                                            f'A builder or parent image build {builder_build_nvr} is newer than latest '
+                                            f'{image_meta.distgit_key} build'))
+                return
+
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.
         key = f'{meta.qualified_key}+{rebuild_hint.rebuild}'
@@ -519,9 +662,21 @@ class ConfigScanSources:
             self.add_assessment_reason(descendant_meta, RebuildHint(RebuildHintCode.ANCESTOR_CHANGING,
                                                                     f'Ancestor {meta.distgit_key} is changing'))
 
+    def is_image_enabled(self, image_name: str) -> bool:
+        image_meta = self.runtime.image_map[image_name]
+        mode = image_meta.config.konflux.mode
+        enabled = mode != 'disabled' and mode != 'wip'
+        if not enabled:
+            self.logger.warning('Excluding image %s from the report as it is not enabled in Konflux', image_name)
+        return enabled
+
     def generate_report(self):
         image_results = []
         changing_image_names = [name for name in self.changing_image_names]
+
+        # Filter out images that are disabled or wip at the konflux level
+        changing_image_names = list(filter(lambda image_name: self.is_image_enabled(image_name), changing_image_names))
+
         for image_meta in self.all_image_metas:
             dgk = image_meta.distgit_key
             is_changing = dgk in changing_image_names

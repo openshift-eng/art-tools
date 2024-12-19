@@ -8,7 +8,8 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime
+from google.cloud.bigquery.table import RowIterator
+from sqlalchemy import Column, String, DateTime, func
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -109,8 +110,8 @@ class KonfluxDb:
             await asyncio.gather(*(loop.run_in_executor(pool, self.add_build, build) for build in builds))
 
     async def search_builds_by_fields(self, start_search: datetime, end_search: datetime = None,
-                                      where: typing.Dict[str, typing.Any] = None, order_by: str = '',
-                                      sorting: str = 'DESC', limit: int = None) -> list:
+                                      where: typing.Dict[str, typing.Any] = None, extra_patterns: dict = None,
+                                      order_by: str = '', sorting: str = 'DESC', limit: int = None) -> RowIterator:
         """
         Execute a SELECT * from the BigQuery table.
 
@@ -121,33 +122,35 @@ class KonfluxDb:
         Return a (possibly empty) list of results
         """
 
-        query = f'SELECT * FROM `{self.bq_client.table_ref}`'
-        query += f" WHERE `start_time` > '{start_search}'"
+        where_clauses = [
+            Column('start_time', DateTime) >= start_search,
+        ]
+
         if end_search:
-            query += f" AND `start_time` < '{end_search}'"
+            where_clauses.append(Column('start_time', DateTime) < end_search)
 
-        where_clauses = []
-        where = where if where is not None else {}
-        for name, value in where.items():
-            if value is not None:
-                where_clauses.append(f"`{name}` = '{value}'")
+        where = where if where else {}
+        for col_name, col_value in where.items():
+            if col_value is not None:
+                where_clauses.append(Column(col_name, String) == col_value)
             else:
-                where_clauses.append(f"`{name}` IS NULL")
-        if where_clauses:
-            query += ' AND '
-            query += ' AND '.join(where_clauses)
+                where_clauses.append(Column(col_name, String).is_(None))
 
-        if order_by:
-            query += f' ORDER BY `{order_by}` {sorting}'
+        extra_patterns = extra_patterns if extra_patterns else {}
+        for col_name, col_value in extra_patterns.items():
+            regexp_condition = func.REGEXP_CONTAINS(Column(col_name, String), col_value)
+            where_clauses.append(regexp_condition)
 
-        if limit is not None:
-            assert isinstance(limit, int)
-            assert limit >= 0, 'LIMIT expects a non-negative integer literal or parameter '
-            query += f' LIMIT {limit}'
+        order_by_clause = Column(order_by if order_by else 'start_time', quote=True)
+        order_by_clause = order_by_clause.desc() if sorting == 'DESC' else order_by_clause.asc()
 
-        results = await self.bq_client.query_async(query)
+        results = await self.bq_client.select(
+            where_clauses=where_clauses,
+            order_by_clause=order_by_clause,
+            limit=limit)
+
         self.logger.debug('Found %s builds', results.total_rows)
-        return [self.from_result_row(result) for result in results]
+        return results
 
     async def get_latest_builds(self, names: typing.List[str], group: str,
                                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, assembly: str = 'stream',
@@ -180,10 +183,6 @@ class KonfluxDb:
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         """
 
-        if not completed_before:
-            completed_before = datetime.now(tz=timezone.utc)
-        self.logger.info('Searching for %s builds completed before %s', name, completed_before)
-
         # Table is partitioned by start_time. Perform an iterative search within 3-month windows, going back to 3 years
         # at most. This will let us reduce the amount of scanned data (and the BigQuery usage cost), as in the vast
         # majority of cases we would find a build in the first 3-month interval.
@@ -192,10 +191,15 @@ class KonfluxDb:
             Column('group', String) == group,
             Column('outcome', String) == str(outcome),
             Column('assembly', String) == assembly,
-            Column('end_time').isnot(None),
-            Column('end_time', DateTime) < completed_before
         ]
         order_by_clause = Column('start_time', quote=True).desc()
+
+        if completed_before:
+            self.logger.info('Searching for %s builds completed before %s', name, completed_before)
+            base_clauses.extend([
+                Column('end_time').isnot(None),
+                Column('end_time', DateTime) < completed_before
+            ])
 
         if el_target:
             base_clauses.append(Column('el_target', String) == el_target)
@@ -209,8 +213,9 @@ class KonfluxDb:
         for col_name, col_value in extra_patterns.items():
             base_clauses.append(Column(col_name, String).like(f"%{col_value}%"))
 
+        started_before = datetime.now(tz=timezone.utc) if not completed_before else completed_before
         for window in range(12):
-            end_search = completed_before - window * 3 * timedelta(days=30)
+            end_search = started_before - window * 3 * timedelta(days=30)
             start_search = end_search - 3 * timedelta(days=30)
 
             where_clauses = copy.copy(base_clauses)

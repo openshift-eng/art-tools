@@ -6,17 +6,17 @@ import pathlib
 import re
 import urllib.parse
 from collections import deque
-from contextlib import contextmanager
 from datetime import datetime
-from inspect import getframeinfo, stack
 from itertools import chain
 from os.path import abspath
 from pathlib import Path
 from sys import getsizeof, stderr
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 import semver
 import yaml
+from async_lru import alru_cache
+from tenacity import retry, wait_fixed, stop_after_attempt
 
 import artcommonlib
 from artcommonlib import exectools
@@ -31,8 +31,6 @@ try:
 except ImportError:
     pass
 
-from doozerlib import constants
-from doozerlib.exceptions import DoozerFatalError
 from functools import lru_cache
 
 DICT_EMPTY = object()
@@ -361,24 +359,6 @@ def strip_epoch(nvr: str):
     return nvr.split(':')[0]
 
 
-def isolate_timestamp_in_release(release: str) -> Optional[str]:
-    """
-    Given a release field, determines whether is contains
-    a timestamp. If it does, it returns the timestamp.
-    If it is not found, None is returned.
-    """
-    match = re.search(r"(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})", release)  # yyyyMMddHHmm
-    if match:
-        year = int(match.group(1))
-        month = int(match.group(2))
-        day = int(match.group(3))
-        hour = int(match.group(4))
-        minute = int(match.group(5))
-        if year >= 2000 and month >= 1 and month <= 12 and day >= 1 and day <= 31 and hour <= 23 and minute <= 59:
-            return match.group(0)
-    return None
-
-
 def get_release_tag_datetime(release: str) -> Optional[str]:
     match = re.search(r"(\d{4})-(\d{2})-(\d{2})-(\d{6})", release)  # yyyy-MM-dd-HHmmss
     if match:
@@ -578,6 +558,30 @@ def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     if you expect the image to change during the course of doozer's execution.
     """
     return oc_image_info(pull_spec, go_arch)
+
+
+@retry(reraise=True, wait=wait_fixed(3), stop=stop_after_attempt(3))
+async def oc_image_info_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+    """
+    Returns a Dict of the parsed JSON output of `oc image info` for the specified
+    pullspec. Filter by os because images can be multi-arch manifest lists
+    (which cause oc image info to throw an error if not filtered).
+
+    Use oc_image_info__caching if you think the image won't change during the course of doozer's execution.
+    """
+    cmd = ['oc', 'image', 'info', f'--filter-by-os={go_arch}', '-o', 'json', pull_spec]
+    _, out, _ = await exectools.cmd_gather_async(cmd)
+    return json.loads(out)
+
+
+@alru_cache
+async def oc_image_info__caching_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+    """
+    Returns a Dict of the parsed JSON output of `oc image info` for the specified
+    pullspec. This function will cache that output per pullspec, so do not use it
+    if you expect the image to change during the course of doozer's execution.
+    """
+    return await oc_image_info_async(pull_spec, go_arch)
 
 
 def infer_assembly_type(custom, assembly_name):

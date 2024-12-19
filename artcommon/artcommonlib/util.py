@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 import requests
 from tenacity import retry, wait_fixed, stop_after_attempt
-
+from ruamel.yaml import YAML
 from artcommonlib.constants import RELEASE_SCHEDULES
 
 LOGGER = logging.getLogger(__name__)
@@ -32,6 +32,25 @@ def remove_suffix(s: str, suffix: str) -> str:
         return s[:-len(suffix)]
     else:
         return s[:]
+
+
+def new_roundtrip_yaml_handler():
+    """
+    Creates and returns a configured YAML handler with specific formatting settings.
+    Returns:
+        YAML: A YAML handler configured with:
+            - round-trip (rt) mode for preserving comments and formatting
+            - disabled flow style for better readability
+            - preserved quotes
+            - 4096 character line width
+            - custom indentation (2 spaces for mappings, 4 for sequences)
+    """
+    yaml = YAML(typ="rt")
+    yaml.default_flow_style = False
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    return yaml
 
 
 def convert_remote_git_to_https(source_url: str):
@@ -127,28 +146,26 @@ def is_future_release_date(date_str):
 
 def get_assembly_release_date(assembly, group):
     """
-    Get assembly release release date from release schedule API
-    """
-    assembly_release_date = None
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    Get assembly release release date from release schedule API.
 
+    :raises ValueError: If the assembly release date is not found
+    """
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     try:
         for release in release_schedules.json()['all_ga_tasks']:
             if assembly in release['name']:
                 # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
-                assembly_release_date = datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
-                break
-        return assembly_release_date
-
+                return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
     except KeyError:
-        return None
+        pass
+    raise ValueError(f'Assembly release date not found for {assembly}')
 
 
 def is_release_next_week(group):
     """
     Check if there release of group need to release in the near week
     """
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/schedule-tasks/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:
         release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
         if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
@@ -162,8 +179,6 @@ def get_inflight(assembly, group):
     """
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
-    if not assembly_release_date:
-        raise ValueError(f'Assembly release date not found for {assembly}')
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
     for release in release_schedules.json()['all_ga_tasks']:

@@ -23,3 +23,6 @@ BUNDLES_TABLE_ID = 'bundles'
 # Redis related vars
 REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'
 REDIS_PORT = '6379'
+
+# Telemetry
+OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector-psi-rhv.hosts.prod.psi.rdu2.redhat.com:4317"

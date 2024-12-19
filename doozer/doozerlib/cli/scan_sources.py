@@ -7,11 +7,11 @@ import yaml
 from typing import List, Tuple, Optional
 
 import artcommonlib.util
-from artcommonlib import exectools
+from artcommonlib import exectools, release_util
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
-from doozerlib import brew, rhcos, util
+from doozerlib import brew, rhcos
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
@@ -328,7 +328,7 @@ class ConfigScanSources:
             self.newest_image_event_ts = create_event_ts
 
     def check_dependents(self, image_meta: ImageMetadata, build_info):
-        rebase_time = util.isolate_timestamp_in_release(build_info["release"])
+        rebase_time = release_util.isolate_timestamp_in_release(build_info["release"])
         if not rebase_time:  # no timestamp string in NVR?
             return
 
@@ -354,7 +354,7 @@ class ConfigScanSources:
             if not dep_info:
                 return
 
-            dep_rebase_time = util.isolate_timestamp_in_release(dep_info["release"])
+            dep_rebase_time = release_util.isolate_timestamp_in_release(dep_info["release"])
             if not dep_rebase_time:  # no timestamp string in NVR?
                 return
 

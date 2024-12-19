@@ -14,8 +14,7 @@ from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from typing import List, Dict, Tuple
 
-
-JENKINS_BASE_URL = "https://jenkins-rhcos.apps.ocp-virt.prod.psi.redhat.com"
+JENKINS_BASE_URL = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 
 # lifted verbatim from
 # https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
@@ -47,7 +46,6 @@ class BuildRhcosPipeline:
         self.api_token = None
         self._stream = None  # rhcos stream the version maps to
         self.dry_run = self.runtime.dry_run
-
         self.request_session = requests.Session()
         retries = Retry(
             total=5, backoff_factor=1,
@@ -161,7 +159,7 @@ class BuildRhcosPipeline:
     def start_build(self):
         """Start a new build for the given version"""
         # determine parameters
-        params = dict(STREAM=self.stream, EARLY_ARCH_JOBS="false")
+        params = dict(STREAM=self.stream, EARLY_ARCH_JOBS="true")
         if self.new_build:
             params["FORCE"] = "true"
         job_url = f"{JENKINS_BASE_URL}/job/build/buildWithParameters"

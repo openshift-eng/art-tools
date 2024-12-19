@@ -346,7 +346,6 @@ ENV https_proxy ${{HTTPS_PROXY}}
 
 # Certs necessary to install from internal repos
 RUN curl -k https://certs.corp.redhat.com/certs/2022-IT-Root-CA.pem --output /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem
-RUN curl -k https://certs.corp.redhat.com/certs/2015-IT-Root-CA.pem --output /etc/pki/ca-trust/source/anchors/2015-IT-Root-CA.pem
 RUN update-ca-trust && update-ca-trust enable
 
 # Add typical build repos to the image, but don't add to /etc/yum.repos.d

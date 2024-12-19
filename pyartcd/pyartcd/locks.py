@@ -14,10 +14,12 @@ class Lock(enum.Enum):
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
     PLASHET = 'lock:compose:{assembly}:{version}'
     BUILD = 'lock:build:{version}'
+    BUILD_KONFLUX = 'lock:build-konflux:{version}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
     SCAN = 'lock:scan:{version}'
+    SCAN_KONFLUX = 'lock:scan-konflux:{version}'
 
 
 class Keys(enum.Enum):
@@ -55,6 +57,11 @@ LOCK_POLICY = {
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
+    Lock.BUILD_KONFLUX: {
+        'retry_count': 36000 * 1,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+    },
     Lock.MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
@@ -71,6 +78,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.SCAN: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+    },
+    Lock.SCAN_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT

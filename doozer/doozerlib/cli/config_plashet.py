@@ -1,4 +1,3 @@
-import glob
 import itertools
 import logging
 import os
@@ -13,6 +12,7 @@ import click
 import requests
 import yaml
 
+from artcommonlib.assembly import assembly_type, AssemblyTypes
 from artcommonlib.build_util import find_latest_builds
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
@@ -488,7 +488,10 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     --brew-tag <tag> <product_version> example: --brew-tag rhaos-4.5-rhel-8-candidate OSE-4.5-RHEL-8 --brew-tag .. ..
     """
     runtime: Runtime = config.runtime
-    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True)
+    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True,
+                       # we load disabled to include microshift rpm which still could be pinned for assembly
+                       # and eligible for plashet inclusion
+                       disabled=True)
     assembly = runtime.assembly
     koji_proxy = runtime.build_retrying_koji_client()
     koji_proxy.gssapi_login()
@@ -539,6 +542,16 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
         # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only collect the rpm builds specific to that assembly.
         tagged_builds = builder.from_tag(tag, inherit, assembly, event)
         component_builds.update(tagged_builds)
+
+        # For named assemblies, microshift rpm is built and pinned to the assembly after promotion
+        # To include this pinned rpm in our plashet sync, we have to
+        # first fetch a placeholder build of microshift from the "microshift" assembly (stream assembly equivalent for microshift)
+        # This build will be later be overridden by the pinned build from the assembly definition (if present)
+        current_assembly_type = assembly_type(runtime.releases_config, runtime.assembly)
+        if current_assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]:
+            microshift_build = builder.from_tag(tag, inherit, 'microshift', event, only=['microshift'])
+            component_builds.update(microshift_build)
+
         signable_components |= tagged_builds.keys()  # components from our tag are always signable
 
         # rpms pinned by "is" and group dependencies should take precedence over every build from the tag
