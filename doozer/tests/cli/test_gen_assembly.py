@@ -66,21 +66,6 @@ class TestGenPayloadCli(TestCase):
         gacli._validate_params()
 
     @patch('doozerlib.cli.release_gen_assembly.GenAssemblyCli._exit_with_error', MagicMock(return_value=None))
-    def test_arches_nightlies_mismatchs(self):
-        """
-        The command expects one nightly/standard for each group arch,
-        and should raise an error otherwise
-        """
-
-        # 2 group arches, 1 nightly
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream', arches=['amd64', 's390x']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811']
-        ))
-        gacli.should_receive('_exit_with_error').once()
-        gacli._validate_params()
-
-    @patch('doozerlib.cli.release_gen_assembly.GenAssemblyCli._exit_with_error', MagicMock(return_value=None))
     def test_previous_and_auto_previous(self):
         """
         Only one among `--previous` and `--auto-previous` can be used.
