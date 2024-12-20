@@ -401,7 +401,7 @@ class GenAssemblyCli:
         rhcos_el_major = self.runtime.group_config.vars.RHCOS_EL_MAJOR
         rhcos_el_minor = self.runtime.group_config.vars.RHCOS_EL_MINOR
 
-        for arch in self.runtime.arches:
+        for arch in self.runtime.group_config.arches:
             if arch in self.rhcos_by_tag[self.primary_rhcos_tag]:
                 continue
 
