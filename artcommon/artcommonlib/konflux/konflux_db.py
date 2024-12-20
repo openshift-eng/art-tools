@@ -115,24 +115,26 @@ class KonfluxDb:
             self,
             start_search: typing.Optional[datetime] = None,
             end_search: typing.Optional[datetime] = None,
-            window_size: int = DEFAULT_SEARCH_WINDOW,
+            window_size: int | None = None,
             where: typing.Optional[typing.Dict[str, typing.Any]] = None,
             extra_patterns: typing.Optional[dict] = None,
             order_by: str = '',
             sorting: str = 'DESC',
             limit: typing.Optional[int] = None,
-    ):
+            strict: bool = False,
+    ) -> typing.AsyncIterator[KonfluxRecord]:
         """
         Execute a SELECT * from the BigQuery table.
 
         "where" is an optional dictionary that maps names and values to define a WHERE clause.
         "start_search" is a lower bound to be applied to the partitioning field `start_time`. If None, the search starts 360 days ago.
         "end_search" can optionally be provided as an upper bound for the same field. If None, the search ends now.
-        "window_size" is the number of days to search in each iteration. If 0, the whole period is searched at once.
+        "window_size" is the number of days to search in each iteration.
         "extra_patterns" is an optional dictionary that maps names and values to define extra patterns to be matched.
         "order_by" is the column to order by.
         "sorting" is the sorting order.
         "limit" is the maximum number of results to return. None for no limit.
+        "strict" is a flag that raises an exception if no results are found.
 
         Return a generator that yields KonfluxRecord objects.
         """
@@ -141,11 +143,8 @@ class KonfluxDb:
             raise ValueError(f"start_search {start_search} must be earlier than end_search {end_search}")
         end_search = end_search or datetime.now(tz=timezone.utc)
         start_search = start_search or end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
-        if window_size < 0:
-            raise ValueError(f"search_window {window_size} must be a non-negative integer")
-        elif window_size == 0:
-            # If window_size is 0, search the whole period at once
-            window_size = (end_search - start_search).days
+        assert window_size is None or window_size > 0, f"search_window {window_size} must be a positive integer"
+        window_size = window_size or DEFAULT_SEARCH_WINDOW
 
         base_clauses = []
         where = where or {}
@@ -178,6 +177,10 @@ class KonfluxDb:
                 yield self.from_result_row(row)
                 if limit is not None and total_rows >= limit:
                     return
+        if total_rows == 0:
+            self.logger.warning('No builds found with the given criteria')
+            if strict:
+                raise IOError('No builds found with the given criteria')
 
     async def get_latest_builds(
             self,
@@ -263,7 +266,7 @@ class KonfluxDb:
 
         end_search = datetime.now(tz=timezone.utc) if not completed_before else completed_before
         start_search = end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
-        for window in range(0, (end_search - start_search).days, DEFAULT_SEARCH_WINDOW):
+        for window in range(0, DEFAULT_SEARCH_DAYS, DEFAULT_SEARCH_WINDOW):
             end_window = end_search - timedelta(days=window)
             start_window = max(end_window - timedelta(days=DEFAULT_SEARCH_WINDOW), start_search)
             where_clauses = copy.copy(base_clauses)
@@ -333,7 +336,11 @@ class KonfluxDb:
         :return: The build records.
         """
         nvrs = list(nvrs)
-        tasks = [asyncio.create_task(self.get_build_record_by_nvr(nvr=nvr, outcome=outcome, strict=strict)) for nvr in nvrs]
+
+        async def _task(nvr):
+            where = {"nvr": nvr, "outcome": str(outcome)}
+            return await anext(self.search_builds_by_fields(where=where, limit=1, strict=True))
+        tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
         records = await asyncio.gather(*tasks, return_exceptions=True)
         errors = [(nvr, record) for nvr, record in zip(nvrs, records) if isinstance(record, BaseException)]
         if errors:
