@@ -470,7 +470,7 @@ class ConfigScanSources:
                     if rc != 0:
                         raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir} for {path}')
 
-                if commit_message.lower().startswith('scan-sources:noop'):
+                if 'scan-sources-konflux:noop' in commit_message.lower():
                     self.logger.info('Ignoring digest change since commit message indicates noop')
                 else:
                     self.add_image_meta_change(image_meta,
