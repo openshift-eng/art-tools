@@ -467,6 +467,14 @@ class ImageMetadata(Metadata):
         ignore_keys = ["owners", "scan_sources", "content.source.ci_alignment",
                        "content.source.git", "external_scanners", "delivery"]  # list of keys that shouldn't be involved in config digest calculation
         image_config: Dict[str, Any] = deepcopy(self.config.primitive())
+
+        # Use a separate Dockerfile for konflux if required
+        # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
+        konflux_dockerfile_override = image_config.konflux.content.source.dockerfile
+        if konflux_dockerfile_override:
+            self._logger.info(f"scan-sources: Override dockerfile for konflux, using: {konflux_dockerfile_override}")
+            image_config.content.source.dockerfile = konflux_dockerfile_override
+
         group_config: Dict[str, Any] = group_config.primitive()
         streams: Dict[str, Any] = streams.primitive()
 
