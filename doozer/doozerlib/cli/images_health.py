@@ -109,7 +109,7 @@ class ImagesHealthPipeline:
                         f'was {latest_success_idx} attempts ago')
             elif latest_success_idx == 1:
                 # Do nothing
-                pass
+                return  # skipping notifications when only latest attempt failed
 
             # Append the Art-Dash link to the message
             msg += f'. {self.url_text(art_dash_link, "Details")}'
