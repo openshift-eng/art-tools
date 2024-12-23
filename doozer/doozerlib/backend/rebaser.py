@@ -110,13 +110,6 @@ class KonfluxRebaser:
 
             dest_dir = self._base_dir.joinpath(metadata.qualified_key)
 
-            # Use a separate Dockerfile for konflux if required
-            # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
-            dockerfile_override = metadata.config.konflux.content.source.dockerfile
-            if dockerfile_override:
-                self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
-                metadata.config.content.source.dockerfile = dockerfile_override
-
             # Clone the build repository
             build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
             await build_repo.ensure_source(upcycle=self.upcycle)
@@ -157,6 +150,15 @@ class KonfluxRebaser:
         dest_dir = build_repo.local_dir
         df_path = dest_dir.joinpath('Dockerfile')
         source_dir = None
+
+        self._generate_config_digest(metadata, dest_dir)
+
+        # Use a separate Dockerfile for konflux if required
+        # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
+        dockerfile_override = metadata.config.konflux.content.source.dockerfile
+        if dockerfile_override:
+            self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
+            metadata.config.content.source.dockerfile = dockerfile_override
 
         # If this image has upstream source, merge it into the build repo
         if source:
@@ -544,8 +546,6 @@ class KonfluxRebaser:
                           force_yum_updates: bool, image_repo: str, uuid_tag: str):
         with exectools.Dir(dest_dir):
             self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
-
-            self._generate_config_digest(metadata, dest_dir)
 
             self._write_cvp_owners(metadata, dest_dir)
 
