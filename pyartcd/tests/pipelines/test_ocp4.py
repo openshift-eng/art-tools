@@ -258,7 +258,7 @@ class TestBuilds(unittest.IsolatedAsyncioTestCase):
     @patch("os.path.abspath", return_value='doozer_working')
     def default_ocp4_pipeline(*_) -> ocp4.Ocp4Pipeline:
         pipeline = ocp4.Ocp4Pipeline(
-            runtime=MagicMock(dry_run=False),
+            runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
             assembly='stream',
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,
@@ -575,7 +575,7 @@ class TestUpdateDistgit(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_update_distgit(self, cmd_assert_mock: AsyncMock, bz_info_missing_mock, reconciliations_mock, *_):
         pipeline = ocp4.Ocp4Pipeline(
-            runtime=MagicMock(dry_run=False),
+            runtime=MagicMock(dry_run=False, doozer_working='doozer_working'),
             assembly='stream',
             version='4.13',
             data_path=constants.OCP_BUILD_DATA_URL,

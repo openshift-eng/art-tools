@@ -1,11 +1,13 @@
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import tomli
 
 from artcommonlib import runtime, model
+from artcommonlib.exectools import cmd_gather_async
 from pyartcd import jenkins, util, constants
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
@@ -16,6 +18,7 @@ class Runtime:
     def __init__(self, config: Dict[str, Any], working_dir: Path, dry_run: bool):
         self.config = config
         self.working_dir = working_dir
+        self.doozer_working = os.path.abspath(f'{self.working_dir / "doozer_working"}')
         self.dry_run = dry_run
         self.logger = self.init_logger()
 
@@ -59,6 +62,23 @@ class Runtime:
 
     def new_mail_client(self):
         return MailService.from_config(self.config)
+
+    async def cleanup_sources(self, source_dir_name: str):
+        """
+        Removes the git sources cloned by Doozer using rsync
+        """
+
+        source_path = f'{self.doozer_working}/{source_dir_name}'
+        self.logger.info('About to remove source dir %s...', source_path)
+        empty_to_overwrite_path = f'{self.doozer_working}/empty_to_overwrite/'
+
+        # Create the empty directory and delete the source dir with rsync --delete
+        Path(empty_to_overwrite_path).mkdir(parents=True, exist_ok=True)
+        cmd = ['rsync', '-a', '--delete', f'{empty_to_overwrite_path}', source_path]
+        self.logger.info('Executing rsync delete operation: %s', ' '.join(cmd))
+        start_time = datetime.now()
+        await cmd_gather_async(cmd)
+        self.logger.info('Deleted %s in %s seconds', source_path, (datetime.now() - start_time).seconds)
 
 
 class GroupRuntime(runtime.GroupRuntime):
