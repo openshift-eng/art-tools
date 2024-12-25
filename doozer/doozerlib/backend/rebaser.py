@@ -798,7 +798,7 @@ class KonfluxRebaser:
         # The config digest is used by scan-sources to detect config changes
         self._logger.debug("Calculating config digest...")
         digest = metadata.calculate_config_digest(self._runtime.group_config, self._runtime.streams)
-        os.makedirs(f"{dest_dir}/.oit")
+        os.makedirs(f"{dest_dir}/.oit", exist_ok=True)
         with dest_dir.joinpath(".oit", "config_digest").open('w') as f:
             f.write(digest)
         self._logger.info("Saved config digest %s to .oit/config_digest", digest)
