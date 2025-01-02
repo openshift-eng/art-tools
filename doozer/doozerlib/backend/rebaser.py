@@ -751,6 +751,8 @@ class KonfluxRebaser:
         # Inject build repos for Konflux
         self._add_build_repos(dfp)
 
+        self._comment_out_cachito(df_path)
+
         self._reflow_labels(df_path)
 
     def _add_build_repos(self, dfp: DockerfileParser):
@@ -771,6 +773,29 @@ class KonfluxRebaser:
             "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
             "# End Konflux-specific steps\n\n"
         )
+
+    def _comment_out_cachito(self, df_path):
+        """
+        Konflux does not support cachito, comment it out to support green non-hermetic builds
+        """
+        dfp = DockerfileParser()
+        dfp.content = open(df_path, "r").read()
+
+        # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR'
+        lines = dfp.lines
+        updated_lines = []
+        for line in lines:
+            if "REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line:
+                updated_lines.append(f"#{line.strip()}\n")
+            else:
+                updated_lines.append(line)
+
+        if updated_lines:
+            dfp.content = "".join(updated_lines)
+            with open(df_path, "w") as file:
+                file.write(dfp.content)
+
+            self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SROUCES_DIR' have been commented out, since cachito is not supported on konflux")
 
     def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
