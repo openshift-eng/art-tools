@@ -784,18 +784,26 @@ class KonfluxRebaser:
         # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR'
         lines = dfp.lines
         updated_lines = []
+        line_commented = False
         for line in lines:
             if "REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line:
                 updated_lines.append(f"#{line.strip()}\n")
+                line_commented = True
             else:
+                if line_commented:
+                    # Sometimes there will be '&& yarn install ...' command. So replace the leading && with RUN, since
+                    # we comment that out earlier
+                    if line.strip().startswith("&&"):
+                        line = line.replace("&&", "RUN")
                 updated_lines.append(line)
+                line_commented = False
 
         if updated_lines:
             dfp.content = "".join(updated_lines)
             with open(df_path, "w") as file:
                 file.write(dfp.content)
 
-            self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SROUCES_DIR' have been commented out, since cachito is not supported on konflux")
+            self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux")
 
     def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
