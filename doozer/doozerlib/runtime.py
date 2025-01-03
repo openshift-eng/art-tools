@@ -755,6 +755,12 @@ class Runtime(GroupRuntime):
         """
         return list(self.arches)
 
+    def get_konflux_global_arches(self):
+        """
+        :return: Returns a list of architectures that are enabled globally in group.yml, for Konflux.
+        """
+        return list(self.konflux_arches)
+
     def get_product_config(self) -> Model:
         """
         Returns a Model of the product.yml in ocp-build-data main branch.

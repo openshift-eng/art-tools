@@ -297,6 +297,22 @@ class Metadata(object):
         else:
             return list(self.runtime.get_global_arches())
 
+    def get_konflux_arches(self):
+        """
+        :return: Returns the list of architecture this image/rpm should build for, in Konflux. This is an intersection
+        of config specific arches & globally enabled arches in group.yml
+        """
+        if self.config.arches:
+            ca = self.config.arches
+            intersection = list(set(self.runtime.get_konflux_global_arches()) & set(ca))
+            if len(intersection) != len(ca):
+                self.logger.info(f'Arches are being pruned by group.yml. Using computed {intersection} vs config list {ca}')
+            if not intersection:
+                raise ValueError(f'No arches remained enabled in {self.qualified_key}')
+            return intersection
+        else:
+            return list(self.runtime.get_global_arches())
+
     def cgit_atom_feed(self, commit_hash: Optional[str] = None, branch: Optional[str] = None) -> List[CgitAtomFeedEntry]:
         """
         :param commit_hash: Specify to receive an entry for the specific commit (branch ignored if specified).
