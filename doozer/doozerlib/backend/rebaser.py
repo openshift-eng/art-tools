@@ -1025,7 +1025,7 @@ class KonfluxRebaser:
         """
 
         # list of platform (architecture) names to build this image for
-        arches = metadata.get_arches()
+        arches = metadata.get_konflux_arches() if metadata.get_konflux_arches() else metadata.get_arches()
 
         # override image config with this dict
         config_overrides = {}

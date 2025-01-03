@@ -395,7 +395,7 @@ class ConfigScanSources:
         """
         Check if all arches the image should be built for are present in latest build record
         """
-        target_arches = set(image_meta.get_arches())
+        target_arches = set(image_meta.get_konflux_arches() if image_meta.get_konflux_arches() else image_meta.get_arches())
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         build_arches = set(build_record.arches)
 
