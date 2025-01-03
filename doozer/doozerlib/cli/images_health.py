@@ -11,7 +11,7 @@ from doozerlib import Runtime
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
-DELTA_DAYS = 7  # look at latest 7 days
+DELTA_DAYS = 30  # look at latest 30 days
 
 
 class ImagesHealthPipeline:
