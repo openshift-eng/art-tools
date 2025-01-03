@@ -751,7 +751,7 @@ class KonfluxRebaser:
         # Inject build repos for Konflux
         self._add_build_repos(dfp)
 
-        self._comment_out_cachito(df_path)
+        self._modify_cachito_commands(df_path)
 
         self._reflow_labels(df_path)
 
@@ -774,27 +774,45 @@ class KonfluxRebaser:
             "# End Konflux-specific steps\n\n"
         )
 
-    def _comment_out_cachito(self, df_path):
+    def _modify_cachito_commands(self, df_path):
         """
         Konflux does not support cachito, comment it out to support green non-hermetic builds
+        For yarn, download it if its missing.
         """
         dfp = DockerfileParser()
         dfp.content = open(df_path, "r").read()
 
-        # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR'
         lines = dfp.lines
         updated_lines = []
         line_commented = False
+        yarn_line_updated = False
         for line in lines:
+            if 'echo "need yarn at ${CACHED_YARN}"' in line:
+                # For nmstate-console-plugin and networking-console-plugin the build will error out if it doesn't see a yarn installation at that exact place
+                # So follow the pattern as other images do, and download yarn for now
+                line = line.replace('echo "need yarn at ${CACHED_YARN}"', "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz")
+                updated_lines.append(line)
+                yarn_line_updated = True
+                self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
+                continue
+
+            if yarn_line_updated:
+                if "exit 1" in line:
+                    # The 'exit 1' command follows the 'need yarn ...' message. We need to skip that
+                    yarn_line_updated = False
+                    continue
+
             if "REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line:
+                # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR' since cachito is not supported in konflux
                 updated_lines.append(f"#{line.strip()}\n")
                 line_commented = True
+                self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux")
             else:
                 if line_commented:
                     # Sometimes there will be '&& yarn install ...' command. So replace the leading && with RUN, since
                     # we comment that out earlier
                     if line.strip().startswith("&&"):
-                        line = line.replace("&&", "RUN")
+                        line = line.replace("&&", "RUN", 1)
                 updated_lines.append(line)
                 line_commented = False
 
@@ -802,8 +820,6 @@ class KonfluxRebaser:
             dfp.content = "".join(updated_lines)
             with open(df_path, "w") as file:
                 file.write(dfp.content)
-
-            self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux")
 
     def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
