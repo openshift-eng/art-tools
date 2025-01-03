@@ -20,8 +20,6 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
 
-from artcommon.artcommonlib.assembly import assembly_type
-
 
 async def no_sleep(arg):
     pass
