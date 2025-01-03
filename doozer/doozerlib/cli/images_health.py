@@ -47,16 +47,16 @@ class ImagesHealthPipeline:
         return f"{base_url}?{query_string}"
 
     async def run(self):
-        # Gather concerns for all images
-        await asyncio.gather(*[self.get_concerns(image_meta) for image_meta in self.runtime.image_metas()])
-
-        # Filter out results without concerns
-        concerns = {k: v for k, v in self.concerns.items() if v}
+        # Gather concerns for all images in both Brew and Konflux build systems
+        await asyncio.gather(*[
+            self.get_concerns(image_meta, engine) for image_meta in self.runtime.image_metas()
+            for engine in ['brew', 'konflux']
+        ])
 
         # We should now have a dict of qualified_key => [concern, ...]
-        if not concerns:
+        if not self.concerns:
             self.logger.info('No concerns to report!')
-        click.echo(json.dumps(concerns, indent=4))
+        click.echo(json.dumps(self.concerns, indent=4))
 
     def url_text(self, url, text):
         if self.url_markup == 'slack':
@@ -65,12 +65,10 @@ class ImagesHealthPipeline:
             return f'[{text}]({url})'
         raise IOError(f'Unknown markup mode: {self.url_markup}')
 
-    async def get_concerns(self, image_meta):
+    async def get_concerns(self, image_meta, engine):
         key = image_meta.distgit_key
-        self.concerns[key] = []
-
-        builds = await self.query(image_meta)
-
+        builds = await self.query(image_meta, engine)
+        builds = [build for build in builds if build.outcome != KonfluxBuildOutcome.PENDING]
         if not builds:
             self.logger.info('Image build for %s has never been attempted during last %s days',
                              image_meta.distgit_key, DELTA_DAYS)
@@ -93,9 +91,6 @@ class ImagesHealthPipeline:
         latest_attempt_task_url = builds[0].build_pipeline_url
         oldest_attempt_bi_dt = builds[-1].start_time
 
-        # Generate the Art-Dash link
-        art_dash_link = self.generate_art_dash_history_link(key)
-
         if latest_success_idx != 0:
             msg = (f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} '
                    f'({self.url_text(latest_attempt_build_url, "jenkins job")}); ')
@@ -111,19 +106,24 @@ class ImagesHealthPipeline:
                 # Do nothing
                 return  # skipping notifications when only latest attempt failed
 
-            # Append the Art-Dash link to the message
-            msg += f'. {self.url_text(art_dash_link, "Details")}'
-            self.concerns[key].append(msg)
+            # Add concern
+            msg += f'. {self.url_text(self.generate_art_dash_history_link(key), "Details")}'
+            self.add_concern(key, engine, msg)
 
         else:
             if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
                 # Successful build is older than 2 weeks
-                self.concerns[key].append(
-                    f'Last {self.url_text(latest_success_bi_task_url, "build")} '
-                    f'({self.url_text(latest_success_bi_build_id, "jenkins job")}) was over two weeks ago.')
+                msg = f'Last {self.url_text(latest_success_bi_task_url, "build")} ' \
+                    f'({self.url_text(latest_success_bi_build_id, "jenkins job")}) was over two weeks ago.'
+                self.add_concern(key, engine, msg)
+
+    def add_concern(self, image_dgk, engine, msg):
+        if not self.concerns.get(engine):
+            self.concerns[engine] = {}
+        self.concerns[engine][image_dgk] = msg
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-    async def query(self, image_meta):
+    async def query(self, image_meta, engine):
         """
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
@@ -133,7 +133,7 @@ class ImagesHealthPipeline:
             where={
                 'name': image_meta.distgit_key,
                 'group': self.runtime.group_config.name,
-                'engine': 'brew',
+                'engine': engine,
                 'assembly': 'stream'
             },
             order_by='start_time',
