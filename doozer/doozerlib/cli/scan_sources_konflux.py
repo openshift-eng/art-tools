@@ -27,7 +27,7 @@ from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 from artcommonlib.release_util import isolate_timestamp_in_release
-from doozerlib.util import oc_image_info__caching_async
+from doozerlib.util import oc_image_info__caching_async, isolate_el_version_in_brew_tag
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -719,13 +719,10 @@ class ConfigScanSources:
         but ART is tracking the build records in the Konflux DB
         """
 
-        async def check_rpm_target(rpm_meta: RPMMetadata, el_target: str = None):
+        async def check_rpm_target(rpm_meta: RPMMetadata, el_target):
             rpm_name = rpm_meta.name
             self.logger.info('Checking %s changes in target %s', rpm_name, el_target)
-            if el_target:
-                latest_build_record = self.latest_rpm_build_records_map.get(rpm_name, {}).get(el_target, None)
-            else:
-                raise RuntimeError('TODO handle RPMs with no target')
+            latest_build_record = self.latest_rpm_build_records_map.get(rpm_name, {}).get(el_target, None)
 
             # RPM has never been built
             if not latest_build_record:
@@ -765,7 +762,10 @@ class ConfigScanSources:
                 tasks.extend([check_rpm_target(rpm_meta, f'el{target}')
                               for target in rpm_meta.determine_rhel_targets()])
             else:
-                tasks.append(check_rpm_target(rpm_meta))
+                tasks.extend([
+                    check_rpm_target(rpm_meta, f'el{isolate_el_version_in_brew_tag(target)}')
+                    for target in self.runtime.group_config.build_profiles.rpm.default.targets
+                ])
         await asyncio.gather(*tasks)
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
