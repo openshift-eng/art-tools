@@ -813,6 +813,10 @@ class KonfluxRebaser:
                     # we comment that out earlier
                     if line.strip().startswith("&&"):
                         line = line.replace("&&", "RUN", 1)
+
+                    # Due to network flakiness, yarn install commands error out due to insufficient retries.
+                    # So increase timeout to 600000 ms, i.e. 10 mins
+                    line = line.replace("yarn install", "yarn config set network-timeout 600000 && yarn install")
                 updated_lines.append(line)
                 line_commented = False
 
