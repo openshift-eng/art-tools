@@ -816,7 +816,7 @@ class KonfluxRebaser:
 
                     # Due to network flakiness, yarn install commands error out due to insufficient retries.
                     # So increase timeout to 600000 ms, i.e. 10 mins
-                    line = line.replace("yarn install", "yarn config set network-timeout 600000 && yarn install")
+                    line = line.replace("RUN yarn", "RUN yarn config set network-timeout 600000 && yarn")
                 updated_lines.append(line)
                 line_commented = False
 
