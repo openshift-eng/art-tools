@@ -115,7 +115,7 @@ class KonfluxDb:
             self,
             start_search: typing.Optional[datetime] = None,
             end_search: typing.Optional[datetime] = None,
-            window_size: int | None = None,
+            window_size: typing.Optional[int] = None,
             where: typing.Optional[typing.Dict[str, typing.Any]] = None,
             extra_patterns: typing.Optional[dict] = None,
             order_by: str = '',
@@ -129,7 +129,7 @@ class KonfluxDb:
         "where" is an optional dictionary that maps names and values to define a WHERE clause.
         "start_search" is a lower bound to be applied to the partitioning field `start_time`. If None, the search starts 360 days ago.
         "end_search" can optionally be provided as an upper bound for the same field. If None, the search ends now.
-        "window_size" is the number of days to search in each iteration.
+        "window_size" is the number of days to search in each iteration. If None, defaults to DEFAULT_SEARCH_WINDOW.
         "extra_patterns" is an optional dictionary that maps names and values to define extra patterns to be matched.
         "order_by" is the column to order by.
         "sorting" is the sorting order.

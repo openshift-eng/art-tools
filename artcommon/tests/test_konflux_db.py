@@ -1,9 +1,9 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from google.cloud.bigquery import SchemaField
+from google.cloud.bigquery import SchemaField, Row
 
 from artcommonlib import constants
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome
@@ -149,6 +149,34 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE REGEXP_CONTAINS(name, 'installer') AND REGEXP_CONTAINS(`group`, 'openshift') "
             "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC LIMIT 10")
 
+    @patch('artcommonlib.bigquery.BigQueryClient.query_async')
+    async def test_search_builds_by_fields_windowed(self, mock_query_async: AsyncMock):
+        mocked_rows = [
+            [Row(('ironic', '1.0.0', '3'), {'name': 0, 'version': 1, 'release': 2})],
+            [],
+            [],
+            [Row(('ironic', '1.0.0', '2'), {'name': 0, 'version': 1, 'release': 2}), Row(('ironic', '1.0.0', '1'), {'name': 0, 'version': 1, 'release': 2})]
+        ]
+        mock_query_async.side_effect = [
+            MagicMock(total_rows=len(batch), __iter__=MagicMock(return_value=iter(batch)))
+            for batch in mocked_rows
+        ]
+        records = [record async for record in self.db.search_builds_by_fields(
+            start_search=datetime(2024, 10, 1, 8, 0, 0, tzinfo=timezone.utc),
+            end_search=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            window_size=30,
+            where={'name': 'ironic', 'group': 'openshift-4.18'},
+        )]
+        expected_queries = [
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-12-02 12:00:00+00:00' AND start_time < '2025-01-01 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-11-02 12:00:00+00:00' AND start_time < '2024-12-02 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-10-03 12:00:00+00:00' AND start_time < '2024-11-02 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-10-01 08:00:00+00:00' AND start_time < '2024-10-03 12:00:00+00:00' ORDER BY `start_time` DESC",
+        ]
+        actual_queries = [call[0][0] for call in mock_query_async.await_args_list]
+        self.assertListEqual(actual_queries, expected_queries)
+        self.assertEqual(len(records), 3)
+
     @patch('artcommonlib.konflux.konflux_db.datetime')
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
     async def test_get_latest_build(self, query_mock, datetime_mock):
@@ -204,6 +232,27 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
                       f"AND start_time >= '{str(lower_bound)}' "
                       f"AND start_time < '{now}' "
                       "ORDER BY `start_time` DESC LIMIT 1", actual_calls)
+
+    @patch('artcommonlib.konflux.konflux_db.datetime')
+    @patch('artcommonlib.bigquery.BigQueryClient.query_async')
+    async def test_get_latest_build_windowed(self, mock_query_async: AsyncMock, datetime_mock: MagicMock):
+        datetime_mock.now.return_value = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        mock_query_async.side_effect = [
+            MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
+            MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
+            MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
+            MagicMock(total_rows=0, __next__=MagicMock(return_value=Row(('ironic', '1.0.0', '2', "ironic-1.0.0-2"), {'name': 0, 'version': 1, 'release': 2, 'nvr': 3}))),
+        ]
+        record = await self.db.get_latest_build(name='ironic', group='openshift-4.18', assembly='stream')
+        expected_queries = [
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND outcome = 'success' AND assembly = 'stream' AND start_time >= '2024-10-03 12:00:00+00:00' AND start_time < '2025-01-01 12:00:00+00:00' ORDER BY `start_time` DESC LIMIT 1",
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND outcome = 'success' AND assembly = 'stream' AND start_time >= '2024-07-05 12:00:00+00:00' AND start_time < '2024-10-03 12:00:00+00:00' ORDER BY `start_time` DESC LIMIT 1",
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND outcome = 'success' AND assembly = 'stream' AND start_time >= '2024-04-06 12:00:00+00:00' AND start_time < '2024-07-05 12:00:00+00:00' ORDER BY `start_time` DESC LIMIT 1",
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND outcome = 'success' AND assembly = 'stream' AND start_time >= '2024-01-07 12:00:00+00:00' AND start_time < '2024-04-06 12:00:00+00:00' ORDER BY `start_time` DESC LIMIT 1",
+        ]
+        actual_queries = [call[0][0] for call in mock_query_async.await_args_list]
+        self.assertListEqual(actual_queries, expected_queries)
+        self.assertEqual(record.nvr, "ironic-1.0.0-2")
 
     def test_generate_builds_schema(self):
         expected_fields = [
