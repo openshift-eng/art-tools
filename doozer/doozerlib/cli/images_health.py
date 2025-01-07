@@ -113,8 +113,8 @@ class ImagesHealthPipeline:
         else:
             if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
                 # Successful build is older than 2 weeks
-                msg = f'Last {self.url_text(latest_success_bi_task_url, "build")} ' \
-                    f'({self.url_text(latest_success_bi_build_id, "jenkins job")}) was over two weeks ago.'
+                msg = f'Last {self.url_text(latest_attempt_task_url, "build")} ' \
+                    f'({self.url_text(latest_attempt_build_url, "jenkins job")}) was over two weeks ago.'
                 self.add_concern(key, engine, msg)
 
     def add_concern(self, image_dgk, engine, msg):
