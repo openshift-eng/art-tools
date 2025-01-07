@@ -76,11 +76,13 @@ class ImagesHealthPipeline:
 
         latest_success_idx = -1
         latest_success_bi_task_url = ''
+        latest_success_bi_dt = ''
 
         for idx, build in enumerate(builds):
             if build.outcome == KonfluxBuildOutcome.SUCCESS:
                 latest_success_idx = idx
                 latest_success_bi_task_url = build.build_pipeline_url
+                latest_success_bi_dt = build.start_time
                 break
 
         latest_attempt_build_url = builds[0].art_job_url
@@ -107,9 +109,10 @@ class ImagesHealthPipeline:
             self.add_concern(key, engine, msg)
 
         else:
-            msg = (f'Last build {latest_attempt_task_url} for {image_meta.distgit_key} '
-                   f'(jenkins job {latest_attempt_build_url} was over two weeks ago.')
-            self.logger.warning(msg)
+            if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
+                msg = (f'Last build {latest_attempt_task_url} for {image_meta.distgit_key} '
+                       f'(jenkins job {latest_attempt_build_url} was over two weeks ago.')
+                self.logger.warning(msg)
 
     def add_concern(self, image_dgk, engine, msg):
         if not self.concerns.get(engine):
