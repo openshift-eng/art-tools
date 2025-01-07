@@ -362,7 +362,7 @@ class ConfigScanSources:
             return
 
         # Check for changes in image arches
-        self.scan_arch_changes(image_meta)
+        await self.scan_arch_changes(image_meta)
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
@@ -390,7 +390,7 @@ class ConfigScanSources:
         return upstream_commit_hash
 
     @skip_check_if_changing
-    def scan_arch_changes(self, image_meta: ImageMetadata):
+    async def scan_arch_changes(self, image_meta: ImageMetadata):
         """
         Check if all arches the image should be built for are present in latest build record
         """
