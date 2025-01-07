@@ -333,6 +333,7 @@ class RPMBuilder:
 
         # Update with NVR, env vars, and descriptions
         described = False
+        changelog_added = False
         async with aiofiles.open(rpm.specfile, "r") as sf:
             lines = await sf.readlines()
         for i in range(len(lines)):
@@ -357,6 +358,7 @@ class RPMBuilder:
             elif line.startswith("%autosetup"):
                 lines[i] = f"%autosetup -S git -n {rpm.config.name}-{rpm.version} -p1\n"
             elif line.startswith("%changelog"):
+                changelog_added = True
                 lines[i] = f"{lines[i].strip()}\n{changelog_title}\n- Update to source commit {source_commit_url}\n"
             elif line.startswith("%build"):
                 if go_compliance_shim:
@@ -394,6 +396,10 @@ fi
         # If we didn't find a description, create one
         if not described:
             lines.insert(0, f"%description\n{maintainer_string}\n")
+
+        # Add the changelog if missing
+        if not changelog_added:
+            lines.append(f"\n%changelog\n{changelog_title}\n- Update to source commit {source_commit_url}\n")
 
         return lines
 
