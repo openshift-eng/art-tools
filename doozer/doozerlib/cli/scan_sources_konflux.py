@@ -638,12 +638,13 @@ class ConfigScanSources:
             self.logger.warning('Could not extract timestamp from NVR %s', builder_build_nvr)
             start_search = datetime.now() - timedelta(days=365)
 
-        builds = await self.runtime.konflux_db.search_builds_by_fields(
+        build = await anext(self.runtime.konflux_db.search_builds_by_fields(
             start_search=start_search,
-            where={'nvr': builder_build_nvr, **self.base_search_params}
-        )
-        if builds.total_rows > 0:
-            return next(builds).start_time
+            where={'nvr': builder_build_nvr, **self.base_search_params},
+            limit=1,
+        ), None)
+        if build:
+            return build.start_time
 
         # Builder build isn't tracked inside Konflux DB: look at Brew
         with self.runtime.pooled_koji_client_session() as koji_api:
