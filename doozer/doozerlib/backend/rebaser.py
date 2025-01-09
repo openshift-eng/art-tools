@@ -810,7 +810,7 @@ class KonfluxRebaser:
                     yarn_line_updated = False
                     continue
 
-            if metadata.config.get("konflux", {}).get("cachito").get("comment", True) and ("REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line):
+            if metadata.config.get("konflux", {}).get("cachito", {}).get("comment", True) and ("REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line):
                 # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR' since cachito is not supported in konflux
                 updated_lines.append(f"#{line.strip()}\n")
                 line_commented = True
