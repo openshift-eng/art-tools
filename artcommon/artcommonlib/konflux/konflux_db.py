@@ -143,6 +143,7 @@ class KonfluxDb:
             raise ValueError(f"start_search {start_search} must be earlier than end_search {end_search}")
         end_search = end_search or datetime.now(tz=timezone.utc)
         start_search = start_search or end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
+        start_search = start_search.replace(tzinfo=timezone.utc)
         assert window_size is None or window_size > 0, f"search_window {window_size} must be a positive integer"
         window_size = window_size or DEFAULT_SEARCH_WINDOW
 
