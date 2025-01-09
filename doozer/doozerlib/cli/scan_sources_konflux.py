@@ -15,6 +15,7 @@ from async_lru import alru_cache
 
 import artcommonlib.util
 from artcommonlib import exectools
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine, KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
@@ -720,6 +721,17 @@ class ConfigScanSources:
         but ART is tracking the build records in the Konflux DB
         """
 
+        async def find_rpm_commit_hash(rpm: RPMMetadata):
+            with Dir(rpm.distgit_repo().dg_path):
+                _, out, _ = await cmd_gather_async(['git', 'log', '-n', '1', '--pretty=%B'], cwd=Dir.getcwd())
+
+                try:
+                    return [line.split(' ') for line in out.splitlines()
+                            if line.startswith('io.openshift.build.commit.id')][0][-1]
+
+                except IndexError:
+                    raise DoozerFatalError('Could not determine commitish for rpm %s', rpm.rpm_name)
+
         async def check_rpm_target(rpm_meta: RPMMetadata, el_target):
             rpm_name = rpm_meta.name
             self.logger.info('Checking %s changes in target %s', rpm_name, el_target)
@@ -732,7 +744,7 @@ class ConfigScanSources:
                 return
 
             # Scan for any build in this assembly which includes the git commit.
-            upstream_commit_hash = self.find_upstream_commit_hash(rpm_meta)
+            upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
             search_params = {
                 'name': rpm_name,
                 'extra_patterns': {'commitish': upstream_commit_hash},
