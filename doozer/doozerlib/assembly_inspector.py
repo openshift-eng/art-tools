@@ -12,7 +12,7 @@ import artcommonlib.util as artutil
 from doozerlib.rpm_delivery import RPMDeliveries, RPMDelivery
 
 from doozerlib import brew, util, Runtime
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BuildRecordInspector
 from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.rhcos import RHCOSBuildInspector, RHCOSBuildFinder
 from artcommonlib.rhcos import get_container_configs, RhcosMissingContainerException
@@ -21,10 +21,24 @@ from doozerlib.source_resolver import SourceResolver
 
 class AssemblyInspector:
     """ It inspects an assembly """
-    def __init__(self, runtime: Runtime, brew_session: ClientSession = None, lookup_mode: str = "both"):
+    def __init__(self, runtime: Runtime, brew_session: ClientSession = None):
         """
         :param runtime: Doozer runtime
         :param brew_session: Brew session object to use for communicating with Brew
+        """
+        self.runtime = runtime
+        self.brew_session = brew_session
+
+        self.assembly_rhcos_config = assembly_rhcos_config(self.runtime.releases_config, self.runtime.assembly)
+        self.assembly_type: AssemblyTypes = assembly_type(self.runtime.releases_config, self.runtime.assembly)
+        self._rpm_build_cache: Dict[int, Dict[str, Optional[Dict]]] = {}  # Dict[rhel_ver] -> Dict[distgit_key] -> Optional[BuildDict]
+        self._external_rpm_build_cache: Dict[str, Dict[str, Optional[Dict]]] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
+        self._permits = assembly_permits(self.runtime.releases_config, self.runtime.assembly)
+        self._rpm_deliveries: Dict[str, RPMDelivery] = {}  # Dict[package_name] => per package RpmDelivery config
+        self._release_build_record_inspectors: Dict[str, Optional[BuildRecordInspector]] = dict()
+
+    async def initialize(self, lookup_mode: Optional[str] = "both"):
+        """
         :param lookup_mode:
             None: Create a lite version without the ability to inspect Images; can be used to check
                   AssemblyIssues, fetch rhcos_builds and other defined methods
@@ -32,31 +46,22 @@ class AssemblyInspector:
                       to fail (limited use case)
             "both": Do the lookups for a full inspection
         """
-        self.runtime = runtime
-        self.brew_session = brew_session
-        if lookup_mode and runtime.mode != lookup_mode:
+        if lookup_mode and self.runtime.mode != lookup_mode:
             raise ValueError(f'Runtime must be initialized with "{lookup_mode}"')
-
-        self.assembly_rhcos_config = assembly_rhcos_config(self.runtime.releases_config, self.runtime.assembly)
-        self.assembly_type: AssemblyTypes = assembly_type(self.runtime.releases_config, self.runtime.assembly)
-        self._rpm_build_cache: Dict[int, Dict[str, Optional[Dict]]] = {}  # Dict[rhel_ver] -> Dict[distgit_key] -> Optional[BuildDict]
-        self._external_rpm_build_cache: Dict[str, Dict[str, Optional[Dict]]] = {}  # Dict[tag] -> Dict[distgit_key] -> Optional[BuildDict]
-        self._permits = assembly_permits(self.runtime.releases_config, self.runtime.assembly)
 
         if not lookup_mode:  # do no lookups
             return
         # If an image component has a latest build, an ImageInspector associated with the image.
-        self._release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
-        for image_meta in runtime.get_for_release_image_metas():
-            latest_build_obj = image_meta.get_latest_brew_build(default=None, el_target=image_meta.branch_el_target())
+        for image_meta in self.runtime.get_for_release_image_metas():
+            latest_build_obj = await image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
-                self._release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
+                build_record_inspector_cls = BuildRecordInspector.get_build_record_inspector_cls(self.runtime)
+                self._release_build_record_inspectors[image_meta.distgit_key] = build_record_inspector_cls(self.runtime, latest_build_obj)
             else:
-                self._release_image_inspectors[image_meta.distgit_key] = None
+                self._release_build_record_inspectors[image_meta.distgit_key] = None
 
         # Preprocess rpm_deliveries group config
         # This is mainly to support weekly kernel delivery
-        self._rpm_deliveries: Dict[str, RPMDelivery] = {}  # Dict[package_name] => per package RpmDelivery config
         if self.runtime.group_config.rpm_deliveries:
             # parse and validate rpm_deliveries config
             rpm_deliveries = RPMDeliveries.parse_obj(self.runtime.group_config.rpm_deliveries.primitive())
@@ -108,14 +113,14 @@ class AssemblyInspector:
                     continue
         return issues
 
-    def check_installed_rpms_in_image(self, dg_key: str, build_inspector: BrewBuildImageInspector):
+    def check_installed_rpms_in_image(self, dg_key: str, build_record_inspector: BuildRecordInspector):
         """ Analyzes an image build to check if installed packages are allowed to assemble.
         """
         issues: List[AssemblyIssue] = []
-        self.runtime.logger.info("Getting rpms in image build %s...", build_inspector.get_nvr())
-        installed_packages = build_inspector.get_all_installed_package_build_dicts()
+        self.runtime.logger.info("Getting rpms in image build %s...", build_record_inspector.get_nvr())
+        installed_packages = build_record_inspector.get_all_installed_package_build_dicts()
         # If rpm_deliveries is configured, check if the image build has rpms respecting the stop-ship/ship-ok tag
-        issues.extend(self._check_installed_packages_for_rpm_delivery(dg_key, f'Image build {build_inspector.get_nvr()}', installed_packages))
+        issues.extend(self._check_installed_packages_for_rpm_delivery(dg_key, f'Image build {build_record_inspector.get_nvr()}', installed_packages))
         return issues
 
     async def check_rhcos_issues(self, rhcos_build: RHCOSBuildInspector) -> List[AssemblyIssue]:
@@ -287,20 +292,20 @@ class AssemblyInspector:
 
         return issues
 
-    def check_group_image_consistency(self, build_inspector: BrewBuildImageInspector) -> List[AssemblyIssue]:
+    def check_group_image_consistency(self, build_record_inspector: BuildRecordInspector) -> List[AssemblyIssue]:
         """
         Evaluate the current assembly build and an image in the group and check whether they are consistent with
-        :param build_inspector: The brew build to check
+        :param build_record_inspector: The brew build to check
         :return: Returns a (potentially empty) list of reasons the image should be rebuilt.
         """
-        image_meta = build_inspector.get_image_meta()
+        image_meta = build_record_inspector.get_image_meta()
         self.runtime.logger.info(f'Checking group image for consistency: {image_meta.distgit_key}...')
         issues: List[AssemblyIssue] = []
         required_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at image-specific level
         desired_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at group level
 
-        installed_packages = build_inspector.get_all_installed_package_build_dicts()  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
-        dgk = build_inspector.get_image_meta().distgit_key
+        installed_packages = build_record_inspector.get_all_installed_package_build_dicts()  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
+        dgk = build_record_inspector.get_image_meta().distgit_key
 
         """
         If the assembly defined any RPM package dependencies at the group or image
@@ -342,7 +347,7 @@ class AssemblyInspector:
         If an image contains an RPM from the doozer group, make sure it is the current
         RPM for the assembly.
         """
-        el_ver = build_inspector.get_rhel_base_version()
+        el_ver = build_record_inspector.get_rhel_base_version()
         group_rpm_package_names = set()
         if el_ver:  # We might not find an el_ver for an image (e.g. FROM scratch)
             for _, assembly_rpm_build in self.get_group_rpm_build_dicts(el_ver).items():
@@ -380,7 +385,7 @@ class AssemblyInspector:
         if content_git_url:
             # Make sure things are in https form so we can compare
             content_git_url, _, _ = SourceResolver.get_public_upstream(content_git_url, self.runtime.group_config.public_upstreams)
-            build_git_url = artutil.convert_remote_git_to_https(build_inspector.get_source_git_url())
+            build_git_url = artutil.convert_remote_git_to_https(build_record_inspector.get_source_git_url())
             if content_git_url != build_git_url:
                 # Impermissible as artist can just fix upstream git source in assembly definition
                 issues.append(AssemblyIssue(f'Expected image git source from metadata {content_git_url} but found {build_git_url} as the upstream source of the brew build', component=dgk))
@@ -392,7 +397,7 @@ class AssemblyInspector:
                     # if we reach here, a git commit hash was declared as the
                     # upstream source of the image's content. We should verify
                     # it perfectly matches what we find in the assembly build.
-                    build_commit = build_inspector.get_source_git_commit()
+                    build_commit = build_record_inspector.get_source_git_commit()
                     if target_branch != build_commit:
                         # Impermissible as artist can just fix the assembly definition.
                         issues.append(AssemblyIssue(f'Expected image build git commit {target_branch} but {build_commit} was found in the build', component=dgk))
@@ -408,11 +413,11 @@ class AssemblyInspector:
     def get_assembly_name(self):
         return self.runtime.assembly
 
-    def get_group_release_images(self) -> Dict[str, Optional[BrewBuildImageInspector]]:
+    def get_group_release_images(self) -> Dict[str, Optional[BuildRecordInspector]]:
         """
-        :return: Returns a map of distgit_key -> BrewImageInspector for each image built in this group. The value will be None if no build was found.
+        :return: Returns a map of distgit_key -> ImageInspector for each image built in this group. The value will be None if no build was found.
         """
-        return self._release_image_inspectors
+        return self._release_build_record_inspectors
 
     def get_group_rpm_build_dicts(self, el_ver: int) -> Dict[str, Optional[Dict]]:
         """

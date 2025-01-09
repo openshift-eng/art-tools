@@ -11,7 +11,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from doozerlib import util
 from doozerlib import brew, coverity
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 
@@ -427,7 +427,7 @@ class ImageMetadata(Metadata):
                     return self, RebuildHint(RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built')
 
             self.logger.info("Getting RPMs contained in %s", image_nvr)
-            bbii = BrewBuildImageInspector(self.runtime, image_build)
+            bbii = BrewBuildRecordInspector(self.runtime, image_build)
 
             arch_archives = bbii.get_arch_archives()
             build_arches = set(arch_archives.keys())

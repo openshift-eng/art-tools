@@ -438,14 +438,17 @@ class Metadata(object):
         # strict means raise an exception if not found.
         return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True)
 
-    async def get_latest_konflux_build(self, assembly: Optional[str] = None,
+    async def get_latest_konflux_build(self,
+                                       default=None,
+                                       assembly: Optional[str] = None,
                                        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-                                       el_target: Optional[int] = None,
+                                       el_target: Optional[Union[int, str]] = None,
                                        honor_is: bool = True,
                                        completed_before: Optional[datetime] = None,
                                        extra_patterns: dict = {},
                                        **kwargs) -> Optional[KonfluxBuildRecord]:
         """
+        :param default: the value to be returned when no build is found
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
                          will be used. If runtime.assembly is also None, the search will return true latest.
                          If the assembly parameter is set to '', this search will also return true latest.
@@ -479,6 +482,9 @@ class Metadata(object):
             'extra_patterns': extra_patterns,
             **kwargs
         }
+        if el_target and isinstance(el_target, int):
+            el_target = f'el{el_target}'
+
         if self.meta_type == 'rpm':
             # For RPMs, if rhel target is not set fetch true latest
             if el_target:
@@ -515,10 +521,11 @@ class Metadata(object):
         if not build_record:
             self.logger.warning('No build found for %s in group and %s assembly %s',
                                 self.distgit_key, self.runtime.group, self.runtime.assembly)
+            return default
         return build_record
 
-    async def get_latest_brew_build_async(self, **kwargs):
-        return await asyncio.to_thread(self.get_latest_brew_build, **kwargs)
+    async def get_latest_brew_build_async(self, **kwargs) -> Model:
+        return Model(await asyncio.to_thread(self.get_latest_brew_build, **kwargs))
 
     def get_latest_brew_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
                               build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,

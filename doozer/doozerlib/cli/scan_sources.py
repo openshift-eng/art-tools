@@ -581,7 +581,7 @@ class ConfigScanSources:
     def _tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:
         """determine the most recently tagged RHCOS in given imagestream"""
         base_namespace = rgp.default_imagestream_namespace_base_name()
-        base_name = rgp.default_imagestream_base_name(version)
+        base_name = rgp.default_imagestream_base_name(version, self.runtime)
         namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
         stdout, _ = exectools.cmd_assert(
             f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
