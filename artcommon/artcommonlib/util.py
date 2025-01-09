@@ -1,4 +1,3 @@
-from functools import lru_cache
 import logging
 from typing import OrderedDict, Optional, Tuple, Iterable, List
 from datetime import datetime, timezone, timedelta, date
@@ -54,7 +53,6 @@ def new_roundtrip_yaml_handler():
     return yaml
 
 
-@lru_cache(maxsize=512)
 def convert_remote_git_to_https(source_url: str):
     """
     Accepts a source git URL in ssh or https format and return it in a normalized
@@ -79,7 +77,6 @@ def convert_remote_git_to_https(source_url: str):
     return f'https://{server}/{org_repo}'
 
 
-@lru_cache(maxsize=512)
 def convert_remote_git_to_ssh(url):
     """
     Accepts a remote git URL and turns it into a git@

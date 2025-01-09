@@ -116,14 +116,10 @@ class KonfluxRebaser:
 
             # Rebase the image in the build repository
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
-            actual_version, actual_release, _ = await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
+            await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
 
             # Commit changes
             await build_repo.commit(commit_message, allow_empty=True)
-
-            # Tag the commit
-            tag = f"{actual_version}-{actual_release}"
-            await build_repo.tag(tag)
 
             # Push changes
             if push:
@@ -145,10 +141,7 @@ class KonfluxRebaser:
             force_yum_updates: bool,
             image_repo: str,
     ):
-        """
-        Rebase the image in the build repository.
-        :return: Tuple of version, release, private_fix
-        """
+        """ Rebase the image in the build repository. """
         # Whether or not the source contains private fixes; None means we don't know yet
         private_fix = None
         if self.force_private_bit:  # --embargoed is set, force private_fix to True
@@ -229,7 +222,6 @@ class KonfluxRebaser:
         self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
                                image_repo, uuid_tag)
         metadata.private_fix = private_fix
-        return version, release, private_fix
 
         self._update_dockerignore(build_repo.local_dir)
 

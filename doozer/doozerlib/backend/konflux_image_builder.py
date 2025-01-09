@@ -86,7 +86,7 @@ class KonfluxImageBuilder:
                 source = None
                 if metadata.has_source():
                     logger.info(f"Resolving source for {metadata.qualified_key}")
-                    source = cast(SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True))
+                    source = cast(SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata))
                 else:
                     raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
                 dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
