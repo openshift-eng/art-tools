@@ -367,29 +367,32 @@ class KonfluxClient:
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
         # Task specific parameters to override in the template
+        has_build_images_task = False
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             match task["name"]:
                 case "build-images":
+                    has_build_images_task = True
                     task["timeout"] = "12h"
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
-        obj["spec"]["taskRunSpecs"] = [{
-            "pipelineTaskName": "build-images",
-            "stepSpecs": [{
-                "name": "sbom-syft-generate",
-                "computeResources": {
-                    "requests": {
-                        "memory": "5Gi"
-                    },
-                    "limits": {
-                        "memory": "10Gi"
+        if has_build_images_task:
+            obj["spec"]["taskRunSpecs"] = [{
+                "pipelineTaskName": "build-images",
+                "stepSpecs": [{
+                    "name": "sbom-syft-generate",
+                    "computeResources": {
+                        "requests": {
+                            "memory": "5Gi"
+                        },
+                        "limits": {
+                            "memory": "10Gi"
+                        }
                     }
-                }
+                }]
             }]
-        }]
 
         return obj
 
