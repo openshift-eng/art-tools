@@ -135,7 +135,7 @@ class KonfluxBuildCli:
         image_repo: str,
         skip_checks: bool,
         dry_run: bool,
-        plr_template,
+        plr_template: str,
     ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
@@ -188,13 +188,13 @@ class KonfluxBuildCli:
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--plr-template', required=False, default='',
-              help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template')
+@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+              help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template')
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
         runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-        konflux_namespace: str, image_repo: str, skip_checks: bool, dry_run: bool, plr_template):
+        konflux_namespace: str, image_repo: str, skip_checks: bool, dry_run: bool, plr_template: str):
     cli = KonfluxBuildCli(
         runtime=runtime, konflux_kubeconfig=konflux_kubeconfig,
         konflux_context=konflux_context, konflux_namespace=konflux_namespace,
@@ -215,6 +215,7 @@ class KonfluxBundleCli:
         image_repo: str,
         skip_checks: bool,
         release: Optional[str],
+        plr_template: str,
     ):
         self.runtime = runtime
         self.operator_nvrs = list(operator_nvrs)
@@ -226,6 +227,7 @@ class KonfluxBundleCli:
         self.image_repo = image_repo
         self.skip_checks = skip_checks
         self.release = release
+        self.plr_template = plr_template
 
     async def get_operator_builds(self):
         """ Get build records for the given operator nvrs or latest build records for all operators.
@@ -348,6 +350,7 @@ class KonfluxBundleCli:
             konflux_context=self.konflux_context,
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
+            pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
         )
 
@@ -380,15 +383,18 @@ class KonfluxBundleCli:
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option("--release", metavar='RELEASE', help="Release string to populate in bundle's Dockerfiles.")
+@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
+              help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template')
 @pass_runtime
 @click_coroutine
 async def images_konflux_bundle(
         runtime: Runtime, operator_nvrs: Tuple[str, ...], force: bool, dry_run: bool,
         konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-        konflux_namespace: str, image_repo: str, skip_checks: bool, release: Optional[str]):
+        konflux_namespace: str, image_repo: str, skip_checks: bool, release: Optional[str],
+        plr_template: str):
     cli = KonfluxBundleCli(
         runtime=runtime, operator_nvrs=operator_nvrs, force=force, dry_run=dry_run,
         konflux_kubeconfig=konflux_kubeconfig, konflux_context=konflux_context,
         konflux_namespace=konflux_namespace, image_repo=image_repo, skip_checks=skip_checks,
-        release=release)
+        release=release, plr_template=plr_template)
     await cli.run()

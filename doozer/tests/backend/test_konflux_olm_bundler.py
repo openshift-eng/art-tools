@@ -9,6 +9,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome, KonfluxBundleBuildRecord)
 from artcommonlib.konflux.konflux_db import Engine
 
+from doozerlib import constants
 from doozerlib.backend.konflux_olm_bundler import (KonfluxOlmBundleBuilder,
                                                    KonfluxOlmBundleRebaser)
 
@@ -582,6 +583,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             building_arches=["x86_64"],
             additional_tags=additional_tags,
             skip_checks=self.skip_checks,
+            pipelinerun_template_url=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
 

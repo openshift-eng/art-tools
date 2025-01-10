@@ -31,18 +31,15 @@ class KonfluxClient:
         "aarch64": "linux/arm64",
     }
 
-    def __init__(self, default_namespace: str, config: Configuration, plr_template: str, dry_run: bool = False, logger: logging.Logger = LOGGER) -> None:
+    def __init__(self, default_namespace: str, config: Configuration, dry_run: bool = False, logger: logging.Logger = LOGGER) -> None:
         self.api_client = ApiClient(configuration=config)
         self.dyn_client = DynamicClient(self.api_client)
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
 
-        plr_template_owner, plr_template_branch = plr_template.split("@") if plr_template else ["openshift-priv", "main"]
-        self.konflux_plr_template_url = constants.KONFLUX_PlR_TEMPLATE_URL.format(owner=plr_template_owner, branch_name=plr_template_branch)
-
     @staticmethod
-    def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], plr_template: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
+    def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
         """ Create a KonfluxClient from a kubeconfig file.
 
         :param config_file: The path to the kubeconfig file.
@@ -50,12 +47,11 @@ class KonfluxClient:
         :param default_namespace: The default namespace.
         :param dry_run: Whether to run in dry-run mode.
         :param logger: The logger.
-        :param plr_template: Override the Pipeline Run template commit from openshift-priv/art-konflux-template
         :return: The KonfluxClient.
         """
         cfg = Configuration()
         config.load_kube_config(config_file=config_file, context=context, persist_config=False, client_configuration=cfg)
-        return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger, plr_template=plr_template)
+        return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger)
 
     @alru_cache
     async def _get_api(self, api_version: str, kind: str):
@@ -308,10 +304,10 @@ class KonfluxClient:
                 return template
 
     async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
-                                         git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
-                                         additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
-                                         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
+                                               git_url: str, commit_sha: str, target_branch: str, output_image: str,
+                                               build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                                               additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
+                                               pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)

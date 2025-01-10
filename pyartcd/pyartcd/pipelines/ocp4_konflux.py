@@ -143,7 +143,9 @@ class KonfluxOcp4Pipeline:
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
         if self.plr_template:
-            cmd.extend(['--plr-template', self.plr_template])
+            plr_template_owner, plr_template_branch = self.plr_template.split("@") if self.plr_template else ["openshift-priv", "main"]
+            plr_template_url = constants.KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT.format(owner=plr_template_owner, branch_name=plr_template_branch)
+            cmd.extend(['--plr-template', plr_template_url])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
         await exectools.cmd_assert_async(cmd)
@@ -245,7 +247,7 @@ class KonfluxOcp4Pipeline:
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] Limit included arches to this list")
 @click.option('--plr-template', required=False, default='',
-              help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template')
+              help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>')
 @pass_runtime
 @click_coroutine
 async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional[str], assembly: str,
