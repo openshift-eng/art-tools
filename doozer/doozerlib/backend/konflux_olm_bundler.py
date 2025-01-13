@@ -375,6 +375,7 @@ class KonfluxOlmBundleBuilder:
                  konflux_context: Optional[str] = None,
                  image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
                  skip_checks: bool = False,
+                 pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
                  dry_run: bool = False,
                  logger: logging.Logger = _LOGGER) -> None:
         self.base_dir = base_dir
@@ -387,9 +388,10 @@ class KonfluxOlmBundleBuilder:
         self.konflux_context = konflux_context
         self.image_repo = image_repo
         self.skip_checks = skip_checks
+        self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
         self._logger = logger
-        self._konflux_client = KonfluxClient.from_kubeconfig(self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, plr_template=None, dry_run=self.dry_run)
+        self._konflux_client = KonfluxClient.from_kubeconfig(self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run)
 
     async def build(self, metadata: ImageMetadata):
         """ Build a bundle with Konflux. """
@@ -517,6 +519,7 @@ class KonfluxOlmBundleBuilder:
             building_arches=["x86_64"],  # We always build bundles on x86_64
             additional_tags=list(additional_tags),
             skip_checks=skip_checks,
+            pipelinerun_template_url=self.pipelinerun_template_url,
         )
         url = konflux_client.build_pipeline_url(pipelinerun)
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")

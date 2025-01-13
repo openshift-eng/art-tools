@@ -2,12 +2,11 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Sequence, Union, cast
 
+import aiohttp
 import jinja2
-import requests
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
-from functools import lru_cache
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -32,18 +31,15 @@ class KonfluxClient:
         "aarch64": "linux/arm64",
     }
 
-    def __init__(self, default_namespace: str, config: Configuration, plr_template: str, dry_run: bool = False, logger: logging.Logger = LOGGER) -> None:
+    def __init__(self, default_namespace: str, config: Configuration, dry_run: bool = False, logger: logging.Logger = LOGGER) -> None:
         self.api_client = ApiClient(configuration=config)
         self.dyn_client = DynamicClient(self.api_client)
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
 
-        plr_template_owner, plr_template_branch = plr_template.split("@") if plr_template else ["openshift-priv", "main"]
-        self.konflux_plr_template_url = constants.KONFLUX_PlR_TEMPLATE_URL.format(owner=plr_template_owner, branch_name=plr_template_branch)
-
     @staticmethod
-    def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], plr_template: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
+    def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
         """ Create a KonfluxClient from a kubeconfig file.
 
         :param config_file: The path to the kubeconfig file.
@@ -51,12 +47,11 @@ class KonfluxClient:
         :param default_namespace: The default namespace.
         :param dry_run: Whether to run in dry-run mode.
         :param logger: The logger.
-        :param plr_template: Override the Pipeline Run template commit from openshift-priv/art-konflux-template
         :return: The KonfluxClient.
         """
         cfg = Configuration()
         config.load_kube_config(config_file=config_file, context=context, persist_config=False, client_configuration=cfg)
-        return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger, plr_template=plr_template)
+        return KonfluxClient(default_namespace=default_namespace, config=cfg, dry_run=dry_run, logger=logger)
 
     @alru_cache
     async def _get_api(self, api_version: str, kind: str):
@@ -293,23 +288,31 @@ class KonfluxClient:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
-    def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
-                                         git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
-                                         additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False) -> dict:
+    @alru_cache
+    async def _get_pipelinerun_template(self, template_url: str):
+        """ Get a PipelineRun template.
+
+        :param template_url: The URL to the template.
+        :return: The template.
+        """
+        self._logger.info(f"Pulling Konflux PLR template from: {template_url}")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(template_url) as response:
+                response.raise_for_status()
+                template_text = await response.text()
+                template = jinja2.Template(template_text, autoescape=True)
+                return template
+
+    async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
+                                               git_url: str, commit_sha: str, target_branch: str, output_image: str,
+                                               build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                                               additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
+                                               pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
 
-        @lru_cache()
-        def _get_plr_template():
-            self._logger.info(f"Pulling Konflux PLR template from: {self.konflux_plr_template_url}")
-            response = requests.get(self.konflux_plr_template_url)
-
-            return response.text
-
-        plr_template = _get_plr_template()
-        template = jinja2.Template(plr_template, autoescape=True)
+        template = await self._get_pipelinerun_template(pipelinerun_template_url)
         rendered = template.render({
             "source_url": https_url,
             "revision": commit_sha,
@@ -360,29 +363,32 @@ class KonfluxClient:
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
         # Task specific parameters to override in the template
+        has_build_images_task = False
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             match task["name"]:
                 case "build-images":
+                    has_build_images_task = True
                     task["timeout"] = "12h"
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
-        obj["spec"]["taskRunSpecs"] = [{
-            "pipelineTaskName": "build-images",
-            "stepSpecs": [{
-                "name": "sbom-syft-generate",
-                "computeResources": {
-                    "requests": {
-                        "memory": "5Gi"
-                    },
-                    "limits": {
-                        "memory": "10Gi"
+        if has_build_images_task:
+            obj["spec"]["taskRunSpecs"] = [{
+                "pipelineTaskName": "build-images",
+                "stepSpecs": [{
+                    "name": "sbom-syft-generate",
+                    "computeResources": {
+                        "requests": {
+                            "memory": "5Gi"
+                        },
+                        "limits": {
+                            "memory": "10Gi"
+                        }
                     }
-                }
+                }]
             }]
-        }]
 
         return obj
 
@@ -401,6 +407,7 @@ class KonfluxClient:
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
+        pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
     ):
         """
         Start a PipelineRun for building an image.
@@ -427,7 +434,7 @@ class KonfluxClient:
         # If vm_override is not one and an override exists for a particular arch, use that. Otherwise, use the default
         build_platforms = [vm_override[arch] if vm_override and arch in vm_override else self.SUPPORTED_ARCHES[arch] for arch in building_arches]
 
-        pipelinerun_manifest = self._new_pipelinerun_for_image_build(
+        pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
             generate_name,
             namespace,
             application_name,
@@ -440,6 +447,7 @@ class KonfluxClient:
             git_auth_secret=git_auth_secret,
             skip_checks=skip_checks,
             additional_tags=additional_tags,
+            pipelinerun_template_url=pipelinerun_template_url,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)

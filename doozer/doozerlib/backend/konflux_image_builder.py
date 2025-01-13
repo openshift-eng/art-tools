@@ -64,7 +64,7 @@ class KonfluxImageBuilder:
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
         self._config = config
         self._logger = logger or LOGGER
-        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run, plr_template=config.plr_template)
+        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run)
 
         if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
             for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
@@ -211,7 +211,8 @@ class KonfluxImageBuilder:
             building_arches=building_arches,
             additional_tags=additional_tags,
             skip_checks=self._config.skip_checks,
-            vm_override=metadata.config.get("konflux", {}).get("vm_override")
+            vm_override=metadata.config.get("konflux", {}).get("vm_override"),
+            pipelinerun_template_url=self._config.plr_template,
         )
 
         logger.info(f"Created PipelineRun: {self.build_pipeline_url(pipelinerun)}")
