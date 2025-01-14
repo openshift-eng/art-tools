@@ -252,9 +252,11 @@ class GenAssemblyCli:
 
             # The brew_build_inspector will take this archive image and find the actual
             # brew build which created it.
-            brew_build_inspector = BrewBuildImageInspector(self.runtime, payload_tag_pullspec)
-            package_name = brew_build_inspector.get_package_name()
-            build_nvr = brew_build_inspector.get_nvr()
+            image_info = await util.oc_image_info_async(payload_tag_pullspec)
+            image_labels = image_info['config']['config']['Labels']
+            package_name = image_labels['com.redhat.component']
+            build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
+            brew_build_inspector = BrewBuildImageInspector(self.runtime, build_nvr)
             if package_name in self.component_image_builds:
                 # If we have already encountered this package once in the list of releases we are
                 # processing, then make sure that the original NVR we found matches the new NVR.
