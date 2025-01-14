@@ -392,6 +392,20 @@ class Metadata(object):
             raise IOError(f"Failed to fetch {url}: {e}. Does branch {branch} exist?")
         return req.read()
 
+    async def get_latest_build(self, **kwargs):
+        """
+        Find the latest build for the component depending on which build system we're interested in.
+        The switch is controller by the doozer --build-system option
+        """
+        if self.runtime.build_system == 'brew':
+            return await self.get_latest_brew_build_async(**kwargs)
+
+        elif self.runtime.build_system == 'konflux':
+            raise NotImplementedError
+
+        else:
+            raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')
+
     async def get_latest_brew_build_async(self, **kwargs):
         return await asyncio.to_thread(self.get_latest_brew_build, **kwargs)
 
