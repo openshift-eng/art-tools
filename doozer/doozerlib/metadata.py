@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import io
 import os
@@ -390,6 +391,9 @@ class Metadata(object):
         except Exception as e:
             raise IOError(f"Failed to fetch {url}: {e}. Does branch {branch} exist?")
         return req.read()
+
+    async def get_latest_build_async(self, **kwargs):
+        return await asyncio.to_thread(self.get_latest_build, **kwargs)
 
     def get_latest_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
                          build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,

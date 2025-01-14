@@ -56,7 +56,7 @@ class ConfigScanSources:
             self.scan_for_upstream_changes(koji_api)
 
             # Check for other reasons why images should be rebuilt (e.g. config changes, dependencies)
-            self.check_for_image_changes(koji_api)
+            await self.check_for_image_changes(koji_api)
 
         # Checks if an image needs to be rebuilt based on the packages it is dependent on
         await self.check_changing_rpms()
@@ -292,16 +292,16 @@ class ConfigScanSources:
             else:
                 raise IOError(f'Unsupported meta type: {meta.meta_type}')
 
-    def check_for_image_changes(self, koji_api):
-        for image_meta in self.runtime.image_metas():
+    async def check_for_image_changes(self, koji_api):
+        async def _inner(image_meta):
             # If a rebuild is already requested, skip following checks
             if image_meta in self.changing_image_metas:
-                continue
+                return
 
-            build_info = image_meta.get_latest_build(default=None)
+            build_info = await image_meta.get_latest_build_async(default=None)
 
             if build_info is None:
-                continue
+                return
 
             # To limit the size of the queries we are going to make, find the oldest and newest image
             self.find_oldest_newest(koji_api, build_info)
@@ -315,6 +315,8 @@ class ConfigScanSources:
             # We detect config changes by comparing their digest changes.
             # The config digest of the previous build is stored at .oit/config_digest on distgit repo.
             self.check_config_changes(image_meta, build_info)
+
+        await asyncio.gather(*[_inner(image_meta) for image_meta in self.runtime.image_metas()])
 
         self.runtime.logger.debug('Will be assessing tagging changes between '
                                   'newest_image_event_ts:%s and oldest_image_event_ts:%s',
