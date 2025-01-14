@@ -84,7 +84,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
         s = s.replace("{distgit_key}", image.distgit_key)
         s = s.replace("{component}", image.get_component_name())
 
-        build_info = image.get_latest_build(default=None)
+        build_info = image.get_latest_brew_build(default=None)
         if build_info is None:
             if "{" in s:
                 if skip_missing:
@@ -187,7 +187,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
         # This will respect --images if specified
         operator_metas = [meta for meta in runtime.ordered_image_metas() if
                           meta.enabled and meta.config['update-csv'] is not Missing]
-        results = exectools.parallel_exec(lambda meta, _: meta.get_latest_build(), operator_metas)
+        results = exectools.parallel_exec(lambda meta, _: meta.get_latest_brew_build(), operator_metas)
         operator_builds = results.get()
 
     def rebase_and_build(olm_bundle: OLMBundle):

@@ -48,7 +48,7 @@ class AssemblyInspector:
         # If an image component has a latest build, an ImageInspector associated with the image.
         self._release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
         for image_meta in runtime.get_for_release_image_metas():
-            latest_build_obj = image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
+            latest_build_obj = image_meta.get_latest_brew_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
                 self._release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
             else:
@@ -424,7 +424,7 @@ class AssemblyInspector:
             # Maps of component names to the latest brew build dicts. If there is no latest build, the value will be None
             for rpm_meta in self.runtime.rpm_metas():
                 if el_ver in rpm_meta.determine_rhel_targets():
-                    latest_build = rpm_meta.get_latest_build(default=None, el_target=el_ver)
+                    latest_build = rpm_meta.get_latest_brew_build(default=None, el_target=el_ver)
                     if not latest_build:
                         raise IOError(f'RPM {rpm_meta.distgit_key} claims to have a rhel-{el_ver} build target, but no build was detected')
                     assembly_rpm_dicts[rpm_meta.distgit_key] = latest_build

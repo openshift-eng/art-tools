@@ -621,9 +621,9 @@ class GenPayloadCli:
                     continue
 
                 if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
-                    public_build = v.image_meta.get_latest_build(default=None,
-                                                                 el_target=v.image_meta.branch_el_target(),
-                                                                 extra_pattern='*.p0.*')
+                    public_build = v.image_meta.get_latest_brew_build(default=None,
+                                                                      el_target=v.image_meta.branch_el_target(),
+                                                                      extra_pattern='*.p0.*')
                     if not public_build:
                         raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
 

@@ -138,7 +138,7 @@ class PlashetBuilder:
 
         self._logger.info("Finding image builds...")
         for distgit_key, image_meta in image_map.items():
-            build = image_meta.get_latest_build(default=None, honor_is=False)
+            build = image_meta.get_latest_brew_build(default=None, honor_is=False)
             if build:  # Ignore None in case we build for an basis event that is prior to the first build of an image
                 image_builds[distgit_key] = build
 
