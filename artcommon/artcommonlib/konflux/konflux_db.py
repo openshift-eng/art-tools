@@ -210,7 +210,7 @@ class KonfluxDb:
             name: str,
             group: str,
             outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-            assembly: str = 'stream',
+            assembly: str = None,
             el_target: typing.Optional[str] = None,
             artifact_type: typing.Optional[ArtifactType] = None,
             engine: typing.Optional[Engine] = None,
@@ -224,7 +224,7 @@ class KonfluxDb:
         :param name: component name, e.g. 'ironic'
         :param group: e.g. 'openshift-4.18'
         :param outcome: 'success' | 'failure'
-        :param assembly: non-standard assembly name, defaults to 'stream' if omitted
+        :param assembly: assembly name, if omitted any assembly is matched
         :param el_target: e.g. 'el8'
         :param artifact_type: 'rpm' | 'image'
         :param engine: 'brew' | 'konflux'
@@ -242,8 +242,10 @@ class KonfluxDb:
             Column('name', String) == name,
             Column('group', String) == group,
             Column('outcome', String) == str(outcome),
-            Column('assembly', String) == assembly,
         ]
+        if assembly:
+            base_clauses.append(Column('assembly', String) == assembly)
+
         order_by_clause = Column('start_time', quote=True).desc()
 
         if completed_before:
