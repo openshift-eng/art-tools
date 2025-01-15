@@ -37,6 +37,7 @@ from doozerlib.runtime import Runtime
 from artcommonlib.telemetry import start_as_current_span_async
 from doozerlib.util import isolate_nightly_name_components, extract_version_fields, what_is_in_master
 from artcommonlib.util import convert_remote_git_to_https
+from elliottlib.util import chunk
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import find_manifest_list_sha
 
@@ -854,8 +855,6 @@ class GenPayloadCli:
                 self.logger.info("--apply-multi-arch is enabled but the group config / assembly does "
                                  "not have group.multi_arch.enabled==true")
 
-    @exectools.limit_concurrency(500)
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def mirror_payload_content(self, arch: str, payload_entries: Dict[str, PayloadEntry],
                                      private: bool = False):
         """
@@ -876,19 +875,26 @@ class GenPayloadCli:
                 mirror_src_for_dest[payload_entry.dest_manifest_list_pullspec] = \
                     payload_entry.build_inspector.get_build_pullspec()
 
-        # Save the default SRC=DEST input to a file for syncing by 'oc image mirror'. Why is
-        # there no '-priv'? The true images for the assembly are what we are syncing -
-        # it is what we update in the imagestreams that defines whether the image will be
-        # part of a public vs private release.
-        src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}.txt")
-        async with aiofiles.open(src_dest_path, mode="w+", encoding="utf-8") as out_file:
-            for dest_pullspec, src_pullspec in mirror_src_for_dest.items():
-                await out_file.write(f"{src_pullspec}={dest_pullspec}\n")
+        @exectools.limit_concurrency(500)
+        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+        async def _mirror(file_path: Path, dest_src_pullspecs: List[Tuple[str, str]]):
+            # Save the default SRC=DEST input to a file for syncing by 'oc image mirror'
+            async with aiofiles.open(file_path, mode="w+", encoding="utf-8") as out_file:
+                for dest_pullspec, src_pullspec in dest_src_pullspecs:
+                    await out_file.write(f"{src_pullspec}={dest_pullspec}\n")
 
-        if self.apply or self.apply_multi_arch:
-            self.logger.info(f"Mirroring images from {str(src_dest_path)}")
-            cmd = ['oc', 'image', 'mirror', '--keep-manifest-list', '--continue-on-error', f'--filename={str(src_dest_path)}']
-            await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
+            if self.apply or self.apply_multi_arch:
+                self.logger.info(f"Mirroring images from {str(src_dest_path)}")
+                cmd = ['oc', 'image', 'mirror', '--keep-manifest-list', '--continue-on-error', f'--filename={str(src_dest_path)}']
+                await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
+
+        # Mirror the images in chunks to avoid erroring out due to possible registry issues
+        image_chunk_size = 50
+        i = 0
+        for pullspec_pair_chunk in chunk(list(mirror_src_for_dest.items()), image_chunk_size):
+            src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}-{i}.txt")
+            await _mirror(src_dest_path, pullspec_pair_chunk)
+            i += 1
 
     async def generate_specific_payload_imagestreams(self, arch: str, private_mode: bool,
                                                      payload_entries: Dict[str, PayloadEntry],
@@ -1313,7 +1319,6 @@ class GenPayloadCli:
                     f"--name={multi_release_name}",
                     "--reference-mode=source",
                     "--keep-manifest-list",
-                    "--continue-on-error",
                     f"--from-image-stream-file={str(multi_release_is_path)}",
                     f"--to-image-base={cvo_entry.dest_pullspec}",
                     f"--to-image={arch_release_dests[arch]}",
