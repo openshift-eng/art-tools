@@ -1319,7 +1319,6 @@ class GenPayloadCli:
                     f"--name={multi_release_name}",
                     "--reference-mode=source",
                     "--keep-manifest-list",
-                    "--continue-on-error",
                     f"--from-image-stream-file={str(multi_release_is_path)}",
                     f"--to-image-base={cvo_entry.dest_pullspec}",
                     f"--to-image={arch_release_dests[arch]}",
