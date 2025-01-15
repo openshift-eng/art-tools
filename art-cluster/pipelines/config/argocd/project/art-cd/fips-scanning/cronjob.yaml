@@ -1,0 +1,30 @@
+kind: CronJob
+apiVersion: batch/v1
+metadata:
+  name: fips-scan-cron-job
+spec:
+  schedule: 0 */3 * * *
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: fips-scan
+              image: 'image-registry.openshift-image-registry.svc:5000/art-cd/art-cd:latest'
+              command:
+                - tkn
+                - pipeline
+                - start
+                - fips-pipeline
+                - '--param'
+                - 'data_path="https://github.com/openshift-eng/ocp-build-data"'
+                - '--param'
+                - nvrs=""
+                - '--pipeline-timeout'
+                - 4h
+              imagePullPolicy: Always
+          restartPolicy: OnFailure
+          serviceAccountName: pipeline
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 10
