@@ -187,13 +187,23 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success')
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
+                                           f"AND start_time >= '{str(lower_bound)}' "
+                                           f"AND start_time < '{now}' "
+                                           "ORDER BY `start_time` DESC LIMIT 1")
+
+        query_mock.reset_mock()
+        await self.db.get_latest_build(name='ironic', group='openshift-4.18',
+                                       outcome='success', assembly='stream')
+        query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
+                                           "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' "
                                            f"AND start_time >= '{str(lower_bound)}' "
                                            f"AND start_time < '{now}' "
                                            "ORDER BY `start_time` DESC LIMIT 1")
 
         query_mock.reset_mock()
-        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', completed_before=now)
+        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success',
+                                       completed_before=now, assembly='stream')
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' AND end_time IS NOT NULL "
@@ -204,7 +214,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         query_mock.reset_mock()
         like = {'release': 'b45ea65'}
-        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success', extra_patterns=like)
+        await self.db.get_latest_build(name='ironic', group='openshift-4.18', outcome='success',
+                                       extra_patterns=like, assembly='stream')
         query_mock.assert_called_once_with(f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
                                            "AND `group` = 'openshift-4.18' AND outcome = 'success' "
                                            "AND assembly = 'stream' "
