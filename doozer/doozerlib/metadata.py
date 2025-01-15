@@ -175,7 +175,7 @@ class Metadata(object):
                 pass
             else:
                 # Ooof.. it is not defined in the assembly, so we need to find it dynamically.
-                build_obj = self.get_latest_build(default=None, el_target=self.determine_rhel_targets()[0])
+                build_obj = self.get_latest_brew_build(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
                     self.logger.info('Pinning upstream source to commit of assembly selected build '
@@ -392,12 +392,12 @@ class Metadata(object):
             raise IOError(f"Failed to fetch {url}: {e}. Does branch {branch} exist?")
         return req.read()
 
-    async def get_latest_build_async(self, **kwargs):
-        return await asyncio.to_thread(self.get_latest_build, **kwargs)
+    async def get_latest_brew_build_async(self, **kwargs):
+        return await asyncio.to_thread(self.get_latest_brew_build, **kwargs)
 
-    def get_latest_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
-                         build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
-                         el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None):
+    def get_latest_brew_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
+                              build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
+                              el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
@@ -596,7 +596,7 @@ class Metadata(object):
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
         :return: A tuple: (component name, version, release); e.g. ("registry-console-docker", "v3.6.173.0.75", "1")
         """
-        build = self.get_latest_build(default=default, **kwargs)
+        build = self.get_latest_brew_build(default=default, **kwargs)
         if default != -1 and build == default:
             return default
         return build['name'], build['version'], build['release']
@@ -686,7 +686,7 @@ class Metadata(object):
 
         component_name = self.get_component_name()
 
-        latest_build = self.get_latest_build(default=None, el_target=el_target)
+        latest_build = self.get_latest_brew_build(default=None, el_target=el_target)
 
         if not latest_build:
             return RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
@@ -727,9 +727,9 @@ class Metadata(object):
             # 2. We've already tried a build and the build failed.
 
             # Check whether a build attempt for this assembly has failed.
-            last_failed_build = self.get_latest_build(default=None,
-                                                      build_state=BuildStates.FAILED,
-                                                      el_target=el_target)  # How recent was the last failed build?
+            last_failed_build = self.get_latest_brew_build(default=None,
+                                                           build_state=BuildStates.FAILED,
+                                                           el_target=el_target)  # How recent was the last failed build?
             if not last_failed_build:
                 return RebuildHint(code=RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER,
                                    reason='Distgit only commit is newer than last successful build')
@@ -762,9 +762,9 @@ class Metadata(object):
         git_component = f'.g*{upstream_commit_hash[:7]}'  # use .g*<commit> so it matches new form ".g0123456" and old ".git.0123456"
 
         # Scan for any build in this assembly which also includes the git commit.
-        upstream_commit_build = self.get_latest_build(default=None,
-                                                      extra_pattern=f'*{git_component}*',
-                                                      el_target=el_target)  # Latest build for this commit.
+        upstream_commit_build = self.get_latest_brew_build(default=None,
+                                                           extra_pattern=f'*{git_component}*',
+                                                           el_target=el_target)  # Latest build for this commit.
 
         if not upstream_commit_build:
             # There is no build for this upstream commit. Two options to assess:
@@ -772,10 +772,10 @@ class Metadata(object):
             # 2. Previous attempts at building this commit have failed
 
             # Check whether a build attempt with this commit has failed before.
-            failed_commit_build = self.get_latest_build(default=None,
-                                                        extra_pattern=f'*{git_component}*',
-                                                        build_state=BuildStates.FAILED,
-                                                        el_target=el_target)  # Have we tried before and failed?
+            failed_commit_build = self.get_latest_brew_build(default=None,
+                                                             extra_pattern=f'*{git_component}*',
+                                                             build_state=BuildStates.FAILED,
+                                                             el_target=el_target)  # Have we tried before and failed?
 
             # If not, this is a net-new upstream commit. Build it.
             if not failed_commit_build:

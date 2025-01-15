@@ -350,7 +350,7 @@ class ImageMetadata(Metadata):
         runtime = self.runtime
 
         with runtime.pooled_koji_client_session() as koji_api:
-            image_build = self.get_latest_build(default='')
+            image_build = self.get_latest_brew_build(default='')
             if not image_build:
                 # Seems this have never been built. Mark it as needing change.
                 return self, RebuildHint(RebuildHintCode.NO_LATEST_BUILD, 'Image has never been built before')
@@ -442,7 +442,7 @@ class ImageMetadata(Metadata):
             # we do not want to react because of an RPM build in the 'test' assembly.
             group_rpm_builds_nvrs: Dict[str, str] = dict()  # Maps package name to latest brew build nvr
             for rpm_meta in self.runtime.rpm_metas():
-                latest_rpm_build = rpm_meta.get_latest_build(default=None)
+                latest_rpm_build = rpm_meta.get_latest_brew_build(default=None)
                 if latest_rpm_build:
                     group_rpm_builds_nvrs[rpm_meta.get_package_name()] = latest_rpm_build['nvr']
 

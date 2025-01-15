@@ -345,7 +345,7 @@ class GenAssemblyCli:
 
             dgk = image_meta.distgit_key
             package_name = image_meta.get_component_name()
-            basis_event_dict = image_meta.get_latest_build(default=None, complete_before_event=self.basis_event)
+            basis_event_dict = image_meta.get_latest_brew_build(default=None, complete_before_event=self.basis_event)
             if not basis_event_dict:
                 self._exit_with_error(f'No image was found for assembly {self.runtime.assembly} for component {dgk} '
                                       f'at estimated brew event {self.basis_event}. No normal reason for this to '
@@ -474,7 +474,7 @@ class GenAssemblyCli:
 
                 # Now it is time to see whether a query for the RPM from the basis event
                 # estimate comes up with this RPM NVR.
-                basis_event_build_dict = rpm_meta.get_latest_build(
+                basis_event_build_dict = rpm_meta.get_latest_brew_build(
                     el_target=el_ver, complete_before_event=self.basis_event)
 
                 if not basis_event_build_dict:

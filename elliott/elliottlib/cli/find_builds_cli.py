@@ -475,7 +475,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     pinned_nvrs = set()
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
-            tasks = [exectools.to_thread(progress_func, functools.partial(rpm.get_latest_build, default=None, el_target=tag)) for rpm in runtime.rpm_metas()]
+            tasks = [exectools.to_thread(progress_func, functools.partial(rpm.get_latest_brew_build, default=None, el_target=tag)) for rpm in runtime.rpm_metas()]
             builds_for_tag = await asyncio.gather(*tasks)
             builds.extend(filter(lambda b: b is not None, builds_for_tag))
 
