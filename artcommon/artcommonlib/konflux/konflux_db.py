@@ -141,9 +141,8 @@ class KonfluxDb:
 
         if start_search and end_search and start_search >= end_search:
             raise ValueError(f"start_search {start_search} must be earlier than end_search {end_search}")
-        end_search = end_search or datetime.now(tz=timezone.utc)
-        start_search = start_search or end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
-        start_search = start_search.replace(tzinfo=timezone.utc)
+        end_search = end_search.astimezone(timezone.utc) if end_search else datetime.now(tz=timezone.utc)
+        start_search = start_search.astimezone(timezone.utc) if start_search else end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
         assert window_size is None or window_size > 0, f"search_window {window_size} must be a positive integer"
         window_size = window_size or DEFAULT_SEARCH_WINDOW
 
@@ -247,6 +246,7 @@ class KonfluxDb:
         order_by_clause = Column('start_time', quote=True).desc()
 
         if completed_before:
+            completed_before = completed_before.astimezone(timezone.utc)
             self.logger.info('Searching for %s builds completed before %s', name, completed_before)
             base_clauses.extend([
                 Column('end_time').isnot(None),
