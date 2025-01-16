@@ -18,7 +18,7 @@ from typing import Dict, Iterable, List, Optional, Union, Set
 from urllib.parse import quote
 from ruamel.yaml import YAML
 from semver import VersionInfo
-from tenacity import (RetryCallState, RetryError, retry, retry_if_exception_message,
+from tenacity import (RetryCallState, RetryError, retry,
                       retry_if_exception_type, retry_if_result,
                       stop_after_attempt, wait_fixed)
 
@@ -1400,7 +1400,6 @@ class PromotePipeline:
             reraise=True,
             stop=stop_after_attempt(10),  # retry 10 times
             wait=wait_fixed(30),  # wait for 30 seconds between retries
-            retry=(retry_if_exception_message(match=r".*HTTP status: 502 Bad Gateway")),
         )(exectools.cmd_gather_async)(cmd, env=env)
 
     @staticmethod
