@@ -409,7 +409,8 @@ class KonfluxClient:
             else:
                 prefetch_params.append({"type": "npm", "path": "."})
 
-        if prefetch_params:
+        cachito_enabled = image_metadata.config.get("cachito", {}).get("enabled", False)
+        if cachito_enabled and prefetch_params:
             _modify_param(params, "prefetch-input", prefetch_params)
 
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
