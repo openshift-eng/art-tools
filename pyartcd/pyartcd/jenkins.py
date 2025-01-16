@@ -32,6 +32,7 @@ class Jobs(Enum):
     OCP4_SCAN_KONFLUX = 'aos-cd-builds/build%2Focp4-scan-konflux'
     RHCOS = 'aos-cd-builds/build%2Frhcos'
     OLM_BUNDLE = 'aos-cd-builds/build%2Folm_bundle'
+    OLM_BUNDLE_KONFLUX = 'aos-cd-builds/build%2Folm_bundle_konflux'
     SYNC_FOR_CI = 'scheduled-builds/sync-for-ci'
     MICROSHIFT_SYNC = 'aos-cd-builds/build%2Fmicroshift_sync'
     CINCINNATI_PRS = 'aos-cd-builds/build%2Fcincinnati-prs'
@@ -292,7 +293,7 @@ def start_ocp4_konflux(build_version: str, assembly: str, image_list: list,
         params['LIMIT_ARCHES'] = ','.join(limit_arches)
 
     return start_build(
-        job=Jobs.OCP4_KONFLUX,
+        job=Jobs.OLM_BUNDLE_KONFLUX,
         params=params,
         **kwargs
     )
@@ -382,6 +383,27 @@ def start_olm_bundle(build_version: str, assembly: str, operator_nvrs: list,
 
     return start_build(
         job=Jobs.OLM_BUNDLE,
+        params={
+            'BUILD_VERSION': build_version,
+            'ASSEMBLY': assembly,
+            'DOOZER_DATA_PATH': doozer_data_path,
+            'DOOZER_DATA_GITREF': doozer_data_gitref,
+            'OPERATOR_NVRS': ','.join(operator_nvrs)
+        },
+        **kwargs
+    )
+
+
+def start_olm_bundle_konflux(
+        build_version: str, assembly: str, operator_nvrs: list,
+        doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+        doozer_data_gitref: str = '', **kwargs) -> Optional[str]:
+    if not operator_nvrs:
+        logger.warning('Empty operator NVR received: skipping olm-bundle')
+        return
+
+    return start_build(
+        job=Jobs.OLM_BUNDLE_KONFLUX,
         params={
             'BUILD_VERSION': build_version,
             'ASSEMBLY': assembly,

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 import shutil
 from enum import Enum
 from typing import Optional, Tuple
@@ -15,6 +16,7 @@ from pyartcd import constants, util, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
+from pyartcd import record as record_util
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,13 +51,16 @@ class EnumEncoder(json.JSONEncoder):
 class KonfluxOcp4Pipeline:
     def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str], image_build_strategy: Optional[str],
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
-                 kubeconfig: Optional[str], skip_rebase: bool, arches: Tuple[str, ...], plr_template: str):
+                 kubeconfig: Optional[str], skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...], plr_template: str):
         self.runtime = runtime
         self.assembly = assembly
         self.version = version
+        self.data_path = data_path
+        self.data_gitref = data_gitref
         self.kubeconfig = kubeconfig
         self.arches = arches
         self.skip_rebase = skip_rebase
+        self.skip_bundle_build = skip_bundle_build
         self.plr_template = plr_template
 
         group_param = f'--group=openshift-{version}'
@@ -209,6 +214,27 @@ class KonfluxOcp4Pipeline:
             self.runtime.cleanup_sources('konflux_build_sources'),
         ])
 
+    def trigger_bundle_build(self):
+        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        if not record_log_path.exists():
+            LOGGER.warning('record.log not found, skipping bundle build')
+            return
+        with record_log_path.open('r') as file:
+            record_log: dict = record_util.parse_record_log(file)
+        records = record_log.get('image_build_konflux', [])
+        operator_nvrs = []
+        for record in records:
+            if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
+                operator_nvrs.append(record['nvrs'].split(',')[0])
+        if operator_nvrs:
+            jenkins.start_olm_bundle_konflux(
+                build_version=self.version,
+                assembly=self.assembly,
+                operator_nvrs=operator_nvrs,
+                doozer_data_path=self.data_path or '',
+                doozer_data_gitref=self.data_gitref or '',
+            )
+
     async def run(self):
         await self.initialize()
 
@@ -222,9 +248,17 @@ class KonfluxOcp4Pipeline:
             await self.rebase(version, input_release)
 
         LOGGER.info(f"Building images for OCP {self.version} with release {input_release}")
-        await self.build()
-
-        await self.clean_up()
+        try:
+            await self.build()
+        finally:
+            if self.skip_bundle_build:
+                LOGGER.warning("Skipping bundle build step because --skip-bundle-build flag is set")
+            else:
+                try:
+                    self.trigger_bundle_build()
+                except Exception as e:
+                    LOGGER.exception(f"Failed to trigger bundle build: {e}")
+            await self.clean_up()
 
 
 @cli.command("beta:ocp4-konflux", help="A pipeline to build images with Konflux for OCP 4")
@@ -244,6 +278,7 @@ class KonfluxOcp4Pipeline:
 @click.option('--ignore-locks', is_flag=True, default=False,
               help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
+@click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
 @click.option("--arch", "arches", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] Limit included arches to this list")
 @click.option('--plr-template', required=False, default='',
@@ -252,7 +287,7 @@ class KonfluxOcp4Pipeline:
 @click_coroutine
 async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional[str], assembly: str,
                data_path: Optional[str], version: str, data_gitref: Optional[str], kubeconfig: Optional[str],
-               ignore_locks: bool, skip_rebase: bool, arches: Tuple[str, ...], plr_template: str):
+               ignore_locks: bool, skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...], plr_template: str):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
@@ -270,6 +305,7 @@ async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional
         data_gitref=data_gitref,
         kubeconfig=kubeconfig,
         skip_rebase=skip_rebase,
+        skip_bundle_build=skip_bundle_build,
         arches=arches,
         plr_template=plr_template)
 

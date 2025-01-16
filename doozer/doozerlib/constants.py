@@ -38,6 +38,7 @@ KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-i
 ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
 KONFLUX_UI_HOST = "https://konflux.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
 KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
+KONFLUX_DEFAULT_NAMESPACE = f"{KONFLUX_UI_DEFAULT_WORKSPACE}-tenant"
 MAX_KONFLUX_BUILD_QUEUE_SIZE = 25  # how many concurrent Konflux pipeline can we spawn per OCP version?
 KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-konflux-template-push.yaml"
 KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-bundle-konflux-template-push.yaml"
