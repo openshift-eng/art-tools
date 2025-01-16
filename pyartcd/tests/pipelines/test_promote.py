@@ -621,8 +621,8 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         tag_release.assert_not_awaited()
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
-    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async", return_value=0)
-    async def test_build_release_image_from_reference_release(self, cmd_assert_async: AsyncMock, _):
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", return_value=0)
+    async def test_build_release_image_from_reference_release(self, cmd_gather_async: AsyncMock, _):
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -645,29 +645,29 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         await pipeline.build_release_image("4.10.99", "x86_64", previous_list, [],
                                            metadata, dest_pullspec, reference_release, None, keep_manifest_list=False)
         expected_cmd = ["oc", "adm", "release", "new", "-n", "ocp", "--name=4.10.99", "--to-image=example.com/foo/release:4.10.99-x86_64", f"--from-release={reference_release}", "--previous=4.10.98,4.10.97,4.9.99", "--metadata", "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}"]
-        cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
+        cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
         # test aarch64
         reference_release = "registry.ci.openshift.org/ocp-arm64/release-arm64:whatever-aarch64"
         dest_pullspec = "example.com/foo/release:4.10.99-aarch64"
-        cmd_assert_async.reset_mock()
+        cmd_gather_async.reset_mock()
         await pipeline.build_release_image("4.10.99", "aarch64", previous_list, [],
                                            metadata, dest_pullspec, reference_release, None, keep_manifest_list=False)
         expected_cmd = ["oc", "adm", "release", "new", "-n", "ocp-arm64", "--name=4.10.99", "--to-image=example.com/foo/release:4.10.99-aarch64", f"--from-release={reference_release}", "--previous=4.10.98,4.10.97,4.9.99", "--metadata", "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}"]
-        cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
+        cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
         # test multi-aarch64
         reference_release = "registry.ci.openshift.org/ocp-arm64/release-arm64:whatever-multi-aarch64"
         dest_pullspec = "example.com/foo/release:4.10.99-multi-aarch64"
-        cmd_assert_async.reset_mock()
+        cmd_gather_async.reset_mock()
         await pipeline.build_release_image("4.10.99", "aarch64", previous_list, [],
                                            metadata, dest_pullspec, reference_release, None, keep_manifest_list=True)
         expected_cmd = ["oc", "adm", "release", "new", "-n", "ocp-arm64", "--name=4.10.99", "--to-image=example.com/foo/release:4.10.99-multi-aarch64", f"--from-release={reference_release}", "--keep-manifest-list", "--previous=4.10.98,4.10.97,4.9.99", "--metadata", "{\"description\": \"whatever\", \"url\": \"https://access.redhat.com/errata/RHBA-2099:2222\"}"]
-        cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
+        cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
-    @patch("pyartcd.pipelines.promote.exectools.cmd_assert_async", return_value=0)
-    async def test_build_release_image_from_image_stream(self, cmd_assert_async: AsyncMock, _):
+    @patch("pyartcd.pipelines.promote.exectools.cmd_gather_async", return_value=0)
+    async def test_build_release_image_from_image_stream(self, cmd_gather_async: AsyncMock, _):
         runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"},
                                     "jira": {"url": "https://issues.redhat.com/"}},
                             working_dir=Path("/path/to/working"), dry_run=False)
@@ -682,17 +682,17 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         await pipeline.build_release_image("4.10.99", "x86_64", previous_list, [],
                                            metadata, dest_pullspec, reference_release, from_image_stream, keep_manifest_list=False)
         expected_cmd = ['oc', 'adm', 'release', 'new', '-n', 'ocp', '--name=4.10.99', '--to-image=example.com/foo/release:4.10.99-x86_64', '--reference-mode=source', '--from-image-stream=4.10-art-assembly-4.10.99', '--previous=4.10.98,4.10.97,4.9.99', '--metadata', '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}']
-        cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
+        cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
         # test aarch64
         reference_release = None
         dest_pullspec = "example.com/foo/release:4.10.99-aarch64"
         from_image_stream = "4.10-art-assembly-4.10.99-arm64"
-        cmd_assert_async.reset_mock()
+        cmd_gather_async.reset_mock()
         await pipeline.build_release_image("4.10.99", "aarch64", previous_list, [],
                                            metadata, dest_pullspec, reference_release, from_image_stream, keep_manifest_list=False)
         expected_cmd = ['oc', 'adm', 'release', 'new', '-n', 'ocp-arm64', '--name=4.10.99', '--to-image=example.com/foo/release:4.10.99-aarch64', '--reference-mode=source', '--from-image-stream=4.10-art-assembly-4.10.99-arm64', '--previous=4.10.98,4.10.97,4.9.99', '--metadata', '{"description": "whatever", "url": "https://access.redhat.com/errata/RHBA-2099:2222"}']
-        cmd_assert_async.assert_awaited_once_with(expected_cmd, env=ANY, stdout=ANY)
+        cmd_gather_async.assert_awaited_once_with(expected_cmd, env=ANY)
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
     @patch("pyartcd.pipelines.promote.PromotePipeline.tag_release", return_value=None)
@@ -1046,13 +1046,11 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
             dry_run=False
         )
         pipeline = PromotePipeline(runtime, group="openshift-4.10", assembly="4.10.99", signing_env="prod")
-        temp_dir = tempfile.mkdtemp()
-        os.chdir(temp_dir)
-        open("openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz", "w").close()
-        open("openshift-client-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz", "w").close()
-        open("openshift-install-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz", "w").close()
-        pipeline.create_symlink(temp_dir, False, False)
-        self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-client-linux.tar.gz')))
-        self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-client-mac.tar.gz')))
-        self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-install-mac.tar.gz')))
-        shutil.rmtree(temp_dir)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            Path(temp_dir, "openshift-client-linux-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
+            Path(temp_dir, "openshift-client-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
+            Path(temp_dir, "openshift-install-mac-4.3.0-0.nightly-2019-12-06-161135.tar.gz").open("w").close()
+            pipeline.create_symlink(temp_dir, False, False)
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-client-linux.tar.gz')))
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-client-mac.tar.gz')))
+            self.assertTrue(os.path.exists(os.path.join(temp_dir, 'openshift-install-mac.tar.gz')))
