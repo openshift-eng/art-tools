@@ -24,10 +24,12 @@ class QuayDoomsdaySync:
         self.runtime = runtime
         self.version = version
         self.workdir = "./workspace"
+        self.slack_client = self.runtime.new_slack_client()
+        self.slack_client.bind_channel(version)
 
         self.arches = arches.split(",") if arches else ALL_ARCHES_LIST
 
-    async def sync_arch(self, arch: str):
+    async def sync_arch(self, arch: str) -> bool:
         if arch not in ALL_ARCHES_LIST:
             raise Exception(f"Invalid arch: {arch}")
 
@@ -54,6 +56,7 @@ class QuayDoomsdaySync:
             self.runtime.logger.info("[%s] Mirror command ran successfully", arch)
             if self.runtime.dry_run:
                 self.runtime.logger.info("[DRY RUN] [%s] Would have run %s", arch, " ".join(aws_cmd))
+                self.runtime.logger.info("[DRY RUN] [%s] Would have messaged Slack", arch)
             else:
                 await asyncio.sleep(5)
                 self.runtime.logger.info("[%s] Running aws command: %s", arch, aws_cmd)
@@ -61,18 +64,43 @@ class QuayDoomsdaySync:
                 self.runtime.logger.info("[%s] AWS command ran successfully", arch)
                 await asyncio.sleep(5)
 
+                await self.slack_client.say_in_thread(f":white_check_mark: Successfully synced {self.version}-{arch}")
+
         except ChildProcessError as e:
             self.runtime.logger.error("[%s] Failed to sync: %s", arch, e)
+            if self.runtime.dry_run:
+                self.runtime.logger.info("[DRY RUN] [%s] Would have messaged Slack", arch)
+            else:
+                await self.slack_client.say_in_thread(f":warning: Failed to sync {self.version}-{arch}: {e}")
+            return False
 
         if os.path.exists(f"{self.workdir}/{path}"):
             self.runtime.logger.info("[%s] Cleaning dir: %s", arch, f"{self.workdir}/{path}")
             shutil.rmtree(f"{self.workdir}/{path}")
 
-    async def run(self):
+        return True
+
+    async def run(self) -> None:
         mkdirs(self.workdir)
 
+        if not self.runtime.dry_run:
+            slack_response = await self.slack_client.say_in_thread(f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:")
+            slack_channel_id = slack_response["channel"]
+            main_message_ts = slack_response["message"]["ts"]
+        else:
+            self.runtime.logger.info("[DRY RUN] Would have messaged Slack")
+
         tasks = [self.sync_arch(arch) for arch in self.arches]
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+
+        # Report the results to Slack
+        if not self.runtime.dry_run:
+            if all(results):
+                await self.slack_client._client.reactions_add(channel=slack_channel_id, timestamp=main_message_ts, name="done_it_is")
+            else:
+                await self.slack_client.say_in_thread(":x: Failed to sync some arches", broadcast=True)
+        else:
+            self.runtime.logger.info("[DRY RUN] Would have messaged Slack")
 
 
 @cli.command("quay-doomsday-backup", help="Run doomsday pipeline for the specified version and all arches unless --arches is specified")
