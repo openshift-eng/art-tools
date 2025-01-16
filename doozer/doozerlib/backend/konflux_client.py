@@ -381,6 +381,12 @@ class KonfluxClient:
             else:
                 prefetch_params.append({"type": "pip", "path": "."})
 
+        if "gomod" in package_managers:
+            prefetch_params.append({"type": "gomod", "path": "."})
+
+        if "npm" in package_managers:
+            prefetch_params.append({"type": "npm", "path": "."})
+
         if prefetch_params:
             _modify_param(params, "prefetch-input", prefetch_params)
 
