@@ -766,10 +766,9 @@ class KonfluxRebaser:
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         konflux_lines = ["\n# Start Konflux-specific steps",
-            "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
-            f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
-            f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
-        ]
+                         "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
+                         f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
+                         f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"]
 
         network_mode = metadata.config.get("konflux", {}).get("network_mode")
 
@@ -783,7 +782,7 @@ class KonfluxRebaser:
         konflux_lines += ["# End Konflux-specific steps\n\n"]
 
         dfp.add_lines(
-            konflux_lines,
+            *konflux_lines,
             at_start=True,
             all_stages=True,
         )
