@@ -369,7 +369,7 @@ class KonfluxClient:
                 for entry in pip_configs:
                     pip_override = {"type": "pip"}
 
-                    pip_path = entry["path"]
+                    pip_path = entry.get("path")
                     if pip_path:
                         pip_override["path"] = pip_path
 
@@ -382,10 +382,32 @@ class KonfluxClient:
                 prefetch_params.append({"type": "pip", "path": "."})
 
         if "gomod" in package_managers:
-            prefetch_params.append({"type": "gomod", "path": "."})
+            gomod_configs = image_metadata.config.get("cachito", {}).get("packages", {}).get("gomod", [])
+            if gomod_configs:
+                for entry in gomod_configs:
+                    gomod_override = {"type": "gomod"}
+
+                    gomod_path = entry.get("path")
+                    if gomod_path:
+                        gomod_override["path"] = gomod_path
+
+                    prefetch_params.append({"type": "gomod", "path": gomod_path})
+            else:
+                prefetch_params.append({"type": "gomod", "path": "."})
 
         if "npm" in package_managers:
-            prefetch_params.append({"type": "npm", "path": "."})
+            npm_configs = image_metadata.config.get("cachito", {}).get("packages", {}).get("npm", [])
+            if npm_configs:
+                for entry in npm_configs:
+                    npm_override = {"type": "npm"}
+
+                    npm_path = entry.get("path")
+                    if npm_path:
+                        npm_override["path"] = npm_path
+
+                    prefetch_params.append({"type": "npm", "path": npm_path})
+            else:
+                prefetch_params.append({"type": "npm", "path": "."})
 
         if prefetch_params:
             _modify_param(params, "prefetch-input", prefetch_params)
