@@ -18,7 +18,7 @@ from typing import Dict, Iterable, List, Optional, Union, Set
 from urllib.parse import quote
 from ruamel.yaml import YAML
 from semver import VersionInfo
-from tenacity import (RetryCallState, RetryError, retry,
+from tenacity import (RetryCallState, RetryError, retry, retry_if_exception_message,
                       retry_if_exception_type, retry_if_result,
                       stop_after_attempt, wait_fixed)
 
@@ -1396,8 +1396,12 @@ class PromotePipeline:
         env = os.environ.copy()
         env["GOTRACEBACK"] = "all"
         self._logger.info("Running %s", " ".join(cmd))
-        await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
-        pass
+        return await retry(
+            reraise=True,
+            stop=stop_after_attempt(10),  # retry 10 times
+            wait=wait_fixed(30),  # wait for 30 seconds between retries
+            retry=(retry_if_exception_message(match=r".*HTTP status: 502 Bad Gateway")),
+        )(exectools.cmd_gather_async)(cmd, env=env)
 
     @staticmethod
     async def get_image_stream(namespace: str, image_stream: str):
