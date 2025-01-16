@@ -213,6 +213,7 @@ class KonfluxImageBuilder:
             skip_checks=self._config.skip_checks,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
+            image_metadata=metadata
         )
 
         logger.info(f"Created PipelineRun: {self.build_pipeline_url(pipelinerun)}")

@@ -14,6 +14,8 @@ from ruamel.yaml import YAML
 
 from doozerlib import constants
 
+from doozerlib.image import ImageMetadata
+
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
 
@@ -305,7 +307,7 @@ class KonfluxClient:
 
     async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                                git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                               build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                                               build_platforms: Sequence[str], image_metadata: ImageMetadata, git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
                                                pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
@@ -359,6 +361,29 @@ class KonfluxClient:
         _modify_param(params, "image-expires-after", "6w")
         _modify_param(params, "build-platforms", list(build_platforms))
 
+        prefetch_params = []
+        package_managers = image_metadata.config.get("content", {}).get("source", {}).get("pkg_managers", [])
+        if "pip" in package_managers:
+            pip_configs = image_metadata.config.get("cachito", {}).get("packages", {}).get("pip", [])
+            if pip_configs:
+                for entry in pip_configs:
+                    pip_override = {"type": "pip"}
+
+                    pip_path = entry["path"]
+                    if pip_path:
+                        pip_override["path"] = pip_path
+
+                    pip_requirements_files = entry.get("requirements_files", [])
+                    pip_requirements_build_files = entry.get("requirements_build_files", [])
+                    if pip_requirements_files or pip_requirements_build_files:
+                        pip_override["requirements_files"] = pip_requirements_files + pip_requirements_build_files
+                    prefetch_params.append(pip_override)
+            else:
+                prefetch_params.append({"type": "pip", "path": "."})
+
+        if prefetch_params:
+            _modify_param(params, "prefetch-input", prefetch_params)
+
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
@@ -408,6 +433,7 @@ class KonfluxClient:
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+        image_metadata: ImageMetadata = None
     ):
         """
         Start a PipelineRun for building an image.
@@ -425,6 +451,7 @@ class KonfluxClient:
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
+        :param image_metadata: Image metadata
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -448,6 +475,7 @@ class KonfluxClient:
             skip_checks=skip_checks,
             additional_tags=additional_tags,
             pipelinerun_template_url=pipelinerun_template_url,
+            image_metadata=image_metadata
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
