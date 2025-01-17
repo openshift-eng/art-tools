@@ -281,7 +281,16 @@ class BuildMicroShiftPipeline:
             "--verify-flaws",
             str(advisory_id)
         ]
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
+        try:
+            await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
+        except ChildProcessError as err:
+            self._logger.warning("Error verifying attached bugs: %s", err)
+            if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                await self.slack_client.say_in_thread("Attached bugs have some issues. Permitting since "
+                                                      f"assembly is of type {self.assembly_type}")
+                await self.slack_client.say_in_thread(str(err))
+            else:
+                raise err
 
     # Advisory can have several pending checks, so retry it a few times
     @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))
