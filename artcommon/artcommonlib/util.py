@@ -169,6 +169,9 @@ def is_release_next_week(group):
     Check if there release of group need to release in the near week
     """
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    if 'all_ga_tasks' not in release_schedules.json():
+        LOGGER.error("Key 'all_ga_tasks' not found in response data")
+        return False
     for release in release_schedules.json()['all_ga_tasks']:
         release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
         if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
@@ -184,6 +187,9 @@ def get_inflight(assembly, group):
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    if 'all_ga_tasks' not in release_schedules.json():
+        LOGGER.error("Key 'all_ga_tasks' not found in response data")
+        return inflight_release
     for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:
