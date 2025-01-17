@@ -180,7 +180,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
     @patch('artcommonlib.konflux.konflux_db.datetime')
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
     async def test_get_latest_build(self, query_mock, datetime_mock):
-        now = datetime(2022, 1, 1, 12, 0, 0)
+        now = datetime(2022, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         lower_bound = now - 3 * timedelta(days=30)
         datetime_mock.now.return_value = now
 
