@@ -287,7 +287,7 @@ class BuildMicroShiftPipeline:
             self._logger.warning("Error verifying attached bugs: %s", err)
             if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                 await self.slack_client.say_in_thread("Attached bugs have some issues. Permitting since "
-                                                       f"assembly is of type {assembly_type}")
+                                                      f"assembly is of type {self.assembly_type}")
                 await self.slack_client.say_in_thread(str(err))
             else:
                 raise err
