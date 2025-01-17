@@ -1,9 +1,11 @@
+import base64
 import copy
 import functools
 import json
 import os
 import pathlib
 import re
+import tempfile
 import urllib.parse
 from collections import deque
 from datetime import datetime
@@ -560,28 +562,81 @@ def oc_image_info__caching(pull_spec: str, go_arch: str = 'amd64') -> Dict:
     return oc_image_info(pull_spec, go_arch)
 
 
-@retry(reraise=True, wait=wait_fixed(3), stop=stop_after_attempt(3))
-async def oc_image_info_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+async def oc_image_info_async(
+        pull_spec: str,
+        go_arch: str = 'amd64',
+        registry_config: Optional[str] = None,
+        registry_username: Optional[str] = None,
+        registry_password: Optional[str] = None,
+) -> Dict:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
     pullspec. Filter by os because images can be multi-arch manifest lists
     (which cause oc image info to throw an error if not filtered).
+    This function will authenticate with the registry using the provided registry_config or username and password.
 
-    Use oc_image_info__caching if you think the image won't change during the course of doozer's execution.
+    Use oc_image_info_async__caching if you think the image won't change during the course of doozer
+    execution.
+
+    :param pull_spec: The image pullspec to query.
+    :param go_arch: The Go architecture to filter by.
+    :param registry_config: The path to the registry config file.
+    :param registry_username: The username to authenticate with the registry.
+    :param registry_password: The password to authenticate with the registry.
+    :return: The parsed JSON output of `oc image info`.
     """
-    cmd = ['oc', 'image', 'info', f'--filter-by-os={go_arch}', '-o', 'json', pull_spec]
-    _, out, _ = await exectools.cmd_gather_async(cmd)
-    return json.loads(out)
+
+    async def _run_command(auth_file: Optional[str]):
+        options = [f'--filter-by-os={go_arch}', '-o', 'json']
+        if auth_file:
+            options.extend([f'--registry-config={auth_file}'])
+        cmd = ['oc', 'image', 'info'] + options + [pull_spec]
+        _, out, _ = await exectools.cmd_gather_async(cmd)
+        return json.loads(out)
+
+    if not registry_username and not registry_password:
+        return await _run_command(auth_file=registry_config)
+
+    if not registry_password:
+        raise ValueError('registry_password must be provided if auth is needed.')
+    if not registry_username:
+        auth = registry_password
+    else:
+        auth = base64.b64encode(f'{registry_username}:{registry_password}'.encode()).decode()
+    with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
+        registry_config_file.write(json.dumps({
+            'auths': {
+                pull_spec.split('/')[0]: {
+                    'auth': auth,
+                }
+            }
+        }))
+        registry_config_file.flush()
+        return await _run_command(auth_file=registry_config_file.name)
 
 
 @alru_cache
-async def oc_image_info__caching_async(pull_spec: str, go_arch: str = 'amd64') -> Dict:
+async def oc_image_info_async__caching(
+        pull_spec: str,
+        go_arch: str = 'amd64',
+        registry_config: Optional[str] = None,
+        registry_username: Optional[str] = None,
+        registry_password: Optional[str] = None) -> Dict:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
-    pullspec. This function will cache that output per pullspec, so do not use it
+    pullspec. This will authenticate with the registry using the provided username and password.
+
+    This function will cache that output per pullspec, so do not use it
     if you expect the image to change during the course of doozer's execution.
+
+    :param pull_spec: The image pullspec to query.
+    :param go_arch: The Go architecture to filter by.
+    :param registry_config: The path to the registry config file.
+    :param registry_username: The username to authenticate with the registry.
+    :param registry_password: The password to authenticate with the registry.
+    :return: The parsed JSON output of `oc image info`.
     """
-    return await oc_image_info_async(pull_spec, go_arch)
+    return await oc_image_info_async(pull_spec, go_arch, registry_config, registry_username, registry_password)
 
 
 def infer_assembly_type(custom, assembly_name):

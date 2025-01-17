@@ -67,7 +67,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(match.group(1), "namespace/image")
         self.assertEqual(match.group(2), "tag")
 
-    @patch("doozerlib.util.oc_image_info__caching_async")
+    @patch("doozerlib.util.oc_image_info_async__caching")
     async def test_replace_image_references(self, mock_oc_image_info):
         old_registry = "registry.example.com"
         content = """
