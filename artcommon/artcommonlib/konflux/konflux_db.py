@@ -210,7 +210,7 @@ class KonfluxDb:
             name: str,
             group: str,
             outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-            assembly: str = None,
+            assembly: typing.Optional[str] = None,
             el_target: typing.Optional[str] = None,
             artifact_type: typing.Optional[ArtifactType] = None,
             engine: typing.Optional[Engine] = None,
