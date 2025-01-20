@@ -30,14 +30,12 @@ from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
 from pyartcd.locks import Lock
 from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
-from pyartcd.util import nightlies_with_pullspecs
 from pyartcd import constants, locks, util, jenkins
 from artcommonlib import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from artcommonlib.exceptions import VerificationError
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
-from pyartcd.s3 import sync_dir_to_s3_mirror
 from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
     extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
 from pyartcd.runtime import Runtime, GroupRuntime
@@ -1396,8 +1394,11 @@ class PromotePipeline:
         env = os.environ.copy()
         env["GOTRACEBACK"] = "all"
         self._logger.info("Running %s", " ".join(cmd))
-        await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
-        pass
+        return await retry(
+            reraise=True,
+            stop=stop_after_attempt(10),  # retry 10 times
+            wait=wait_fixed(30),  # wait for 30 seconds between retries
+        )(exectools.cmd_gather_async)(cmd, env=env)
 
     @staticmethod
     async def get_image_stream(namespace: str, image_stream: str):

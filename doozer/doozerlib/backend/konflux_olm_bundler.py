@@ -249,7 +249,12 @@ class KonfluxOlmBundleRebaser:
         # Get image infos for all found images
         for pullspec, (namespace, image_short_name, image_tag) in references.items():
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-            image_info_tasks.append(asyncio.create_task(util.oc_image_info__caching_async(build_pullspec)))
+            image_info_tasks.append(asyncio.create_task(
+                util.oc_image_info_async__caching(
+                    build_pullspec,
+                    registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+                    registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                )))
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content
@@ -542,10 +547,9 @@ class KonfluxOlmBundleBuilder:
             source_repo = df.labels['io.openshift.build.source-location']
             commitish = df.labels['io.openshift.build.commit.id']
 
-            component_name = df.labels['com.redhat.component']
             version = df.labels['version']
             release = df.labels['release']
-            nvr = "-".join([component_name, version, release])
+            nvr = "-".join([metadata.get_olm_bundle_short_name(), version, release])
 
             pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)

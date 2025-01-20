@@ -67,7 +67,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(match.group(1), "namespace/image")
         self.assertEqual(match.group(2), "tag")
 
-    @patch("doozerlib.util.oc_image_info__caching_async")
+    @patch("doozerlib.util.oc_image_info_async__caching")
     async def test_replace_image_references(self, mock_oc_image_info):
         old_registry = "registry.example.com"
         content = """
@@ -710,7 +710,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.name, "test-bundle")
         self.assertEqual(build_record.version, "1.0")
         self.assertEqual(build_record.release, "1")
-        self.assertEqual(build_record.nvr, "test-component-1.0-1")
+        self.assertEqual(build_record.nvr, "test-bundle-1.0-1")
         self.assertEqual(build_record.group, "test-group")
         self.assertEqual(build_record.assembly, "test-assembly")
         self.assertEqual(build_record.source_repo, "https://example.com/source-repo.git")
@@ -777,7 +777,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.name, "test-bundle")
         self.assertEqual(build_record.version, "1.0")
         self.assertEqual(build_record.release, "1")
-        self.assertEqual(build_record.nvr, "test-component-1.0-1")
+        self.assertEqual(build_record.nvr, "test-bundle-1.0-1")
         self.assertEqual(build_record.group, "test-group")
         self.assertEqual(build_record.assembly, "test-assembly")
         self.assertEqual(build_record.source_repo, "https://example.com/source-repo.git")
