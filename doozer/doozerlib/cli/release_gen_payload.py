@@ -342,7 +342,7 @@ class GenPayloadCli:
 
         red_print("DO NOT PROCEED WITH THIS ASSEMBLY PAYLOAD -- not all detected issues are permitted.",
                   file=sys.stderr)
-        exit(42) # set exit code to 42 to indicate that assembly is not viable
+        exit(42)  # set exit code to 42 to indicate that assembly is not viable
 
     def validate_parameters(self):
         """

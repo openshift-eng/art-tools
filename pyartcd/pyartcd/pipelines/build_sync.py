@@ -357,11 +357,11 @@ class BuildSyncPipeline:
             cmd.extend(['--skip-gc-tagging', '--moist-run'])
         rc = await exectools.cmd_assert_async(cmd, check=False, env=os.environ.copy())
         if rc != 0:
-            if rc == 42: # special exit code for unviable assembly
+            if rc == 42:  # special exit code for unviable assembly
                 jenkins.update_title(' [UNVIABLE]')
             else:
                 jenkins.update_title(' [FAILED]')
-            raise ChildProcessError(stderr)
+            raise ChildProcessError(f"{cmd} exited with code {rc}.")
 
         # Populate CI imagestreams
         await self._populate_ci_imagestreams()
