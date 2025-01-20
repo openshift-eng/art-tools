@@ -60,13 +60,6 @@ class ConfigScanSources:
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
 
-        # Common params for all queries
-        self.base_search_params = {
-            'group': self.runtime.group,
-            'assembly': self.runtime.assembly,  # to let test ocp4-scan in non-stream assemblies, e.g. 'test'
-            'engine': Engine.KONFLUX.value,
-        }
-
         self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
@@ -292,14 +285,9 @@ class ConfigScanSources:
 
         self.logger.info('Gathering latest RPM build records information...')
 
-        async def _find_target_build(rpm_name, el_target):
-            search_params = {
-                'name': rpm_name,
-                'el_target': el_target,
-                **self.base_search_params,
-                'engine': 'brew'  # for RPMs we only have Brew build engine
-            }
-            build_record = await self.runtime.konflux_db.get_latest_build(**search_params)
+        async def _find_target_build(rpm_meta, el_target):
+            rpm_name = rpm_meta.rpm_name
+            build_record = await rpm_meta.get_latest_build(el_target=el_target)
             if not self.latest_rpm_build_records_map.get(rpm_name):
                 self.latest_rpm_build_records_map[rpm_name] = {}
             self.latest_rpm_build_records_map[rpm_name][el_target] = build_record
@@ -307,16 +295,15 @@ class ConfigScanSources:
         tasks = []
         for rpm in self.runtime.rpm_metas():
             tasks.extend([
-                _find_target_build(rpm.rpm_name, f'el{target}')
+                _find_target_build(rpm, f'el{target}')
                 for target in rpm.determine_rhel_targets()
             ])
         await asyncio.gather(*tasks)
 
     async def find_latest_image_builds(self, image_names: typing.List[str]):
         self.logger.info('Gathering latest image build records information...')
-        latest_image_builds = await self.runtime.konflux_db.get_latest_builds(
-            names=image_names,
-            **self.base_search_params)
+        latest_image_builds = await asyncio.gather(*[
+            self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names])
         self.latest_image_build_records_map.update((zip(
             image_names, latest_image_builds)))
 
@@ -421,10 +408,9 @@ class ConfigScanSources:
 
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
-        upstream_commit_build_record = await self.runtime.konflux_db.get_latest_build(
-            **self.base_search_params,
-            name=image_meta.distgit_key,
-            extra_patterns={'commitish': upstream_commit_hash}  # WHERE commitish LIKE '%{upstream_commit_hash}%'
+        upstream_commit_build_record = await image_meta.get_latest_build(
+            engine=Engine.KONFLUX.value,
+            extra_patterns={'commitish': upstream_commit_hash}
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -455,9 +441,7 @@ class ConfigScanSources:
         now = datetime.now(timezone.utc)
 
         # Check whether a build attempt with this commit has failed before.
-        failed_commit_build_record = await self.runtime.konflux_db.get_latest_build(
-            **self.base_search_params,
-            name=image_meta.distgit_key,
+        failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
             outcome=KonfluxBuildOutcome.FAILURE
         )
@@ -640,7 +624,11 @@ class ConfigScanSources:
 
         build = await anext(self.runtime.konflux_db.search_builds_by_fields(
             start_search=start_search,
-            where={'nvr': builder_build_nvr, **self.base_search_params},
+            where={
+                'nvr': builder_build_nvr,
+                'group': self.runtime.group,
+                'assembly': self.runtime.assembly,
+            },
             limit=1,
         ), None)
         if build:
@@ -744,15 +732,11 @@ class ConfigScanSources:
 
             # Scan for any build in this assembly which includes the git commit.
             upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
-            search_params = {
-                'name': rpm_name,
-                'extra_patterns': {'commitish': upstream_commit_hash},
-                **self.base_search_params,
-                'engine': 'brew'  # for RPMs we only have Brew build engine
-            }
-            if el_target:
-                search_params['el_target'] = el_target
-            upstream_commit_build_record = await self.runtime.konflux_db.get_latest_build(**search_params)
+            upstream_commit_build_record = await rpm_meta.get_latest_build(
+                el_target=el_target,
+                extra_patterns={'commitish': upstream_commit_hash},
+                engine=Engine.BREW.value
+            )
 
             if not upstream_commit_build_record:
                 self.logger.warning('No build for RPM %s from upstream commit %s',
