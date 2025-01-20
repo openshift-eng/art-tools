@@ -355,13 +355,7 @@ class BuildSyncPipeline:
             cmd.extend([f'--exclude-arch {arch}' for arch in self.exclude_arches])
         if self.runtime.dry_run:
             cmd.extend(['--skip-gc-tagging', '--moist-run'])
-        rc = await exectools.cmd_assert_async(cmd, check=False, env=os.environ.copy())
-        if rc != 0:
-            if rc == 42:  # special exit code for unviable assembly
-                jenkins.update_title(' [UNVIABLE]')
-            else:
-                jenkins.update_title(' [FAILED]')
-            raise ChildProcessError(f"{cmd} exited with code {rc}.")
+        await exectools.cmd_assert_async(cmd, env=os.environ.copy())
 
         # Populate CI imagestreams
         await self._populate_ci_imagestreams()
@@ -402,7 +396,7 @@ class BuildSyncPipeline:
                     self.logger.info('Command failed: retrying, %s', e)
                     await asyncio.sleep(5)
 
-    def filter_assembly_issues(self) -> dict[str, dict[any, any]]:
+    def get_unpermissable_assembly_issues(self) -> dict[str, dict[any, any]]:
         """
         Filters assembly issues with 'permitted: false' from assembly_report.yml.
         """
@@ -446,12 +440,14 @@ class BuildSyncPipeline:
             raise
 
         # More than 2 failures: we need to notify ART and #forum-release before breaking the build
-        filtered_issues = self.filter_assembly_issues()
+        unpermissable_issues = self.get_unpermissable_assembly_issues()
 
-        if filtered_issues['assembly_issues']:
-            report = yaml.safe_dump(filtered_issues)
+        if unpermissable_issues['assembly_issues']:
+            report = yaml.safe_dump(unpermissable_issues)
+            jenkins.update_title(' [UNVIABLE]')
         else:
-            report = None
+            report = "Unknown Failure. Please investigate"
+            jenkins.update_title(' [FAILURE]')
 
         # TODO https://issues.redhat.com/browse/ART-5657
         if 10 <= fail_count <= 50:
