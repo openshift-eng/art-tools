@@ -562,7 +562,7 @@ class KonfluxRebaser:
 
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(metadata, source, df_path, version, release, downstream_parents,
-                                    force_yum_updates, uuid_tag)
+                                    force_yum_updates, uuid_tag, dest_dir)
 
             self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
@@ -614,7 +614,7 @@ class KonfluxRebaser:
 
     def _update_dockerfile(self, metadata: ImageMetadata, source: Optional[SourceResolution],
                            df_path: Path, version: str, release: str, downstream_parents: Optional[List[str]],
-                           force_yum_updates: bool, uuid_tag: str):
+                           force_yum_updates: bool, uuid_tag: str, dest_dir: Path):
         """ Update the Dockerfile in the build repo with the correct labels and version information.
         """
         dfp = DockerfileParser(str(df_path))
@@ -756,17 +756,47 @@ class KonfluxRebaser:
         self._update_environment_variables(metadata, source, df_path, build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
 
         # Inject build repos for Konflux
-        self._add_build_repos(dfp, metadata)
+        self._add_build_repos(dfp, metadata, dest_dir)
 
         self._modify_cachito_commands(metadata, df_path)
 
         self._reflow_labels(df_path)
 
-    def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata):
+    def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
         network_mode = metadata.config.get("konflux", {}).get("network_mode")
+        valid_network_modes = ["hermetic", "internal-only", "open"]
+        if network_mode not in valid_network_modes:
+            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
 
         konflux_lines = ["\n# Start Konflux-specific steps"]
+
+        # Set ENV variables for cachi2 configuration
+        # Ref policy doc: https://docs.google.com/document/d/1Ajc6MSNJz20b34L7QNwoPcWKxId7Fy-eRt7oqyaJl8c
+        # ART_BUILD_ENGINE=brew|konflux
+        # ART_BUILD_DEPS_METHOD=cachito|cachi2
+        # ART_BUILD_DEPS_MODE=default|cachito-emulation
+        # ART_BUILD_NETWORK=hermetic|internal-only|open for konflux | ART_BUILD_NETWORK=internal-only for brew
+        konflux_lines += [
+            "ENV ART_BUILD_ENGINE=konflux",
+            "ENV ART_BUILD_DEPS_METHOD=cachi2",
+            f"ENV ART_BUILD_NETWORK={network_mode if network_mode else 'open'}"
+        ]
+
+        cachito_emulation = metadata.config.get("konflux", {}).get("cachito", {}).get("emulation", False)
+        if cachito_emulation:
+            with open(f"{dest_dir}/cachi2-emulation/app/.dir"):
+                # Create an emtpy file for rebase
+                pass
+
+            konflux_lines += [
+                "ENV ART_BUILD_DEPS_MODE=cachito-emulation",
+                f"ENV REMOTE_SOURCES={dest_dir}/cachito-emulation",
+            ]
+        else:
+            konflux_lines += [
+                "ENV ART_BUILD_DEPS_MODE=default",
+            ]
 
         if network_mode != "hermetic":
             konflux_lines += [
