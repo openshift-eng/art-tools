@@ -13,6 +13,7 @@ from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
 from doozerlib import constants
+from doozerlib.image import ImageMetadata
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -304,7 +305,7 @@ class KonfluxClient:
                 return template
 
     async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
-                                               git_url: str, commit_sha: str, target_branch: str, output_image: str,
+                                               git_url: str, commit_sha: str, target_branch: str, output_image: str, image_metadata: ImageMetadata,
                                                build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
                                                pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
@@ -359,6 +360,9 @@ class KonfluxClient:
         _modify_param(params, "image-expires-after", "6w")
         _modify_param(params, "build-platforms", list(build_platforms))
 
+        if image_metadata.config.get("konflux", {}).get("network-mode") == "hermetic":
+            _modify_param(params, "hermetic", "true")
+
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
@@ -408,6 +412,7 @@ class KonfluxClient:
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+        image_metadata: ImageMetadata = None
     ):
         """
         Start a PipelineRun for building an image.
@@ -425,6 +430,7 @@ class KonfluxClient:
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
+        :param image_metadata: Image metadata
         :param pipelinerun_template_url: The URL to the PipelineRun template.
         :return: The PipelineRun resource.
         """
@@ -449,6 +455,7 @@ class KonfluxClient:
             skip_checks=skip_checks,
             additional_tags=additional_tags,
             pipelinerun_template_url=pipelinerun_template_url,
+            image_metadata=image_metadata
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
