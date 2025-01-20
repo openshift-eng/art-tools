@@ -249,7 +249,12 @@ class KonfluxOlmBundleRebaser:
         # Get image infos for all found images
         for pullspec, (namespace, image_short_name, image_tag) in references.items():
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-            image_info_tasks.append(asyncio.create_task(util.oc_image_info__caching_async(build_pullspec)))
+            image_info_tasks.append(asyncio.create_task(
+                util.oc_image_info_async__caching(
+                    build_pullspec,
+                    registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+                    registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                )))
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content

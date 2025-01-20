@@ -28,7 +28,7 @@ from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 from artcommonlib.release_util import isolate_timestamp_in_release
-from doozerlib.util import oc_image_info__caching_async, isolate_el_version_in_brew_tag
+from doozerlib.util import oc_image_info_async__caching, isolate_el_version_in_brew_tag
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -605,7 +605,7 @@ class ConfigScanSources:
             builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
 
         # Find and map the builder image NVR
-        latest_builder_image_info = Model(await oc_image_info__caching_async(builder_image_url))
+        latest_builder_image_info = Model(await oc_image_info_async__caching(builder_image_url))
         builder_info_labels = latest_builder_image_info.config.config.Labels
         builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'],
                             builder_info_labels['release']]
