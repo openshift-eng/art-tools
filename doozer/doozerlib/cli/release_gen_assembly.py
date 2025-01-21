@@ -61,7 +61,7 @@ def releases_gen_assembly(ctx, name):
               help="When using --auto-previous, set custom suggestions URL, load from {major}-{minor}-{arch}.yaml")
 @click.option('--output-file', '-o', required=False,
               help='Specify a file path to write the generated assembly definition to')
-@click.option("--gen-microshift", default=False, is_flag=True,
+@click.option("--gen-microshift", 'gen_microshift', default=False, is_flag=True,
               help="Create microshift entry for assembly release.")
 @pass_runtime
 @click_coroutine

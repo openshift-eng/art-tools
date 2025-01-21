@@ -30,8 +30,7 @@ class GenAssemblyPipeline:
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
                  custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
                  auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
-                 ignore_non_x86_nightlies: Optional[bool] = False, logger: Optional[logging.Logger] = None,
-                 gen_microshift: bool):
+                 ignore_non_x86_nightlies: Optional[bool] = False, logger: Optional[logging.Logger] = None, gen_microshift: bool = False):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
