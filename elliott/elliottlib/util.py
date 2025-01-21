@@ -505,14 +505,24 @@ def all_same(items: Iterable[Any]):
     return all(x == first for x in it)
 
 
-async def get_nvrs_from_payload(pullspec, rhcos_images, logger=None):
+async def get_nvrs_from_payload(pullspec_or_imagestream, rhcos_images, logger=None):
     def log(msg):
         if logger:
             logger.info(msg)
 
+    # a pullspec looks like this: quay.io/openshift-release-dev/ocp-release:4.17.14-x86_64
+    # an imagestream looks like this: 4.17-art-assembly-4.17.14
+    if '@' in pullspec_or_imagestream or ':' in pullspec_or_imagestream:
+        is_pullspec = True
+    else:
+        is_pullspec = False
+
     all_payload_nvrs = {}
     log("Fetching release info...")
-    release_export_cmd = f'oc adm release info {pullspec} -o json'
+    if is_pullspec:
+        release_export_cmd = f'oc adm release info -o json {pullspec_or_imagestream}'
+    else:
+        release_export_cmd = f'oc -n ocp -o json get is/{pullspec_or_imagestream}'
 
     rc, stdout, stderr = exectools.cmd_gather(release_export_cmd)
     if rc != 0:
@@ -521,15 +531,17 @@ async def get_nvrs_from_payload(pullspec, rhcos_images, logger=None):
         raise RuntimeError(msg)
 
     payload_json = json.loads(stdout)
+    if is_pullspec:
+        payload_json = payload_json["references"]
     log("Looping over payload images...")
-    log(f"{len(payload_json['references']['spec']['tags'])} images to check")
+    log(f"{len(payload_json['spec']['tags'])} images to check")
     cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
-            payload_json['references']['spec']['tags']]
+            payload_json['spec']['tags']]
 
     log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
 
-    for image, cmd, cmd_result in zip(payload_json['references']['spec']['tags'], cmds, cmd_results):
+    for image, cmd, cmd_result in zip(payload_json['spec']['tags'], cmds, cmd_results):
         image_name = image['name']
         rc, stdout, stderr = cmd_result
         if rc != 0:

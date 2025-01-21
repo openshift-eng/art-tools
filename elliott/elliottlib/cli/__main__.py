@@ -172,11 +172,11 @@ Fields for the short format: Release date, State, Synopsys, URL
 
 
 @cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
-@click.argument("payload")
+@click.argument("payload_or_imagestream")
 @click.argument('advisory', type=int)
 @click.pass_obj
 @click_coroutine
-async def verify_payload(runtime, payload, advisory):
+async def verify_payload(runtime, payload_or_imagestream, advisory):
     """Cross-check that the builds present in PAYLOAD match the builds
 attached to ADVISORY. The payload is treated as the source of
 truth. If something is absent or different in the advisory it is
@@ -209,7 +209,7 @@ written out to summary_results.json.
 
     click.echo("Found {} builds".format(len(all_advisory_nvrs)))
 
-    all_payload_nvrs = await util.get_nvrs_from_payload(payload, rhcos_images, LOGGER)
+    all_payload_nvrs = await util.get_nvrs_from_payload(payload_or_imagestream, rhcos_images, LOGGER)
 
     missing_in_errata = {}
     payload_doesnt_match_errata = {}
