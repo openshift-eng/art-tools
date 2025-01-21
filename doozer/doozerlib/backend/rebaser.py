@@ -279,12 +279,11 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                build = asyncio.run(self.konflux_db.get_latest_build(
-                    name=parent_metadata.distgit_key,
-                    assembly=self._runtime.assembly,
-                    group=self._runtime.group,
+                build = asyncio.run(parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX))
+                    engine=Engine.KONFLUX
+                ))
+
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 return build.image_pullspec, build.embargoed
@@ -1546,12 +1545,10 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                build = asyncio.run(self.konflux_db.get_latest_build(
-                    name=meta.distgit_key,
-                    assembly=self._runtime.assembly,
-                    group=self._runtime.group,
+                build = asyncio.run(meta.get_latest_build(
                     el_target=f'el{meta.branch_el_target()}',
-                    engine=Engine.KONFLUX))
+                    engine=Engine.KONFLUX
+                ))
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
                 v = build.version
