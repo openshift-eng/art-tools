@@ -129,13 +129,13 @@ releases:
                                                  base='openshift-4.12', title='Add assembly 4.12.99', body=ANY,
                                                  maintainer_can_modify=True)
 
+    @patch("pyartcd.pipelines.gen_assembly.GenAssemblyPipeline._get_latest_accepted_nightly", return_value="nightly2")
     @patch("pyartcd.pipelines.gen_assembly.GenAssemblyPipeline._create_or_update_pull_request", autospec=True,
            return_value=MagicMock(html_url="https://github.example.com/foo/bar/pull/1234", number=1234))
     @patch("pyartcd.pipelines.gen_assembly.GenAssemblyPipeline._gen_assembly_from_releases", autospec=True)
     @patch("pyartcd.pipelines.gen_assembly.GenAssemblyPipeline._get_nightlies", autospec=True)
     async def test_run(self, get_nightlies: AsyncMock, _gen_assembly_from_releases: AsyncMock,
-                       _create_or_update_pull_request: AsyncMock):
-
+                       _create_or_update_pull_request: AsyncMock, _get_latest_accepted_nightly: AsyncMock):
         os.environ["GITHUB_TOKEN"] = "irrelevant"
 
         runtime = MagicMock(dry_run=False, config={"build_config": {

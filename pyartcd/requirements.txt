@@ -23,9 +23,9 @@ slack_sdk >= 3.13.0
 stomp.py ~= 8.1.0
 tenacity ~= 8.4, != 8.4.0 # https://github.com/jd/tenacity/issues/471
 tomli ~= 2.0.1
-specfile
-awscli
+specfile; sys_platform == "linux"
 aiohttp>=3.10.2 # not directly required, pinned by Snyk to avoid a vulnerability
 requests>=2.32.0 # not directly required, pinned by Snyk to avoid a vulnerability
 setuptools>=70.0.0 # not directly required, pinned by Snyk to avoid a vulnerability
 mysql-connector-python>=9.1.0 # not directly required, pinned by Snyk to avoid a vulnerability
+zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability

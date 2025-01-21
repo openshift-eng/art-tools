@@ -143,7 +143,7 @@ class BuildStatusDetector:
                 # We need to check any group members for their latest build in the
                 # current assembly. This may be different than what is in the tag.
                 for rpm_meta in self.runtime.rpm_metas():
-                    assembly_build_dict = rpm_meta.get_latest_build(default=None, el_target=candidate_tag)
+                    assembly_build_dict = rpm_meta.get_latest_brew_build(default=None, el_target=candidate_tag)
                     if not assembly_build_dict:
                         # Likely this RPM has not been built for this RHEL version.
                         continue

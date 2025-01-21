@@ -10,11 +10,10 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
-from ruamel.yaml import YAML
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -30,10 +29,7 @@ from pyartcd.util import (get_assembly_type,
                           default_release_suffix,
                           get_microshift_builds)
 
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftPipeline:
@@ -285,7 +281,16 @@ class BuildMicroShiftPipeline:
             "--verify-flaws",
             str(advisory_id)
         ]
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
+        try:
+            await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
+        except ChildProcessError as err:
+            self._logger.warning("Error verifying attached bugs: %s", err)
+            if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
+                await self.slack_client.say_in_thread("Attached bugs have some issues. Permitting since "
+                                                      f"assembly is of type {self.assembly_type}")
+                await self.slack_client.say_in_thread(str(err))
+            else:
+                raise err
 
     # Advisory can have several pending checks, so retry it a few times
     @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))

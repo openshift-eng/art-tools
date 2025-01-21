@@ -16,6 +16,7 @@ from artcommonlib.constants import BREW_HUB
 from artcommonlib.release_util import split_el_suffix_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib import exectools
+from artcommonlib.util import new_roundtrip_yaml_handler
 from pyartcd import jenkins
 from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -26,11 +27,7 @@ from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from elliottlib import util as elliottutil
 
 _LOGGER = logging.getLogger(__name__)
-
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = new_roundtrip_yaml_handler()
 
 
 def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
@@ -300,7 +297,7 @@ class UpdateGolangPipeline:
         streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
         go_latest = group_content['vars']['GO_LATEST']
-        go_previous = group_content['vars']['GO_PREVIOUS']
+        go_previous = group_content['vars'].get('GO_PREVIOUS', None)
         update_streams = update_group = False
         # This is to bump minor golang for GO_LATEST
         if go_version == go_latest:
@@ -327,7 +324,7 @@ class UpdateGolangPipeline:
             for el_v, builder_nvr in builder_nvrs:
                 parsed_nvr = parse_nvr(builder_nvr)
                 latest_go = streams_content[f'rhel-{el_v}-golang']['image']
-                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image']
+                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for stream, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -336,7 +333,8 @@ class UpdateGolangPipeline:
                         info['image'] = latest_go
                 group_content['vars']['GO_LATEST'] = go_version
                 group_content['vars']['GO_EXTRA'] = go_version
-                group_content['vars']['GO_PREVIOUS'] = go_latest
+                if go_previous:
+                    group_content['vars']['GO_PREVIOUS'] = go_latest
                 update_streams = update_group = True
         # save changes and create pr
         if update_streams:

@@ -3,7 +3,8 @@ Test the brew related functions/classes
 """
 
 from flexmock import flexmock
-import platform
+
+from tenacity import wait_none
 import unittest
 from unittest import mock
 
@@ -12,6 +13,10 @@ from tests import test_structures
 
 
 class TestBrew(unittest.TestCase):
+    def setUp(self):
+        # Disable waits on retries
+        errata.get_brew_build.retry.wait = wait_none()
+
     def test_build_attached_to_open_erratum(self):
         """We can tell if a build is attached to any open erratum"""
         # Create Erratum(), create Build() using dict with all_errata
@@ -137,82 +142,45 @@ class TestBrew(unittest.TestCase):
 
         self.assertEqual(expected_json, b.to_json())
 
-    def test_get_brew_build_success(self):
-        (flexmock(errata.ssl)
-            .should_receive("get_default_verify_paths")
-            .and_return(flexmock(openssl_cafile="/my/cert.pem")))
-
-        (flexmock(errata)
-            .should_receive("HTTPSPNEGOAuth")
-            .and_return("MyHTTPSPNEGOAuth"))
-
-        response = flexmock(status_code=200)
-        response.should_receive("json").and_return(test_structures.rpm_build_attached_json)
-
+    @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
+    @mock.patch("requests.Session")
+    def test_get_brew_build_success(self, MockSession, _):
         nvr = 'coreutils-8.22-21.el7'
         pv = 'rhaos-test-7'
-
-        (flexmock(errata.requests.Session)
-            .should_receive("get")
-            .with_args(constants.errata_get_build_url.format(id=nvr),
-                       auth="MyHTTPSPNEGOAuth",
-                       verify="/my/cert.pem")
-            .and_return(response))
-
+        mock_session = MockSession.return_value
+        mock_session.get.return_value.status_code = 200
+        mock_session.get.return_value.json.return_value = test_structures.rpm_build_attached_json
         b = errata.get_brew_build(nvr, product_version=pv)
-
         self.assertEqual(nvr, b.nvr)
+        mock_session.get.assert_called_once_with(
+            constants.errata_get_build_url.format(id=nvr),
+            verify="/my/cert.pem",
+            auth=mock.ANY)
 
-    def test_get_brew_build_success_session(self):
-        (flexmock(errata.ssl)
-            .should_receive("get_default_verify_paths")
-            .and_return(flexmock(openssl_cafile="/my/cert.pem")))
-
-        (flexmock(errata)
-            .should_receive("HTTPSPNEGOAuth")
-            .and_return("MyHTTPSPNEGOAuth"))
-
-        response = flexmock(status_code=200)
-        response.should_receive("json").and_return(test_structures.rpm_build_attached_json)
-
+    @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
+    @mock.patch("requests.Session")
+    def test_get_brew_build_success_session(self, MockSession, _):
         nvr = 'coreutils-8.22-21.el7'
         pv = 'rhaos-test-7'
-
-        session = flexmock()
-        (session
-            .should_receive("get")
-            .with_args(constants.errata_get_build_url.format(id=nvr),
-                       auth="MyHTTPSPNEGOAuth",
-                       verify="/my/cert.pem")
-            .and_return(response))
-
-        b = errata.get_brew_build(nvr, product_version=pv, session=session)
-
+        mock_session = mock.MagicMock()
+        mock_session.get.return_value.status_code = 200
+        mock_session.get.return_value.json.return_value = test_structures.rpm_build_attached_json
+        b = errata.get_brew_build(nvr, product_version=pv, session=mock_session)
         self.assertEqual(nvr, b.nvr)
+        mock_session.get.assert_called_once_with(
+            constants.errata_get_build_url.format(id=nvr),
+            verify="/my/cert.pem",
+            auth=mock.ANY)
+        MockSession.assert_not_called()
 
-    def test_get_brew_build_failure(self):
-        (flexmock(errata.ssl)
-            .should_receive("get_default_verify_paths")
-            .and_return(flexmock(openssl_cafile="/my/cert.pem")))
-
-        (flexmock(errata)
-            .should_receive("HTTPSPNEGOAuth")
-            .and_return("MyHTTPSPNEGOAuth"))
-
-        response = flexmock(status_code=404, text="_irrelevant_")
-
+    @mock.patch("requests.Session")
+    def test_get_brew_build_failure(self, mock_session):
         nvr = 'coreutils-8.22-21.el7'
         pv = 'rhaos-test-7'
-
-        (flexmock(errata.requests.Session)
-            .should_receive("get")
-            .with_args(constants.errata_get_build_url.format(id=nvr),
-                       auth="MyHTTPSPNEGOAuth",
-                       verify="/my/cert.pem")
-            .and_return(response))
-
-        self.assertRaises(exceptions.BrewBuildException,
-                          errata.get_brew_build, nvr, product_version=pv)
+        mock_session.get.return_value.status_code = 404
+        mock_session.get.return_value.text = "__irrelevant__"
+        with self.assertRaises(exceptions.BrewBuildException):
+            errata.get_brew_build(nvr, product_version=pv)
 
     def test_get_build_objects(self):
         build_infos = {

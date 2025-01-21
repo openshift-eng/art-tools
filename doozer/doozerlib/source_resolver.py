@@ -82,9 +82,10 @@ class SourceResolver:
         self._record_logger = record_logger
         self._state_holder = state_holder
 
-    def resolve_source(self, meta: 'Metadata') -> SourceResolution:
+    def resolve_source(self, meta: 'Metadata', no_clone: bool = False) -> SourceResolution:
         """ Resolve the source code repository for the specified metadata.
         :param meta: The metadata to resolve the source code repository for.
+        :param no_clone: If True, the source code repository will not be cloned. Only the source resolution object will be returned.
         :return: A SourceResolution instance containing the information of the resolved source code repository.
         """
         LOGGER.debug("Resolving source for {}".format(meta.qualified_key))
@@ -162,6 +163,21 @@ class SourceResolver:
             has_public_upstream = False
             if self._group_config.public_upstreams:
                 meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
+
+            if no_clone:
+                https_url = art_util.convert_remote_git_to_https(url)
+                return SourceResolution(
+                    source_path=source_dir,
+                    url=url,
+                    branch=clone_branch,
+                    https_url=https_url,
+                    commit_hash="",
+                    committer_date=datetime.fromtimestamp(0, timezone.utc),
+                    latest_tag="",
+                    has_public_upstream=has_public_upstream,
+                    public_upstream_url=meta.public_upstream_url or https_url,
+                    public_upstream_branch=meta.public_upstream_branch or clone_branch,
+                )
 
             LOGGER.info("Attempting to checkout source '%s' branch %s in: %s" % (url, clone_branch, source_dir))
             try:

@@ -110,23 +110,20 @@ class KonfluxRebaser:
 
             dest_dir = self._base_dir.joinpath(metadata.qualified_key)
 
-            # Use a separate Dockerfile for konflux if required
-            # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
-            dockerfile_override = metadata.config.konflux.content.source.dockerfile
-            if dockerfile_override:
-                self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
-                metadata.config.content.source.dockerfile = dockerfile_override
-
             # Clone the build repository
             build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=self._logger)
             await build_repo.ensure_source(upcycle=self.upcycle)
 
             # Rebase the image in the build repository
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
-            await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
+            actual_version, actual_release, _ = await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
 
             # Commit changes
             await build_repo.commit(commit_message, allow_empty=True)
+
+            # Tag the commit
+            tag = f"{actual_version}-{actual_release}"
+            await build_repo.tag(tag)
 
             # Push changes
             if push:
@@ -148,7 +145,10 @@ class KonfluxRebaser:
             force_yum_updates: bool,
             image_repo: str,
     ):
-        """ Rebase the image in the build repository. """
+        """
+        Rebase the image in the build repository.
+        :return: Tuple of version, release, private_fix
+        """
         # Whether or not the source contains private fixes; None means we don't know yet
         private_fix = None
         if self.force_private_bit:  # --embargoed is set, force private_fix to True
@@ -157,6 +157,15 @@ class KonfluxRebaser:
         dest_dir = build_repo.local_dir
         df_path = dest_dir.joinpath('Dockerfile')
         source_dir = None
+
+        self._generate_config_digest(metadata, dest_dir)
+
+        # Use a separate Dockerfile for konflux if required
+        # For cachito images, we need an override since we now have a separate file for konflux, with cachi2 support
+        dockerfile_override = metadata.config.konflux.content.source.dockerfile
+        if dockerfile_override:
+            self._logger.info(f"Override dockerfile for konflux, using: {dockerfile_override}")
+            metadata.config.content.source.dockerfile = dockerfile_override
 
         # If this image has upstream source, merge it into the build repo
         if source:
@@ -220,6 +229,7 @@ class KonfluxRebaser:
         self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
                                image_repo, uuid_tag)
         metadata.private_fix = private_fix
+        return version, release, private_fix
 
         self._update_dockerignore(build_repo.local_dir)
 
@@ -269,12 +279,11 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                build = asyncio.run(self.konflux_db.get_latest_build(
-                    name=parent_metadata.distgit_key,
-                    assembly=self._runtime.assembly,
-                    group=self._runtime.group,
+                build = asyncio.run(parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX))
+                    engine=Engine.KONFLUX
+                ))
+
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 return build.image_pullspec, build.embargoed
@@ -545,8 +554,6 @@ class KonfluxRebaser:
         with exectools.Dir(dest_dir):
             self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
 
-            self._generate_config_digest(metadata, dest_dir)
-
             self._write_cvp_owners(metadata, dest_dir)
 
             self._write_fetch_artifacts(metadata, dest_dir)
@@ -751,6 +758,8 @@ class KonfluxRebaser:
         # Inject build repos for Konflux
         self._add_build_repos(dfp)
 
+        self._modify_cachito_commands(metadata, df_path)
+
         self._reflow_labels(df_path)
 
     def _add_build_repos(self, dfp: DockerfileParser):
@@ -771,6 +780,57 @@ class KonfluxRebaser:
             "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
             "# End Konflux-specific steps\n\n"
         )
+
+    def _modify_cachito_commands(self, metadata, df_path):
+        """
+        Konflux does not support cachito, comment it out to support green non-hermetic builds
+        For yarn, download it if its missing.
+        """
+        dfp = DockerfileParser()
+        dfp.content = open(df_path, "r").read()
+
+        lines = dfp.lines
+        updated_lines = []
+        line_commented = False
+        yarn_line_updated = False
+        for line in lines:
+            if 'echo "need yarn at ${CACHED_YARN}"' in line:
+                # For nmstate-console-plugin and networking-console-plugin the build will error out if it doesn't see a yarn installation at that exact place
+                # So follow the pattern as other images do, and download yarn for now
+                line = line.replace('echo "need yarn at ${CACHED_YARN}"', "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz")
+                updated_lines.append(line)
+                yarn_line_updated = True
+                self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
+                continue
+
+            if yarn_line_updated:
+                if "exit 1" in line:
+                    # The 'exit 1' command follows the 'need yarn ...' message. We need to skip that
+                    yarn_line_updated = False
+                    continue
+
+            if metadata.config.get("konflux", {}).get("cachito", {}).get("comment", True) and ("REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line):
+                # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR' since cachito is not supported in konflux
+                updated_lines.append(f"#{line.strip()}\n")
+                line_commented = True
+                self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux")
+            else:
+                if line_commented:
+                    # Sometimes there will be '&& yarn install ...' command. So replace the leading && with RUN, since
+                    # we comment that out earlier
+                    if line.strip().startswith("&&"):
+                        line = line.replace("&&", "RUN", 1)
+
+                    # Due to network flakiness, yarn install commands error out due to insufficient retries.
+                    # So increase timeout to 600000 ms, i.e. 10 mins
+                    line = line.replace("RUN yarn", "RUN yarn config set network-timeout 600000 && yarn")
+                updated_lines.append(line)
+                line_commented = False
+
+        if updated_lines:
+            dfp.content = "".join(updated_lines)
+            with open(df_path, "w") as file:
+                file.write(dfp.content)
 
     def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
@@ -798,6 +858,7 @@ class KonfluxRebaser:
         # The config digest is used by scan-sources to detect config changes
         self._logger.debug("Calculating config digest...")
         digest = metadata.calculate_config_digest(self._runtime.group_config, self._runtime.streams)
+        os.makedirs(f"{dest_dir}/.oit", exist_ok=True)
         with dest_dir.joinpath(".oit", "config_digest").open('w') as f:
             f.write(digest)
         self._logger.info("Saved config digest %s to .oit/config_digest", digest)
@@ -1394,12 +1455,10 @@ class KonfluxRebaser:
             if labels:
                 additional_labels = {}
 
-                if "io.k8s.description" not in labels:
-                    additional_labels["io.k8s.description"] = "Dummy description"
-                if "description" not in labels:
-                    additional_labels["description"] = labels.get("io.k8s.description", "Dummy description")
-                if "summary" not in labels:
-                    additional_labels["summary"] = labels.get("io.k8s.description", "Dummy summary")
+                for override_label in ["io.k8s.description", "io.k8s.display-name", "io.openshift.tags",
+                                       "description", "summary"]:
+                    if override_label not in labels:
+                        additional_labels[override_label] = ""
 
                 labels.update(additional_labels)
 
@@ -1470,12 +1529,10 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                build = asyncio.run(self.konflux_db.get_latest_build(
-                    name=meta.distgit_key,
-                    assembly=self._runtime.assembly,
-                    group=self._runtime.group,
+                build = asyncio.run(meta.get_latest_build(
                     el_target=f'el{meta.branch_el_target()}',
-                    engine=Engine.KONFLUX))
+                    engine=Engine.KONFLUX
+                ))
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
                 v = build.version

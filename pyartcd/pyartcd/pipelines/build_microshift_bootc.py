@@ -6,10 +6,9 @@ import requests
 import asyncio
 import traceback
 from typing import Optional
-from ruamel.yaml import YAML
 
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.arch_util import brew_arch_for_go_arch
@@ -25,12 +24,9 @@ from pyartcd.util import (get_assembly_type,
                           get_release_name_for_assembly,
                           get_microshift_builds)
 from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
-from doozerlib.constants import ART_DEFAULT_IMAGE_REPO
+from doozerlib.constants import ART_PROD_IMAGE_REPO
 
-yaml = YAML(typ="rt")
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.width = 4096
+yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftBootcPipeline:
@@ -272,7 +268,7 @@ class BuildMicroShiftBootcPipeline:
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
             "--lock-upstream", bootc_image_name, "HEAD",
             "beta:images:konflux:build",
-            "--image-repo", ART_DEFAULT_IMAGE_REPO,
+            "--image-repo", ART_PROD_IMAGE_REPO,
             "--konflux-kubeconfig", kubeconfig,
             "--konflux-namespace", "ocp-art-tenant"
         ]

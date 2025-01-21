@@ -15,17 +15,20 @@ from async_lru import alru_cache
 
 import artcommonlib.util
 from artcommonlib import exectools
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine, KonfluxBuildOutcome
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
+from artcommonlib.rpm_utils import parse_nvr
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import RebuildHint, RebuildHintCode, Metadata
+from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 from artcommonlib.release_util import isolate_timestamp_in_release
-from doozerlib.util import oc_image_info__caching_async
+from doozerlib.util import oc_image_info_async__caching, isolate_el_version_in_brew_tag
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -57,14 +60,10 @@ class ConfigScanSources:
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
 
-        # Common params for all queries
-        self.base_search_params = {
-            'group': self.runtime.group,
-            'assembly': self.runtime.assembly,  # to let test ocp4-scan in non-stream assemblies, e.g. 'test'
-        }
-
         self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
+        self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
+        self.changing_rpms = set()
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -72,6 +71,12 @@ class ConfigScanSources:
             # TODO: to be removed once this job is the only one we use for scanning
             raise DoozerFatalError('ocp4-scan for Konflux is not yet allowed to rebase into openshfit-priv!')
             self.rebase_into_priv()
+
+        # Gather latest builds for ART-managed RPMs
+        await self.find_latest_rpms_builds()
+
+        # Find RPMs built by ART that need to be rebuilt
+        await self.check_changing_rpms()
 
         # Build an image dependency tree to scan across levels of inheritance. This should save us some time,
         # as when an image is found in need for a rebuild, we can also mark its children or operators without checking
@@ -264,12 +269,41 @@ class ConfigScanSources:
 
         return levels_dict
 
+    async def find_latest_rpms_builds(self):
+        """
+        The RPM build map stores latest builds for all RPM targets:
+        {
+            'openshift-clients': {
+                'el8': <KonfluxBuildRecord>,
+                'el9': <KonfluxBuildRecord>
+            },
+            'microshift': {
+                'el9': <KonfluxBuildRecord>
+            }
+        }
+        """
+
+        self.logger.info('Gathering latest RPM build records information...')
+
+        async def _find_target_build(rpm_meta, el_target):
+            rpm_name = rpm_meta.rpm_name
+            build_record = await rpm_meta.get_latest_build(el_target=el_target)
+            if not self.latest_rpm_build_records_map.get(rpm_name):
+                self.latest_rpm_build_records_map[rpm_name] = {}
+            self.latest_rpm_build_records_map[rpm_name][el_target] = build_record
+
+        tasks = []
+        for rpm in self.runtime.rpm_metas():
+            tasks.extend([
+                _find_target_build(rpm, f'el{target}')
+                for target in rpm.determine_rhel_targets()
+            ])
+        await asyncio.gather(*tasks)
+
     async def find_latest_image_builds(self, image_names: typing.List[str]):
         self.logger.info('Gathering latest image build records information...')
-        latest_image_builds = await self.runtime.konflux_db.get_latest_builds(
-            names=image_names,
-            engine=Engine.KONFLUX,
-            **self.base_search_params)
+        latest_image_builds = await asyncio.gather(*[
+            self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names])
         self.latest_image_build_records_map.update((zip(
             image_names, latest_image_builds)))
 
@@ -305,6 +339,19 @@ class ConfigScanSources:
     async def scan_image(self, image_meta: ImageMetadata):
         self.logger.info(f'Scanning {image_meta.distgit_key} for changes')
 
+        # Check if the component has ever been built
+        latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)
+        if not latest_build_record:
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
+                            reason=f'Component {image_meta.distgit_key} has no latest build '
+                                   f'for assembly {self.runtime.assembly}'))
+            return
+
+        # Check for changes in image arches
+        await self.scan_arch_changes(image_meta)
+
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
@@ -317,6 +364,36 @@ class ConfigScanSources:
         # Check for changes in builders
         await self.scan_builders_changes(image_meta)
 
+        # Check for RPM changes
+        await self.scan_rpm_changes(image_meta)
+
+    def find_upstream_commit_hash(self, meta: Metadata):
+        """
+        Get the upstream latest commit hash using git ls-remote
+        """
+        use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
+        _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(meta.config.content.source.git,
+                                                                             self.runtime.stage,
+                                                                             use_source_fallback_branch)
+        return upstream_commit_hash
+
+    @skip_check_if_changing
+    async def scan_arch_changes(self, image_meta: ImageMetadata):
+        """
+        Check if all arches the image should be built for are present in latest build record
+        """
+        target_arches = set(image_meta.get_arches())
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        build_arches = set(build_record.arches)
+
+        if target_arches != build_arches:
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(
+                    RebuildHintCode.ARCHES_CHANGE,
+                    f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
+            )
+
     @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
         """
@@ -324,32 +401,16 @@ class ConfigScanSources:
         has a downstream build associated with it.
         """
 
-        # Check if the component has ever been built
-        latest_build_record = self.latest_image_build_records_map.get(image_meta.distgit_key, None)
-        if not latest_build_record:
-            self.add_image_meta_change(
-                image_meta,
-                RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                            reason=f'Component {image_meta.distgit_key} has no latest build '
-                                   f'for assembly {self.runtime.assembly}'))
-            return
-
         # We have no more "alias" source anywhere in ocp-build-data, and there's no such a thing as a distgit-only
         # component in Konflux; hence, assume that git is the only possible source for a component
         # TODO runtime.stage seems to be never different from False, maybe it can be pruned?
         # TODO use_source_fallback_branch isn't defined anywhere in ocp-build-data, maybe it can be pruned?
 
-        # Check the upstream latest commit hash using git ls-remote
-        use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
-        _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(image_meta.config.content.source.git,
-                                                                             self.runtime.stage,
-                                                                             use_source_fallback_branch)
-
         # Scan for any build in this assembly which includes the git commit.
-        upstream_commit_build_record = await self.runtime.konflux_db.get_latest_build(
-            **self.base_search_params,
-            name=image_meta.distgit_key,
-            extra_patterns={'commitish': upstream_commit_hash}  # WHERE commitish LIKE '%{upstream_commit_hash}%'
+        upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
+        upstream_commit_build_record = await image_meta.get_latest_build(
+            engine=Engine.KONFLUX.value,
+            extra_patterns={'commitish': upstream_commit_hash}
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -359,7 +420,8 @@ class ConfigScanSources:
 
         # Does most recent build match the one from the latest upstream commit?
         # If it doesn't, mark for rebuild
-        if latest_build_record.nvr != upstream_commit_build_record.nvr:
+        latest_build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        if latest_build_record.commitish != upstream_commit_hash:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
@@ -379,9 +441,7 @@ class ConfigScanSources:
         now = datetime.now(timezone.utc)
 
         # Check whether a build attempt with this commit has failed before.
-        failed_commit_build_record = await self.runtime.konflux_db.get_latest_build(
-            **self.base_search_params,
-            name=image_meta.distgit_key,
+        failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
             outcome=KonfluxBuildOutcome.FAILURE
         )
@@ -448,7 +508,7 @@ class ConfigScanSources:
                     if rc != 0:
                         raise IOError(f'Unable to retrieve commit message from {self.runtime.data_dir} for {path}')
 
-                if commit_message.lower().startswith('scan-sources:noop'):
+                if 'scan-sources-konflux:noop' in commit_message.lower():
                     self.logger.info('Ignoring digest change since commit message indicates noop')
                 else:
                     self.add_image_meta_change(image_meta,
@@ -529,7 +589,7 @@ class ConfigScanSources:
             builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
 
         # Find and map the builder image NVR
-        latest_builder_image_info = Model(await oc_image_info__caching_async(builder_image_url))
+        latest_builder_image_info = Model(await oc_image_info_async__caching(builder_image_url))
         builder_info_labels = latest_builder_image_info.config.config.Labels
         builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'],
                             builder_info_labels['release']]
@@ -549,26 +609,30 @@ class ConfigScanSources:
         If it's not, query Brew API to get the Brew build result. Querying Brew API will eventually go away.
         """
 
-        try:
-            # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
-            # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
-            # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
-            # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
-            # so an option might be to store this information in Redis
-            nvr_timestamp = datetime.strptime(isolate_timestamp_in_release(builder_build_nvr), "%Y%m%d%H%M%S")
-            start_search = datetime(nvr_timestamp.year, nvr_timestamp.month, nvr_timestamp.day)
-
-        except TypeError:
+        # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
+        # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
+        # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
+        # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
+        # so an option might be to store this information in Redis
+        nvr_timestamp = isolate_timestamp_in_release(builder_build_nvr)
+        if nvr_timestamp:
+            start_search = datetime.strptime(nvr_timestamp, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        else:
             # Default search window: last 365 days
             self.logger.warning('Could not extract timestamp from NVR %s', builder_build_nvr)
-            start_search = datetime.now() - timedelta(days=365)
+            start_search = datetime.now(tz=timezone.utc) - timedelta(days=365)
 
-        builds = await self.runtime.konflux_db.search_builds_by_fields(
+        build = await anext(self.runtime.konflux_db.search_builds_by_fields(
             start_search=start_search,
-            where={'nvr': builder_build_nvr, **self.base_search_params}
-        )
-        if builds.total_rows > 0:
-            return next(builds).start_time
+            where={
+                'nvr': builder_build_nvr,
+                'group': self.runtime.group,
+                'assembly': self.runtime.assembly,
+            },
+            limit=1,
+        ), None)
+        if build:
+            return build.start_time
 
         # Builder build isn't tracked inside Konflux DB: look at Brew
         with self.runtime.pooled_koji_client_session() as koji_api:
@@ -617,6 +681,88 @@ class ConfigScanSources:
                                             f'A builder or parent image build {builder_build_nvr} is newer than latest '
                                             f'{image_meta.distgit_key} build'))
                 return
+
+    @skip_check_if_changing
+    async def scan_rpm_changes(self, image_meta: ImageMetadata):
+        # Determine the list of package installed in the latest image build
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+        installed_packages = {parse_nvr(package)['name']: package for package in build_record.installed_packages}
+
+        # Check if the build used any of the ART built rpms that are changing
+        for rpm in self.changing_rpms:
+            if rpm in installed_packages:
+                self.add_image_meta_change(
+                    image_meta,
+                    RebuildHint(RebuildHintCode.PACKAGE_CHANGE,
+                                f'Image includes {rpm} which is also about to change')
+                )
+                return
+
+        # TODO check non-ART RPMs https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/image.py#L402
+        # TODO check extra_packages https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/image.py#L327
+
+    async def check_changing_rpms(self):
+        """
+        For each RPM built by ART, determine if the current upstream source commit hash
+        has a successful build associated with it. As of 12/2024, RPMs are still being built in Brew
+        but ART is tracking the build records in the Konflux DB
+        """
+
+        async def find_rpm_commit_hash(rpm: RPMMetadata):
+            with Dir(rpm.distgit_repo().dg_path):
+                _, out, _ = await cmd_gather_async(['git', 'log', '-n', '1', '--pretty=%B'], cwd=Dir.getcwd())
+
+                try:
+                    return [line.split(' ') for line in out.splitlines()
+                            if line.startswith('io.openshift.build.commit.id')][0][-1]
+
+                except IndexError:
+                    raise DoozerFatalError('Could not determine commitish for rpm %s', rpm.rpm_name)
+
+        async def check_rpm_target(rpm_meta: RPMMetadata, el_target):
+            rpm_name = rpm_meta.name
+            self.logger.info('Checking %s changes in target %s', rpm_name, el_target)
+            latest_build_record = self.latest_rpm_build_records_map.get(rpm_name, {}).get(el_target, None)
+
+            # RPM has never been built
+            if not latest_build_record:
+                self.logger.warning('No build found for RPM %s in %s', rpm_name, self.runtime.group)
+                self.changing_rpms.add(rpm_name)
+                return
+
+            # Scan for any build in this assembly which includes the git commit.
+            upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
+            upstream_commit_build_record = await rpm_meta.get_latest_build(
+                el_target=el_target,
+                extra_patterns={'commitish': upstream_commit_hash},
+                engine=Engine.BREW.value
+            )
+
+            if not upstream_commit_build_record:
+                self.logger.warning('No build for RPM %s from upstream commit %s',
+                                    rpm_name, upstream_commit_hash)
+                self.changing_rpms.add(rpm_name)
+                return
+
+            # Does most recent build match the one from the latest upstream commit?
+            # If it doesn't, mark for rebuild
+            if latest_build_record.commitish != upstream_commit_build_record.commitish:
+                self.logger.warning('Latest build for RPM %s does not match upstream commit %s',
+                                    rpm_name, upstream_commit_hash)
+                self.changing_rpms.add(rpm_name)
+                return
+
+        tasks = []
+        for rpm_meta in self.runtime.rpm_metas():
+            if rpm_meta.config.targets:
+                tasks.extend([check_rpm_target(rpm_meta, f'el{target}')
+                              for target in rpm_meta.determine_rhel_targets()])
+            else:
+                tasks.extend([
+                    check_rpm_target(rpm_meta, f'el{isolate_el_version_in_brew_tag(target)}')
+                    for target in self.runtime.group_config.build_profiles.rpm.default.targets
+                ])
+        await asyncio.gather(*tasks)
 
     def add_assessment_reason(self, meta, rebuild_hint: RebuildHint):
         # qualify by whether this is a True or False for change so that we can store both in the map.

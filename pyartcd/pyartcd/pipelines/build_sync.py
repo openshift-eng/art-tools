@@ -6,23 +6,22 @@ import re
 import click
 import yaml
 from opentelemetry import trace
+from ghapi.all import GhApi
 
 from artcommonlib import rhcos, redis
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import split_git_url
+from artcommonlib.telemetry import start_as_current_span_async
+from artcommonlib.redis import RedisError
 from artcommonlib import exectools
 from pyartcd.cli import cli, pass_runtime, click_coroutine
 from pyartcd.oc import registry_login
-from artcommonlib.redis import RedisError
 from pyartcd.runtime import Runtime, GroupRuntime
-from artcommonlib.telemetry import start_as_current_span_async
-from pyartcd import constants, locks
-from artcommonlib import exectools
+from pyartcd import constants, locks, jenkins
 from pyartcd.util import branch_arches
 from pyartcd.jenkins import get_build_url
-from ghapi.all import GhApi
 
 
 TRACER = trace.get_tracer(__name__)
@@ -322,6 +321,8 @@ class BuildSyncPipeline:
         The verb will also mirror out images to the quay monorepo.
         """
 
+        jenkins.init_jenkins()
+
         self.logger.info('Generating and applying imagestream updates')
         mirror_working = 'MIRROR_working'
 
@@ -395,7 +396,7 @@ class BuildSyncPipeline:
                     self.logger.info('Command failed: retrying, %s', e)
                     await asyncio.sleep(5)
 
-    def filter_assembly_issues(self) -> dict[str, dict[any, any]]:
+    def get_unpermissable_assembly_issues(self) -> dict[str, dict[any, any]]:
         """
         Filters assembly issues with 'permitted: false' from assembly_report.yml.
         """
@@ -439,12 +440,14 @@ class BuildSyncPipeline:
             raise
 
         # More than 2 failures: we need to notify ART and #forum-release before breaking the build
-        filtered_issues = self.filter_assembly_issues()
+        unpermissable_issues = self.get_unpermissable_assembly_issues()
 
-        if filtered_issues['assembly_issues']:
-            report = yaml.safe_dump(filtered_issues)
+        if unpermissable_issues['assembly_issues']:
+            report = yaml.safe_dump(unpermissable_issues)
+            jenkins.update_title(' [UNVIABLE]')
         else:
-            report = None
+            report = "Unknown Failure. Please investigate"
+            jenkins.update_title(' [FAILURE]')
 
         # TODO https://issues.redhat.com/browse/ART-5657
         if 10 <= fail_count <= 50:
@@ -477,7 +480,7 @@ class BuildSyncPipeline:
     async def notify_failures(self, channel, assembly_report, fail_count):
         msg = (f'Pipeline has failed to assemble release payload for {self.version} '
                f'(assembly {self.assembly}) {fail_count} times.')
-        self.slack_client.bind(channel)
+        self.slack_client.bind_channel(channel)
         slack_response = await self.slack_client.say(msg)
         slack_thread = slack_response["message"]["ts"]
         await self.slack_client.say(f'```{assembly_report}```', slack_thread)

@@ -1653,7 +1653,7 @@ class ImageDistGitRepo(DistGitRepo):
         # If you are here trying to figure out how to change this behavior, you should
         # consider using 'from!:' in the assembly metadata for this component. This will
         # allow you to fully pin the parent images (e.g. {'from!:' ['image': <pullspec>] })
-        latest_build = self.metadata.get_latest_build(default=None)
+        latest_build = self.metadata.get_latest_brew_build(default=None)
         assembly_msg = f'{self.metadata.distgit_key} in assembly {self.runtime.assembly} ' \
                        f'with basis event {self.runtime.assembly_basis_event}'
         if not latest_build:

@@ -29,7 +29,7 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager):
 
     # Schedule scan
     runtime.logger.info('[%s] Scheduling ocp4-scan', version)
-    jenkins.start_ocp4_scan(version=version, block_until_building=False)
+    jenkins.start_ocp4_scan(version=version, block_until_building=True)
 
 
 @cli.command('schedule-ocp4-scan')

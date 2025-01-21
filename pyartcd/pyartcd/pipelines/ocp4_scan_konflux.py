@@ -93,7 +93,8 @@ class Ocp4ScanPipeline:
             f'--working-dir={self._doozer_working}',
             f'--data-path={self.data_path}',
             f'--group={group_param}',
-            f'--assembly={self.assembly}'
+            f'--assembly={self.assembly}',
+            '--build-system=konflux'
         ]
         if self.image_list:
             cmd.append(f'--images={self.image_list}')

@@ -20,8 +20,6 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
 
-from artcommon.artcommonlib.assembly import assembly_type
-
 
 async def no_sleep(arg):
     pass
@@ -735,8 +733,9 @@ manifests:
     os: linux
         """.strip())
 
+    @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
-    async def test_apply_multi_imagestream_update(self, mar_mock):
+    async def test_apply_multi_imagestream_update(self, mar_mock, _):
         gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM)))
 
         # make MAR method do basically what it would, without writing all the files
@@ -774,8 +773,9 @@ manifests:
         self.assertEqual(os.getenv('BUILD_URL', ''), new_tag_annotations['release.openshift.io/build-url'])
         self.assertIn('release.openshift.io/runtime-brew-event', new_tag_annotations)
 
+    @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
-    async def test_apply_multi_imagestream_update_retain_accepted(self, mar_mock):
+    async def test_apply_multi_imagestream_update_retain_accepted(self, mar_mock, _):
         gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM)))
 
         # make MAR method do basically what it would, without writing all the files

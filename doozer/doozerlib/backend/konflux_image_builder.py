@@ -9,6 +9,8 @@ from typing import Optional, cast
 
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch
+from packageurl import PackageURL
+
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
@@ -39,6 +41,7 @@ class KonfluxImageBuilderConfig:
     base_dir: Path
     group_name: str
     namespace: str
+    plr_template: str
     kubeconfig: Optional[str] = None
     context: Optional[str] = None
     image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
@@ -61,7 +64,12 @@ class KonfluxImageBuilder:
     def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
         self._config = config
         self._logger = logger or LOGGER
-        self._konflux_client = KonfluxClient.from_kubeconfig(config.namespace, config.kubeconfig, config.context, config.dry_run)
+        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run)
+
+        if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
+            for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
+                if secret not in os.environ:
+                    raise EnvironmentError(f"Missing required environment variable {secret}")
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
@@ -78,7 +86,7 @@ class KonfluxImageBuilder:
                 source = None
                 if metadata.has_source():
                     logger.info(f"Resolving source for {metadata.qualified_key}")
-                    source = cast(SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata))
+                    source = cast(SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True))
                 else:
                     raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
                 dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
@@ -95,16 +103,10 @@ class KonfluxImageBuilder:
             if failed_parents:
                 raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
 
-            arches = metadata.get_arches()
-
-            unsupported_arches = set(arches) - set(KonfluxImageBuilder.SUPPORTED_ARCHES)
-            building_arches = list(set(arches) - unsupported_arches)
-            if unsupported_arches:
-                raise ValueError(f"[{metadata.distgit_key}] Unsupported arches: {', '.join(unsupported_arches)}")
-
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
             retries = 3
+            building_arches = metadata.get_arches()
             error = None
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
@@ -209,6 +211,8 @@ class KonfluxImageBuilder:
             building_arches=building_arches,
             additional_tags=additional_tags,
             skip_checks=self._config.skip_checks,
+            vm_override=metadata.config.get("konflux", {}).get("vm_override"),
+            pipelinerun_template_url=self._config.plr_template,
         )
 
         logger.info(f"Created PipelineRun: {self.build_pipeline_url(pipelinerun)}")
@@ -217,13 +221,12 @@ class KonfluxImageBuilder:
     def build_pipeline_url(self, pipelinerun):
         return self._konflux_client.build_pipeline_url(pipelinerun)
 
-    @staticmethod
-    async def get_installed_packages(image_pullspec, arches) -> list:
+    async def get_installed_packages(self, image_pullspec, arches, logger) -> list:
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
-        async def _get_for_arch(arch):
+        async def _get_for_arch(arch, logger):
             go_arch = go_arch_for_brew_arch(arch)
 
             cmd = [
@@ -231,20 +234,43 @@ class KonfluxImageBuilder:
                 "download",
                 "sbom",
                 image_pullspec,
-                "--platform", f"linux/{go_arch}"
+                "--platform", f"linux/{go_arch}",
             ]
-            _, stdout, _ = await exectools.cmd_gather_async(cmd)
+
+            if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
+                cmd += [
+                    "--registry-username", f"{os.environ['KONFLUX_ART_IMAGES_USERNAME']}",
+                    "--registry-password", f"{os.environ['KONFLUX_ART_IMAGES_PASSWORD']}",
+                ]
+
+            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
+
+            if rc != 0:
+                raise ChildProcessError("cosign command failed to download SBOM")
+
             sbom_contents = json.loads(stdout)
             source_rpms = set()
             for x in sbom_contents["components"]:
-                if x["bom-ref"].startswith("pkg:rpm"):
-                    for i in x["properties"]:
-                        if i["name"] == "syft:metadata:sourceRpm":
-                            source_rpms.add(i["value"].rstrip(".src.rpm"))
-                            break
+                # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
+                # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
+                # example: pkg:rpm/rhel/coreutils-single@8.32-35.el9?arch=x86_64&upstream=coreutils-8.32-35.el9.src.rpm&distro=rhel-9.4
+                # https://github.com/package-url/packageurl-python does not support purl schemes other than "pkg"
+                # so filter them out
+                if x.get("purl", '').startswith("pkg:"):
+                    try:
+                        purl = PackageURL.from_string(x["purl"])
+                        # right now, we only care about rpms
+                        if purl.type == "rpm":
+                            # get the source rpm
+                            source_rpm = purl.qualifiers.get("upstream", None)
+                            if source_rpm:
+                                source_rpms.add(source_rpm.rstrip(".src.rpm"))
+                    except Exception as e:
+                        logger.warning(f"Failed to parse purl: {x['purl']} {e}")
+                        continue
             return source_rpms
 
-        results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
+        results = await asyncio.gather(*(_get_for_arch(arch, logger) for arch in arches))
         for arch, result in zip(arches, results):
             if not result:
                 raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
@@ -269,10 +295,9 @@ class KonfluxImageBuilder:
             source_repo = df.labels['io.openshift.build.source-location']
             commitish = df.labels['io.openshift.build.commit.id']
 
-            component_name = df.labels['com.redhat.component']
             version = df.labels['version']
             release = df.labels['release']
-            nvr = "-".join([component_name, version, release])
+            nvr = "-".join([metadata.distgit_key, version, release])
 
             pipelinerun_name = pipelinerun['metadata']['name']
             build_pipeline_url = self.build_pipeline_url(pipelinerun)
@@ -320,7 +345,7 @@ class KonfluxImageBuilder:
                 start_time = pipelinerun.status.startTime
                 end_time = pipelinerun.status.completionTime
 
-                installed_packages = await self.get_installed_packages(image_pullspec, building_arches)
+                installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
 
                 build_record_params.update({
                     'image_pullspec': image_pullspec,

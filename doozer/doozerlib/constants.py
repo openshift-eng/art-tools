@@ -35,10 +35,12 @@ KONFLUX_DEFAULT_PIPELINERUN_SERVICE_ACCOUNT = "appstudio-pipeline"
 KONFLUX_DEFAULT_PIPELINERUN_TIMEOUT = "1h0m0s"
 KONFLUX_DEFAULT_PIPRLINE_DOCKER_BUILD_BUNDLE_PULLSPEC = "quay.io/konflux-ci/tekton-catalog/pipeline-docker-build:devel"
 KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"   # FIXME: If we change clusters this URL will change
-ART_DEFAULT_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
+ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
 KONFLUX_UI_HOST = "https://konflux.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
 KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
-MAX_KONFLUX_BUILD_QUEUE_SIZE = 10  # how many concurrent Konflux pipeline can we spawn?
+MAX_KONFLUX_BUILD_QUEUE_SIZE = 25  # how many concurrent Konflux pipeline can we spawn per OCP version?
+KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-konflux-template-push.yaml"
+KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-bundle-konflux-template-push.yaml"
 
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"

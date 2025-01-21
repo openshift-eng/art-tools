@@ -2,7 +2,6 @@
 
 venv:
 	uv venv --python 3.11
-	uv self update || : # ignoring errors in case uv was package-manager installed
 	./install.sh
 	uv pip install -r doozer/requirements-dev.txt -r pyartcd/requirements-dev.txt -r ocp-build-data-validator/requirements-dev.txt
 	cd elliott && uv pip install '.[tests]'

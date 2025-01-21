@@ -417,7 +417,7 @@ def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
 
     """
     if session is None:
-        session = requests.session()
+        session = requests.Session()
 
     res = session.get(constants.errata_get_build_url.format(id=nvr),
                       verify=ssl.get_default_verify_paths().openssl_cafile,

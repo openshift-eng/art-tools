@@ -2,11 +2,11 @@ import asyncio
 import logging
 from typing import Dict, List, Optional, Sequence, Union, cast
 
+import aiohttp
 import jinja2
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
-from importlib_resources import files
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration
 from kubernetes.dynamic import DynamicClient, exceptions, resource
@@ -22,7 +22,8 @@ class KonfluxClient:
     """
     KonfluxClient is a client for interacting with the Konflux API.
     """
-    # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/getting-started/multi-platform-builds.md
+    # https://konflux.pages.redhat.com/docs/users/getting-started/multi-platform-builds.html
+    # The arch to Konflux VM name mapping. The specs for each of the VMs can be seen in the doc link shared above.
     SUPPORTED_ARCHES = {
         "x86_64": "linux/x86_64",
         "s390x": "linux/s390x",
@@ -196,7 +197,14 @@ class KonfluxClient:
         api_version, kind, name, namespace = self._extract_manifest_metadata(manifest)
         resource = await self._get(api_version, kind, name, namespace, strict=False)
         if not resource:
-            return await self._create(manifest)
+            try:
+                return await self._create(manifest)
+            except exceptions.ConflictError as e:
+                if "already exists" in e.summary():
+                    # This indicates this resource has been created by another process; ignore the error
+                    LOGGER.debug("Error creating %s/%s %s/%s because it already exists; ignoring", api_version, kind, namespace, name)
+                    return await self._get(api_version, kind, name, namespace, strict=True)
+                raise
         return await self._patch(manifest)
 
     async def _create_or_replace(self, manifest: dict):
@@ -280,17 +288,31 @@ class KonfluxClient:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
-    @staticmethod
-    def _new_pipelinerun_for_image_build(generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
-                                         git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                         build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
-                                         additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False) -> dict:
+    @alru_cache
+    async def _get_pipelinerun_template(self, template_url: str):
+        """ Get a PipelineRun template.
+
+        :param template_url: The URL to the template.
+        :return: The template.
+        """
+        self._logger.info(f"Pulling Konflux PLR template from: {template_url}")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(template_url) as response:
+                response.raise_for_status()
+                template_text = await response.text()
+                template = jinja2.Template(template_text, autoescape=True)
+                return template
+
+    async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
+                                               git_url: str, commit_sha: str, target_branch: str, output_image: str,
+                                               build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                                               additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
+                                               pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
-        # TODO: In the future the PipelineRun template should be loaded from a remote git repo.
-        template_content = files("doozerlib").joinpath("backend").joinpath("konflux_image_build_pipelinerun.yaml").read_text()
-        template = jinja2.Template(template_content, autoescape=True)
+
+        template = await self._get_pipelinerun_template(pipelinerun_template_url)
         rendered = template.render({
             "source_url": https_url,
             "revision": commit_sha,
@@ -333,6 +355,7 @@ class KonfluxClient:
         params = obj["spec"]["params"]
         _modify_param(params, "output-image", output_image)
         _modify_param(params, "skip-checks", skip_checks)
+        _modify_param(params, "build-source-image", "true")  # Have to be true always to satisfy Enterprise Contract Policy
         _modify_param(params, "image-expires-after", "6w")
         _modify_param(params, "build-platforms", list(build_platforms))
 
@@ -340,31 +363,32 @@ class KonfluxClient:
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
         # Task specific parameters to override in the template
+        has_build_images_task = False
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             match task["name"]:
                 case "build-images":
+                    has_build_images_task = True
                     task["timeout"] = "12h"
                 case "apply-tags":
-                    # microshift-bootc times out after the default '2h' for the apply-tags task. So increasing to '4h'
-                    task["timeout"] = "4h"
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
-        obj["spec"]["taskRunSpecs"] = [{
-            "pipelineTaskName": "build-images",
-            "stepSpecs": [{
-                "name": "sbom-syft-generate",
-                "computeResources": {
-                    "requests": {
-                        "memory": "5Gi"
-                    },
-                    "limits": {
-                        "memory": "10Gi"
+        if has_build_images_task:
+            obj["spec"]["taskRunSpecs"] = [{
+                "pipelineTaskName": "build-images",
+                "stepSpecs": [{
+                    "name": "sbom-syft-generate",
+                    "computeResources": {
+                        "requests": {
+                            "memory": "5Gi"
+                        },
+                        "limits": {
+                            "memory": "10Gi"
+                        }
                     }
-                }
+                }]
             }]
-        }]
 
         return obj
 
@@ -378,10 +402,12 @@ class KonfluxClient:
         commit_sha: str,
         target_branch: str,
         output_image: str,
+        vm_override: dict,
         building_arches: Sequence[str],
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
+        pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
     ):
         """
         Start a PipelineRun for building an image.
@@ -393,19 +419,23 @@ class KonfluxClient:
         :param git_url: The git URL.
         :param commit_sha: The commit SHA.
         :param target_branch: The target branch.
+        :param vm_override: Override the default konflux VM flavor (in case we need more specs)
         :param output_image: The output image.
         :param building_arches: The architectures to build.
         :param git_auth_secret: The git auth secret.
         :param additional_tags: Additional tags to apply to the image.
         :param skip_checks: Whether to skip checks.
+        :param pipelinerun_template_url: The URL to the PipelineRun template.
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
         if unsupported_arches:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
 
-        build_platforms = [self.SUPPORTED_ARCHES[arch] for arch in building_arches]
-        pipelinerun_manifest = self._new_pipelinerun_for_image_build(
+        # If vm_override is not one and an override exists for a particular arch, use that. Otherwise, use the default
+        build_platforms = [vm_override[arch] if vm_override and arch in vm_override else self.SUPPORTED_ARCHES[arch] for arch in building_arches]
+
+        pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
             generate_name,
             namespace,
             application_name,
@@ -418,6 +448,7 @@ class KonfluxClient:
             git_auth_secret=git_auth_secret,
             skip_checks=skip_checks,
             additional_tags=additional_tags,
+            pipelinerun_template_url=pipelinerun_template_url,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)

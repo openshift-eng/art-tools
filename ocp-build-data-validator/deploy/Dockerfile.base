@@ -20,8 +20,6 @@ RUN python3 -m pip install -U pip build \
  && useradd -ms /bin/bash -u 1000 art \
  && curl -o /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem --fail -L \
          https://certs.corp.redhat.com/certs/2022-IT-Root-CA.pem \
- && curl -o /etc/pki/ca-trust/source/anchors/2015-IT-Root-CA.pem --fail -L \
-         https://certs.corp.redhat.com/certs/2015-IT-Root-CA.pem \
  && update-ca-trust extract  # Trust the Red Hat IT Root CAs
 
 USER art

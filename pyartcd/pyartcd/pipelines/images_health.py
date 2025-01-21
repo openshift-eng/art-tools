@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import click
@@ -36,33 +37,35 @@ class ImagesHealthPipeline:
         self.runtime.logger.info('images:health output for openshift-%s:\n%s', self.version, out)
 
         if any([self.send_to_release_channel, self.send_to_forum_ocp_art]):
-            await self._send_notifications()
+            await asyncio.gather(*[self._send_notifications(engine) for engine in ['brew', 'konflux']])
 
-    async def _send_notifications(self):
+    async def _send_notifications(self, engine):
         slack_client = self.runtime.new_slack_client()
+        engine_report = self.report.get(engine, None)
 
-        if self.report:
-            msg = (f':alert: Howdy! There are some issues to look into for openshift-{self.version}. '
-                   f'{len(self.report)} components have failed!')
-
-            report = ''
-            for image_name, concerns in self.report.items():
-                report += f'\n`{image_name}`:\n- ' + '\n- '.join(concerns)
-
+        if not engine_report:
             if self.send_to_release_channel:
                 slack_client.bind_channel(self.version)
-                response = await slack_client.say(msg)
-                await slack_client.say(report, thread_ts=response['ts'])
+                await slack_client.say(f':white_check_mark: [{engine}] All images are healthy for openshift-{self.version}')
+            return
 
-            if self.send_to_forum_ocp_art:
-                slack_client.bind_channel('#forum-ocp-art')
-                response = await slack_client.say(msg)
-                await slack_client.say(report, thread_ts=response['ts'])
+        msg = (f':alert: [{engine}] There are some issues to look into for openshift-{self.version}. '
+               f'{len(engine_report)} components have failed!')
 
-        else:
-            if self.send_to_release_channel:
-                slack_client.bind_channel(self.version)
-                await slack_client.say(f':white_check_mark: All images are healthy for openshift-{self.version}')
+        report = ''
+        for image_name, concern in engine_report.items():
+            report += f'\n`{image_name}`:\n- ' + concern
+
+        if self.send_to_release_channel:
+            slack_client.bind_channel(self.version)
+            response = await slack_client.say(msg)
+            await slack_client.say(report, thread_ts=response['ts'])
+
+        # For now, only notify public channels about Brew failures
+        if self.send_to_forum_ocp_art and engine == 'brew':
+            slack_client.bind_channel('#forum-ocp-art')
+            response = await slack_client.say(msg)
+            await slack_client.say(report, thread_ts=response['ts'])
 
 
 @cli.command('images-health')

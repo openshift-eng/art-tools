@@ -50,6 +50,43 @@ class ImageMetadata(Metadata):
     def image_name_short(self):
         return self.config.name.split('/')[-1]
 
+    @property
+    def is_olm_operator(self):
+        """ Returns whether this image is an OLM operator. """
+        return self.config['update-csv'] is not Missing
+
+    def get_olm_bundle_brew_component_name(self):
+        """ Returns the Brew component name of the OLM bundle for this OLM operator.
+
+        :return: The Brew component name.
+        :raises IOError: If the image is not an OLM operator.
+        """
+        if not self.is_olm_operator:
+            raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        return str(self.config.distgit.bundle_component or self.get_component_name().replace('-container', '-metadata-container'))
+
+    def get_olm_bundle_short_name(self):
+        """ Returns the short name of the OLM bundle for this OLM operator.
+
+        :return: The short name of the OLM bundle for this OLM operator.
+        :raises IOError: If the image is not an OLM operator.
+        """
+        if not self.is_olm_operator:
+            raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
+        return f"{self.distgit_key}-bundle"
+
+    def get_olm_bundle_image_name(self):
+        """ Returns the image name of the OLM bundle for this OLM operator.
+        This is to be used in the "name" label of the OLM bundle.
+
+        :return: The image name of the OLM bundle for this OLM operator.
+        :raises IOError: If the image is not an OLM operator.
+        """
+        short_name = self.get_olm_bundle_short_name()
+        if not short_name.startswith('ose-'):
+            short_name = 'ose-' + short_name
+        return f"openshift/{short_name}"
+
     def get_assembly_rpm_package_dependencies(self, el_ver: int) -> Tuple[Dict[str, str], Dict[str, str]]:
         """
         An assembly can define RPMs which should be installed into a given member
@@ -313,7 +350,7 @@ class ImageMetadata(Metadata):
         runtime = self.runtime
 
         with runtime.pooled_koji_client_session() as koji_api:
-            image_build = self.get_latest_build(default='')
+            image_build = self.get_latest_brew_build(default='')
             if not image_build:
                 # Seems this have never been built. Mark it as needing change.
                 return self, RebuildHint(RebuildHintCode.NO_LATEST_BUILD, 'Image has never been built before')
@@ -405,7 +442,7 @@ class ImageMetadata(Metadata):
             # we do not want to react because of an RPM build in the 'test' assembly.
             group_rpm_builds_nvrs: Dict[str, str] = dict()  # Maps package name to latest brew build nvr
             for rpm_meta in self.runtime.rpm_metas():
-                latest_rpm_build = rpm_meta.get_latest_build(default=None)
+                latest_rpm_build = rpm_meta.get_latest_brew_build(default=None)
                 if latest_rpm_build:
                     group_rpm_builds_nvrs[rpm_meta.get_package_name()] = latest_rpm_build['nvr']
 

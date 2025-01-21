@@ -104,6 +104,8 @@ def print_version(ctx, param, value):
 @click.option("--profile", metavar="NAME", default="", help="Name of build profile")
 @click.option("--brew-event", metavar='EVENT', default=None, type=int,
               help="Lock koji clients from runtime to this brew event.")
+@click.option("--build-system", default='brew', envvar='BUILD_SYSTEM',
+              help="Which build system (Brew/Konflux) to consider when searching for builds.")
 @click.pass_context
 def cli(ctx, **kwargs):
     global CTX_GLOBAL

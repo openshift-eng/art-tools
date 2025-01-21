@@ -28,9 +28,11 @@ class GroupRuntime(ABC):
         for key, val in kwargs.items():
             self.__dict__[key] = val
 
-    def initialize(self):
+    def initialize(self, build_system=None):
         self.initialize_logging()
         self.initialize_konxflux_db()
+        if build_system:
+            self.build_system = build_system
 
     def initialize_logging(self):
         self.debug_log_path = os.path.join(self.working_dir, 'debug.log')
@@ -54,6 +56,8 @@ class GroupRuntime(ABC):
         self._logger = logging.getLogger('artcommonlib')
 
     def initialize_konxflux_db(self):
+        if self.konflux_db:
+            return  # already initialized
         try:
             self.konflux_db = KonfluxDb()
             self._logger.info('Konflux DB initialized ')
