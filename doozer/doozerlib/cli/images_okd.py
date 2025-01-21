@@ -339,6 +339,18 @@ class CiOperatorConfig:
                 }
             ]
         }
+        self.tests = [
+            {
+                "always_run": True,
+                "as": "e2e-aws-ovn",
+                "optional": True,
+                "skip_if_only_changed": "^docs/|\.md$|^(?:.*/)?(?:\.gitignore|OWNERS|PROJECT|LICENSE)$",
+                "steps": {
+                    "cluster_profile": "aws",
+                    "workflow": "openshift-e2e-aws"
+                }
+            }
+        ]
         self.build_root = None
         self.releases = dict()
         self.complete = False  # There are stages to preparing a ci-operator config. If it is not completed successfully, don't write it to openshift/release.
@@ -405,7 +417,8 @@ class CiOperatorConfig:
                         'memory': '200Mi'
                     }
                 }
-            }
+            },
+            'tests': self.tests,
         }
         if raw_steps:
             config['raw_steps'] = raw_steps
@@ -797,7 +810,8 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
         ci_operator_config.complete = True
 
     ci_operator_configs.write_configs(release_clone_dir)
-    print('It is necessary to run "make ci-operator-configs" and then "make jobs" on the generated release repository')
+    print('It is necessary to run "make ci-operator-configs", "make jobs", "make openshift-image-mirror-mappings" on the generated release repository')
+    print('Push for PR with "git push --set-upstream fork HEAD:okd_updates --force"')
 
 
 @prs.command('set-optional-presubmit', short_help='Find OKD configs in MODIFIED openshift/release and set optional & always_run:false.')
