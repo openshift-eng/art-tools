@@ -293,7 +293,7 @@ def start_ocp4_konflux(build_version: str, assembly: str, image_list: list,
         params['LIMIT_ARCHES'] = ','.join(limit_arches)
 
     return start_build(
-        job=Jobs.OLM_BUNDLE_KONFLUX,
+        job=Jobs.OCP4_KONFLUX,
         params=params,
         **kwargs
     )
