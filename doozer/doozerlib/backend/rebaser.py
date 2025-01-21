@@ -756,36 +756,20 @@ class KonfluxRebaser:
         self._update_environment_variables(metadata, source, df_path, build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
 
         # Inject build repos for Konflux
-        self._add_build_repos(dfp, metadata)
+        self._add_build_repos(dfp)
 
         self._modify_cachito_commands(metadata, df_path)
 
         self._reflow_labels(df_path)
 
-    def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata):
+    def _add_build_repos(self, dfp: DockerfileParser):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = metadata.config.get("konflux", {}).get("network_mode")
-
-        konflux_lines = ["\n# Start Konflux-specific steps"]
-
-        if network_mode != "hermetic":
-            konflux_lines += [
-                "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
-                f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
-                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"
-            ]
-
-        if network_mode == "internal-only":
-            konflux_lines += [
-                "ENV NO_PROXY='localhost,127.0.0.1,::1,.redhat.com'",
-                "ENV HTTP_PROXY='http://127.0.0.1:9999'",
-                "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
-            ]
-
-        konflux_lines += ["# End Konflux-specific steps\n\n"]
-
         dfp.add_lines(
-            *konflux_lines,
+            "\n# Start Konflux-specific steps",
+            "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
+            f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
+            f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
+            "# End Konflux-specific steps\n\n",
             at_start=True,
             all_stages=True,
         )
