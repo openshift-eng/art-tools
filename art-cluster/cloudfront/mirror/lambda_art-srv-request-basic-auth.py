@@ -19,14 +19,12 @@ AWS_EC2_REGION_IP_RANGES = {"us-east-1": [[50462720, 50462975], [50463232, 50463
 S3_BUCKET_NAME = "art-srv-enterprise"
 S3_REGION_NAME = 'us-east-1'
 
-
 # Ensure s3v4 signature is used regardless of the region the lambda is executing in.
 BOTO3_CLIENT_CONFIG = Config(signature_version='s3v4')
 # According to https://docs.aws.amazon.com/codeguru/detector-library/python/lambda-client-reuse/
 # s3 clients can and should be reused. This allows the client to be cached in an execution
 # environment and reused if possible. Initialize these lazily so we can handle ANY s3 errors easily.
 s3_client = None
-
 
 def unauthorized():
     return {
@@ -40,7 +38,6 @@ def unauthorized():
         }
     }
 
-
 def redirect(uri: str, code: int = 302, description="Found"):
     return {
         'status': code,
@@ -52,7 +49,6 @@ def redirect(uri: str, code: int = 302, description="Found"):
             }],
         }
     }
-
 
 class KeyifyList(object):
     """ bisect does not support key= until 3.10. Eliminate this when Lambda supports 3.10.
@@ -67,7 +63,6 @@ class KeyifyList(object):
 
     def __getitem__(self, k):
         return self.key(self.inner[k])
-
 
 def find_region(ip) -> Optional[str]:
     """ Find the AWS region for the given IP address.
@@ -87,7 +82,6 @@ def find_region(ip) -> Optional[str]:
             break
     return found_region
 
-
 def get_secrets_manager_secret_dict(secret_name):
     import json
     # We need to read in the secret from AWS SecretManager
@@ -106,7 +100,6 @@ def get_secrets_manager_secret_dict(secret_name):
         username_password_keypairs_str = get_secret_value_response['SecretString']
         return json.loads(username_password_keypairs_str)
 
-
 def lambda_handler(event: Dict, context: Dict):
     global s3_client
     global ENTERPRISE_SERVICE_ACCOUNTS
@@ -121,6 +114,9 @@ def lambda_handler(event: Dict, context: Dict):
         # Strip off '/srv'. This was the original location I uploaded things to.
         # but it makes more sense for everything to be in the root.
         uri = uri[4:]
+
+    # Replace literal + simbol with encoded form
+    uri = uri.replace('+', '%2B')
 
     # prefixes that should be swapped on access; used to be done with symlinks on mirror.
     links = {

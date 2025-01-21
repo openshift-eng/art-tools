@@ -14,7 +14,6 @@ from lambda_r2_lib import get_r2_s3_client, get_secrets_manager_secret_dict, S3_
 ENTERPRISE_SERVICE_ACCOUNTS = None
 POCKET_SERVICE_ACCOUNTS = None
 
-
 def unauthorized():
     return {
         'status': 401,
@@ -27,7 +26,6 @@ def unauthorized():
         }
     }
 
-
 def redirect(uri: str, code: int = 302, description="Found"):
     return {
         'status': code,
@@ -39,7 +37,6 @@ def redirect(uri: str, code: int = 302, description="Found"):
             }],
         }
     }
-
 
 def not_found(description="File Not Found"):
     return {
@@ -62,7 +59,6 @@ def not_found(description="File Not Found"):
         'body': 'File not found',
     }
 
-
 class KeyifyList(object):
     """ bisect does not support key= until 3.10. Eliminate this when Lambda supports 3.10.
     """
@@ -77,7 +73,6 @@ class KeyifyList(object):
     def __getitem__(self, k):
         return self.key(self.inner[k])
 
-
 def lambda_handler(event: Dict, context: Dict):
     global ENTERPRISE_SERVICE_ACCOUNTS
     global POCKET_SERVICE_ACCOUNTS
@@ -91,6 +86,9 @@ def lambda_handler(event: Dict, context: Dict):
         # Strip off '/srv'. This was the original location I uploaded things to.
         # but it makes more sense for everything to be in the root.
         uri = uri[4:]
+
+    # Replace literal + simbol with encoded form
+    uri = uri.replace('+', '%2B')
 
     # prefixes that should be swapped on access; used to be done with symlinks on mirror.
     links = {
