@@ -49,4 +49,5 @@ UMB_BROKERS = {
 
 GITHUB_OWNER = "openshift-eng"
 
-KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://raw.githubusercontent.com/{owner}/art-konflux-template/refs/heads/{branch_name}/.tekton/art-konflux-template-push.yaml"  # Konflux PipelineRun (PLR) template
+KONFLUX_IMAGE_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://raw.githubusercontent.com/{owner}/art-konflux-template/refs/heads/{branch_name}/.tekton/art-konflux-template-push.yaml"  # Konflux PipelineRun (PLR) template for image builds
+KONFLUX_BUNDLE_BUILD_PLR_TEMPLATE_URL_FORMAT = "https://raw.githubusercontent.com/{owner}/art-konflux-template/refs/heads/{branch_name}/.tekton/art-bundle-konflux-template-push.yaml"  # Konflux PipelineRun (PLR) template for bundle builds

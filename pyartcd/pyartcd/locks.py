@@ -11,6 +11,7 @@ from pyartcd import constants
 # Defines the pipeline locks managed by Redis
 class Lock(enum.Enum):
     OLM_BUNDLE = 'lock:olm-bundle:{version}'
+    OLM_BUNDLE_KONFLUX = 'lock:olm-bundle-konflux:{version}'
     MIRRORING_RPMS = 'lock:mirroring-rpms:{version}'
     PLASHET = 'lock:compose:{assembly}:{version}'
     BUILD = 'lock:build:{version}'
@@ -38,6 +39,11 @@ DEFAULT_LOCK_TIMEOUT = 60 * 60 * 96  # 96 hours
 # - a timeout, after which the lock will expire and clear itself
 LOCK_POLICY = {
     Lock.OLM_BUNDLE: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+    },
+    Lock.OLM_BUNDLE_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
