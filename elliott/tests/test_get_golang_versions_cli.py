@@ -55,8 +55,8 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
         result = runner.invoke(cli, ['go', '--nvrs', 'podman-container-3.0.1-6.el8,podman-1.9.3-3.rhaos4.6.el8'])
         self.assertEqual(result.exit_code, 0)
 
-    @patch('elliottlib.util.get_nvrs_from_payload')
-    def test_get_golang_versions_release(self, mock_get_nvrs_from_payload: AsyncMock):
+    @patch('elliottlib.util.get_nvrs_from_release')
+    def test_get_golang_versions_release(self, mock_get_nvrs_from_release: AsyncMock):
         runner = CliRunner()
         flexmock(Runtime).should_receive("initialize").and_return(None)
         payload_nvrs = {'ose-cli-container': ('3.0.1', '6.el8')}
@@ -66,7 +66,7 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
         flexmock(rhcos). \
             should_receive("get_container_configs"). \
             and_return([{'name': 'machine-os-content'}])
-        mock_get_nvrs_from_payload.return_value = payload_nvrs
+        mock_get_nvrs_from_release.return_value = payload_nvrs
         flexmock(utillib). \
             should_receive("get_golang_container_nvrs"). \
             with_args([('ose-cli-container', '3.0.1', '6.el8')], logger).and_return(go_map)
