@@ -56,8 +56,9 @@ class TagRPMsPipeline:
                     for nvr in nvrs:
                         message += f"\t{nvr}\n"
                 if untagged:
-                    message += "Builds were untagged because they were tagged into the stop-ship tags. Notify ota-monitor on Slack channel #forum-release if a release contains this build is already promoted\n\n"
-                    await self.slack_client.say(f":alert-siren: Hi @release-artists ,\n{message}", reaction="art-attention")
+                    message += "Builds were untagged because they were tagged into the stop-ship tags. Notify ota-monitor on Slack channel #forum-release if a release contains this build is already promoted.\n"
+                    message += "May need to manually trigger builds of kernel carryin images like `driver-toolkit` and `ironic-rhcos-downloader`.\n\n"
+                    await self.slack_client.say(f":alert-siren: Hi @release-artists ,\n{message}")
             if report["tagged"]:
                 for tag, nvrs in report["tagged"].items():
                     if not nvrs:
