@@ -3,7 +3,7 @@ import hmac
 from bisect import bisect
 from ipaddress import ip_address
 from typing import Dict, List, Optional
-from urllib.parse import quote, unquote_plus
+from urllib.parse import quote, unquote
 
 import boto3
 from botocore.client import Config
@@ -199,7 +199,7 @@ def lambda_handler(event: Dict, context: Dict):
             ClientMethod='get_object',
             Params={
                 'Bucket': S3_BUCKET_NAME,
-                'Key': unquote_plus(uri[1:]),  # Strip '/'
+                'Key': unquote(uri[1:]),  # Strip '/'
             },
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )
@@ -210,5 +210,5 @@ def lambda_handler(event: Dict, context: Dict):
     # in order for the URL to resolve via an S3 HTTP request. decoding and then
     # re-encoding should ensure that clients that do or don't encode will always
     # head toward the S3 origin encoded.
-    request['uri'] = quote(unquote_plus(uri))
+    request['uri'] = quote(unquote(uri))
     return request
