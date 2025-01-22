@@ -5,7 +5,7 @@ import ipaddress
 
 from botocore.exceptions import ClientError
 from typing import Dict, List, Optional
-from urllib.parse import quote, unquote_plus
+from urllib.parse import quote, unquote
 
 import boto3
 from lambda_r2_lib import get_r2_s3_client, get_secrets_manager_secret_dict, S3_BUCKET_NAME
@@ -191,7 +191,7 @@ def lambda_handler(event: Dict, context: Dict):
     else:
         # If we have not initialized an R2 client, do so now.
         s3_client = get_r2_s3_client()
-        file_key = unquote_plus(uri.lstrip('/'))  # Strip '/' prefix and decode any uri encoding like "%2B"
+        file_key = unquote(uri.lstrip('/'))  # Strip '/' prefix and decode any uri encoding like "%2B"
 
         try:
             s3_client.head_object(Bucket=S3_BUCKET_NAME, Key=file_key)
@@ -249,5 +249,5 @@ def lambda_handler(event: Dict, context: Dict):
     # in order for the URL to resolve via an S3 HTTP request. decoding and then
     # re-encoding should ensure that clients that do or don't encode will always
     # head toward the S3 origin encoded.
-    request['uri'] = quote(unquote_plus(uri))
+    request['uri'] = quote(unquote(uri))
     return request
