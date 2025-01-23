@@ -785,7 +785,9 @@ class KonfluxRebaser:
 
         cachito_emulation = metadata.config.get("konflux", {}).get("cachito", {}).get("emulation", False)
         if cachito_emulation:
-            with open(f"{dest_dir}/cachi2-emulation/app/.dir"):
+            emulation_dir = f"{dest_dir}/cachi2-emulation/app"
+            os.makedirs(emulation_dir, exist_ok=True)
+            with open(f"{emulation_dir}/.dir", "w"):
                 # Create an emtpy file for rebase
                 pass
 
