@@ -67,7 +67,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(match.group(1), "namespace/image")
         self.assertEqual(match.group(2), "tag")
 
-    @patch("doozerlib.util.oc_image_info__caching_async")
+    @patch("doozerlib.util.oc_image_info_async__caching")
     async def test_replace_image_references(self, mock_oc_image_info):
         old_registry = "registry.example.com"
         content = """
@@ -84,9 +84,12 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             'config': {
                 'config': {
                     'Labels': {
-                        'com.redhat.component': 'test-component',
+                        'com.redhat.component': 'test-brew-component',
                         'version': '1.0',
                         'release': '1',
+                    },
+                    'Env': {
+                        '__doozer_key=test-component'
                     }
                 }
             },
@@ -388,7 +391,7 @@ spec:
             'operators.operatorframework.io.bundle.package.v1': 'test-package',
         }, input_release)
         mock_create_container_yaml.assert_called_once_with(Path("/path/to/bundle/dir/container.yaml"))
-        mock_create_oit_files.assert_called_once_with(bundle_dir, 'test-component-1.0-1', {
+        mock_create_oit_files.assert_called_once_with(bundle_dir, 'test-distgit-key-1.0-1', {
             'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
         })
 
@@ -481,7 +484,7 @@ spec:
 
         with self.assertRaises(ValueError) as context:
             await self.rebaser._rebase_dir(metadata, operator_dir, bundle_dir, input_release)
-        self.assertIn("Label 'com.redhat.component', 'version' or 'release' is not set in the operator's Dockerfile", str(context.exception))
+        self.assertIn("Label 'version' or 'release' is not set in the operator's Dockerfile", str(context.exception))
 
     @patch("pathlib.Path.iterdir", return_value=iter([]))
     async def test_rebase_dir_no_files_in_bundle_dir(self, _):
@@ -536,7 +539,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             )
 
     @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    async def test_start_build_success(self, mock_dockerfile_parser):
+    async def test_start_build(self, mock_dockerfile_parser):
         metadata = MagicMock()
         metadata.distgit_key = "test-distgit-key"
         metadata.get_olm_bundle_short_name.return_value = "test-bundle"
@@ -559,7 +562,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.konflux_client.start_pipeline_run_for_image_build.return_value = pipelinerun
         self.konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipelinerun")
 
-        pipelinerun, url = await self.builder._start_build(metadata, bundle_build_repo, self.image_repo, self.konflux_namespace, self.skip_checks, additional_tags)
+        pipelinerun, url = await self.builder._start_build(metadata, bundle_build_repo, f"{self.image_repo}:test-component-1.0-1", self.konflux_namespace, self.skip_checks, additional_tags)
 
         self.konflux_client.ensure_application.assert_called_once_with(name="test-group", display_name="test-group")
         self.konflux_client.ensure_component.assert_called_once_with(
@@ -571,10 +574,10 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             revision=bundle_build_repo.commit_hash,
         )
         self.konflux_client.start_pipeline_run_for_image_build.assert_called_once_with(
-            generate_name="test-component-",
+            generate_name="test-group-test-bundle-",
             namespace=self.konflux_namespace,
             application_name="test-group",
-            component_name="test-component",
+            component_name='test-group-test-bundle',
             git_url=bundle_build_repo.https_url,
             commit_sha=bundle_build_repo.commit_hash,
             target_branch=bundle_build_repo.commit_hash,
@@ -586,66 +589,6 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             pipelinerun_template_url=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
         )
         self.assertEqual(url, "https://example.com/pipelinerun")
-
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    async def test_start_build_missing_component_label(self, mock_dockerfile_parser):
-        metadata = MagicMock()
-        metadata.distgit_key = "test-distgit-key"
-        bundle_build_repo = MagicMock()
-        bundle_build_repo.commit_hash = "test-commit-hash"
-        bundle_build_repo.branch = None
-        bundle_build_repo.https_url = "https://example.com/repo.git"
-
-        mock_dockerfile = MagicMock()
-        mock_dockerfile.labels = {
-            'version': '1.0',
-            'release': '1',
-        }
-        mock_dockerfile_parser.return_value = mock_dockerfile
-
-        with self.assertRaises(IOError) as context:
-            await self.builder._start_build(metadata, bundle_build_repo, self.image_repo, self.konflux_namespace)
-        self.assertIn("Label 'com.redhat.component' is not set. Did you run rebase?", str(context.exception))
-
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    async def test_start_build_missing_version_label(self, mock_dockerfile_parser):
-        metadata = MagicMock()
-        metadata.distgit_key = "test-distgit-key"
-        bundle_build_repo = MagicMock()
-        bundle_build_repo.commit_hash = "test-commit-hash"
-        bundle_build_repo.branch = None
-        bundle_build_repo.https_url = "https://example.com/repo.git"
-
-        mock_dockerfile = MagicMock()
-        mock_dockerfile.labels = {
-            'com.redhat.component': 'test-component',
-            'release': '1',
-        }
-        mock_dockerfile_parser.return_value = mock_dockerfile
-
-        with self.assertRaises(IOError) as context:
-            await self.builder._start_build(metadata, bundle_build_repo, self.image_repo, self.konflux_namespace)
-        self.assertIn("Label 'version' is not set. Did you run rebase?", str(context.exception))
-
-    @patch("doozerlib.backend.konflux_olm_bundler.DockerfileParser")
-    async def test_start_build_missing_release_label(self, mock_dockerfile_parser):
-        metadata = MagicMock()
-        metadata.distgit_key = "test-distgit-key"
-        bundle_build_repo = MagicMock()
-        bundle_build_repo.commit_hash = "test-commit-hash"
-        bundle_build_repo.branch = None
-        bundle_build_repo.https_url = "https://example.com/repo.git"
-
-        mock_dockerfile = MagicMock()
-        mock_dockerfile.labels = {
-            'com.redhat.component': 'test-component',
-            'version': '1.0',
-        }
-        mock_dockerfile_parser.return_value = mock_dockerfile
-
-        with self.assertRaises(IOError) as context:
-            await self.builder._start_build(metadata, bundle_build_repo, self.image_repo, self.konflux_namespace)
-        self.assertIn("Label 'release' is not set. Did you run rebase?", str(context.exception))
 
     async def test_start_build_no_commit_hash(self):
         metadata = MagicMock()
@@ -703,14 +646,15 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             }
         })
 
-        await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS)
+        await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS,
+                                              'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
 
         self.db.add_build.assert_called_once()
         build_record = self.db.add_build.call_args[0][0]
         self.assertEqual(build_record.name, "test-bundle")
         self.assertEqual(build_record.version, "1.0")
         self.assertEqual(build_record.release, "1")
-        self.assertEqual(build_record.nvr, "test-component-1.0-1")
+        self.assertEqual(build_record.nvr, "test-bundle-1.0-1")
         self.assertEqual(build_record.group, "test-group")
         self.assertEqual(build_record.assembly, "test-assembly")
         self.assertEqual(build_record.source_repo, "https://example.com/source-repo.git")
@@ -770,14 +714,15 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             }
         })
 
-        await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.FAILURE)
+        await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.FAILURE,
+                                              'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
 
         self.db.add_build.assert_called_once()
         build_record = self.db.add_build.call_args[0][0]
         self.assertEqual(build_record.name, "test-bundle")
         self.assertEqual(build_record.version, "1.0")
         self.assertEqual(build_record.release, "1")
-        self.assertEqual(build_record.nvr, "test-component-1.0-1")
+        self.assertEqual(build_record.nvr, "test-bundle-1.0-1")
         self.assertEqual(build_record.group, "test-group")
         self.assertEqual(build_record.assembly, "test-assembly")
         self.assertEqual(build_record.source_repo, "https://example.com/source-repo.git")
@@ -842,7 +787,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.builder._db = None
 
         with self.assertLogs(self.builder._logger, level='WARNING') as cm:
-            await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS)
+            await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS,
+                                                  'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
             self.assertIn('Konflux DB connection is not initialized, not writing build record to the Konflux DB.', cm.output[0])
 
     @patch("aiofiles.open")
@@ -893,5 +839,6 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.db.add_build.side_effect = Exception("Test exception")
 
         with self.assertLogs(self.builder._logger, level='ERROR') as cm:
-            await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS)
+            await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS,
+                                                  'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
             self.assertIn('Failed writing record to the konflux DB: Test exception', cm.output[0])

@@ -22,6 +22,7 @@ from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient, resource
 from doozerlib.image import ImageMetadata
+from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,12 +122,11 @@ class KonfluxOlmBundleRebaser:
 
         # Read the operator's Dockerfile
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
-        operator_component = operator_df.labels.get('com.redhat.component')
         operator_version = operator_df.labels.get('version')
         operator_release = operator_df.labels.get('release')
-        if not operator_component or not operator_version or not operator_release:
-            raise ValueError(f"[{metadata.distgit_key}] Label 'com.redhat.component', 'version' or 'release' is not set in the operator's Dockerfile")
-        operator_nvr = f"{operator_component}-{operator_version}-{operator_release}"
+        if not operator_version or not operator_release:
+            raise ValueError(f"[{metadata.distgit_key}] Label 'version' or 'release' is not set in the operator's Dockerfile")
+        operator_nvr = f"{metadata.distgit_key}-{operator_version}-{operator_release}"
 
         # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
@@ -249,17 +249,23 @@ class KonfluxOlmBundleRebaser:
         # Get image infos for all found images
         for pullspec, (namespace, image_short_name, image_tag) in references.items():
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-            image_info_tasks.append(asyncio.create_task(util.oc_image_info__caching_async(build_pullspec)))
+            image_info_tasks.append(asyncio.create_task(
+                util.oc_image_info_async__caching(
+                    build_pullspec,
+                    registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+                    registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                )))
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
         for pullspec, image_info in zip(references, image_infos):
             image_labels = image_info['config']['config']['Labels']
-            image_component = image_labels['com.redhat.component']
             image_version = image_labels['version']
             image_release = image_labels['release']
-            image_nvr = f"{image_component}-{image_version}-{image_release}"
+            image_envs = image_info['config']['config']['Env']
+            image_dgk = next((env.split('=')[1] for env in image_envs if env.startswith('__doozer_key=')))
+            image_nvr = f"{image_dgk}-{image_version}-{image_release}"
             namespace, image_short_name, image_tag = references[pullspec]
             image_sha = image_info['listDigest'] if self._group_config.operator_image_ref_mode == 'manifest-list' else image_info['contentDigest']
             new_namespace = 'openshift4' if namespace == csv_namespace else namespace
@@ -377,6 +383,7 @@ class KonfluxOlmBundleBuilder:
                  skip_checks: bool = False,
                  pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
                  dry_run: bool = False,
+                 record_logger: Optional[RecordLogger] = None,
                  logger: logging.Logger = _LOGGER) -> None:
         self.base_dir = base_dir
         self.group = group
@@ -390,6 +397,7 @@ class KonfluxOlmBundleBuilder:
         self.skip_checks = skip_checks
         self.pipelinerun_template_url = pipelinerun_template_url
         self.dry_run = dry_run
+        self._record_logger = record_logger
         self._logger = logger
         self._konflux_client = KonfluxClient.from_kubeconfig(self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run)
 
@@ -397,72 +405,111 @@ class KonfluxOlmBundleBuilder:
         """ Build a bundle with Konflux. """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         konflux_client = self._konflux_client
-
         bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
-        if bundle_dir.exists():
-            # Load exiting build source repository
-            logger.info("Loading existing bundle repository...")
-            bundle_build_repo = await BuildRepo.from_local_dir(bundle_dir, self._logger)
-            logger.info("Bundle repository loaded from %s", bundle_dir)
-        else:
-            source = None
-            if metadata.has_source():
-                logger.info("Resolving source...")
-                source = cast(SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata, no_clone=True))
+        df_path = bundle_dir.joinpath("Dockerfile")
+
+        record = {
+            'status': -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            "message": "Unknown failure",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "operator_nvr": "n/a",
+            "operand_nvrs": "n/a",
+            "bundle_nvr": "n/a",
+        }
+
+        try:
+            if bundle_dir.exists():
+                # Load exiting build source repository
+                logger.info("Loading existing bundle repository...")
+                bundle_build_repo = await BuildRepo.from_local_dir(bundle_dir, self._logger)
+                logger.info("Bundle repository loaded from %s", bundle_dir)
             else:
-                raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
-            # Clone the build source repository
-            bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map({
-                "group": self.group,
-                "assembly_name": self.assembly,
-                "distgit_key": metadata.distgit_key,
-            })
-            logger.info("Cloning bundle repository...")
-            bundle_build_repo = BuildRepo(url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger)
-            await bundle_build_repo.ensure_source()
-            logger.info("Bundle repository cloned to %s", bundle_dir)
-        if not bundle_build_repo.commit_hash:
-            raise IOError(f"Bundle repository {bundle_build_repo.url} doesn't have any commits to build")
+                source = None
+                if metadata.has_source():
+                    logger.info("Resolving source...")
+                    source = cast(SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata, no_clone=True))
+                else:
+                    raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
+                # Clone the build source repository
+                bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map({
+                    "group": self.group,
+                    "assembly_name": self.assembly,
+                    "distgit_key": metadata.distgit_key,
+                })
+                logger.info("Cloning bundle repository...")
+                bundle_build_repo = BuildRepo(url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger)
+                await bundle_build_repo.ensure_source()
+                logger.info("Bundle repository cloned to %s", bundle_dir)
+            if not bundle_build_repo.commit_hash:
+                raise IOError(f"Bundle repository {bundle_build_repo.url} doesn't have any commits to build")
 
-        logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
-        retries = 3
-        for attempt in range(retries):
-            logger.info("Build attempt %d/%d", attempt + 1, retries)
-            pipelinerun, url = await self._start_build(metadata, bundle_build_repo, self.image_repo, self.konflux_namespace, self.skip_checks)
-            pipelinerun_name = pipelinerun.metadata.name
-            logger.info(f"Build started: {url}")
+            # Parse bundle's Dockerfile
+            bundle_df = DockerfileParser(str(df_path))
+            version = bundle_df.labels.get('version')
+            if not version:
+                raise IOError(f"{metadata.distgit_key}: Label 'version' is not set. Did you run rebase?")
+            release = bundle_df.labels.get('release')
+            if not release:
+                raise IOError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
+            nvr = f"{metadata.get_olm_bundle_short_name()}-{version}-{release}"
+            record['bundle_nvr'] = nvr
+            output_image = f"{self.image_repo}:{nvr}"
 
-            # Update the Konflux DB with status PENDING
-            outcome = KonfluxBuildOutcome.PENDING
-            if not self.dry_run:
-                await self._update_konflux_db(metadata, bundle_build_repo, pipelinerun, outcome)
-            else:
-                logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
+            # Load olm_bundle_info.yaml to get the operator and operand NVRs
+            async with aiofiles.open(bundle_build_repo.local_dir / '.oit' / 'olm_bundle_info.yaml', 'r') as f:
+                bundle_info = yaml.safe_load(await f.read())
+            operator_nvr = bundle_info['operator']['nvr']
+            record['operator_nvr'] = operator_nvr
+            operand_nvrs = sorted({info['nvr'] for info in bundle_info['operands'].values()})
+            record['operand_nvrs'] = ','.join(operand_nvrs)
 
-            # Wait for the PipelineRun to complete
-            pipelinerun = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
-            status = pipelinerun.status.conditions[0].status
-            outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
-            logger.info(f"PipelineRun {url} completed with outcome {outcome}")
+            # Start the bundle build
+            logger.info("Starting Konflux bundle image build for %s...", metadata.distgit_key)
+            retries = 3
+            for attempt in range(retries):
+                logger.info("Build attempt %d/%d", attempt + 1, retries)
+                pipelinerun, url = await self._start_build(metadata, bundle_build_repo, output_image, self.konflux_namespace, self.skip_checks)
+                pipelinerun_name = pipelinerun.metadata.name
+                record["task_id"] = pipelinerun_name
+                record["task_url"] = url
 
-            # Update the Konflux DB with the final outcome
-            if not self.dry_run:
-                await self._update_konflux_db(metadata, bundle_build_repo, pipelinerun, outcome)
-            else:
-                logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
-            if status != "True":
-                error = KonfluxOlmBundleBuildError(f"Konflux bundle image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
-                logger.error(f"{error}: {url}")
-            else:
-                error = None
-                break
+                # Update the Konflux DB with status PENDING
+                outcome = KonfluxBuildOutcome.PENDING
+                if not self.dry_run:
+                    await self._update_konflux_db(metadata, bundle_build_repo, pipelinerun, outcome, operator_nvr, operand_nvrs)
+                else:
+                    logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
 
-        if error:
-            raise error
+                # Wait for the PipelineRun to complete
+                pipelinerun = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
+                status = pipelinerun.status.conditions[0].status
+                outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
+                logger.info(f"PipelineRun {url} completed with outcome {outcome}")
+
+                # Update the Konflux DB with the final outcome
+                if not self.dry_run:
+                    await self._update_konflux_db(metadata, bundle_build_repo, pipelinerun, outcome, operator_nvr, operand_nvrs)
+                else:
+                    logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
+                if status != "True":
+                    error = KonfluxOlmBundleBuildError(f"Konflux bundle image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
+                    logger.error(f"{error}: {url}")
+                else:
+                    error = None
+                    record["message"] = "Success"
+                    record['status'] = 0
+                    break
+            if error:
+                record['message'] = str(error)
+                raise error
+        finally:
+            if self._record_logger:
+                self._record_logger.add_record("build_olm_bundle_konflux", **record)
         return pipelinerun_name, pipelinerun
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
-    async def _start_build(self, metadata: ImageMetadata, bundle_build_repo: BuildRepo, image_repo: str, namespace: str,
+    async def _start_build(self, metadata: ImageMetadata, bundle_build_repo: BuildRepo, output_image: str, namespace: str,
                            skip_checks: bool = False, additional_tags: Optional[Sequence[str]] = None):
         """ Start a build with Konflux. """
         if not bundle_build_repo.commit_hash:
@@ -482,7 +529,7 @@ class KonfluxOlmBundleBuilder:
         # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
         component_name = f"{app_name}-{bundle_name}".replace(".", "-").replace("_", "-")
         logger.info(f"Creating Konflux component: {component_name}")
-        dest_image_repo = image_repo
+        dest_image_repo = output_image.split(":")[0]
         await konflux_client.ensure_component(
             name=component_name,
             application=app_name,
@@ -492,20 +539,7 @@ class KonfluxOlmBundleBuilder:
             revision=target_branch,
         )
         logger.info(f"Konflux component {component_name} created")
-        # Read the bundle's Dockerfile
-        bundle_df = DockerfileParser(str(bundle_build_repo.local_dir.joinpath('Dockerfile')))
         # Start a PipelineRun
-        component_name = bundle_df.labels.get('com.redhat.component')
-        if not component_name:
-            raise IOError(f"{metadata.distgit_key}: Label 'com.redhat.component' is not set. Did you run rebase?")
-        version = bundle_df.labels.get('version')
-        if not version:
-            raise IOError(f"{metadata.distgit_key}: Label 'version' is not set. Did you run rebase?")
-        release = bundle_df.labels.get('release')
-        if not release:
-            raise IOError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
-        nvr = f"{component_name}-{version}-{release}"
-        logger.info(f"Building bundle {nvr}...")
         pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=namespace,
@@ -514,7 +548,7 @@ class KonfluxOlmBundleBuilder:
             git_url=bundle_build_repo.https_url,
             commit_sha=bundle_build_repo.commit_hash,
             target_branch=target_branch,
-            output_image=f"{dest_image_repo}:{nvr}",
+            output_image=output_image,
             vm_override={},
             building_arches=["x86_64"],  # We always build bundles on x86_64
             additional_tags=list(additional_tags),
@@ -526,7 +560,8 @@ class KonfluxOlmBundleBuilder:
         return pipelinerun, url
 
     async def _update_konflux_db(self, metadata: ImageMetadata, build_repo: BuildRepo,
-                                 pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome):
+                                 pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
+                                 operator_nvr: str, operand_nvrs: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
         if not db or db.record_cls != KonfluxBundleBuildRecord:
@@ -542,19 +577,12 @@ class KonfluxOlmBundleBuilder:
             source_repo = df.labels['io.openshift.build.source-location']
             commitish = df.labels['io.openshift.build.commit.id']
 
-            component_name = df.labels['com.redhat.component']
             version = df.labels['version']
             release = df.labels['release']
-            nvr = "-".join([component_name, version, release])
+            nvr = "-".join([metadata.get_olm_bundle_short_name(), version, release])
 
             pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
-
-            # Load .oit files
-            async with aiofiles.open(build_repo.local_dir / '.oit' / 'olm_bundle_info.yaml', 'r') as f:
-                bundle_info = yaml.safe_load(await f.read())
-            operator_nvr = bundle_info['operator']['nvr']
-            operand_nvrs = sorted({info['nvr'] for info in bundle_info['operands'].values()})
 
             build_record_params = {
                 'name': metadata.get_olm_bundle_short_name(),

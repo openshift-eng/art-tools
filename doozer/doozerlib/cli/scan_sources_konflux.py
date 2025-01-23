@@ -28,7 +28,7 @@ from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 from artcommonlib.release_util import isolate_timestamp_in_release
-from doozerlib.util import oc_image_info__caching_async, isolate_el_version_in_brew_tag
+from doozerlib.util import oc_image_info_async__caching, isolate_el_version_in_brew_tag
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -59,13 +59,6 @@ class ConfigScanSources:
         self.changing_image_names = set()
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
-
-        # Common params for all queries
-        self.base_search_params = {
-            'group': self.runtime.group,
-            'assembly': self.runtime.assembly,  # to let test ocp4-scan in non-stream assemblies, e.g. 'test'
-            'engine': Engine.KONFLUX.value,
-        }
 
         self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
@@ -292,14 +285,9 @@ class ConfigScanSources:
 
         self.logger.info('Gathering latest RPM build records information...')
 
-        async def _find_target_build(rpm_name, el_target):
-            search_params = {
-                'name': rpm_name,
-                'el_target': el_target,
-                **self.base_search_params,
-                'engine': 'brew'  # for RPMs we only have Brew build engine
-            }
-            build_record = await self.runtime.konflux_db.get_latest_build(**search_params)
+        async def _find_target_build(rpm_meta, el_target):
+            rpm_name = rpm_meta.rpm_name
+            build_record = await rpm_meta.get_latest_build(el_target=el_target)
             if not self.latest_rpm_build_records_map.get(rpm_name):
                 self.latest_rpm_build_records_map[rpm_name] = {}
             self.latest_rpm_build_records_map[rpm_name][el_target] = build_record
@@ -307,16 +295,15 @@ class ConfigScanSources:
         tasks = []
         for rpm in self.runtime.rpm_metas():
             tasks.extend([
-                _find_target_build(rpm.rpm_name, f'el{target}')
+                _find_target_build(rpm, f'el{target}')
                 for target in rpm.determine_rhel_targets()
             ])
         await asyncio.gather(*tasks)
 
     async def find_latest_image_builds(self, image_names: typing.List[str]):
         self.logger.info('Gathering latest image build records information...')
-        latest_image_builds = await self.runtime.konflux_db.get_latest_builds(
-            names=image_names,
-            **self.base_search_params)
+        latest_image_builds = await asyncio.gather(*[
+            self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names])
         self.latest_image_build_records_map.update((zip(
             image_names, latest_image_builds)))
 
@@ -421,10 +408,9 @@ class ConfigScanSources:
 
         # Scan for any build in this assembly which includes the git commit.
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
-        upstream_commit_build_record = await self.runtime.konflux_db.get_latest_build(
-            **self.base_search_params,
-            name=image_meta.distgit_key,
-            extra_patterns={'commitish': upstream_commit_hash}  # WHERE commitish LIKE '%{upstream_commit_hash}%'
+        upstream_commit_build_record = await image_meta.get_latest_build(
+            engine=Engine.KONFLUX.value,
+            extra_patterns={'commitish': upstream_commit_hash}
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -455,9 +441,7 @@ class ConfigScanSources:
         now = datetime.now(timezone.utc)
 
         # Check whether a build attempt with this commit has failed before.
-        failed_commit_build_record = await self.runtime.konflux_db.get_latest_build(
-            **self.base_search_params,
-            name=image_meta.distgit_key,
+        failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
             outcome=KonfluxBuildOutcome.FAILURE
         )
@@ -605,7 +589,7 @@ class ConfigScanSources:
             builder_image_url = self.runtime.resolve_brew_image_url(builder_image_name)
 
         # Find and map the builder image NVR
-        latest_builder_image_info = Model(await oc_image_info__caching_async(builder_image_url))
+        latest_builder_image_info = Model(await oc_image_info_async__caching(builder_image_url))
         builder_info_labels = latest_builder_image_info.config.config.Labels
         builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'],
                             builder_info_labels['release']]
@@ -625,23 +609,26 @@ class ConfigScanSources:
         If it's not, query Brew API to get the Brew build result. Querying Brew API will eventually go away.
         """
 
-        try:
-            # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
-            # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
-            # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
-            # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
-            # so an option might be to store this information in Redis
-            nvr_timestamp = datetime.strptime(isolate_timestamp_in_release(builder_build_nvr), "%Y%m%d%H%M%S")
-            start_search = datetime(nvr_timestamp.year, nvr_timestamp.month, nvr_timestamp.day)
-
-        except TypeError:
+        # Look for the build record in Konflux DB. BigQuery is partitioned by start_time, so we need a reasonable
+        # time interval to look at. In most cases, we can infer the builder build date from its NVR, and use that
+        # as the search window lower boundary. In all other cases (e.g. nodejs builder, which has a NVR like
+        # nodejs-18-container-1-98), we can only use a default, broad search window. This is an expensive query,
+        # so an option might be to store this information in Redis
+        nvr_timestamp = isolate_timestamp_in_release(builder_build_nvr)
+        if nvr_timestamp:
+            start_search = datetime.strptime(nvr_timestamp, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        else:
             # Default search window: last 365 days
             self.logger.warning('Could not extract timestamp from NVR %s', builder_build_nvr)
-            start_search = datetime.now() - timedelta(days=365)
+            start_search = datetime.now(tz=timezone.utc) - timedelta(days=365)
 
         build = await anext(self.runtime.konflux_db.search_builds_by_fields(
             start_search=start_search,
-            where={'nvr': builder_build_nvr, **self.base_search_params},
+            where={
+                'nvr': builder_build_nvr,
+                'group': self.runtime.group,
+                'assembly': self.runtime.assembly,
+            },
             limit=1,
         ), None)
         if build:
@@ -745,15 +732,11 @@ class ConfigScanSources:
 
             # Scan for any build in this assembly which includes the git commit.
             upstream_commit_hash = await find_rpm_commit_hash(rpm_meta)
-            search_params = {
-                'name': rpm_name,
-                'extra_patterns': {'commitish': upstream_commit_hash},
-                **self.base_search_params,
-                'engine': 'brew'  # for RPMs we only have Brew build engine
-            }
-            if el_target:
-                search_params['el_target'] = el_target
-            upstream_commit_build_record = await self.runtime.konflux_db.get_latest_build(**search_params)
+            upstream_commit_build_record = await rpm_meta.get_latest_build(
+                el_target=el_target,
+                extra_patterns={'commitish': upstream_commit_hash},
+                engine=Engine.BREW.value
+            )
 
             if not upstream_commit_build_record:
                 self.logger.warning('No build for RPM %s from upstream commit %s',

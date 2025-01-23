@@ -279,12 +279,11 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                build = asyncio.run(self.konflux_db.get_latest_build(
-                    name=parent_metadata.distgit_key,
-                    assembly=self._runtime.assembly,
-                    group=self._runtime.group,
+                build = asyncio.run(parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX))
+                    engine=Engine.KONFLUX
+                ))
+
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
                 return build.image_pullspec, build.embargoed
@@ -757,20 +756,36 @@ class KonfluxRebaser:
         self._update_environment_variables(metadata, source, df_path, build_update_envs=build_update_env_vars, metadata_envs=metadata_envs)
 
         # Inject build repos for Konflux
-        self._add_build_repos(dfp)
+        self._add_build_repos(dfp, metadata)
 
         self._modify_cachito_commands(metadata, df_path)
 
         self._reflow_labels(df_path)
 
-    def _add_build_repos(self, dfp: DockerfileParser):
+    def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
+        network_mode = metadata.config.get("konflux", {}).get("network_mode")
+
+        konflux_lines = ["\n# Start Konflux-specific steps"]
+
+        if network_mode != "hermetic":
+            konflux_lines += [
+                "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
+                f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
+                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"
+            ]
+
+        if network_mode == "internal-only":
+            konflux_lines += [
+                "ENV NO_PROXY='localhost,127.0.0.1,::1,.redhat.com'",
+                "ENV HTTP_PROXY='http://127.0.0.1:9999'",
+                "ENV HTTPS_PROXY='http://127.0.0.1:9999'",
+            ]
+
+        konflux_lines += ["# End Konflux-specific steps\n\n"]
+
         dfp.add_lines(
-            "\n# Start Konflux-specific steps",
-            "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
-            f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
-            f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
-            "# End Konflux-specific steps\n\n",
+            *konflux_lines,
             at_start=True,
             all_stages=True,
         )
@@ -1530,12 +1545,10 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                build = asyncio.run(self.konflux_db.get_latest_build(
-                    name=meta.distgit_key,
-                    assembly=self._runtime.assembly,
-                    group=self._runtime.group,
+                build = asyncio.run(meta.get_latest_build(
                     el_target=f'el{meta.branch_el_target()}',
-                    engine=Engine.KONFLUX))
+                    engine=Engine.KONFLUX
+                ))
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
                 v = build.version

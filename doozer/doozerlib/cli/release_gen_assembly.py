@@ -61,6 +61,8 @@ def releases_gen_assembly(ctx, name):
               help="When using --auto-previous, set custom suggestions URL, load from {major}-{minor}-{arch}.yaml")
 @click.option('--output-file', '-o', required=False,
               help='Specify a file path to write the generated assembly definition to')
+@click.option("--gen-microshift", 'gen_microshift', default=False, is_flag=True,
+              help="Create microshift entry for assembly release.")
 @pass_runtime
 @click_coroutine
 @click.pass_context
@@ -68,7 +70,7 @@ async def gen_assembly_from_releases(ctx, runtime: Runtime, nightlies: Tuple[str
                                      custom: bool, pre_ga_mode: str, in_flight: Optional[str], previous_list: Tuple[str, ...],
                                      auto_previous: bool, graph_url: Optional[str], graph_content_stable: Optional[str],
                                      graph_content_candidate: Optional[str], suggestions_url: Optional[str],
-                                     output_file: Optional[str]):
+                                     output_file: Optional[str], gen_microshift: bool):
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
 
@@ -91,6 +93,7 @@ async def gen_assembly_from_releases(ctx, runtime: Runtime, nightlies: Tuple[str
         graph_content_stable=graph_content_stable,
         graph_content_candidate=graph_content_candidate,
         suggestions_url=suggestions_url,
+        gen_microshift=gen_microshift,
     ).run()
 
     print(yaml.dump(assembly_def))
@@ -115,7 +118,8 @@ class GenAssemblyCli:
             graph_url: Optional[str] = None,
             graph_content_stable: Optional[str] = None,
             graph_content_candidate: Optional[str] = None,
-            suggestions_url: Optional[str] = None):
+            suggestions_url: Optional[str] = None,
+            gen_microshift: bool = False):
 
         self.runtime = runtime
         # The name of the assembly we are going to output
@@ -133,6 +137,7 @@ class GenAssemblyCli:
         self.suggestions_url = suggestions_url
         self.logger = self.runtime.logger
         self.release_pullspecs: Dict[str, str] = dict()
+        self.gen_microshift = gen_microshift
         # Maps brew arch name to nightly name
         self.reference_releases_by_arch: Dict[str, str] = dict()
         # Maps RHCOS container name(s) to brew arch name to pullspec(s) from nightly
@@ -347,7 +352,7 @@ class GenAssemblyCli:
 
             dgk = image_meta.distgit_key
             package_name = image_meta.get_component_name()
-            basis_event_dict = image_meta.get_latest_build(default=None, complete_before_event=self.basis_event)
+            basis_event_dict = image_meta.get_latest_brew_build(default=None, complete_before_event=self.basis_event)
             if not basis_event_dict:
                 self._exit_with_error(f'No image was found for assembly {self.runtime.assembly} for component {dgk} '
                                       f'at estimated brew event {self.basis_event}. No normal reason for this to '
@@ -476,7 +481,7 @@ class GenAssemblyCli:
 
                 # Now it is time to see whether a query for the RPM from the basis event
                 # estimate comes up with this RPM NVR.
-                basis_event_build_dict = rpm_meta.get_latest_build(
+                basis_event_build_dict = rpm_meta.get_latest_brew_build(
                     el_target=el_ver, complete_before_event=self.basis_event)
 
                 if not basis_event_build_dict:
@@ -539,7 +544,7 @@ class GenAssemblyCli:
 
         # For OCP >= 4.14, also microshift advisory placeholder must be created
         major, minor = self.runtime.get_major_minor_fields()
-        if (major, minor) >= (4, 14):
+        if (major, minor) >= (4, 14) and self.gen_microshift:
             advisories['microshift'] = -1
 
         release_jira = "ART-0"

@@ -30,7 +30,7 @@ class GenAssemblyPipeline:
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
                  custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
                  auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
-                 ignore_non_x86_nightlies: Optional[bool] = False, logger: Optional[logging.Logger] = None):
+                 ignore_non_x86_nightlies: Optional[bool] = False, logger: Optional[logging.Logger] = None, gen_microshift: bool = False):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -44,6 +44,7 @@ class GenAssemblyPipeline:
         self.custom = custom
         self.arches = arches
         self.skip_get_nightlies = skip_get_nightlies
+        self.gen_microshift = gen_microshift
         if in_flight:
             self.in_flight = in_flight
         elif not custom and not pre_ga_mode:
@@ -190,7 +191,8 @@ class GenAssemblyPipeline:
 
         if self.pre_ga_mode:
             cmd.append(f"--pre-ga-mode={self.pre_ga_mode}")
-
+        if self.gen_microshift:
+            cmd.append("--gen-microshift")
         if self.custom:
             cmd.append("--custom")
         else:
@@ -304,17 +306,19 @@ class GenAssemblyPipeline:
 @click.option('--auto-previous', 'auto_previous', is_flag=True, help='If specified, previous list is calculated from Cincinnati graph')
 @click.option('--skip-get-nightlies', 'skip_get_nightlies', is_flag=True, default=False, help='Skip get_nightlies_function (Use only for special cases)')
 @click.option('--ignore-non-x86-nightlies', 'ignore_non_x86_nightlies', is_flag=True, default=False, help='Ignore non-x86 nightlies, only use x86 nightly')
+@click.option("--gen-microshift", 'gen_microshift', default=False, is_flag=True, help="Create microshift entry for assembly release.")
 @pass_runtime
 @click_coroutine
 async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
                        allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
                        auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
-                       previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool, ignore_non_x86_nightlies: bool):
+                       previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool, ignore_non_x86_nightlies: bool,
+                       gen_microshift: bool):
     pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, data_path=data_path,
                                    nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
                                    allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
                                    auto_trigger_build_sync=auto_trigger_build_sync,
                                    in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous,
                                    pre_ga_mode=pre_ga_mode, skip_get_nightlies=skip_get_nightlies,
-                                   ignore_non_x86_nightlies=ignore_non_x86_nightlies)
+                                   ignore_non_x86_nightlies=ignore_non_x86_nightlies, gen_microshift=gen_microshift)
     await pipeline.run()

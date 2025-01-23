@@ -56,7 +56,7 @@ class KonfluxRebaseCli:
     @start_as_current_span_async(TRACER, "beta:images:konflux:rebase")
     async def run(self):
         runtime = self.runtime
-        runtime.initialize(mode='images', clone_distgits=False)
+        runtime.initialize(mode='images', clone_distgits=False, build_system='konflux')
         assert runtime.source_resolver is not None, "source_resolver is required for this command"
         metas = runtime.ordered_image_metas()
         base_dir = Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES)
@@ -164,7 +164,7 @@ class KonfluxBuildCli:
             dry_run=self.dry_run,
             plr_template=self.plr_template
         )
-        builder = KonfluxImageBuilder(config=config)
+        builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         tasks = []
         for image_meta in metas:
             tasks.append(asyncio.create_task(builder.build(image_meta)))
@@ -184,7 +184,7 @@ class KonfluxBuildCli:
 @cli.command("beta:images:konflux:build", short_help="Build images for the group.")
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', required=True, help='The namespace to use for Konflux cluster connections.')
+@click.option('--konflux-namespace', metavar='NAMESPACE', default=constants.KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
@@ -352,6 +352,7 @@ class KonfluxBundleCli:
             skip_checks=self.skip_checks,
             pipelinerun_template_url=self.plr_template,
             dry_run=self.dry_run,
+            record_logger=runtime.record_logger,
         )
 
         tasks = []
@@ -379,7 +380,7 @@ class KonfluxBundleCli:
               help='Do not push to build repo or build anything, but print what would be done.')
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', required=True, help='The namespace to use for Konflux cluster connections.')
+@click.option('--konflux-namespace', metavar='NAMESPACE', default=constants.KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option("--release", metavar='RELEASE', help="Release string to populate in bundle's Dockerfiles.")

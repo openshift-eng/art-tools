@@ -57,6 +57,10 @@ CLI_OPTS = {
     'registry_config_dir': {
         'env': 'DOCKER_CONFIG',
         'help': 'Config directory for the image registry'
+    },
+    'build_system': {
+        'env': 'BUILD_SYSTEM',
+        'help': 'Weather we should look at Brew or at Konflux DB when searching for builds'
     }
 }
 

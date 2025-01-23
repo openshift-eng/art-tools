@@ -48,7 +48,7 @@ class AssemblyInspector:
         # If an image component has a latest build, an ImageInspector associated with the image.
         self._release_image_inspectors: Dict[str, Optional[BrewBuildImageInspector]] = dict()
         for image_meta in runtime.get_for_release_image_metas():
-            latest_build_obj = image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
+            latest_build_obj = image_meta.get_latest_brew_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
                 self._release_image_inspectors[image_meta.distgit_key] = BrewBuildImageInspector(self.runtime, latest_build_obj['nvr'])
             else:
@@ -104,7 +104,7 @@ class AssemblyInspector:
                 tag_names = {tag["name"] for tag in self.brew_session.listTags(brew.KojiWrapperOpts(caching=True), build=rpm_build["id"])}
                 # If the rpm is tagged into the stop-ship tag, it is never permissible
                 if rpm_delivery_config.stop_ship_tag and rpm_delivery_config.stop_ship_tag in tag_names:
-                    issues.append(AssemblyIssue(f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}', component=component, code=AssemblyIssueCode.IMPERMISSIBLE))
+                    issues.append(AssemblyIssue(f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}', component=component, code=AssemblyIssueCode.UNSHIPPABLE_KERNEL))
                     continue
         return issues
 
@@ -424,7 +424,7 @@ class AssemblyInspector:
             # Maps of component names to the latest brew build dicts. If there is no latest build, the value will be None
             for rpm_meta in self.runtime.rpm_metas():
                 if el_ver in rpm_meta.determine_rhel_targets():
-                    latest_build = rpm_meta.get_latest_build(default=None, el_target=el_ver)
+                    latest_build = rpm_meta.get_latest_brew_build(default=None, el_target=el_ver)
                     if not latest_build:
                         raise IOError(f'RPM {rpm_meta.distgit_key} claims to have a rhel-{el_ver} build target, but no build was detected')
                     assembly_rpm_dicts[rpm_meta.distgit_key] = latest_build

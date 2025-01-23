@@ -78,12 +78,17 @@ class FindBugsKernelClonesCli:
         } for bug in found_bugs]
         self._print_report(report, sys.stdout)
 
+    @staticmethod
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
+    def _get_issue(jira_client: JIRA, key: str) -> Issue:
+        return jira_client.issue(key)
+
     def _get_jira_bugs(self, jira_client: JIRA, bug_keys: List[str], config: KernelBugSweepConfig):
         # get a specified list of jira bugs we created previously as clones of the original kernel bugs
         found_bugs: List[Issue] = []
         labels = {"art:cloned-kernel-bug"}
         for key in bug_keys:
-            bug = jira_client.issue(key)
+            bug = self._get_issue(jira_client, key)
             if not labels.issubset(set(bug.fields.labels)):
                 raise ValueError(f"Jira {key} doesn't have all required labels {labels}")
             if bug.fields.project.key != config.target_jira.project:
@@ -135,7 +140,7 @@ class FindBugsKernelClonesCli:
                 raise ValueError(f"Jira clone {bug.key} doesn't have the required `art:kmaint:*` label")
             tracker = trackers.get(tracker_key)
             if not tracker:
-                tracker = trackers[tracker_key] = jira_client.issue(tracker_key)
+                tracker = trackers[tracker_key] = self._get_issue(jira_client, tracker_key)
                 if tracker.fields.project.key != config.tracker_jira.project:
                     raise ValueError(f"KMAINT tracker {tracker_key} is not in project {config.tracker_jira.project}")
                 if not set(config.tracker_jira.labels).issubset(set(tracker.fields.labels)):

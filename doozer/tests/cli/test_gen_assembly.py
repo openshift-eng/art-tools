@@ -276,7 +276,6 @@ class TestGenPayloadCli(TestCase):
             'rpm': -1,
             'extras': -1,
             'metadata': -1,
-            'microshift': -1,
         })
 
         runtime.get_major_minor_fields.return_value = (3, 11)
@@ -297,7 +296,6 @@ class TestGenPayloadCli(TestCase):
             'rpm': -1,
             'extras': -1,
             'metadata': -1,
-            'microshift': -1,
         })
 
     def test_get_advisories_release_jira_candidate_reuse(self):

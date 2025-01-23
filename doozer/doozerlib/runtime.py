@@ -266,7 +266,8 @@ class Runtime(GroupRuntime):
     def initialize(self, mode='images', clone_distgits=True,
                    validate_content_sets=False,
                    no_group=False, clone_source=None, disabled=None,
-                   prevent_cloning: bool = False, config_only: bool = False, group_only: bool = False):
+                   prevent_cloning: bool = False, config_only: bool = False, group_only: bool = False,
+                   build_system: str = None):
 
         if self.initialized:
             return
@@ -281,7 +282,7 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
-        super().initialize()
+        super().initialize(build_system)
 
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")

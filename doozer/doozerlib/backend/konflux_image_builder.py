@@ -5,12 +5,10 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, cast
+from typing import Dict, Optional, cast
 
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_arch_for_brew_arch
-from packageurl import PackageURL
-
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
@@ -18,11 +16,13 @@ from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
 from artcommonlib.release_util import isolate_el_version_in_release
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource
+from packageurl import PackageURL
 
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
+from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
 
 LOGGER = logging.getLogger(__name__)
@@ -54,16 +54,27 @@ class KonfluxImageBuilder:
 
     # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/getting-started/multi-platform-builds.md
     SUPPORTED_ARCHES = {
-        # Only x86_64 is supported, until we are on the new cluster
         "x86_64": "linux/x86_64",
         "s390x": "linux/s390x",
         "ppc64le": "linux/ppc64le",
         "aarch64": "linux/arm64",
     }
 
-    def __init__(self, config: KonfluxImageBuilderConfig, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        config: KonfluxImageBuilderConfig,
+        logger: Optional[logging.Logger] = None,
+        record_logger: Optional[RecordLogger] = None,
+    ):
+        """ Initialize the KonfluxImageBuilder.
+
+        :param config: Options for the KonfluxImageBuilder.
+        :param logger: Logger to use for logging. Defaults to the module logger.
+        :param record_logger: Logger to use for logging build records. If None, no build records will be logged.
+        """
         self._config = config
         self._logger = logger or LOGGER
+        self._record_logger = record_logger
         self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run)
 
         if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
@@ -76,8 +87,20 @@ class KonfluxImageBuilder:
         """ Build a container image with Konflux. """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         metadata.build_status = False
+        dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
+        df_path = dest_dir.joinpath("Dockerfile")
+        record = {
+            "dir": str(dest_dir.absolute()),
+            "dockerfile": str(df_path.absolute()),
+            "name": metadata.distgit_key,
+            "nvrs": "n/a",
+            "message": "Unknown failure",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "status": -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            "has_olm_bundle": 1 if metadata.is_olm_operator else 0,
+        }
         try:
-            dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
             if dest_dir.exists():
                 # Load exiting build source repository
                 build_repo = await BuildRepo.from_local_dir(dest_dir, logger)
@@ -97,6 +120,14 @@ class KonfluxImageBuilder:
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
 
+            # Parse Dockerfile
+            uuid_tag, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
+            record["nvrs"] = f"{metadata.distgit_key}-{version}-{release}"
+            output_image = f"{self._config.image_repo}:{uuid_tag}"
+            additional_tags = [
+                f"{metadata.image_name_short}-{version}-{release}"
+            ]
+
             # Wait for parent members to be built
             parent_members = await self._wait_for_parent_members(metadata)
             failed_parents = [parent_member.distgit_key for parent_member in parent_members if parent_member is not None and not parent_member.build_status]
@@ -110,10 +141,12 @@ class KonfluxImageBuilder:
             error = None
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
-                pipelinerun = await self._start_build(metadata, build_repo, building_arches)
+                pipelinerun = await self._start_build(metadata, build_repo, building_arches, output_image, additional_tags)
+                pipelinerun_name = pipelinerun['metadata']['name']
+                record["task_id"] = pipelinerun_name
+                record["task_url"] = self._konflux_client.build_pipeline_url(pipelinerun)
                 await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches)
 
-                pipelinerun_name = pipelinerun['metadata']['name']
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
                 pipelinerun = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
@@ -130,12 +163,37 @@ class KonfluxImageBuilder:
                                                    pipelinerun_name, pipelinerun)
                 else:
                     metadata.build_status = True
+                    record["message"] = "Success"
+                    record["status"] = 0
                     break
             if not metadata.build_status and error:
+                record["message"] = str(error)
                 raise error
         finally:
+            if self._record_logger:
+                self._record_logger.add_record("image_build_konflux", **record)
             metadata.build_event.set()
         return pipelinerun_name, pipelinerun
+
+    def _parse_dockerfile(self, distgit_key: str, df_path: Path):
+        """ Parse the Dockerfile and return the UUID tag, version, and release.
+
+        :param distgit_key: The distgit key of the image.
+        :param df_path: The path to the Dockerfile.
+        :return: A tuple containing the UUID tag, version, and release.
+        :raises ValueError: If the Dockerfile is missing the required environment variables or labels.
+        """
+        df = DockerfileParser(str(df_path))
+        uuid_tag = df.envs.get("__doozer_uuid_tag")
+        if not uuid_tag:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
+        version = df.labels.get("version")
+        if not version:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'version' label.")
+        release = df.labels.get("release")
+        if not release:
+            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
+        return uuid_tag, version, release
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built
@@ -151,7 +209,8 @@ class KonfluxImageBuilder:
                 await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
 
-    async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list):
+    async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
+                           output_image: str, additional_tags: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not build_repo.commit_hash:
             raise IOError(f"The build branch {build_repo.branch} doesn't have any commits in the build repository {build_repo.https_url}")
@@ -159,11 +218,6 @@ class KonfluxImageBuilder:
         git_branch = build_repo.branch or build_repo.commit_hash
         git_url = build_repo.https_url
         git_commit = build_repo.commit_hash
-
-        df_path = build_repo.local_dir.joinpath("Dockerfile")
-        df = DockerfileParser(str(df_path))
-        if "__doozer_uuid_tag" not in df.envs:
-            raise ValueError(f"[{metadata.distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
 
         # Ensure the Application resource exists
         app_name = self._config.group_name.replace(".", "-")
@@ -178,22 +232,13 @@ class KonfluxImageBuilder:
         # A component resource name must start with a lower case letter and must be no more than 63 characters long.
         component_name = f"ose-{component_name.removeprefix('openshift-')}"
 
-        dest_image_repo = self._config.image_repo
-        dest_image_tag = df.envs["__doozer_uuid_tag"]
-        version = df.labels.get("version")
-        release = df.labels.get("release")
-        if not version or not release:
-            raise ValueError(f"[{metadata.distgit_key}] `version` and `release` labels are required.")
-        additional_tags = [
-            f"{metadata.image_name_short}-{version}-{release}"
-        ]
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
         logger.info(f"Using component: {component_name}")
         await self._konflux_client.ensure_component(
             name=component_name,
             application=app_name,
             component_name=component_name,
-            image_repo=dest_image_repo,
+            image_repo=output_image.split(":")[0],
             source_url=git_url,
             revision=default_revision,
         )
@@ -207,19 +252,17 @@ class KonfluxImageBuilder:
             git_url=git_url,
             commit_sha=git_commit,
             target_branch=git_branch,
-            output_image=f"{dest_image_repo}:{dest_image_tag}",
+            output_image=output_image,
             building_arches=building_arches,
             additional_tags=additional_tags,
             skip_checks=self._config.skip_checks,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
+            image_metadata=metadata
         )
 
-        logger.info(f"Created PipelineRun: {self.build_pipeline_url(pipelinerun)}")
+        logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
         return pipelinerun
-
-    def build_pipeline_url(self, pipelinerun):
-        return self._konflux_client.build_pipeline_url(pipelinerun)
 
     async def get_installed_packages(self, image_pullspec, arches, logger) -> list:
         """
@@ -295,13 +338,12 @@ class KonfluxImageBuilder:
             source_repo = df.labels['io.openshift.build.source-location']
             commitish = df.labels['io.openshift.build.commit.id']
 
-            component_name = df.labels['com.redhat.component']
             version = df.labels['version']
             release = df.labels['release']
-            nvr = "-".join([component_name, version, release])
+            nvr = "-".join([metadata.distgit_key, version, release])
 
             pipelinerun_name = pipelinerun['metadata']['name']
-            build_pipeline_url = self.build_pipeline_url(pipelinerun)
+            build_pipeline_url = self._konflux_client.build_pipeline_url(pipelinerun)
 
             build_record_params = {
                 'name': metadata.distgit_key,

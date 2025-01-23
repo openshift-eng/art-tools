@@ -148,8 +148,8 @@ class TestPlashetBuilder(TestCase):
         actual = builder.from_images(image_map)
         self.assertEqual({rpm_build["nvr"] for rpm_build in actual["fake-image1"]}, {"fake101-1.2.3-1.el8", "fake102-1.2.3-1.el8", "fake103-1.2.3-1.el8", "fake104-1.2.3-1.el8"})
         self.assertEqual({rpm_build["nvr"] for rpm_build in actual["fake-image2"]}, {"fake201-1.2.3-1.el8", "fake202-1.2.3-1.el8"})
-        image_map["fake-image1"].get_latest_build.assert_called_once()
-        image_map["fake-image2"].get_latest_build.assert_called_once()
+        image_map["fake-image1"].get_latest_brew_build.assert_called_once()
+        image_map["fake-image2"].get_latest_brew_build.assert_called_once()
         builder._get_builds.assert_called_once_with({101, 102, 103, 104, 201, 202})
         list_archives_by_builds.assert_called_once()
 

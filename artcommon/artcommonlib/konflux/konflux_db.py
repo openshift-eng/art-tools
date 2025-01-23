@@ -141,9 +141,8 @@ class KonfluxDb:
 
         if start_search and end_search and start_search >= end_search:
             raise ValueError(f"start_search {start_search} must be earlier than end_search {end_search}")
-        end_search = end_search or datetime.now(tz=timezone.utc)
-        start_search = start_search or end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
-        start_search = start_search.replace(tzinfo=timezone.utc)
+        end_search = end_search.astimezone(timezone.utc) if end_search else datetime.now(tz=timezone.utc)
+        start_search = start_search.astimezone(timezone.utc) if start_search else end_search - timedelta(days=DEFAULT_SEARCH_DAYS)
         assert window_size is None or window_size > 0, f"search_window {window_size} must be a positive integer"
         window_size = window_size or DEFAULT_SEARCH_WINDOW
 
@@ -210,7 +209,7 @@ class KonfluxDb:
             name: str,
             group: str,
             outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-            assembly: str = 'stream',
+            assembly: typing.Optional[str] = None,
             el_target: typing.Optional[str] = None,
             artifact_type: typing.Optional[ArtifactType] = None,
             engine: typing.Optional[Engine] = None,
@@ -224,7 +223,7 @@ class KonfluxDb:
         :param name: component name, e.g. 'ironic'
         :param group: e.g. 'openshift-4.18'
         :param outcome: 'success' | 'failure'
-        :param assembly: non-standard assembly name, defaults to 'stream' if omitted
+        :param assembly: assembly name, if omitted any assembly is matched
         :param el_target: e.g. 'el8'
         :param artifact_type: 'rpm' | 'image'
         :param engine: 'brew' | 'konflux'
@@ -242,11 +241,14 @@ class KonfluxDb:
             Column('name', String) == name,
             Column('group', String) == group,
             Column('outcome', String) == str(outcome),
-            Column('assembly', String) == assembly,
         ]
+        if assembly:
+            base_clauses.append(Column('assembly', String) == assembly)
+
         order_by_clause = Column('start_time', quote=True).desc()
 
         if completed_before:
+            completed_before = completed_before.astimezone(timezone.utc)
             self.logger.info('Searching for %s builds completed before %s', name, completed_before)
             base_clauses.extend([
                 Column('end_time').isnot(None),
