@@ -764,7 +764,7 @@ class KonfluxRebaser:
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = metadata.config.get("konflux", {}).get("network_mode")
+        network_mode = metadata.config.get("konflux", {}).get("network_mode", "open")
         valid_network_modes = ["hermetic", "internal-only", "open"]
         if network_mode not in valid_network_modes:
             raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
@@ -780,7 +780,7 @@ class KonfluxRebaser:
         konflux_lines += [
             "ENV ART_BUILD_ENGINE=konflux",
             "ENV ART_BUILD_DEPS_METHOD=cachi2",
-            f"ENV ART_BUILD_NETWORK={network_mode if network_mode else 'open'}"
+            f"ENV ART_BUILD_NETWORK={network_mode}"
         ]
 
         cachito_emulation = metadata.config.get("konflux", {}).get("cachito", {}).get("emulation", False)
