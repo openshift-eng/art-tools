@@ -357,7 +357,6 @@ class KonfluxClient:
         _modify_param(params, "output-image", output_image)
         _modify_param(params, "skip-checks", skip_checks)
         _modify_param(params, "build-source-image", "true")  # Have to be true always to satisfy Enterprise Contract Policy
-        _modify_param(params, "image-expires-after", "6w")
         _modify_param(params, "build-platforms", list(build_platforms))
 
         if image_metadata.config.get("konflux", {}).get("network-mode") == "hermetic":
