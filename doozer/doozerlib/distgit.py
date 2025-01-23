@@ -1863,6 +1863,22 @@ class ImageDistGitRepo(DistGitRepo):
         # Write rebased from directives
         dfp.parent_images = mapped_images
 
+    def _cachito_env_vars(self, dfp):
+        """
+        Insert ENV variables so that image owners can differentiate between cachito and cachi2 environments
+        """
+        env_variables = [
+            "ENV ART_BUILD_ENGINE=brew",
+            "ENV ART_BUILD_DEPS_METHOD=cachito",
+            "ENV ART_BUILD_NETWORK=internal-only",
+        ]
+        self.logger.info(f"Inserting cachito ENV variables: {env_variables}")
+        dfp.add_lines(
+            *env_variables,
+            at_start=True,
+            all_stages=True,
+        )
+
     def update_distgit_dir(self, version, release, prev_release=None, force_yum_updates=False):
         dg_path = self.dg_path
         with Dir(self.distgit_dir):
@@ -1885,6 +1901,8 @@ class ImageDistGitRepo(DistGitRepo):
             dfp = DockerfileParser(path=str(dg_path.joinpath('Dockerfile')))
 
             self._clean_repos(dfp)
+
+            self._cachito_env_vars(dfp)
 
             # If no version has been specified, we will leave the version in the Dockerfile. Extract it.
             if version is None:
