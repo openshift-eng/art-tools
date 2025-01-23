@@ -586,6 +586,7 @@ async def oc_image_info_async(
     :return: The parsed JSON output of `oc image info`.
     """
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def _run_command(auth_file: Optional[str]):
         options = [f'--filter-by-os={go_arch}', '-o', 'json']
         if auth_file:
