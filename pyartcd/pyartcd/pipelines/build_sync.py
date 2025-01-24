@@ -352,7 +352,7 @@ class BuildSyncPipeline:
         if not self.skip_multiarch_payload:
             cmd.append('--apply-multi-arch')
         if self.exclude_arches:
-            cmd.extend([f'--exclude-arch {arch}' for arch in self.exclude_arches])
+            cmd.extend([f'--exclude-arch={arch}' for arch in self.exclude_arches])
         if self.runtime.dry_run:
             cmd.extend(['--skip-gc-tagging', '--moist-run'])
         await exectools.cmd_assert_async(cmd, env=os.environ.copy())
