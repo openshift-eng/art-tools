@@ -435,13 +435,7 @@ class BuildSyncPipeline:
         # Update fail counter on Redis
         await redis.set_value(self.fail_count_name, fail_count)
 
-        # Less than 2 failures, assembly != stream: just break the build
-        if fail_count < 2 or self.assembly != 'stream':
-            raise
-
-        # More than 2 failures: we need to notify ART and #forum-release before breaking the build
         unpermissable_issues = self.get_unpermissable_assembly_issues()
-
         if unpermissable_issues['assembly_issues']:
             report = yaml.safe_dump(unpermissable_issues)
             jenkins.update_title(' [UNVIABLE]')
@@ -449,6 +443,11 @@ class BuildSyncPipeline:
             report = "Unknown Failure. Please investigate"
             jenkins.update_title(' [FAILURE]')
 
+        # Less than 2 failures, assembly != stream: just break the build
+        if fail_count < 2 or self.assembly != 'stream':
+            raise
+
+        # More than 2 failures: we need to notify ART and #forum-release before breaking the build
         # TODO https://issues.redhat.com/browse/ART-5657
         if 10 <= fail_count <= 50:
             art_notify_frequency = 5
