@@ -265,7 +265,7 @@ class BuildSyncPipeline:
               f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
 
         if self.runtime.dry_run:
-            self.logger.info('Would have executed: "%s"', ' '.join(cmd))
+            self.logger.info('Would have executed: "%s"', cmd)
         else:
             await exectools.cmd_gather_async(cmd)
 
@@ -277,7 +277,7 @@ class BuildSyncPipeline:
                   f'tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal'
 
             if self.runtime.dry_run:
-                self.logger.info('Would have executed: "%s"', ' '.join(cmd))
+                self.logger.info('Would have executed: "%s"', cmd)
             else:
                 await exectools.cmd_gather_async(cmd)
 
