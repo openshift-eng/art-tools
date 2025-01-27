@@ -1539,7 +1539,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
-            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
+            labels = util.oc_image_info_for_arch__caching(original_parent)['config']['config']['Labels']
 
             # Get builder X.Y
             major, minor, _ = extract_version_fields(labels['version'])
@@ -1758,7 +1758,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # We will infer the rhel version from the last build layer in the upstream Dockerfile
             last_layer_pullspec = parent_images[-1]
-            image_labels = util.oc_image_info__caching(last_layer_pullspec)['config']['config']['Labels']
+            image_labels = util.oc_image_info_for_arch__caching(last_layer_pullspec)['config']['config']['Labels']
             if 'version' not in image_labels or 'release' not in image_labels:
                 # This does not appear to be a brew image. We can't determine RHEL.
                 return None

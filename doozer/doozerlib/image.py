@@ -410,7 +410,7 @@ class ImageMetadata(Metadata):
                 builder_brew_build = ImageMetadata.builder_image_builds.get(builder_image_url, None)
 
                 if not builder_brew_build:
-                    latest_builder_image_info = Model(util.oc_image_info__caching(builder_image_url))
+                    latest_builder_image_info = Model(util.oc_image_info_for_arch__caching(builder_image_url))
                     builder_info_labels = latest_builder_image_info.config.config.Labels
                     builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'], builder_info_labels['release']]
 
