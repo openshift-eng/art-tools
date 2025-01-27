@@ -3,14 +3,16 @@ import logging
 import os
 import re
 import traceback
+import subprocess
 import click
+from subprocess import PIPE
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler
+from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler, get_assembly_release_date
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
@@ -24,6 +26,7 @@ from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_type,
                           isolate_el_version_in_release,
+                          get_release_name_for_assembly
                           load_group_config,
                           load_releases_config,
                           default_release_suffix,
@@ -49,6 +52,7 @@ class BuildMicroShiftPipeline:
         self._logger = logger or runtime.logger
         self._working_dir = self.runtime.working_dir.absolute()
         self.releases_config = None
+        self.advisory_num = None
         self.slack_client = slack_client
 
         # determines OCP version
@@ -84,15 +88,47 @@ class BuildMicroShiftPipeline:
         if self.assembly_type is AssemblyTypes.STREAM:
             await self._rebase_and_build_for_stream()
         else:
+            # Check if microshift advisory is defined in assembly
+            if 'microshift' not in advisories:
+                self.advisory_num = self.create_microshift_advisory()
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
+            await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
-            # Check if microshift advisory is defined in assembly
-            if 'microshift' not in advisories:
-                self._logger.info(f"Skipping advisory prep since microshift advisory is not defined in assembly {self.assembly}")
-            else:
-                await self._prepare_advisory(advisories['microshift'])
+
+    def create_microshift_advisory(self, release_date: str) -> int:
+        release_name = get_release_name_for_assembly(self.group_name, self.releases_config, self.assembly)
+        advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
+        release_date = get_assembly_release_date(self.assembly, self.group)
+        self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
+        create_cmd = [
+            "elliott",
+            f"--working-dir={self._elliott_env_vars["ELLIOTT_WORKING_DIR"]}",
+            f"--group={self.group}",
+            "--assembly", self.assembly,
+            "create",
+            f"--type={advisory_type}",
+            f"--art-advisory-key=microshift",
+            f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
+            f"--manager={self.runtime.config['advisory']['manager']}",
+            f"--package-owner={self.runtime.config["advisory"]["package_owner"]}",
+            f"--date={release_date}",
+            "--yes"
+        ]
+        self._logger.info("Running command: %s", create_cmd)
+        result = subprocess.run(create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self._working_dir)
+        if result.returncode != 0:
+            raise IOError(
+                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
+            )
+        match = re.search(
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
+        )
+        advisory_num = int(match[1])
+        self._logger.info("Created microshift advisory %s", advisory_num)
+        return advisory_num
+
 
     async def _rebase_and_build_for_stream(self):
         # Do a sanity check
@@ -402,6 +438,8 @@ class BuildMicroShiftPipeline:
             assert el_version is not None
             is_entry[f"el{el_version}"] = nvr
 
+        if self.advisory_num:
+            releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault("advisories", {}).setdefault("microshift", self.advisory_num)
         rpms_entry = releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("members", {}).setdefault("rpms", [])
         microshift_entry = next(filter(lambda rpm: rpm.get("distgit_key") == dg_key, rpms_entry), None)
         if microshift_entry is None:
