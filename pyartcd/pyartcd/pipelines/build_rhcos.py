@@ -159,7 +159,7 @@ class BuildRhcosPipeline:
     def start_build(self):
         """Start a new build for the given version"""
         # determine parameters
-        params = dict(STREAM=self.stream, EARLY_ARCH_JOBS="true")
+        params = dict(STREAM=self.stream, EARLY_ARCH_JOBS="false")
         if self.new_build:
             params["FORCE"] = "true"
         job_url = f"{JENKINS_BASE_URL}/job/build/buildWithParameters"
