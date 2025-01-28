@@ -257,7 +257,7 @@ class GenAssemblyCli:
 
             # The brew_build_inspector will take this archive image and find the actual
             # brew build which created it.
-            image_info = await util.oc_image_info_async(payload_tag_pullspec)
+            image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec)
             image_labels = image_info['config']['config']['Labels']
             package_name = image_labels['com.redhat.component']
             build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']

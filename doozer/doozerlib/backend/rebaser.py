@@ -1309,7 +1309,7 @@ class KonfluxRebaser:
 
         try:
             self._logger.debug('Retrieving image info for image %s', original_parent)
-            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
+            labels = util.oc_image_info_for_arch__caching(original_parent)['config']['config']['Labels']
 
             # Get builder X.Y
             major, minor, _ = util.extract_version_fields(labels['version'])

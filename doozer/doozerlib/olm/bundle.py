@@ -427,7 +427,7 @@ class OLMBundle(object):
 
         pull_spec = '{}/{}'.format(registry, image)
         try:
-            image_info = util.oc_image_info__caching(pull_spec)
+            image_info = util.oc_image_info_for_arch__caching(pull_spec)
         except:
             self.runtime.logger.error(f'Unable to find image from CSV: {pull_spec}. Image may have failed to build after CSV rebase.')
             raise

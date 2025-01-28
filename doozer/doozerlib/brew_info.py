@@ -258,7 +258,7 @@ class BrewBuildImageInspector:
         :return Returns the parsed output of oc image info for the specified arch.
         """
         go_arch = go_arch_for_brew_arch(arch)  # Ensure it is a go arch
-        return util.oc_image_info__caching(self._build_pullspec, go_arch)
+        return util.oc_image_info_for_arch__caching(self._build_pullspec, go_arch)
 
     def get_labels(self, arch='amd64') -> Dict[str, str]:
         """
