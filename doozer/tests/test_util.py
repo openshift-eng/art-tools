@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
@@ -114,6 +115,42 @@ class TestUtil(unittest.TestCase):
         actual = util.get_release_name_for_assembly("openshift-4.12", releases_config, "art0003")
         expected = "4.12.23-assembly.art0003"
         self.assertEqual(actual, expected)
+
+    @patch("artcommonlib.exectools.cmd_assert")
+    def test_oc_image_info_show_multiarch(self, assert_mock):
+        assert_mock.return_value = ['{}', 0]
+        util.oc_image_info_show_multiarch('pullspec')
+        assert_mock.assert_called_once_with(
+            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'],
+            retries=3
+        )
+
+    @patch("artcommonlib.exectools.cmd_assert")
+    def test_oc_image_info_show_multiarch_caching(self, assert_mock):
+        assert_mock.return_value = ['{}', 0]
+        util.oc_image_info_show_multiarch__caching('pullspec')
+        assert_mock.assert_called_once_with(
+            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'],
+            retries=3
+        )
+
+    @patch("artcommonlib.exectools.cmd_assert")
+    def test_oc_image_info_for_arch(self, assert_mock):
+        assert_mock.return_value = ['{}', 0]
+        util.oc_image_info_for_arch('pullspec')
+        assert_mock.assert_called_once_with(
+            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'],
+            retries=3
+        )
+
+    @patch("artcommonlib.exectools.cmd_assert")
+    def test_oc_image_info_for_arch_caching(self, assert_mock):
+        assert_mock.return_value = ['{}', 0]
+        util.oc_image_info_for_arch__caching('pullspec')
+        assert_mock.assert_called_once_with(
+            ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'],
+            retries=3
+        )
 
 
 if __name__ == "__main__":

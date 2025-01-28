@@ -574,6 +574,25 @@ def oc_image_info_for_arch__caching(pullspec: str, go_arch: str = 'amd64') -> Di
     return oc_image_info_for_arch(pullspec, go_arch)
 
 
+def oc_image_info_show_multiarch(pullspec: str) -> Union[Dict, List]:
+    """
+    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
+    For single arch images, it will return a dict representing the supported arch manifest.
+    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
+    """
+    return oc_image_info(pullspec, '--show-multiarch')
+
+
+@lru_cache(maxsize=1000)
+def oc_image_info_show_multiarch__caching(pullspec: str) -> Union[Dict, List]:
+    """
+    Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
+    For single arch images, it will return a dict representing the supported arch manifest.
+    For multi arch images, it will return a list of dictionaries, each of these representing a single arch
+    """
+    return oc_image_info_show_multiarch(pullspec)
+
+
 async def oc_image_info_async(
         pullspec: str,
         *options,
