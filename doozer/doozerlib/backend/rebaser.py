@@ -1506,7 +1506,7 @@ class KonfluxRebaser:
                 for override_label in ["io.k8s.description", "io.k8s.display-name", "io.openshift.tags",
                                        "description", "summary"]:
                     if override_label not in labels:
-                        additional_labels[override_label] = "None"
+                        additional_labels[override_label] = "Empty"
 
                 labels.update(additional_labels)
 
