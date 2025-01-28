@@ -382,16 +382,27 @@ class FindBugsGolangCli:
             bugs: List[JIRABug] = self.jira_tracker._search(query, verbose=self._runtime.debug)
 
         def is_valid(b: JIRABug):
+            if not b.cve_id:
+                logger.warning(f"{b.id} does not have a CVE ID set. Skipping")
+                return False
+
+            comp = b.whiteboard_component
+            if not comp:
+                logger.warning(f"{b.id} does not have a component set. Skipping")
+                return False
+
+            # if cve_ids are given, only operate on those
             if self.cve_ids and b.cve_id not in self.cve_ids:
+                return False
+
+            # if components are given, only operate on those
+            if self.components and comp not in self.components:
                 return False
 
             # Do not operate on embargoed bugs
             if b.bug.fields.security.name == "Embargoed Security Issue":
                 return False
 
-            comp = b.whiteboard_component
-            if not comp or (self.components and comp not in self.components):
-                return False
             not_art = ["sandboxed-containers"]
             if comp in not_art:
                 return False
