@@ -13,8 +13,7 @@ from dockerfile_parse import DockerfileParser
 
 from artcommonlib import exectools, logutil
 from artcommonlib.git_helper import gather_git
-from artcommonlib.konflux.konflux_build_record import (KonfluxBuildOutcome, Engine, ArtifactType,
-                                                       KonfluxBundleBuildRecord)
+from artcommonlib.konflux.konflux_build_record import (KonfluxBuildOutcome, Engine, KonfluxBundleBuildRecord)
 from artcommonlib.model import Missing
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.util import convert_remote_git_to_https
@@ -255,7 +254,6 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                 'commitish': commitish,
                 'rebase_repo_url': convert_remote_git_to_https(rebase_repo_url),
                 'rebase_commitish': rebase_commitish.strip(),
-                'artifact_type': ArtifactType.IMAGE,
                 'engine': Engine.BREW,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_pipeline_url': record['task_url'],
