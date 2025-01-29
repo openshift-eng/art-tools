@@ -48,10 +48,15 @@ class ImagesHealthPipeline:
 
     async def run(self):
         # Gather concerns for all images in both Brew and Konflux build systems
-        await asyncio.gather(*[
-            self.get_concerns(image_meta, engine) for image_meta in self.runtime.image_metas()
-            for engine in ['brew', 'konflux']
+        tasks = [
+            self.get_concerns(image_meta, 'brew') for image_meta in self.runtime.image_metas()
+            if not image_meta.mode == 'disabled'
+        ]
+        tasks.extend([
+            self.get_concerns(image_meta, 'konflux') for image_meta in self.runtime.image_metas()
+            if not image_meta.config.konflux.mode == 'disabled'
         ])
+        await asyncio.gather(*tasks)
 
         # We should now have a dict of qualified_key => [concern, ...]
         if not self.concerns:
