@@ -100,9 +100,9 @@ async def olm_bundle_konflux(
 
     except (ChildProcessError, RuntimeError) as e:
         runtime.logger.error('Encountered error: %s', e)
-        if not runtime.dry_run and assembly != 'test':
-            slack_client = runtime.new_slack_client()
-            slack_client.bind_channel(version)
-            await slack_client.say('*:heavy_exclamation_mark: olm_bundle failed*\n'
-                                   f'buildvm job: {os.environ["BUILD_URL"]}')
-            raise
+        # if not runtime.dry_run and assembly != 'test':
+        #    slack_client = runtime.new_slack_client()
+        #    slack_client.bind_channel(version)
+        #    await slack_client.say('*:heavy_exclamation_mark: konflux_olm_bundle failed*\n'
+        #                           f'buildvm job: {os.environ["BUILD_URL"]}')
+        raise
