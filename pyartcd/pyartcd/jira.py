@@ -1,5 +1,6 @@
 from typing import Optional, Callable, Dict, List, Any
 from jira import JIRA, Issue
+from tenacity import retry, stop_after_attempt, wait_fixed
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ class JIRAClient:
     def __init__(self, jira: JIRA) -> None:
         self._client = jira
 
+    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
     def get_issue(self, key) -> Issue:
         return self._client.issue(key)
 
