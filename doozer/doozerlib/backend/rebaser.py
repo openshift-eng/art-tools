@@ -14,9 +14,10 @@ import bashlex.errors
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
-from artcommonlib.model import ListModel, Missing
+from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
+from artcommonlib.util import deep_merge
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.brew import BuildStates
@@ -91,6 +92,10 @@ class KonfluxRebaser:
             commit_message: str,
             push: bool,
     ) -> None:
+        # If there is a konflux stanza in the image config, merge it with the main config
+        if metadata.config.konflux is not Missing:
+            metadata.config = Model(deep_merge(metadata.config.primitive(), metadata.config.konflux.primitive()))
+
         try:
             # If this image has an upstream source, resolve it
             source = None
