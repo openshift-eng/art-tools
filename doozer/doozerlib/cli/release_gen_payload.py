@@ -1306,7 +1306,7 @@ class GenPayloadCli:
 
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
         async def _run(to_image, to_image_base):
-            await exectools.cmd_assert_async([
+            return await exectools.cmd_assert_async([
                 "oc", "adm", "release", "new",
                 f"--name={multi_release_name}",
                 "--reference-mode=source",
