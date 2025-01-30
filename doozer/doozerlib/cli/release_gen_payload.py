@@ -1287,7 +1287,7 @@ class GenPayloadCli:
         sha = await find_manifest_list_sha(output_pullspec)
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+    # @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def create_multi_release_image(self, imagestream_name: str, multi_release_is: Dict, multi_release_dest: str,
                                          multi_release_name: str,
                                          multi_specs: Dict[bool, Dict[str, Dict[str, PayloadEntry]]],
@@ -1308,24 +1308,24 @@ class GenPayloadCli:
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
         arch_release_dests: Dict[str, str] = dict()
-        tasks = []
+        # tasks = []
         for arch, cvo_entry in multi_specs[private_mode]["cluster-version-operator"].items():
             arch_release_dests[arch] = f"{multi_release_dest}-{arch}"
             # Create the arch specific release payload containing tags pointing to manifest list
             # component images.
-            tasks.append(
-                exectools.cmd_assert_async([
-                    "oc", "--loglevel=8", "adm", "release", "new",
-                    f"--name={multi_release_name}",
-                    "--reference-mode=source",
-                    "--keep-manifest-list",
-                    f"--from-image-stream-file={str(multi_release_is_path)}",
-                    f"--to-image-base={cvo_entry.dest_pullspec}",
-                    f"--to-image={arch_release_dests[arch]}",
-                    "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
-                ])
-            )
-        await asyncio.gather(*tasks)
+            # tasks.append(
+            await exectools.cmd_assert_async([
+                "oc", "--loglevel=8", "adm", "release", "new",
+                f"--name={multi_release_name}",
+                "--reference-mode=source",
+                "--keep-manifest-list",
+                f"--from-image-stream-file={str(multi_release_is_path)}",
+                f"--to-image-base={cvo_entry.dest_pullspec}",
+                f"--to-image={arch_release_dests[arch]}",
+                "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
+            ])
+            # )
+        # await asyncio.gather(*tasks)
 
         return await self.create_multi_release_manifest_list(arch_release_dests, imagestream_name, multi_release_dest)
 
