@@ -1287,7 +1287,6 @@ class GenPayloadCli:
         sha = await find_manifest_list_sha(output_pullspec)
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def create_multi_release_image(self, imagestream_name: str, multi_release_is: Dict, multi_release_dest: str,
                                          multi_release_name: str,
                                          multi_specs: Dict[bool, Dict[str, Dict[str, PayloadEntry]]],
@@ -1305,6 +1304,19 @@ class GenPayloadCli:
         async with aiofiles.open(multi_release_is_path, mode="w+") as mf:
             await mf.write(yaml.safe_dump(multi_release_is))
 
+        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+        async def _run(to_image, to_image_base):
+            await exectools.cmd_assert_async([
+                "oc", "adm", "release", "new",
+                f"--name={multi_release_name}",
+                "--reference-mode=source",
+                "--keep-manifest-list",
+                f"--from-image-stream-file={str(multi_release_is_path)}",
+                f"--to-image-base={to_image_base}",
+                f"--to-image={to_image}",
+                "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
+            ])
+
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
         arch_release_dests: Dict[str, str] = dict()
@@ -1314,16 +1326,7 @@ class GenPayloadCli:
             # component images.
             # Note: Do not use asyncio.gather here because it can result in a large number of
             # concurrent requests to the registry, which can cause unexpected EOFs/fails
-            await exectools.cmd_assert_async([
-                "oc", "adm", "release", "new",
-                f"--name={multi_release_name}",
-                "--reference-mode=source",
-                "--keep-manifest-list",
-                f"--from-image-stream-file={str(multi_release_is_path)}",
-                f"--to-image-base={cvo_entry.dest_pullspec}",
-                f"--to-image={arch_release_dests[arch]}",
-                "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
-            ])
+            await _run(to_image=arch_release_dests[arch], to_image_base=cvo_entry.dest_pullspec)
 
         return await self.create_multi_release_manifest_list(arch_release_dests, imagestream_name, multi_release_dest)
 
