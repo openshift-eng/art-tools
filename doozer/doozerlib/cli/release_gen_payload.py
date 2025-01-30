@@ -1315,7 +1315,7 @@ class GenPayloadCli:
             # component images.
             tasks.append(
                 exectools.cmd_assert_async([
-                    "oc", "adm", "release", "new",
+                    "oc", "--loglevel=8", "adm", "release", "new",
                     f"--name={multi_release_name}",
                     "--reference-mode=source",
                     "--keep-manifest-list",
