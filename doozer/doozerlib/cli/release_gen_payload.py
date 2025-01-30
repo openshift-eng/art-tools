@@ -1308,24 +1308,22 @@ class GenPayloadCli:
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
         arch_release_dests: Dict[str, str] = dict()
-        tasks = []
         for arch, cvo_entry in multi_specs[private_mode]["cluster-version-operator"].items():
             arch_release_dests[arch] = f"{multi_release_dest}-{arch}"
             # Create the arch specific release payload containing tags pointing to manifest list
             # component images.
-            tasks.append(
-                exectools.cmd_assert_async([
-                    "oc", "adm", "release", "new",
-                    f"--name={multi_release_name}",
-                    "--reference-mode=source",
-                    "--keep-manifest-list",
-                    f"--from-image-stream-file={str(multi_release_is_path)}",
-                    f"--to-image-base={cvo_entry.dest_pullspec}",
-                    f"--to-image={arch_release_dests[arch]}",
-                    "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
-                ])
-            )
-        await asyncio.gather(*tasks)
+            # Note: Do not use asyncio.gather here because it can result in a large number of
+            # concurrent requests to the registry, which can cause unexpected EOFs/fails
+            await exectools.cmd_assert_async([
+                "oc", "adm", "release", "new",
+                f"--name={multi_release_name}",
+                "--reference-mode=source",
+                "--keep-manifest-list",
+                f"--from-image-stream-file={str(multi_release_is_path)}",
+                f"--to-image-base={cvo_entry.dest_pullspec}",
+                f"--to-image={arch_release_dests[arch]}",
+                "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
+            ])
 
         return await self.create_multi_release_manifest_list(arch_release_dests, imagestream_name, multi_release_dest)
 
