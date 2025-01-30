@@ -234,9 +234,9 @@ class KonfluxRebaser:
         self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
                                image_repo, uuid_tag)
         metadata.private_fix = private_fix
-        return version, release, private_fix
 
         self._update_dockerignore(build_repo.local_dir)
+        return version, release, private_fix
 
     def _update_dockerignore(self, path):
         """
@@ -246,7 +246,7 @@ class KonfluxRebaser:
         if os.path.exists(docker_ignore_path):
             self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
             with open(docker_ignore_path, "a") as file:
-                file.write("\n!/.oit/**")
+                file.write("\n!/.oit/**\n")
 
     def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """ Resolve the parent images for the given image metadata."""
