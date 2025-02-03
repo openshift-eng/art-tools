@@ -49,7 +49,9 @@ class BuildRhcosPipeline:
         self.request_session = requests.Session()
         retries = Retry(
             total=5, backoff_factor=1,
+            status_forcelist=tuple(range(400, 600)),
             allowed_methods=["HEAD", "GET", "POST"],
+            raise_on_status=True,
         )
         self.request_session.mount("https://", TimeoutHTTPAdapter(max_retries=retries))
 
@@ -122,7 +124,6 @@ class BuildRhcosPipeline:
             response = self.request_session.get(
                 f"{JENKINS_BASE_URL}/job/{job}/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]",
             )
-            response.raise_for_status()
             builds_info = response.json()["builds"]
             for b in builds_info:
                 # build is still running when it has no status
