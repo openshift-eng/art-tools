@@ -120,13 +120,16 @@ class BuildRhcosPipeline:
         """Check if there are any existing builds for the given version. Returns builds in progress."""
         builds = []
         for job in ("build", "build-arch", "release"):
-            builds.extend(
-                dict(**b, job=job, parameters=self.build_parameters(b), url=self.build_url(job, b["number"]))
-                for b in self.request_session.get(
-                    f"{JENKINS_BASE_URL}/job/{job}/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]",
-                ).json()["builds"]
-                if b["result"] is None  # build is still running when it has no status
+            response = self.request_session.get(
+                f"{JENKINS_BASE_URL}/job/{job}/api/json?tree=builds[number,description,result,actions[parameters[name,value]]]",
             )
+            response.raise_for_status()
+            builds_info = response.json()["builds"]
+            for b in builds_info:
+                # build is still running when it has no status
+                if b["result"] is None:
+                    build = dict(**b, job=job, parameters=self.build_parameters(b), url=self.build_url(job, b["number"]))
+                    builds.append(build)
 
         return [b for b in builds if b["parameters"].get("STREAM") == self.stream]
 
