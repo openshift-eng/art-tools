@@ -48,7 +48,7 @@ class BuildRhcosPipeline:
         self.dry_run = self.runtime.dry_run
         self.request_session = requests.Session()
         retries = Retry(
-            total=10, backoff_factor=1,
+            total=5, backoff_factor=1,
             status_forcelist=[401, 403, 500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "POST"],
             raise_on_status=True,
