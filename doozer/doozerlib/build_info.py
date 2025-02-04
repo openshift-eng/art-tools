@@ -248,18 +248,20 @@ class BuildRecordInspector(ABC):
     def __repr__(self):
         return f'{self.__class__.__name__}:{self.get_build_id()}:{self.get_nvr()}'
 
-    @classmethod
-    def get_build_record_inspector_cls(cls, runtime):
+    @staticmethod
+    def get_build_record_inspector(runtime, build_obj: Union[dict, KonfluxBuildRecord]):
         build_system = runtime.build_system
 
         if build_system == 'brew':
-            return BrewBuildRecordInspector
+            bri_class = BrewBuildRecordInspector
 
         elif build_system == 'konflux':
-            return KonfluxBuildRecordInspector
+            bri_class = KonfluxBuildRecordInspector
 
         else:
             raise ValueError(f'Invalid build system: {build_system}')
+
+        return bri_class(runtime, build_obj)
 
     @abstractmethod
     def get_build_id(self):

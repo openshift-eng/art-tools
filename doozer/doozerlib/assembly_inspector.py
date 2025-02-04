@@ -55,8 +55,8 @@ class AssemblyInspector:
         for image_meta in self.runtime.get_for_release_image_metas():
             latest_build_obj = await image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
-                build_record_inspector_cls = BuildRecordInspector.get_build_record_inspector_cls(self.runtime)
-                self._release_build_record_inspectors[image_meta.distgit_key] = build_record_inspector_cls(self.runtime, latest_build_obj)
+                self._release_build_record_inspectors[image_meta.distgit_key] = \
+                    BuildRecordInspector.get_build_record_inspector(self.runtime, latest_build_obj)
             else:
                 self._release_build_record_inspectors[image_meta.distgit_key] = None
 

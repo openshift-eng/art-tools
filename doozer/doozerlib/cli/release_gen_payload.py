@@ -642,8 +642,8 @@ class GenPayloadCli:
                     if not public_build:
                         raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
 
-                    build_record_inspector_cls = BuildRecordInspector.get_build_record_inspector_cls(self.runtime)
-                    public_bbi = build_record_inspector_cls(runtime=self.runtime, build=public_build)
+                    public_bbi = BuildRecordInspector.get_build_record_inspector(
+                        runtime=self.runtime, build=public_build)
                     public_image_inspector = public_bbi.get_image_inspector(arch)
 
                     dest_pullspec = self.payload_generator.get_mirroring_destination(
