@@ -663,4 +663,4 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         return self._inspectors
 
     def get_build_webpage_url(self):
-        return 'TODO'  # TODO art-dash should display build info for a given build ID
+        return self._build_record.build_pipeline_url
