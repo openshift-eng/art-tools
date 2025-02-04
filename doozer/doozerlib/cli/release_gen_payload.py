@@ -414,7 +414,7 @@ class GenPayloadCli:
         assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
         # Build IDs can either be integers (Brew builds, e.g. 3403040)
         # or strings (Konflux builds, e.g. 'ose-4-18-vsphere-problem-detector-j5n7r'
-        assembly_brew_build_ids = list(filter(lambda build_id: isinstance(build_id, int), assembly_build_ids))
+        assembly_brew_build_ids = list(filter(lambda build_id: str(build_id).isdigit(), assembly_build_ids))
         # assembly_konflux_build_ids = list(filter(lambda build_id: isinstance(build_id, str), assembly_build_ids))
 
         with rt.shared_build_status_detector() as bsd:
