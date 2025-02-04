@@ -245,7 +245,11 @@ class RHCOSBuildInspector:
         for name, vra in extensions.items():
             # e.g. "kernel-rt-core": "4.18.0-372.32.1.rt7.189.el8_6.x86_64"
             # or "qemu-img": "15:6.2.0-11.module+el8.6.0+16538+01ea313d.6.x86_64"
-            version, ra = vra.rsplit('-', 1)
+            values = vra.rsplit('-', 1)
+            if len(values) != 2:
+                self.runtime.logger.warning("Skipping extension rpm %s with invalid version-release: %s", name, vra)
+                continue
+            version, ra = values
             # if epoch is not specified, just use 0. for some reason it's included in the version in
             # RHCOS metadata as "epoch:version"; but if we query brew for it that way, it does not
             # like the format, so we separate it out from the version.
