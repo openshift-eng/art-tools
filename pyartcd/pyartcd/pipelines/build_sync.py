@@ -125,6 +125,9 @@ class BuildSyncPipeline:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
     async def run(self):
+        if self.build_system == 'konflux':
+            jenkins.update_title(' [KONFLUX]')
+
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
