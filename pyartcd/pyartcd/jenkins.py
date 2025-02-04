@@ -330,20 +330,23 @@ def start_rhcos(build_version: str, new_build: bool, **kwargs) -> Optional[str]:
 
 
 def start_build_sync(build_version: str, assembly: str, doozer_data_path: Optional[str] = None,
-                     doozer_data_gitref: Optional[str] = None, **kwargs) -> Optional[str]:
+                     doozer_data_gitref: Optional[str] = None, build_system: Optional[str] = 'brew',
+                     exclude_arches: list = None, **kwargs) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly,
+        'BUILD_SYSTEM': build_system,
     }
     if doozer_data_path:
         params['DOOZER_DATA_PATH'] = doozer_data_path
     if doozer_data_gitref:
         params['DOOZER_DATA_GITREF'] = doozer_data_gitref
+    if exclude_arches:
+        params['EXCLUDE_ARCHES'] = ','.join(exclude_arches)
 
     return start_build(
         job=Jobs.BUILD_SYNC,
-        params=params,
-        **kwargs
+        params=params | kwargs,
     )
 
 

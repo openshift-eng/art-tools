@@ -636,6 +636,12 @@ class Ocp4Pipeline:
             await self._slack_client.say(f'::done_it_is: Mass rebuild for {self.version.stream} complete :done_it_is:')
 
     async def _sync_images(self):
+        """
+        Run an image sync after a build. This will mirror content from internal registries to quay.
+        After a successful sync an image stream is updated with the new tags and pullspecs.
+        Also update the app registry with operator manifests.
+        If operator_nvrs is given, will only build manifests for specified operator NVRs.
+        """
         if not self.build_plan.build_images:
             self.runtime.logger.info('No built images to sync.')
             return
@@ -652,13 +658,25 @@ class Ocp4Pipeline:
             if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                 operator_nvrs.append(record['nvrs'].split(',')[0])
 
-        await util.sync_images(
-            version=self.version.stream,
-            assembly=self.assembly,
-            operator_nvrs=operator_nvrs,
-            doozer_data_path=self.data_path,
-            doozer_data_gitref=self.data_gitref
-        )
+        if self.assembly == 'test':
+            self.runtime.logger.warning('Skipping build-sync job for test assembly')
+
+        else:
+            jenkins.start_build_sync(
+                build_version=self.version.stream,
+                assembly=self.assembly,
+                doozer_data_path=self.data_path,
+                doozer_data_gitref=self.data_gitref
+            )
+
+        if operator_nvrs:
+            jenkins.start_olm_bundle(
+                build_version=self.version.stream,
+                assembly=self.assembly,
+                operator_nvrs=operator_nvrs,
+                doozer_data_path=self.data_path,
+                doozer_data_gitref=self.data_gitref
+            )
 
     async def _mirror_rpms(self):
         if self.assembly != 'stream':
