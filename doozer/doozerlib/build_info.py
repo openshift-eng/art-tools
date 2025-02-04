@@ -1,36 +1,68 @@
 
 import asyncio
-import json
 import logging
+import os
+from abc import ABC, abstractmethod
 from typing import (Awaitable, Dict, List, Optional, Tuple, Union,
                     cast)
 
 import doozerlib
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 
 
-class ArchiveImageInspector:
+class ImageInspector(ABC):
+    def __init__(self, runtime: "doozerlib.Runtime", build_record_inspector: 'BuildRecordInspector' = None):
+        self.runtime = runtime
+        self.build_record_inspector = build_record_inspector
+
+    @abstractmethod
+    def get_pullspec(self):
+        pass
+
+    @abstractmethod
+    def get_digest(self):
+        pass
+
+    @abstractmethod
+    def get_image_meta(self):
+        pass
+
+    @abstractmethod
+    def get_build_inspector(self):
+        pass
+
+    @abstractmethod
+    def image_arch(self):
+        pass
+
+    @abstractmethod
+    def get_manifest_list_digest(self):
+        pass
+
+
+class BrewImageInspector(ImageInspector):
     """
     Represents and returns information about an archive image associated with a brew build.
     """
 
-    def __init__(self, runtime: "doozerlib.Runtime", archive: Dict, brew_build_inspector: 'BrewBuildImageInspector' = None):
+    def __init__(self, runtime: "doozerlib.Runtime", archive: Dict, build_record_inspector: 'BrewBuildRecordInspector' = None):
         """
         :param runtime: The brew build inspector associated with the build that created this archive.
         :param archive: The raw archive dict from brew.
-        :param brew_build_inspector: If the BrewBuildImageInspector is known, pass it in.
+        :param build_record_inspector: If the BrewBuildRecordInspector is known, pass it in.
         """
-        self.runtime = runtime
+        super().__init__(runtime, build_record_inspector)
         self._archive = archive
         self._cache = {}
-        self.brew_build_inspector = brew_build_inspector
 
-        if self.brew_build_inspector:
-            assert (self.brew_build_inspector.get_brew_build_id() == self.get_brew_build_id())
+        if self.build_record_inspector:
+            assert (self.build_record_inspector.get_build_id() == self.get_build_id())
 
     def image_arch(self) -> str:
         """
@@ -65,32 +97,25 @@ class ArchiveImageInspector:
         """
         return dict(self._archive['extra']['docker']['config']['config']['Labels'])
 
-    def get_archive_dict(self) -> Dict:
-        """
-        :return: Returns the raw brew archive object associated with this object.
-                 listArchives output: https://gist.github.com/jupierce/a28a53e4057b550b3c8e5d6a8ac5198c. This method returns a single entry.
-        """
-        return self._archive
-
-    def get_brew_build_id(self) -> int:
+    def get_build_id(self) -> int:
         """
         :return: Returns the brew build id for the build which created this archive.
         """
         return self._archive['build_id']
 
-    def get_brew_build_inspector(self):
+    def get_build_inspector(self):
         """
         :return: Returns a brew build inspector for the build which created this archive.
         """
-        if not self.brew_build_inspector:
-            self.brew_build_inspector = BrewBuildImageInspector(self.runtime, self.get_brew_build_id())
-        return self.brew_build_inspector
+        if not self.build_record_inspector:
+            self.build_record_inspector = BrewBuildRecordInspector(self.runtime, self.get_build_id())
+        return self.build_record_inspector
 
     def get_image_meta(self):  # -> "ImageMetadata":
         """
         :return: Returns the imagemeta associated with this archive's component if there is one. None if no imagemeta represents it.
         """
-        return self.get_brew_build_inspector().get_image_meta()
+        return self.get_build_inspector().get_image_meta()
 
     async def find_non_latest_rpms(self, rpms_to_check: Optional[List[Dict]] = None) -> List[Tuple[str, str, str]]:
         """
@@ -166,24 +191,150 @@ class ArchiveImageInspector:
 
         return self._cache[cn]
 
-    def get_archive_pullspec(self):
+    def get_pullspec(self):
         """
-        :return: Returns an internal pullspec for a specific archive image.
+        :return: Returns an internal pullspec for a specific image.
                  e.g. 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-openshift-controller-manager:rhaos-4.6-rhel-8-containers-candidate-53809-20210722091236-x86_64'
         """
         return self._archive['extra']['docker']['repositories'][0]
 
-    def get_archive_digest(self):
+    def get_digest(self):
         """
         :return Returns the archive image's sha digest (e.g. 'sha256:1f3ebef02669eca018dbfd2c5a65575a21e4920ebe6a5328029a5000127aaa4b')
         """
         digest = self._archive["extra"]['docker']['digests']['application/vnd.docker.distribution.manifest.v2+json']
-        if not digest.startswith("sha256:"):  # It should start with sha256: for now. Let's raise an error if this changes.
+        # It should start with sha256: for now. Let's raise an error if this changes.
+        if not digest.startswith("sha256:"):
             raise ValueError(f"Received unrecognized digest {digest} for archive {self.get_archive_id()}")
         return digest
 
+    def get_manifest_list_digest(self):
+        return self.build_record_inspector.get_manifest_list_digest()
 
-class BrewBuildImageInspector:
+
+class KonfluxImageInspector(ImageInspector):
+    def __init__(self, runtime: "doozerlib.Runtime", image_info: Dict,
+                 build_record_inspector: 'KonfluxBuildRecordInspector' = None):
+        super().__init__(runtime, build_record_inspector)
+        self._image_info = Model(image_info)
+        assert self._image_info['name'] == build_record_inspector.get_build_obj().image_pullspec
+
+    def get_build_inspector(self):
+        return self.build_record_inspector
+
+    def get_digest(self):
+        return self._image_info.digest
+
+    def get_image_meta(self):
+        return self.build_record_inspector.get_image_meta()
+
+    def get_pullspec(self):
+        return self._image_info['name']
+
+    def image_arch(self):
+        return brew_arch_for_go_arch(self._image_info.config.architecture)
+
+    def get_manifest_list_digest(self):
+        return self._image_info.listDigest
+
+
+class BuildRecordInspector(ABC):
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self._nvr: Optional[str] = None  # Will be resolved to the NVR for the image/manifest list
+        self._build_pullspec = None  # Will track the pullspec of the image/manifest list
+        self._cache = dict()
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}:{self.get_build_id()}:{self.get_nvr()}'
+
+    @staticmethod
+    def get_build_record_inspector(runtime, build_obj: Union[dict, KonfluxBuildRecord]):
+        build_system = runtime.build_system
+
+        if build_system == 'brew':
+            bri_class = BrewBuildRecordInspector
+
+        elif build_system == 'konflux':
+            bri_class = KonfluxBuildRecordInspector
+
+        else:
+            raise ValueError(f'Invalid build system: {build_system}')
+
+        return bri_class(runtime, build_obj)
+
+    @abstractmethod
+    def get_build_id(self):
+        pass
+
+    @abstractmethod
+    def get_build_obj(self):
+        pass
+
+    def get_nvr(self) -> str:
+        return self._nvr
+
+    @abstractmethod
+    def get_all_installed_package_build_dicts(self):
+        pass
+
+    @abstractmethod
+    def get_rpms_in_pkg_build(self, build_id: int):
+        pass
+
+    @abstractmethod
+    def get_image_meta(self):
+        pass
+
+    @staticmethod
+    def get_source_git_commit():
+        pass
+
+    @staticmethod
+    def find_non_latest_rpms():
+        pass
+
+    @abstractmethod
+    def get_version(self):
+        pass
+
+    @abstractmethod
+    def get_release(self):
+        pass
+
+    @abstractmethod
+    def get_build_webpage_url(self):
+        pass
+
+    @abstractmethod
+    def is_under_embargo(self):
+        pass
+
+    @abstractmethod
+    def get_build_pullspec(self):
+        pass
+
+    def get_image_info(self, arch='amd64') -> Dict:
+        """
+        :return Returns the parsed output of oc image info for the specified arch.
+        """
+        go_arch = go_arch_for_brew_arch(arch)  # Ensure it is a go arch
+        return util.oc_image_info__caching(self._build_pullspec, go_arch)
+
+    @abstractmethod
+    def get_image_inspectors(self):
+        pass
+
+    def get_image_inspector(self, brew_arch: str):
+        """
+        :param brew_arch: one in ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
+        """
+        arch = brew_arch_for_go_arch(brew_arch)  # Make sure this is a brew arch
+        found = filter(lambda ai: ai.image_arch() == arch, self.get_image_inspectors())
+        return next(found, None)
+
+
+class BrewBuildRecordInspector(BuildRecordInspector):
     """
     Provides an API for common queries we perform against brew built images.
     """
@@ -193,13 +344,10 @@ class BrewBuildImageInspector:
         :param runtime: The koji client session to use.
         :param build: A pullspec to the brew image (it is fine if this is a manifest list OR a single archive image), a brew build id, an NVR, or a brew build dict.
         """
-        self.runtime = runtime
+        super().__init__(runtime)
 
         with self.runtime.pooled_koji_client_session() as koji_api:
-            self._nvr: Optional[str] = None  # Will be resolved to the NVR for the image/manifest list
             self._brew_build_obj: Optional[Dict] = None  # Will be populated with a brew build dict for the NVR
-
-            self._cache = dict()
 
             if isinstance(build, Dict):
                 # Treat as a brew build dict
@@ -226,53 +374,37 @@ class BrewBuildImageInspector:
         """
         return self._brew_build_obj['extra']['image']['index']['digests']['application/vnd.docker.distribution.manifest.list.v2+json']
 
-    def get_brew_build_id(self) -> int:
+    def get_build_id(self) -> int:
         """
         :return: Returns the koji build id for this image.
         """
         return self._brew_build_id
 
-    def get_brew_build_webpage_url(self):
+    def get_build_webpage_url(self):
         """
         :return: Returns a link for humans to go look at details for this brew build.
         """
         return f'{BREWWEB_URL}/buildinfo?buildID={self._brew_build_id}'
 
-    def get_brew_build_dict(self) -> Dict:
+    def get_build_obj(self) -> Dict:
         """
         :return: Returns the koji getBuild dictionary for this iamge.
         """
         return self._brew_build_obj
-
-    def get_nvr(self) -> str:
-        return self._nvr
-
-    def __str__(self):
-        return f'BrewBuild:{self.get_brew_build_id()}:{self.get_nvr()}'
-
-    def __repr__(self):
-        return f'BrewBuild:{self.get_brew_build_id()}:{self.get_nvr()}'
-
-    def get_image_info(self, arch='amd64') -> Dict:
-        """
-        :return Returns the parsed output of oc image info for the specified arch.
-        """
-        go_arch = go_arch_for_brew_arch(arch)  # Ensure it is a go arch
-        return util.oc_image_info_for_arch__caching(self._build_pullspec, go_arch)
 
     def get_labels(self, arch='amd64') -> Dict[str, str]:
         """
         :return: Returns a dictionary of labels associated with the image. If the image is a manifest list,
                  these will be the amd64 labels.
         """
-        return self.get_image_archive_inspector(arch).get_image_labels()
+        return self.get_image_inspector(arch).get_image_labels()
 
     def get_envs(self, arch='amd64') -> Dict[str, str]:
         """
         :param arch: The image architecture to check.
         :return: Returns a dictionary of environment variables set for the image.
         """
-        return self.get_image_archive_inspector(arch).get_image_envs()
+        return self.get_image_inspector(arch).get_image_envs()
 
     def get_component_name(self) -> str:
         return self.get_labels()['com.redhat.component']
@@ -330,11 +462,11 @@ class BrewBuildImageInspector:
         """
         return self.get_envs().get('SOURCE_GIT_COMMIT', None)
 
-    def get_arch_archives(self) -> Dict[str, ArchiveImageInspector]:
+    def get_arch_archives(self) -> Dict[str, BrewImageInspector]:
         """
         :return: Returns a map of architectures -> brew archive Dict  within this brew build.
         """
-        return {a.image_arch(): a for a in self.get_image_archive_inspectors()}
+        return {a.image_arch(): a for a in self.get_image_inspectors()}
 
     def get_build_pullspec(self) -> str:
         """
@@ -361,7 +493,7 @@ class BrewBuildImageInspector:
         """
         return list(filter(lambda a: a['btype'] == 'image', self.get_all_archive_dicts()))
 
-    def get_image_archive_inspectors(self) -> List[ArchiveImageInspector]:
+    def get_image_inspectors(self) -> List[BrewImageInspector]:
         """
         Example listArchives output: https://gist.github.com/jupierce/a28a53e4057b550b3c8e5d6a8ac5198c
         :return: Returns only image archives from the build.
@@ -369,7 +501,7 @@ class BrewBuildImageInspector:
         cn = 'get_image_archives'
         if cn not in self._cache:
             image_archive_dicts = self.get_image_archive_dicts()
-            inspectors = [ArchiveImageInspector(self.runtime, archive, brew_build_inspector=self) for archive in image_archive_dicts]
+            inspectors = [BrewImageInspector(self.runtime, archive, build_record_inspector=self) for archive in image_archive_dicts]
             self._cache[cn] = inspectors
 
         return self._cache[cn]
@@ -391,8 +523,8 @@ class BrewBuildImageInspector:
         cn = 'get_all_installed_rpm_dicts'
         if cn not in self._cache:
             dedupe: Dict[str, Dict] = dict()  # Maps nvr to rpm definition. This is because most archives will have similar RPMS installed.
-            for archive_inspector in self.get_image_archive_inspectors():
-                for rpm_dict in archive_inspector.get_installed_rpm_dicts():
+            for image_inspector in self.get_image_inspectors():
+                for rpm_dict in image_inspector.get_installed_rpm_dicts():
                     dedupe[rpm_dict['nvr']] = rpm_dict
             self._cache[cn] = list(dedupe.values())
         return self._cache[cn]
@@ -407,19 +539,19 @@ class BrewBuildImageInspector:
         cn = 'get_all_installed_package_build_dicts'
         if cn not in self._cache:
             dedupe: Dict[str, Dict] = dict()  # Maps nvr to build dict. This is because most archives will have the similar packages installed.
-            for archive_inspector in self.get_image_archive_inspectors():
-                dedupe.update(archive_inspector.get_installed_package_build_dicts())
+            for image_inspector in self.get_image_inspectors():
+                dedupe.update(image_inspector.get_installed_package_build_dicts())
             self._cache[cn] = dedupe
 
         return self._cache[cn]
 
-    def get_image_archive_inspector(self, arch: str) -> Optional[ArchiveImageInspector]:
+    def get_image_inspector(self, arch: str) -> Optional[BrewImageInspector]:
         """
         Example listArchives output: https://gist.github.com/jupierce/a28a53e4057b550b3c8e5d6a8ac5198c
         :return: Returns the archive inspector for the specified arch    OR    None if the build does not possess one.
         """
         arch = brew_arch_for_go_arch(arch)  # Make sure this is a brew arch
-        found = filter(lambda ai: ai.image_arch() == arch, self.get_image_archive_inspectors())
+        found = filter(lambda ai: ai.image_arch() == arch, self.get_image_inspectors())
         return next(found, None)
 
     def is_under_embargo(self) -> bool:
@@ -474,8 +606,63 @@ class BrewBuildImageInspector:
         arches = meta.get_arches()
         tasks: List[Awaitable[List[Tuple[str, str, str]]]] = []
         for arch in arches:
-            iar = self.get_image_archive_inspector(arch)
+            iar = self.get_image_inspector(arch)
             assert iar is not None
             tasks.append(iar.find_non_latest_rpms(arch_rpms_to_check[arch] if arch_rpms_to_check else None))
         result = dict(zip(arches, await asyncio.gather(*tasks)))
         return result
+
+
+class KonfluxBuildRecordInspector(BuildRecordInspector):
+    def __init__(self, runtime, build_record: KonfluxBuildRecord):
+        super().__init__(runtime)
+        self._build_record = build_record
+        self._nvr = build_record.nvr
+        self.image_pullspec = build_record.image_pullspec
+        self._inspectors = []
+
+    def get_build_id(self):
+        return self._build_record.build_id
+
+    def get_build_obj(self):
+        return self._build_record
+
+    def get_build_pullspec(self):
+        return self._build_record.image_pullspec
+
+    def is_under_embargo(self):
+        return self._build_record.embargoed
+
+    def get_version(self):
+        return self._build_record.version
+
+    def get_release(self):
+        return self._build_record.release
+
+    def get_all_installed_package_build_dicts(self):
+        raise NotImplementedError
+
+    def get_rpms_in_pkg_build(self, build_id: int):
+        raise NotImplementedError
+
+    def get_image_meta(self):
+        return self.runtime.image_map[self.get_build_obj().name]
+
+    def get_image_inspectors(self):
+        if not self._inspectors:
+            info = util.oc_image_info_show_multiarch__caching(
+                pullspec=self.get_build_pullspec(),
+                registry_username=os.environ['KONFLUX_ART_IMAGES_USERNAME'],
+                registry_password=os.environ['KONFLUX_ART_IMAGES_PASSWORD']
+            )
+            if isinstance(info, dict):
+                # The pullspec points to a single arch image
+                self._inspectors.append(KonfluxImageInspector(self.runtime, info, self))
+            else:
+                # The pullspec points to a multi arch manifest list
+                self._inspectors.extend(
+                    [KonfluxImageInspector(self.runtime, item, self) for item in info])
+        return self._inspectors
+
+    def get_build_webpage_url(self):
+        return self._build_record.build_pipeline_url

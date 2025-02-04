@@ -14,7 +14,7 @@ from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssu
 from artcommonlib.model import Model
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import release_gen_payload as rgp_cli
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.image import ImageMetadata
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib import rhcos
@@ -130,10 +130,10 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     async def test_generate_assembly_issues_report(self, cnc_mock):
         gpcli = flexmock(
             rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream")),
-            collect_assembly_build_ids={1, 2, 3},
+            collect_assembly_build_ids=MagicMock(return_value={1, 2, 3}),
             detect_mismatched_siblings=None,
             detect_non_latest_rpms=None,
-            detect_inconsistent_images=None,
+            detect_inconsistent_images=AsyncMock(),
             detect_installed_rpms_issues=None,
             detect_extend_payload_entry_issues=AsyncMock(),
             summarize_issue_permits=(True, {}),
@@ -147,7 +147,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images={})
         bbii = flexmock(
-            Mock(BrewBuildImageInspector),
+            Mock(BrewBuildRecordInspector),
             get_nvr="spam-1.0", get_source_git_commit="spamcommit")
         fms_mock.return_value = [(bbii, bbii)]
 
@@ -156,7 +156,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     def test_id_tags_list(self):
         gpcli = rgp_cli.GenPayloadCli()
-        bbii = flexmock(Mock(BrewBuildImageInspector), get_brew_build_id=1)
+        bbii = flexmock(Mock(BrewBuildRecordInspector), get_build_id=1)
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images=dict(spam=bbii))
 
         self.assertEqual(gpcli.generate_id_tags_list(ai)[0][0], 1)
@@ -179,7 +179,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             build_id += 1
             return dict(spam=dict(id=build_id))
 
-        ai = flexmock(Mock(AssemblyInspector), get_group_rpm_build_dicts=rpm_build_dict)
+        ai = flexmock(Mock(AssemblyInspector), get_group_rpm_build_dicts=MagicMock(side_effect=rpm_build_dict))
 
         # test when we should be tagging for GC prevention
         rt.assembly_type = AssemblyTypes.STANDARD
@@ -195,7 +195,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     async def test_detect_non_latest_rpms(self):
         gpcli = rgp_cli.GenPayloadCli()
-        bbii = AsyncMock(BrewBuildImageInspector)
+        bbii = AsyncMock(BrewBuildRecordInspector)
         bbii.get_image_meta.return_value = Mock(ImageMetadata, is_rpm_exempt=Mock(return_value=(False, None)))
         bbii.find_non_latest_rpms.return_value = {"x86_64": [("foo-0:1.2.0-1.el9.x86_64", "foo-0:1.2.1-1.el9.x86_64", "repo_name")], "s390x": []}
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images=dict(spam=bbii))
@@ -209,10 +209,11 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     def test_detect_inconsistent_images(self):
         gpcli = rgp_cli.GenPayloadCli()
-        bbii = flexmock(Mock(BrewBuildImageInspector))
-        ai = flexmock(Mock(AssemblyInspector), get_group_release_images=dict(spam=bbii))
+        bbii = flexmock(Mock(BrewBuildRecordInspector))
+        ai = MagicMock(AssemblyInspector)
+        ai.get_group_release_images = MagicMock(return_value={"spam": bbii})
+        ai.check_group_image_consistency = MagicMock(return_value=["stuff"])
 
-        ai.should_receive("check_group_image_consistency").and_return(["stuff"]).once()
         gpcli.detect_inconsistent_images(ai)
         self.assertEqual(gpcli.assembly_issues, ["stuff"])
 
@@ -253,11 +254,11 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             exclude_arch=[],
             runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
         )
-        bbii = MagicMock(BrewBuildImageInspector)
+        bbii = MagicMock(BrewBuildRecordInspector)
         bbii.is_under_embargo.return_value = False
 
         test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
-                                                  dest_pullspec="pullspec_1", build_inspector=bbii)
+                                                  dest_pullspec="pullspec_1", build_record_inspector=bbii)
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
         payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
@@ -396,7 +397,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli = rgp_cli.GenPayloadCli(runtime, apply_multi_arch=True)
         payload_entry_test = rgp_cli.PayloadEntry(
             issues=[], dest_pullspec="eggs_pullspec",
-            build_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
+            build_record_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
         )
         gpcli.payload_entries_for_arch = {"x86_64": {"x86_entries": payload_entry_test}}
 
@@ -412,20 +413,20 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("aiofiles.open")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_mirror_payload_content(self, exec_mock, open_mock):
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True)
+        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system='brew'))
         payload_entries = dict(
             rhcos=rgp_cli.PayloadEntry(
                 issues=[], dest_pullspec="dummy",
             ),
             spam=rgp_cli.PayloadEntry(
                 issues=[], dest_pullspec="spam_pullspec",
-                archive_inspector=Mock(get_archive_pullspec=lambda: "spam_src"),
+                image_inspector=Mock(get_pullspec=lambda: "spam_src"),
             ),
             eggs=rgp_cli.PayloadEntry(
                 issues=[], dest_pullspec="eggs_pullspec",
-                archive_inspector=Mock(get_archive_pullspec=lambda: "eggs_src"),
+                image_inspector=Mock(get_pullspec=lambda: "eggs_src"),
                 dest_manifest_list_pullspec="eggs_manifest_pullspec",
-                build_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
+                build_record_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
             ),
         )
 
@@ -458,11 +459,11 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             ),
             spam=rgp_cli.PayloadEntry(
                 issues=[], dest_pullspec="dummy",
-                build_inspector=Mock(BrewBuildImageInspector, is_under_embargo=lambda: True),
+                build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: True),
             ),
             eggs=rgp_cli.PayloadEntry(
                 issues=[], dest_pullspec="dummy",
-                build_inspector=Mock(BrewBuildImageInspector, is_under_embargo=lambda: False),
+                build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: False),
             ),
         )
 
@@ -609,10 +610,9 @@ spec:
 
     async def test_build_multi_istag(self):
         gpcli = flexmock(rgp_cli.GenPayloadCli())
-        bbii = Mock(get_manifest_list_digest=lambda: "sha256:abcdef")
         args = dict(
             dest_manifest_list_pullspec="quay.io/org/repo:spam",
-            build_inspector=bbii,
+            image_inspector=Mock(get_manifest_list_digest=lambda: "sha256:abcdef"),
             issues=[],
             dest_pullspec="quay.io/org/repo:eggs",
         )
