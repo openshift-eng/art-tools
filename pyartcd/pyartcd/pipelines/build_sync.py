@@ -520,7 +520,7 @@ class BuildSyncPipeline:
 @click.option("--embargo-permit-ack", is_flag=True, default=False,
               help="To permit embargoed builds to be promoted after embargo lift")
 @click.option("--build-system", required=False, default='brew',
-              help="To permit embargoed builds to be promoted after embargo lift")
+              help="Whether a Brew payload or a Konflux one has to be produced")
 @pass_runtime
 @click_coroutine
 @start_as_current_span_async(TRACER, "build-sync")
