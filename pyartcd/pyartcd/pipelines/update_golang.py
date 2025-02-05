@@ -144,8 +144,15 @@ async def move_golang_bugs(ocp_version: str,
 
 
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, create_ticket: bool, cves: List[str],
-                 force_update_tracker: bool, go_nvrs: List[str], art_jira: str, tag_builds: bool, scratch: bool = False, force_image_build: bool = False):
+    def __init__(self, runtime: Runtime,
+                 ocp_version: str,
+                 cves: List[str],
+                 force_update_tracker: bool,
+                 go_nvrs: List[str],
+                 art_jira: str,
+                 tag_builds: bool,
+                 scratch: bool = False,
+                 force_image_build: bool = False):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
         self.scratch = scratch
@@ -472,8 +479,9 @@ class UpdateGolangPipeline:
 @click.option('--force-image-build', is_flag=True, default=False, help='Rebuild golang builder image regardless of if one exists')
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, create_ticket: bool, art_jira: str,
-                        cves: str, force_update_tracker: bool, confirm: bool, tag_builds: bool, go_nvrs: List[str], force_image_build: bool):
+async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, art_jira: str,
+                        cves: str, force_update_tracker: bool, confirm: bool, tag_builds: bool,
+                        go_nvrs: List[str], force_image_build: bool):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
@@ -482,5 +490,5 @@ async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, creat
     if force_update_tracker and not cves:
         raise ValueError('CVEs must be provided with --force-update-tracker')
 
-    await UpdateGolangPipeline(runtime, ocp_version, create_ticket, cves, force_update_tracker,
+    await UpdateGolangPipeline(runtime, ocp_version, cves, force_update_tracker,
                                go_nvrs, art_jira, tag_builds, scratch, force_image_build).run()
