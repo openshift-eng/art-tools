@@ -158,7 +158,7 @@ class KonfluxOcp4Pipeline:
 
         LOGGER.info("All builds completed successfully")
 
-    def sync_images(self):
+    async def sync_images(self):
         if self.runtime.dry_run:
             LOGGER.info('Not syncing images in dry run mode')
             return
@@ -188,7 +188,8 @@ class KonfluxOcp4Pipeline:
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
             return
 
-        exclude_arches = ['aarch64', 'ppc64le', 's390x', 'x86_64']
+        _, out, _ = await exectools.cmd_gather_async([*self._doozer_base_command.copy(), 'config:read-group', 'arches'])
+        exclude_arches = json.loads(out.strip())
         for arch in self.arches:
             exclude_arches.remove(arch)
 
@@ -312,7 +313,7 @@ class KonfluxOcp4Pipeline:
             await self.build()
 
         finally:
-            self.sync_images()
+            await self.sync_images()
             self.trigger_bundle_build()
             await self.clean_up()
 
