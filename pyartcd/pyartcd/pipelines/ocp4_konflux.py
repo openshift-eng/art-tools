@@ -159,6 +159,10 @@ class KonfluxOcp4Pipeline:
         LOGGER.info("All builds completed successfully")
 
     def sync_images(self):
+        if self.runtime.dry_run:
+            LOGGER.info('Not syncing images in dry run mode')
+            return
+
         LOGGER.info('Syncing images...')
 
         record_log = self.parse_record_log()
