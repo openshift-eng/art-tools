@@ -5,6 +5,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pyartcd import constants
+from pyartcd.jenkins import Jobs
 from pyartcd.pipelines import ocp4
 
 
@@ -641,8 +642,8 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             {'has_olm_bundle': '1', 'status': '0', 'nvrs': 'nvr5'},
         ]
     })
-    @patch("pyartcd.util.sync_images")
-    async def test_ocp4_sync_images(self, sync_images_mock: AsyncMock, *_):
+    @patch("pyartcd.jenkins.start_build")
+    async def test_ocp4_sync_images(self, start_build_mock: MagicMock, *_):
         pipeline = ocp4.Ocp4Pipeline(
             runtime=MagicMock(dry_run=False),
             assembly='stream',
@@ -661,17 +662,29 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
         # No images
         pipeline.build_plan.build_images = False
         await pipeline._sync_images()
-        sync_images_mock.assert_not_awaited()
+        start_build_mock.assert_not_called()
 
         # Built images
         pipeline.build_plan.build_images = True
-        sync_images_mock.reset_mock()
+        start_build_mock.reset_mock()
         await pipeline._sync_images()
-        sync_images_mock.assert_awaited_once_with(
-            version='4.13', assembly='stream', operator_nvrs=['nvr1', 'nvr5'],
-            doozer_data_path='https://github.com/openshift-eng/ocp-build-data',
-            doozer_data_gitref=''
-        )
+
+        from unittest.mock import call
+        start_build_mock.assert_has_calls([
+            call(job=Jobs.BUILD_SYNC, params={
+                'BUILD_VERSION': '4.13',
+                'ASSEMBLY': 'stream',
+                'BUILD_SYSTEM': 'brew',
+                'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data'
+            }),
+            call(job=Jobs.OLM_BUNDLE, params={
+                'BUILD_VERSION': '4.13',
+                'ASSEMBLY': 'stream',
+                'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data',
+                'DOOZER_DATA_GITREF': '',
+                'OPERATOR_NVRS': 'nvr1,nvr5'
+            })
+        ])
 
     @patch("os.path.abspath", return_value='doozer_working')
     @patch("builtins.open")

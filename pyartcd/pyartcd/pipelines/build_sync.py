@@ -531,6 +531,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
                      images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
                      build_system: str):
+    jenkins.init_jenkins()
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
