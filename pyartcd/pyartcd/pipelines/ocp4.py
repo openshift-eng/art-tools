@@ -658,6 +658,10 @@ class Ocp4Pipeline:
             if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
                 operator_nvrs.append(record['nvrs'].split(',')[0])
 
+        if self.runtime.dry_run:
+            self.runtime.logger.info('Skipping build-sync and olm-bundle for dry run mode')
+            return
+
         if self.assembly == 'test':
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
 
