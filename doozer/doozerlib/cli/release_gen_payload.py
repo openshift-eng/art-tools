@@ -2060,8 +2060,9 @@ class PayloadGenerator:
 
         issues: List[AssemblyIssue] = []
         tasks = []
+        generator = PayloadGenerator()
         for arch, nightly in basis.reference_releases.primitive().items():
-            tasks.append(PayloadGenerator._check_nightly_consistency(assembly_inspector, nightly, arch))
+            tasks.append(generator._check_nightly_consistency(assembly_inspector, nightly, arch))
         results = await asyncio.gather(*tasks)
         issues.extend([issue for result in results for issue in result])
         return issues
