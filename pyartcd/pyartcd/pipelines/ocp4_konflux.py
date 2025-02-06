@@ -11,7 +11,7 @@ import click
 import yaml
 
 from artcommonlib import exectools
-from doozerlib.exceptions import DoozerFatalError
+from artcommonlib.util import new_roundtrip_yaml_handler
 
 from pyartcd import constants, util, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -179,6 +179,7 @@ class KonfluxOcp4Pipeline:
 
         if not built_images:
             # Nothing to do, skipping build-sync
+            LOGGER.info('All image builds failed, nothing to sync')
             return
 
         if self.version != '4.19':
@@ -188,8 +189,9 @@ class KonfluxOcp4Pipeline:
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
             return
 
-        _, out, _ = await exectools.cmd_gather_async([*self._doozer_base_command.copy(), 'config:read-group', 'arches'])
-        exclude_arches = json.loads(out.strip())
+        _, out, _ = await exectools.cmd_gather_async([
+            *self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml'])
+        exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
         for arch in self.arches:
             exclude_arches.remove(arch)
 
