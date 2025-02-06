@@ -910,7 +910,7 @@ class GenPayloadCli:
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
         # Mirror the images in chunks to avoid erroring out due to possible registry issues
-        image_chunk_size = 50
+        image_chunk_size = 100
         i = 0
         for pullspec_pair_chunk in chunk(list(mirror_src_for_dest.items()), image_chunk_size):
             src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}-{i}.txt")
