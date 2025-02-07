@@ -191,7 +191,7 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
     env['LC_ALL'] = 'en_US.UTF-8'
 
     with timer(logger.debug, f'{cmd_info}: Executed:cmd_gather'):
-        logger.info(f'{cmd_info}: Executing:cmd_gather {" ".join(cmd_list)}')
+        logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(cmd_list)}')
         try:
             proc = subprocess.Popen(
                 cmd_list, cwd=cwd, env=env,
@@ -484,7 +484,7 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
             env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
 
-    logger.info(f"Executing:cmd_gather_async {' '.join(cmd_list)}'")
+    logger.info(f"Executing:cmd_gather_async: {' '.join(cmd_list)}")
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
     stdout, stderr = await proc.communicate()
     stdout = stdout.decode() if stdout else ""
@@ -530,7 +530,7 @@ async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwa
             env = kwargs["env"] = os.environ.copy()
         env["TRACEPARENT"] = carrier["traceparent"]
 
-    logger.info(f"Executing:cmd_assert_async {' '.join(cmd_list)}'")
+    logger.info(f"Executing:cmd_assert_async: {' '.join(cmd_list)}")
     proc = await asyncio.subprocess.create_subprocess_exec(cmd_list[0], *cmd_list[1:], **kwargs)
     returncode = await proc.wait()
     span.set_attribute("pyartcd.result.exit_code", str(returncode))
