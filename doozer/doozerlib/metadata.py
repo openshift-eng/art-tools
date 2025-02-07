@@ -444,7 +444,7 @@ class Metadata(object):
                                        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
                                        el_target: Optional[Union[int, str]] = None,
                                        honor_is: bool = True,
-                                       completed_before: Optional[datetime] = None,
+                                       completed_before: Optional[datetime.datetime] = None,
                                        extra_patterns: dict = {},
                                        **kwargs) -> Optional[KonfluxBuildRecord]:
         """

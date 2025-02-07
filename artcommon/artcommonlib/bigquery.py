@@ -14,10 +14,11 @@ from artcommonlib import constants
 
 class BigQueryClient:
     def __init__(self):
-        if 'GOOGLE_APPLICATION_CREDENTIALS' not in os.environ:
-            raise EnvironmentError('Missing required environment variable GOOGLE_APPLICATION_CREDENTIALS')
+        try:
+            self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
+        except:
+            raise EnvironmentError(f'Unable to access {constants.GOOGLE_CLOUD_PROJECT}. Initialize default application context or set GOOGLE_APPLICATION_CREDENTIALS')
 
-        self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
         self._table_ref = None
         self.logger = logging.getLogger(__name__)
 
