@@ -29,3 +29,5 @@ requests>=2.32.0 # not directly required, pinned by Snyk to avoid a vulnerabilit
 setuptools>=70.0.0 # not directly required, pinned by Snyk to avoid a vulnerability
 mysql-connector-python>=9.1.0 # not directly required, pinned by Snyk to avoid a vulnerability
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
+async_lru
+packageurl-python
