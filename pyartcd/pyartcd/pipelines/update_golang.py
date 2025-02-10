@@ -291,93 +291,104 @@ class UpdateGolangPipeline:
         return builder_nvrs
 
     async def update_golang_streams(self, go_version, builder_nvrs):
-        """
-        Update golang builders for current release in ocp-build-data
-        1. First check go verion from group.yml var to decide if it's a major version bump or minor version bump
-        2. Get the golang image value, find and replace for each item in streams.yml
-        3. If it'a major version bump, also need to update key in streams.yml and vars in group.yml
-        4. Create pr to update changes
-        """
-        github_client = Github(os.environ.get("GITHUB_TOKEN"))
-        branch = f"openshift-{self.ocp_version}"
-        upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
-        streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
-        group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
-        go_latest = group_content['vars']['GO_LATEST']
-        go_previous = group_content['vars'].get('GO_PREVIOUS', None)
-        update_streams = update_group = False
-        # This is to bump minor golang for GO_LATEST
-        if go_version == go_latest:
-            for el_v, builder_nvr in builder_nvrs:
-                parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
-                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-                for stream in streams_content:
-                    if stream['image'] == latest_go:
-                        stream['image'] = new_latest_go
-                        update_streams = True
-        # This is to bump minor golang for GO_PREVIOUS
-        elif go_version == go_previous:
-            for el_v, builder_nvr in builder_nvrs:
-                parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image']
-                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-                for stream in streams_content:
-                    if stream['image'] == latest_go:
-                        stream['image'] = new_latest_go
-                        update_streams = True
-        # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
-        elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
-            for el_v, builder_nvr in builder_nvrs:
-                parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
-                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
-                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-                for stream, info in streams_content.items():
-                    if info['image'] == latest_go:
-                        info['image'] = new_latest_go
-                    if info['image'] == previous_go:
-                        info['image'] = latest_go
-                group_content['vars']['GO_LATEST'] = go_version
-                group_content['vars']['GO_EXTRA'] = go_version
-                if go_previous:
-                    group_content['vars']['GO_PREVIOUS'] = go_latest
-                update_streams = update_group = True
-        # save changes and create pr
-        if update_streams:
-            if self.dry_run:
-                _LOGGER.info(f"[DRY RUN] Would have created PR to update {go_version} golang builders")
-                return
-            fork_repo = github_client.get_repo("openshift-bot/ocp-build-data")
-            branch_name = f"update-golang-{self.ocp_version}-{go_version}"
-            title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
-            update_message = f"Bump {self.ocp_version} golang builders to {go_version}"
-            for branch in fork_repo.get_branches():
-                if branch.name == branch_name:
-                    fork_repo.get_git_ref(f"heads/{branch_name}").delete()
-            fork_branch = fork_repo.create_git_ref(f"refs/heads/{branch_name}", upstream_repo.get_branch(branch).commit.sha)
-            _LOGGER.info(f"Created fork branch ref {fork_branch.ref}")
-            output = io.BytesIO()
-            yaml.dump(streams_content, output)
-            output.seek(0)
-            fork_file = fork_repo.get_contents("streams.yml", ref=branch_name)
-            fork_repo.update_file("streams.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
-            if update_group:
-                output = io.BytesIO()
-                yaml.dump(group_content, output)
-                output.seek(0)
-                fork_file = fork_repo.get_contents("group.yml", ref=branch_name)
-                fork_repo.update_file("group.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
-            # create pr
+        build_data_path = self.runtime.working_dir / "ocp-build-data-push"
+        build_data = GitRepository(build_data_path, dry_run=self.dry_run)
+        ocp_build_data_repo_push_url = self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
+        await build_data.setup(ocp_build_data_repo_push_url)
+
+        # Here we also check the previous and next minor version of given OCP version
+        # and try to update the golang builders for them as well
+        # This is because golang builders are used across minor versions
+        # and if we are not careful, we can miss updating them
+        major, minor = self.ocp_version.split('.')
+        next_minor = f"{major}.{int(minor)+1}"
+        previous_minor = f"{major}.{int(minor)-1}"
+        for ocp_version in [previous_minor, self.ocp_version, next_minor]:
+            group_name = f"openshift-{ocp_version}"
+            branch = f"update-golang-{ocp_version}-{go_version}"
+            _LOGGER.info(f"Checking if {group_name}:streams.yml needs update...")
             try:
-                build_url = jenkins.get_build_url()
-                body = f"Created by job run {build_url}" if build_url else ""
-                pr = upstream_repo.create_pull(title=title, body=body, base=branch_name, head=f"openshift-bot:{branch_name}")
-                self._logger.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
-            except GithubException as e:
-                self._logger.warning(f"Failed to create pr to bump golang builder: {e}")
-        else:
-            _LOGGER.info(f"No update needed in {branch}")
+                await build_data.fetch_switch_branch(branch, group_name)
+            except Exception as e:
+                message = f"Failed to fetch {group_name} branch: {e}"
+                if ocp_version == next_minor:
+                    _LOGGER.warning(message)
+                    continue
+                else:
+                    raise
+
+            streams_yaml_path = build_data_path / "streams.yml"
+            streams_yaml = yaml.load(streams_yaml_path)
+
+            # update image nvrs in streams.yml
+            need_update = False
+            major_go, minor_go, _ = go_version.split('.')
+            for stream_name, info in streams_yaml.items():
+                if 'golang' not in stream_name:
+                    continue
+                image_nvr_like = info['image']
+                if 'golang-builder' not in image_nvr_like:
+                    continue
+                name, vr = image_nvr_like.split(':')
+                if not vr.startswith(f"v{major_go}.{minor_go}"):
+                    continue
+
+                _, el_version = split_el_suffix_in_release(vr)  # 'el8'
+                el_version = int(el_version[2:])  # 8
+                if el_version not in builder_nvrs:
+                    continue
+
+                parsed_nvr = parse_nvr(builder_nvrs[el_version])
+                expected_vr = f'{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+                expected_nvr_like = f'{name}:{expected_vr}'
+                if image_nvr_like == expected_nvr_like:
+                    _LOGGER.info(f'stream:{stream_name} has the desired builder nvr:{expected_nvr_like}')
+                else:
+                    _LOGGER.info(f"Updating stream:{stream_name} image from {image_nvr_like} to {expected_nvr_like}")
+                    streams_yaml[stream_name]['image'] = expected_nvr_like
+                    need_update = True
+
+            if not need_update:
+                _LOGGER.info(f"No update needed in {group_name}:streams.yml")
+                continue
+
+            yaml.dump(streams_yaml, streams_yaml_path)
+            title = f"{self.art_jira} - Bump {ocp_version} golang builders to {go_version}"
+
+            # Create a PR
+            build_url = jenkins.get_build_url()
+            body = ""
+            if build_url:
+                body = f"Created by job run {build_url}"
+            match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
+            if not match:
+                raise ValueError(
+                    f"Cannot push: {ocp_build_data_repo_push_url} is not a valid github repo url")
+            head = f"{match[1]}:{branch}"
+            base = group_name
+            if self.dry_run:
+                _LOGGER.info(f"[DRY RUN] Would have created commit on {head=} with {title=} and {body=}")
+            else:
+                pushed = await build_data.commit_push(f"{title}\n{body}")
+                if not pushed:
+                    raise RuntimeError("Commit not pushed: Please investigate")
+
+            repo = "ocp-build-data"
+            api = GhApi(owner=GITHUB_OWNER, repo=repo, token=self.github_token)
+            existing_prs = api.pulls.list(state="open", base=base, head=head)
+            if not existing_prs.items:
+                try:
+                    if self.dry_run:
+                        _LOGGER.info(f"[DRY RUN] Would have created PR from {head=} to {base=}")
+                    else:
+                        result = api.pulls.create(head=head, base=base, title=title, body=body, maintainer_can_modify=True)
+                        _LOGGER.info(f"PR created: {result['html_url']}")
+                except Exception as e:
+                    _LOGGER.warning(f"Failed to create PR: {e}")
+                    manual_pr_url = f"https://github.com/{GITHUB_OWNER}/{repo}/compare/{base}...{head}?expand=1"
+                    _LOGGER.info(f"Create a PR manually {manual_pr_url}")
+            else:
+                _LOGGER.info(f"Existing PR updated: {existing_prs.items[0]['html_url']}")
 
     async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
