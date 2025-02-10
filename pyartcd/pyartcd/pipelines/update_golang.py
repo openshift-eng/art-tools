@@ -355,7 +355,8 @@ class UpdateGolangPipeline:
             for branch in fork_repo.get_branches():
                 if branch.name == branch_name:
                     fork_repo.get_git_ref(f"heads/{branch_name}").delete()
-            fork_branch = fork_repo.create_git_ref(f"refs/heads/{branch_name}", upstream_repo.get_branch(branch).commit.sha)
+            fork_branch = fork_repo.create_git_ref(f"refs/heads/{branch_name}",
+                                                   upstream_repo.get_branch(branch_name).commit.sha)
             _LOGGER.info(f"Created fork branch ref {fork_branch.ref}")
             output = io.BytesIO()
             yaml.dump(streams_content, output)
