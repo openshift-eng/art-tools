@@ -211,6 +211,20 @@ class KonfluxImageBuilder:
                 await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
 
+    @staticmethod
+    def get_application_name(group_name: str):
+        # "openshift-4-18" -> "openshift-4-18"
+        return group_name.replace(".", "-")
+
+    @staticmethod
+    def get_component_name(application_name: str, image_name: str):
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        name = f"{application_name}-{image_name}".replace(".", "-").replace("_", "-")
+        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
+        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
+        name = f"ose-{name.removeprefix('openshift-')}"
+        return name
+
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
                            output_image: str, additional_tags: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -222,18 +236,12 @@ class KonfluxImageBuilder:
         git_commit = build_repo.commit_hash
 
         # Ensure the Application resource exists
-        app_name = self._config.group_name.replace(".", "-")
+        app_name = self.get_application_name(self._config.group_name)
         logger.info(f"Using application: {app_name}")
         await self._konflux_client.ensure_application(name=app_name, display_name=app_name)
 
         # Ensure the component resource exists
-        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
-        component_name = f"{app_name}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
-
-        # 'openshift-4-18-ose-installer-terraform' -> 'ose-4-18-ose-installer-terraform'
-        # A component resource name must start with a lower case letter and must be no more than 63 characters long.
-        component_name = f"ose-{component_name.removeprefix('openshift-')}"
-
+        component_name = self.get_component_name(app_name, metadata.distgit_key)
         default_revision = f"art-{self._config.group_name}-assembly-test-dgk-{metadata.distgit_key}"
         logger.info(f"Using component: {component_name}")
         await self._konflux_client.ensure_component(
