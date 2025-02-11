@@ -1132,6 +1132,32 @@
             "enabled",
             "disabled"
           ]
+        },
+        "cachito": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "description": "How to handle cahcito references during konflux / cachi2 builds. 'removal' removes lines with REMOTE_SOURCES_DIR. 'emulation' injects some expected env vars. 'default' makes no changes to the Dockerfile.",
+              "type": "string",
+              "enum": [
+                "default",
+                "removal",
+                "emulation"
+              ]
+            }
+          },
+          "mode?": {
+            "$ref": "#/properties/mode"
+          },
+          "mode!": {
+            "$ref": "#/properties/mode"
+          }
+        },
+        "cachito?": {
+            "$ref": "#/properties/cachito"
+        },
+        "cachito!": {
+            "$ref": "#/properties/cachito"
         }
       }
     }
