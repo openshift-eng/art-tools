@@ -164,7 +164,7 @@ class UpdateGolangPipeline:
         self.art_jira = art_jira
         self.koji_session = koji.ClientSession(BREW_HUB)
         self.tag_builds = tag_builds
-
+        self._slack_client = self.runtime.new_slack_client()
         self._doozer_working_dir = self.runtime.working_dir / "doozer-working"
         self._doozer_env_vars = os.environ.copy()
 
@@ -176,7 +176,7 @@ class UpdateGolangPipeline:
         go_version, el_nvr_map = extract_and_validate_golang_nvrs(self.ocp_version, self.go_nvrs)
         _LOGGER.info(f'Golang version detected: {go_version}')
         _LOGGER.info(f'NVRs by rhel version: {el_nvr_map}')
-
+        self._slack_client.bind_channel(self.ocp_version)
         running_in_jenkins = os.environ.get('BUILD_ID', False)
         if running_in_jenkins:
             title_update = f" {self.ocp_version} - {go_version} - el{list(el_nvr_map.keys())}"
@@ -184,12 +184,13 @@ class UpdateGolangPipeline:
                 title_update += ' [dry-run]'
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
-
+        await self._slack_client.say_in_thread(f":construction: Updating golang for {self.ocp_version} :construction:")
         cannot_proceed = not all(await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()]))
         if cannot_proceed:
-            raise ValueError('Cannot proceed until all builds are tagged and available')
+            raise ValueError('Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?')
 
         _LOGGER.info('All builds are tagged and available!')
+        await self._slack_client.say_in_thread("All golang builds are tagged and available!")
 
         # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
         builder_nvrs = {}
@@ -214,6 +215,7 @@ class UpdateGolangPipeline:
                 raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
 
         _LOGGER.info("Updating streams.yml with found builder images")
+        await self._slack_client.say_in_thread(f"new golang builders available {builder_nvrs.values()}")
         await self.update_golang_streams(go_version, builder_nvrs)
 
         await move_golang_bugs(
@@ -224,6 +226,7 @@ class UpdateGolangPipeline:
             force_update_tracker=self.force_update_tracker,
             dry_run=self.dry_run,
         )
+        await self._slack_client.say_in_thread(f":white_check_mark: Updating golang for {self.ocp_version} complete.")
 
     async def process_build(self, el_v, nvr):
         if await is_latest_and_available(self.ocp_version, el_v, nvr, self.koji_session):
@@ -231,7 +234,7 @@ class UpdateGolangPipeline:
         if not self.tag_builds:
             return False
         # Tag builds into override tag
-        self.tag_build(el_v, nvr)
+        await self.tag_build(el_v, nvr)
         # Wait for repo to be available (5 hours max)
         for _ in range(30):
             await asyncio.sleep(600)  # 10 minutes
@@ -246,7 +249,7 @@ class UpdateGolangPipeline:
             _LOGGER.info("user logged out from session, login again")
             self.koji_session.gssapi_login()
 
-    def tag_build(self, el_v, nvr):
+    async def tag_build(self, el_v, nvr):
         build_tag = f'rhaos-{self.ocp_version}-rhel-{el_v}-override'
         self.brew_login()
         builds_to_tag = [nvr]
@@ -262,6 +265,7 @@ class UpdateGolangPipeline:
                 continue
             self.koji_session.tagBuild(build_tag, build)
             _LOGGER.info(f"Tagged {build} with {build_tag} tag")
+            await self._slack_client.say_in_thread(f"Tagged {build} with {build_tag} tag")
 
     def get_existing_builders(self, el_nvr_map, go_version):
         component = GOLANG_BUILDER_CVE_COMPONENT
@@ -374,10 +378,14 @@ class UpdateGolangPipeline:
                 body = f"Created by job run {build_url}" if build_url else ""
                 pr = upstream_repo.create_pull(title=title, body=body, base=branch_name, head=f"openshift-bot:{branch_name}")
                 self._logger.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
+                await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
             except GithubException as e:
                 self._logger.warning(f"Failed to create pr to bump golang builder: {e}")
         else:
-            _LOGGER.info(f"No update needed in {branch}")
+            if self.tag_builds:
+                await self._slack_client.say_in_thread("No pr created, please double check if it's expected because new build get tagged.")
+            else:
+                _LOGGER.info(f"No update needed in {branch}")
 
     async def _rebase(self, el_v, go_version):
         _LOGGER.info("Rebasing...")
