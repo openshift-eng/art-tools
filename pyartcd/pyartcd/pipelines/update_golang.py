@@ -192,7 +192,7 @@ class UpdateGolangPipeline:
         _LOGGER.info('All builds are tagged and available!')
 
         # Check if openshift-golang-builder builds exist for the provided compiler builds in brew
-        builder_nvrs: dict() = {}
+        builder_nvrs = {}
         if not self.force_image_build:
             builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
 
@@ -307,28 +307,28 @@ class UpdateGolangPipeline:
         go_previous = group_content['vars'].get('GO_PREVIOUS', None)
         update_streams = update_group = False
         # This is to bump minor golang for GO_LATEST
-        if go_version == go_latest:
-            for el_v, builder_nvr in builder_nvrs:
+        if go_latest in go_version:
+            for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
                 latest_go = streams_content[f'rhel-{el_v}-golang']['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-                for stream in streams_content:
-                    if stream['image'] == latest_go:
-                        stream['image'] = new_latest_go
+                for _, info in streams_content.items():
+                    if info['image'] == latest_go:
+                        info['image'] = new_latest_go
                         update_streams = True
         # This is to bump minor golang for GO_PREVIOUS
-        elif go_version == go_previous:
-            for el_v, builder_nvr in builder_nvrs:
+        elif go_previous in go_version:
+            for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
                 latest_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-                for stream in streams_content:
-                    if stream['image'] == latest_go:
-                        stream['image'] = new_latest_go
+                for _, info in streams_content.items():
+                    if info['image'] == latest_go:
+                        info['image'] = new_latest_go
                         update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
         elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
-            for el_v, builder_nvr in builder_nvrs:
+            for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
                 latest_go = streams_content[f'rhel-{el_v}-golang']['image']
                 previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
@@ -352,8 +352,8 @@ class UpdateGolangPipeline:
             branch_name = f"update-golang-{self.ocp_version}-{go_version}"
             title = f"{self.art_jira} - Bump {self.ocp_version} golang builders to {go_version}"
             update_message = f"Bump {self.ocp_version} golang builders to {go_version}"
-            for branch in fork_repo.get_branches():
-                if branch.name == branch_name:
+            for fork_branch in fork_repo.get_branches():
+                if fork_branch.name == branch_name:
                     fork_repo.get_git_ref(f"heads/{branch_name}").delete()
             fork_branch = fork_repo.create_git_ref(f"refs/heads/{branch_name}", upstream_repo.get_branch(branch).commit.sha)
             _LOGGER.info(f"Created fork branch ref {fork_branch.ref}")
