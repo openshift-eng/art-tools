@@ -7,9 +7,11 @@ import asyncio
 
 import aiohttp
 import requests
+from semver import VersionInfo
 from tenacity import retry, wait_fixed, stop_after_attempt
 from ruamel.yaml import YAML
 from artcommonlib.constants import RELEASE_SCHEDULES
+from urllib.parse import quote
 
 LOGGER = logging.getLogger(__name__)
 
@@ -162,6 +164,25 @@ def get_assembly_release_date(assembly, group):
     except KeyError:
         pass
     raise ValueError(f'Assembly release date not found for {assembly}')
+
+
+async def get_assembly_release_date_async(release_name: str):
+    """
+    Get assembly release release date from release schedule API.
+
+    :raises ValueError: If the assembly release date is not found
+    """
+    version = VersionInfo.parse(release_name)
+    release_train = f'openshift-{version.major}.{version.minor}.z'
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}) as response:
+            response.raise_for_status()
+            data = await response.json()
+            for release in data['all_ga_tasks']:
+                if release_name in release['name']:
+                    # convert date format for advisory usage, 2024-02-13 -> 2024-Feb-13
+                    return datetime.strptime(release['date_start'], "%Y-%m-%d").strftime("%Y-%b-%d")
+    raise ValueError(f'Assembly release date not found for {release_name}')
 
 
 def is_release_next_week(group):
