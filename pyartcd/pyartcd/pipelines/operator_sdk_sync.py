@@ -14,6 +14,8 @@ from pyartcd import util, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
+ARCHES = ["x86_64", "s390x", "ppc64le", "aarch64"]
+
 
 class OperatorSDKPipeline:
     def __init__(self, runtime: Runtime, group: str, assembly: str, nvr: str, prerelease: bool, updatelatest: bool, arches: str) -> None:
@@ -60,6 +62,8 @@ class OperatorSDKPipeline:
         sdkVersion = self._get_sdkversion(build)
         self._logger.info(sdkVersion)
         for arch in self.arches.split(','):
+            if arch not in ARCHES:
+                raise Exception(f"Unsupported arch: {arch}")
             self._extract_binaries(arch, sdkVersion, build['extra']['image']['index']['pull'][0])
         if self.assembly:
             self._jira_client.complete_subtask(self.parent_jira_key, "operator-sdk", f"operator_sdk_sync job: {jenkins.get_build_url()}")
@@ -82,10 +86,16 @@ class OperatorSDKPipeline:
         rarch = brew_arch_for_go_arch(arch)
         tarballFilename = f"{self.sdk}-{sdkVersion}-linux-{rarch}.tar.gz"
 
-        cmd = f"rm -rf ./{rarch} && mkdir ./{rarch}" + \
-              f" && oc image extract {pullspec} --path /usr/local/bin/{self.sdk}:./{rarch}/ --confirm" + \
-              f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}" + \
-              f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
+        cmd = [
+            f"rm -rf ./{rarch} &&",
+            f"mkdir ./{rarch} &&",
+            f"oc image extract {pullspec} --path /usr/local/bin/{self.sdk}:./{rarch}/ --confirm &&",
+            f"chmod +x ./{rarch}/{self.sdk} &&",
+            f"tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk} &&",
+            f"ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz &&",
+            f"rm -f ./{rarch}/{self.sdk}"
+        ]
+
         self.exec_cmd(cmd)
         if arch == 'amd64' or arch == 'arm64':
             tarballFilename = f"{self.sdk}-{sdkVersion}-darwin-{rarch}.tar.gz"
