@@ -23,8 +23,8 @@ import doozerlib
 from artcommonlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
 from doozerlib.source_resolver import SourceResolver
-from doozerlib.util import (isolate_el_version_in_brew_tag,
-                            isolate_git_commit_in_release)
+from artcommonlib.util import (isolate_el_version_in_brew_tag,
+                               isolate_git_commit_in_release)
 
 
 class CgitAtomFeedEntry(NamedTuple):
