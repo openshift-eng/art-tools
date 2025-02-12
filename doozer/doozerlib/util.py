@@ -224,7 +224,7 @@ def get_docker_config_json(config_dir):
 
 def isolate_git_commit_in_release(release: str) -> Optional[str]:
     """
-    Given a release field, determines whether is contains
+    Given a release field, determines whether it contains
     .git.<commit> information or .g<commit> (new style). If it does, it returns the value
     of <commit>. If it is not found, None is returned.
     """
@@ -275,25 +275,6 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
         go_arch = possible_arch
     brew_arch = brew_arch_for_go_arch(go_arch)
     return major_minor, brew_arch, is_private
-
-
-def isolate_el_version_in_brew_tag(tag: Union[str, int]) -> Optional[int]:
-    """
-    Given a brew tag (target) name, determines whether it contains
-    a RHEL version. If it does, it returns the version value.
-    If it is not found, None is returned. If an int is passed in,
-    the int is just returned.
-    """
-    if isinstance(tag, int):
-        # If this is already an int, just use it.
-        return tag
-    else:
-        try:
-            return int(str(tag))  # int as a str?
-        except ValueError:
-            pass
-    el_version_match = re.search(r"rhel-(\d+)", tag)
-    return int(el_version_match[1]) if el_version_match else None
 
 
 # https://code.activestate.com/recipes/577504/
