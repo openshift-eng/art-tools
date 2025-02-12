@@ -58,6 +58,9 @@ class Runtime(GroupRuntime):
         self.load_wip = False
         self.load_disabled = False
         self._logger = None
+        self.use_jira = True
+        if str(os.environ.get('USEJIRA')).lower() in ["false", "0"]:
+            self.use_jira = False
         self._bug_trackers = {}
         self.brew_event: Optional[int] = None
         self.assembly: Optional[str] = 'stream'
