@@ -765,7 +765,7 @@ class KonfluxRebaser:
         # Inject build repos for Konflux
         self._add_build_repos(dfp, metadata, dest_dir)
 
-        self._modify_cachito_commands(metadata, df_path)
+        self._modify_cachito_commands(metadata, dfp)
 
         self._reflow_labels(df_path)
 
@@ -886,14 +886,11 @@ class KonfluxRebaser:
             "# End Konflux-specific steps\n\n"
         )
 
-    def _modify_cachito_commands(self, metadata, df_path):
+    def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """
         Konflux does not support cachito, comment it out to support green non-hermetic builds
         For yarn, download it if its missing.
         """
-        dfp = DockerfileParser()
-        dfp.content = open(df_path, "r").read()
-
         lines = dfp.lines
         updated_lines = []
         line_commented = False
@@ -940,9 +937,7 @@ class KonfluxRebaser:
                 line_commented = False
 
         if updated_lines:
-            dfp.content = "".join(updated_lines)
-            with open(df_path, "w") as file:
-                file.write(dfp.content)
+            dfp.lines = updated_lines
 
     def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
