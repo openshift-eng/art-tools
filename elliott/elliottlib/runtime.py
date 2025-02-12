@@ -116,7 +116,7 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none', no_group=False, disabled=None):
+    def initialize(self, mode='none', no_group=False, disabled=None, build_system: str = None):
         if self.initialized:
             return
 
@@ -130,7 +130,7 @@ class Runtime(GroupRuntime):
             if not os.path.isdir(self.working_dir):
                 os.makedirs(self.working_dir)
 
-        super().initialize()
+        super().initialize(build_system)
 
         if self.quiet and self.verbose:
             click.echo("Flags --quiet and --verbose are mutually exclusive")

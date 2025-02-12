@@ -1,6 +1,6 @@
 from functools import lru_cache
 import logging
-from typing import OrderedDict, Optional, Tuple, Iterable, List, Dict
+from typing import OrderedDict, Optional, Tuple, Iterable, List, Union, Dict
 from datetime import datetime, timezone, timedelta, date
 import re
 import asyncio
@@ -35,6 +35,42 @@ def remove_suffix(s: str, suffix: str) -> str:
         return s[:-len(suffix)]
     else:
         return s[:]
+
+
+def isolate_el_version_in_brew_tag(tag: Union[str, int]) -> Optional[int]:
+    """
+    Given a brew tag (target) name, determines whether it contains
+    a RHEL version. If it does, it returns the version value.
+    If it is not found, None is returned. If an int is passed in,
+    the int is just returned.
+    """
+    if isinstance(tag, int):
+        # If this is already an int, just use it.
+        return tag
+    else:
+        try:
+            return int(str(tag))  # int as a str?
+        except ValueError:
+            pass
+    el_version_match = re.search(r"rhel-(\d+)", tag)
+    return int(el_version_match[1]) if el_version_match else None
+
+
+def isolate_git_commit_in_release(release: str) -> Optional[str]:
+    """
+    Given a release field, determines whether it contains
+    .git.<commit> information or .g<commit> (new style). If it does, it returns the value
+    of <commit>. If it is not found, None is returned.
+    """
+    match = re.match(r'.*\.git\.([a-f0-9]+)(?:\.+|$)', release)
+    if match:
+        return match.group(1)
+
+    match = re.match(r'.*\.g([a-f0-9]+)(?:\.+|$)', release)
+    if match:
+        return match.group(1)
+
+    return None
 
 
 def new_roundtrip_yaml_handler():
