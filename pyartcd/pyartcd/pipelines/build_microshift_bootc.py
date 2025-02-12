@@ -53,6 +53,7 @@ class BuildMicroShiftBootcPipeline:
         self.releases_config = None
         self.assembly_type = AssemblyTypes.STREAM
         self.konflux_db = None
+        self.microshift_nvr = None
 
         # determines OCP version
         self._ocp_version = get_ocp_version_from_group(group)
@@ -77,6 +78,10 @@ class BuildMicroShiftBootcPipeline:
             data_path=self._doozer_env_vars["DOOZER_DATA_PATH"]
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
+
+        microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
+        self.microshift_nvr = next(n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9)
+
         bootc_build = await self._rebase_and_build_bootc()
         if bootc_build:
             self._logger.info("Bootc image build: %s", bootc_build.nvr)
@@ -97,6 +102,18 @@ class BuildMicroShiftBootcPipeline:
         repo_url = bootc_build.image_pullspec.rsplit(":")[0]
         for arch, digest in digest_by_arch.items():
             await self.sync_to_mirror(arch, bootc_build.el_target, f"{repo_url}@{digest}")
+
+    async def is_microshift_for_release_in_latest(self, packages_path):
+        cmd = ["aws", "s3", "ls", f"s3://art-srv-enterprise{packages_path}"]
+        try:
+            _, out, _ = await exectools.cmd_gather_async(cmd)
+        except ChildProcessError as ex:
+            self._logger.error(f"Could not inspect {packages_path} in S3: {ex}")
+            return False
+        self._logger.info(f"Directory contents: \n{out}")
+        if self.microshift_nvr in out:
+            return True
+        return False
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -136,7 +153,16 @@ class BuildMicroShiftBootcPipeline:
             await exectools.cmd_assert_async(cmd)
 
         await _run_for(release_path)
-        await _run_for(latest_path)
+
+        # make sure that the latest path has the same microshift build as the given release assembly
+        # only then sync the pullspec to the latest path
+        latest_packages_path = f"{latest_path}/os/Packages/"
+        if await self.is_microshift_for_release_in_latest(latest_packages_path):
+            await _run_for(latest_path)
+        else:
+            self._logger.info(f"Skipping sync to {latest_path} since microshift build for assembly {self.assembly} "
+                              f"was not found in {latest_packages_path}. If {self.assembly} is the desired latest, "
+                              f"make sure that microshift_sync job has successfully completed for the assembly.")
 
     async def get_latest_bootc_build(self):
         bootc_image_name = "microshift-bootc"
@@ -187,12 +213,10 @@ class BuildMicroShiftBootcPipeline:
                     raise ValueError(f"Expected to find microshift package in plashet.yml at"
                                      f" {url}, but could not find it. Use --force to rebuild plashet.")
 
-                microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
-                expected_microshift_nvr = next(n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9)
-                if actual_nvr != expected_microshift_nvr:
-                    self._logger.info(f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed.")
+                if actual_nvr != self.microshift_nvr:
+                    self._logger.info(f"Found nvr {actual_nvr} in plashet.yml is different from expected {self.microshift_nvr}. Plashet build is needed.")
                     return True
-                self._logger.info(f"Plashet has the expected microshift nvr {expected_microshift_nvr}")
+                self._logger.info(f"Plashet has the expected microshift nvr {self.microshift_nvr}")
                 return False
 
         rebuild_needed = await _rebuild_needed() or self.force_plashet_sync
