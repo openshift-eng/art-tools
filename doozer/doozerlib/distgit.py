@@ -34,7 +34,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib import state, util
-from doozerlib.brew import BuildStates
+from artcommonlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.build_info import BrewBuildRecordInspector
