@@ -23,8 +23,6 @@ from tenacity import retry, wait_fixed, stop_after_attempt
 import artcommonlib
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, GO_ARCHES
-from artcommonlib.util import (isolate_el_version_in_brew_tag,
-                               isolate_git_commit_in_release)
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import red_print
 from artcommonlib.model import Model, Missing
