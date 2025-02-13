@@ -21,7 +21,6 @@ from artcommonlib.model import Model
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
-from github import Github, GithubException
 from pyartcd import constants, jenkins, record
 from pyartcd.mail import MailService
 
@@ -97,31 +96,6 @@ async def load_group_config(group: str, assembly: str, env=None,
     if not isinstance(group_config, dict):
         raise ValueError("ocp-build-data contains invalid group config.")
     return group_config
-
-
-def load_errata_config(group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
-    try:
-        github_client = Github(os.environ.get("GITHUB_TOKEN"))
-        user, repo = extract_git_repo(data_path)
-        upstream_repo = github_client.get_repo(f"{user}/{repo}")
-        et_content = upstream_repo.get_contents("erratatool.yml", ref=group)
-        et_data = yaml.safe_load(et_content.decoded_content)
-    except GithubException as e:
-        raise ValueError(f"Can't load errata config from {data_path}: {e}")
-    return et_data
-
-
-def extract_git_repo(data_path: str):
-    """
-    extract git repo name from data path
-    https://github.com/openshift-eng/ocp-build-data --> openshift-eng, ocp-build-data
-    """
-    data_path = data_path.rstrip(".git")
-    parts = data_path.rstrip("/").split("/")
-    if len(parts) < 2:
-        raise ValueError(f"Invalid git repo URL: {data_path}")
-
-    return parts[-2], parts[-1]
 
 
 async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_DATA_URL) -> Optional[Dict]:
