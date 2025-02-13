@@ -110,10 +110,11 @@ class BuildMicroShiftBootcPipeline:
         """
         Microshift team needs the image on quay.io/openshift-release-dev/ocp-v4.0-art-dev as well.
         """
-        # eg: extract 'ose-baremetal-installer-rhel9-v4.19.0-20250210.224515' from
+        # extract tag
+        # e.g.'ose-baremetal-installer-rhel9-v4.19.0-20250210.224515' from
         # quay.io/redhat-user-workloads/ocp-art-tenant/art-images:ose-baremetal-installer-rhel9-v4.19.0-20250210.224515
-        destination_pullspec = f"{destination_repo}:{source_pullspec.split(':')[-1]}"
-
+        tag = source_pullspec.split(':')[-1]
+        destination_pullspec = f"{destination_repo}:{tag}"
         self._logger.info(f"Syncing bootc image from {source_pullspec} to {destination_pullspec}")
         cmd = ['oc', 'image', 'mirror', '--keep-manifest-list', source_pullspec, destination_pullspec]
         await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
