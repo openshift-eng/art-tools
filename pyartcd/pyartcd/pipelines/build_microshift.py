@@ -104,7 +104,7 @@ class BuildMicroShiftPipeline:
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
         create_cmd = [
             "elliott",
-            f"--working-dir={self._elliott_env_vars["ELLIOTT_WORKING_DIR"]}",
+            f"--working-dir={self._elliott_env_vars['ELLIOTT_WORKING_DIR']}",
             f"--group={self.group}",
             "--assembly", self.assembly,
             "create",
@@ -112,7 +112,7 @@ class BuildMicroShiftPipeline:
             f"--art-advisory-key=microshift",
             f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
             f"--manager={self.runtime.config['advisory']['manager']}",
-            f"--package-owner={self.runtime.config["advisory"]["package_owner"]}",
+            f"--package-owner={self.runtime.config['advisory']['package_owner']}",
             f"--date={release_date}",
             "--yes"
         ]
