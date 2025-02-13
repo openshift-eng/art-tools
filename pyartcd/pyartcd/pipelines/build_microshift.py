@@ -3,9 +3,7 @@ import logging
 import os
 import re
 import traceback
-import subprocess
 import click
-from subprocess import PIPE
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
