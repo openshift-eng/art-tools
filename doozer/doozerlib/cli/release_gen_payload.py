@@ -846,13 +846,12 @@ class GenPayloadCli:
         # Ensure that all payload images have been mirrored before updating
         # the imagestream. Otherwise, the imagestream will fail to import the
         # image.
-        tasks = []
+        # We don't use asyncio.gather here because we want to limit concurrency
+        # to avoid failing at the registry level.
         for arch, payload_entries in self.private_payload_entries_for_arch.items():
-            tasks.append(self.mirror_payload_content(arch, payload_entries, True))
+            await self.mirror_payload_content(arch, payload_entries, True)
         for arch, payload_entries in self.payload_entries_for_arch.items():
-            tasks.append(self.mirror_payload_content(arch, payload_entries))
-        await asyncio.gather(*tasks)
-
+            await self.mirror_payload_content(arch, payload_entries)
         await asyncio.sleep(120)
 
         # Updating public and private image streams
@@ -911,7 +910,7 @@ class GenPayloadCli:
                 await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
         # Mirror the images in chunks to avoid erroring out due to possible registry issues
-        image_chunk_size = 50
+        image_chunk_size = 100
         i = 0
         for pullspec_pair_chunk in chunk(list(mirror_src_for_dest.items()), image_chunk_size):
             src_dest_path = self.output_path.joinpath(f"src_dest.{arch}-{'private' if private else 'public'}-{i}.txt")
