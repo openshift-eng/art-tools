@@ -15,6 +15,7 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler, get_assembly_release_date
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
+from elliottlib.errata_async import AsyncErrataAPI
 from ghapi.all import GhApi
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -29,6 +30,7 @@ from pyartcd.util import (get_assembly_type,
                           get_release_name_for_assembly,
                           load_group_config,
                           load_releases_config,
+                          load_errata_config,
                           default_release_suffix,
                           get_microshift_builds)
 
@@ -90,45 +92,42 @@ class BuildMicroShiftPipeline:
         else:
             # Check if microshift advisory is defined in assembly
             if 'microshift' not in advisories:
-                self.advisory_num = self.create_microshift_advisory()
+                self.advisory_num = await self.create_microshift_advisory()
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
             await self._trigger_build_microshift_bootc()
             await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
-
-    def create_microshift_advisory(self, release_date: str) -> int:
+    async def create_microshift_advisory(self, release_date: str) -> int:
         release_name = get_release_name_for_assembly(self.group_name, self.releases_config, self.assembly)
         advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
         release_date = get_assembly_release_date(self.assembly, self.group)
-        self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
-        create_cmd = [
-            "elliott",
-            f"--working-dir={self._elliott_env_vars['ELLIOTT_WORKING_DIR']}",
-            f"--group={self.group}",
-            "--assembly", self.assembly,
-            "create",
-            f"--type={advisory_type}",
-            f"--art-advisory-key=microshift",
-            f"--assigned-to={self.runtime.config['advisory']['assigned_to']}",
-            f"--manager={self.runtime.config['advisory']['manager']}",
-            f"--package-owner={self.runtime.config['advisory']['package_owner']}",
-            f"--date={release_date}",
-            "--yes"
-        ]
-        self._logger.info("Running command: %s", create_cmd)
-        result = subprocess.run(create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self._working_dir)
-        if result.returncode != 0:
-            raise IOError(
-                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
-            )
-        match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
-        )
-        advisory_num = int(match[1])
-        self._logger.info("Created microshift advisory %s", advisory_num)
-        return advisory_num
+        et_data = load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
+        boilerplate = et_data["boilerplates"]["microshift"]
+        errata_api = AsyncErrataAPI()
 
+        self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
+        try:
+            created_advisory = await errata_api.create_advisory(
+                product=et_data['product'],
+                release=boilerplate.get('release', et_data['release']),
+                errata_type=advisory_type,
+                advisory_synopsis=boilerplate['synopsis'],
+                advisory_topic=boilerplate['topic'],
+                advisory_description=boilerplate['description'],
+                advisory_solution=boilerplate['solution'],
+                advisory_quality_responsibility_name=et_data['quality_responsibility_name'],
+                advisory_package_owner_email=self.runtime.config['advisory']['package_owner'],
+                advisory_manager_email=self.runtime.config['advisory']['manager'],
+                advisory_assigned_to_email=self.runtime.config['advisory']['assigned_to'],
+                advisory_publish_date_override=release_date,
+                batch_id=0
+            )
+            advisory_info = next(iter(created_advisory["errata"].values()))
+            advisory_id = advisory_info["id"]
+            resp = await errata_api.request_liveid(advisory_id)
+            self._logger.info(f"Created microshift advisory {advisory_id}")
+        return advisory_id
 
     async def _rebase_and_build_for_stream(self):
         # Do a sanity check
