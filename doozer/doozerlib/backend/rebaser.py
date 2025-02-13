@@ -3,6 +3,7 @@ import hashlib
 import io
 import logging
 import os
+import pathlib
 import re
 import shutil
 from pathlib import Path
@@ -14,9 +15,10 @@ import bashlex.errors
 import yaml
 from artcommonlib import exectools, release_util
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
-from artcommonlib.model import ListModel, Missing
+from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
+from artcommonlib.util import deep_merge
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.brew import BuildStates
@@ -79,7 +81,8 @@ class KonfluxRebaser:
         self._logger = logger or LOGGER
 
         self.konflux_db = self._runtime.konflux_db
-        self.konflux_db.bind(KonfluxBuildRecord)
+        if self.konflux_db:
+            self.konflux_db.bind(KonfluxBuildRecord)
 
     async def rebase_to(
             self,
@@ -91,6 +94,10 @@ class KonfluxRebaser:
             commit_message: str,
             push: bool,
     ) -> None:
+        # If there is a konflux stanza in the image config, merge it with the main config
+        if metadata.config.konflux is not Missing:
+            metadata.config = Model(deep_merge(metadata.config.primitive(), metadata.config.konflux.primitive()))
+
         try:
             # If this image has an upstream source, resolve it
             source = None
@@ -229,9 +236,9 @@ class KonfluxRebaser:
         self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
                                image_repo, uuid_tag)
         metadata.private_fix = private_fix
-        return version, release, private_fix
 
         self._update_dockerignore(build_repo.local_dir)
+        return version, release, private_fix
 
     def _update_dockerignore(self, path):
         """
@@ -241,7 +248,7 @@ class KonfluxRebaser:
         if os.path.exists(docker_ignore_path):
             self._logger.info(f".dockerignore file found at {docker_ignore_path}, adding excludes for .oit folder")
             with open(docker_ignore_path, "a") as file:
-                file.write("\n!/.oit/**")
+                file.write("\n!/.oit/**\n")
 
     def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """ Resolve the parent images for the given image metadata."""
@@ -758,7 +765,7 @@ class KonfluxRebaser:
         # Inject build repos for Konflux
         self._add_build_repos(dfp, metadata, dest_dir)
 
-        self._modify_cachito_commands(metadata, df_path)
+        self._modify_cachito_commands(metadata, dfp)
 
         self._reflow_labels(df_path)
 
@@ -783,22 +790,72 @@ class KonfluxRebaser:
             f"ENV ART_BUILD_NETWORK={network_mode}"
         ]
 
-        cachito_emulation = metadata.config.get("konflux", {}).get("cachito", {}).get("emulation", False)
-        if cachito_emulation:
-            emulation_dir = f"{dest_dir}/cachi2-emulation/app"
-            os.makedirs(emulation_dir, exist_ok=True)
-            with open(f"{emulation_dir}/.dir", "w"):
-                # Create an emtpy file for rebase
-                pass
+        # Three modes for handling upstreams depending on old
+        # cachito functionality
+        # 1. default (no cachito mode specified) - Do nothing special for the Dockerfile. This may be appropriate for Dockerfiles
+        #    well enough to handle cachito & non-cachito environments already.
+        # 2. "cachito-emulation" - inject cachito-like environment variables & resources into Dockerfile.
+        # 3. "cachito-removal" - Comment out lines referencing REMOTE_SOURCES.
+        cachito_mode = metadata.config.konflux.cachito.mode
+        if cachito_mode is Missing:
+            build_deps_mode = 'default'
+        elif cachito_mode in ['emulation', 'removal']:
+            build_deps_mode = f'cachito-{metadata.config.konflux.cachito.mode}'
+        else:
+            raise IOError(f'Unexpected konflux.cachito.mode: {cachito_mode}')
+
+        if metadata.config.konflux.cachito.mode == 'emulation':
+            # In cachito emulation mode, we make allowances for the upstream
+            # Dockerfile to have references to cachito env vars that no longer
+            # exist in cachi2 builds.
+            # The most important env vars are "REMOTE_SOURCES" and "REMOTE_SOURCES_DIR"
+            # which cachito injects and are used in Dockerfile commands like
+            # COPY "$REMOTE_SOURCES" "$REMOTE_SOURCES_DIR"
+            # RUN source "${REMOTE_SOURCES_DIR}/cachito-gomod-with-deps/cachito.env" && make
+            # Our emulation mode ensures that these env vars are defined
+            # and both the COPY and "source" command will not fail.
+            # This may not satisfy all builds cachito expectations, but can help
+            # folks write Dockerfiles that can be built with cachito and cachi2.
+
+            # The directory will serve as REMOTE_SOURCES content in the rebased
+            # upstream repository.
+            # i.e. COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR will resolve as
+            #      COPY cachito-emulation $REMOTE_SOURCES_DIR
+            # During the rebase, populate this directory in the git repo with
+            # files & directories cachito users expect to find.
+            emulation_dir = 'cachito-emulation'
+
+            # Create a path to the location where files that will
+            # populate REMOTE_SOURCES should be written.
+            emulation_path = pathlib.Path(dest_dir).joinpath(emulation_dir)
+
+            # Cachito creates a directory under REMOTE_SOURCES called app
+            # where source code would be extracted. We don't reproduce
+            # this behavior, but we do at least ensure the directory exists
+            # so that Dockerfiles can safely reference it.
+            app_path = emulation_path.joinpath('app')
+            app_path.mkdir(parents=True, exist_ok=True)
+            # A file must exist in the dir for it to be established in git.
+            # Create a stub file.
+            app_path.joinpath('.dir').touch(exist_ok=True)
+
+            # Cachito requires Dockerfiles to source
+            # ${REMOTE_SOURCES_DIR}/cachito-gomod-with-deps/cachito.env . We don't populate
+            # any env vars here, but we do make it safe to source (i.e. an empty file)
+            gomod_deps_path = emulation_path.joinpath('cachito-gomod-with-deps')
+            gomod_deps_path.mkdir(parents=True, exist_ok=True)
+            # Now ensure the cachito.env file exists in REMOTE_SOURCES so it will
+            # be copied into REMOTE_SOURCES_DIR
+            gomod_deps_path.joinpath('cachito.env').touch(exist_ok=True)
 
             konflux_lines += [
-                "ENV ART_BUILD_DEPS_MODE=cachito-emulation",
-                f"ENV REMOTE_SOURCES={dest_dir}/cachito-emulation",
+                f"ENV REMOTE_SOURCES={emulation_dir}",
+                f"ENV REMOTE_SOURCES_DIR=/tmp/{emulation_dir}",
             ]
-        else:
-            konflux_lines += [
-                "ENV ART_BUILD_DEPS_MODE=default",
-            ]
+
+        konflux_lines += [
+            f"ENV ART_BUILD_DEPS_MODE={build_deps_mode}",
+        ]
 
         if network_mode != "hermetic":
             konflux_lines += [
@@ -829,14 +886,11 @@ class KonfluxRebaser:
             "# End Konflux-specific steps\n\n"
         )
 
-    def _modify_cachito_commands(self, metadata, df_path):
+    def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """
         Konflux does not support cachito, comment it out to support green non-hermetic builds
         For yarn, download it if its missing.
         """
-        dfp = DockerfileParser()
-        dfp.content = open(df_path, "r").read()
-
         lines = dfp.lines
         updated_lines = []
         line_commented = False
@@ -857,8 +911,15 @@ class KonfluxRebaser:
                     yarn_line_updated = False
                     continue
 
-            if metadata.config.get("konflux", {}).get("cachito", {}).get("comment", True) and ("REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line):
-                # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR' since cachito is not supported in konflux
+            # If konflux cachito mode is set to "removal", comment out
+            # all lines which reference cachito environment variables. If this doesn't work
+            # for a build, you can try 'mode: emulation' which will inject cachito env vars
+            # into the Dockerfile.
+            cachito_mode = metadata.config.konflux.cachito.mode
+            cachito_commenting_enabled = cachito_mode == 'removal'
+
+            if cachito_commenting_enabled and ("REMOTE_SOURCES" in line or "REMOTE_SOURCE_DIR" in line):
+                # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR' based on cachito mode.
                 updated_lines.append(f"#{line.strip()}\n")
                 line_commented = True
                 self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux")
@@ -876,9 +937,7 @@ class KonfluxRebaser:
                 line_commented = False
 
         if updated_lines:
-            dfp.content = "".join(updated_lines)
-            with open(df_path, "w") as file:
-                file.write(dfp.content)
+            dfp.lines = updated_lines
 
     def _generate_repo_conf(self, metadata: ImageMetadata, dest_dir: Path, repos: Repos):
         """
@@ -1309,7 +1368,7 @@ class KonfluxRebaser:
 
         try:
             self._logger.debug('Retrieving image info for image %s', original_parent)
-            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
+            labels = util.oc_image_info_for_arch__caching(original_parent)['config']['config']['Labels']
 
             # Get builder X.Y
             major, minor, _ = util.extract_version_fields(labels['version'])
@@ -1506,7 +1565,7 @@ class KonfluxRebaser:
                 for override_label in ["io.k8s.description", "io.k8s.display-name", "io.openshift.tags",
                                        "description", "summary"]:
                     if override_label not in labels:
-                        additional_labels[override_label] = "None"
+                        additional_labels[override_label] = "Empty"
 
                 labels.update(additional_labels)
 

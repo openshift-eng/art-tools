@@ -42,7 +42,8 @@ class BuildSyncPipeline:
 
     def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                  emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
-                 images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool):
+                 images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
+                 build_system: str):
         self.runtime = runtime
         self.version = version
         self.group = f'openshift-{version}'
@@ -56,6 +57,7 @@ class BuildSyncPipeline:
         self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
         self.skip_multiarch_payload = skip_multiarch_payload
         self.embargo_permit_ack = embargo_permit_ack
+        self.build_system = build_system
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
         self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
@@ -63,6 +65,11 @@ class BuildSyncPipeline:
 
         self.slack_client = self.runtime.new_slack_client()
         self.slack_client.bind_channel(f'openshift-{self.version}')
+
+        # Imagestream name for Brew builds is 4.y-art-latest
+        # For konflux, it is 4.y-konflux-art-latest
+        self.is_base_name = f'{self.version}-art-latest' if build_system == 'brew'\
+            else f'{self.version}-konflux-art-latest'
 
     async def comment_on_assembly_pr(self, text_body):
         """
@@ -118,6 +125,9 @@ class BuildSyncPipeline:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
     async def run(self):
+        if self.build_system == 'konflux':
+            jenkins.update_title(' [KONFLUX]')
+
         if self.assembly not in ('stream', 'test') and not self.runtime.dry_run:
             # Comment on PR if triggered from gen assembly
             text_body = f"Build sync job [run]({self.job_run}) has been triggered"
@@ -183,7 +193,7 @@ class BuildSyncPipeline:
                              arch)
             suffix = go_suffix_for_arch(arch, is_private=False)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi9 ' \
-                f'{self.version}-art-latest{suffix}:trigger-release-controller --import-mode=PreserveOriginal'
+                f'{self.is_base_name}{suffix}:trigger-release-controller --import-mode=PreserveOriginal'
             _, out, _, = await exectools.cmd_gather_async(cmd)
             self.logger.info('oc output: %s', out)
 
@@ -191,7 +201,7 @@ class BuildSyncPipeline:
             await asyncio.sleep(120)
 
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag ' \
-                f'{self.version}-art-latest{suffix}:trigger-release-controller -d'
+                f'{self.is_base_name}{suffix}:trigger-release-controller -d'
             _, out, _, = await exectools.cmd_gather_async(cmd)
             self.logger.info('oc output: %s', out)
 
@@ -254,7 +264,7 @@ class BuildSyncPipeline:
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
         cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} ' \
-              f'get istag/{self.version}-art-latest{arch_suffix}:{tag} -o=json'
+              f'get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json'
         _, out, _ = await exectools.cmd_gather_async(cmd)
         tag_pullspec = json.loads(out)['tag']['from']['name']
 
@@ -340,6 +350,7 @@ class BuildSyncPipeline:
         if self.doozer_data_gitref:
             group_param += f'@{self.doozer_data_gitref}'
         cmd.append(group_param)
+        cmd.append(f'--build-system={self.build_system}')
         cmd.extend([
             'release:gen-payload',
             f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
@@ -511,12 +522,16 @@ class BuildSyncPipeline:
                    "heterogeneous release payload by setting this to true")
 @click.option("--embargo-permit-ack", is_flag=True, default=False,
               help="To permit embargoed builds to be promoted after embargo lift")
+@click.option("--build-system", required=False, default='brew',
+              help="Whether a Brew payload or a Konflux one has to be produced")
 @pass_runtime
 @click_coroutine
 @start_as_current_span_async(TRACER, "build-sync")
 async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
                      emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
-                     images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool):
+                     images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
+                     build_system: str):
+    jenkins.init_jenkins()
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
         version=version,
@@ -529,7 +544,8 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         images=images,
         exclude_arches=exclude_arches,
         skip_multiarch_payload=skip_multiarch_payload,
-        embargo_permit_ack=embargo_permit_ack
+        embargo_permit_ack=embargo_permit_ack,
+        build_system=build_system
     )
     span = trace.get_current_span()
     span.set_attributes({

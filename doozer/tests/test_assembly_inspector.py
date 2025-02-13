@@ -8,7 +8,7 @@ from doozerlib.assembly_inspector import AssemblyInspector
 
 
 class TestAssemblyInspector(IsolatedAsyncioTestCase):
-    def test_check_installed_packages_for_rpm_delivery(self):
+    async def test_check_installed_packages_for_rpm_delivery(self):
         # Test a standard release with a package tagged into my-ship-ok-tag
         rt = MagicMock(mode="both", group_config=Model({
             "rpm_deliveries": [
@@ -27,6 +27,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
             {"name": "my-integration-tag"},
         ]
         ai = AssemblyInspector(rt, brew_session)
+        await ai.initialize()
         ai.assembly_type = AssemblyTypes.STANDARD
         rpm_packages = {
             "kernel": {"nvr": "kernel-1.2.3-1", "id": 1}

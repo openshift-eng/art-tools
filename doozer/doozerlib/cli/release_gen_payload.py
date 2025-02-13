@@ -31,7 +31,7 @@ from doozerlib.brew import KojiWrapperMetaReturn
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.image import ImageMetadata
-from doozerlib.brew_info import BrewBuildImageInspector, ArchiveImageInspector
+from doozerlib.build_info import BuildRecordInspector, ImageInspector
 from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.runtime import Runtime
 from artcommonlib.telemetry import start_as_current_span_async
@@ -150,14 +150,17 @@ read and propagate/expose this annotation in its display of the release image.
     ).run()
 
 
-def default_imagestream_base_name(version: str) -> str:
-    return f"{version}-art-latest"
+def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
+    if runtime.build_system == 'brew':
+        return f"{version}-art-latest"
+    else:  # konflux
+        return f"{version}-konflux-art-latest"
 
 
 def assembly_imagestream_base_name(runtime: Runtime) -> str:
     version = runtime.get_minor_version()
     if runtime.assembly == 'stream' and runtime.assembly_type is AssemblyTypes.STREAM:
-        return default_imagestream_base_name(version)
+        return default_imagestream_base_name(version, runtime)
     else:
         return f"{version}-art-assembly-{runtime.assembly}"
 
@@ -241,9 +244,9 @@ class PayloadEntry(NamedTuple):
     # The image metadata which associated with the payload
     image_meta: Optional[ImageMetadata] = None
     # An inspector associated with the overall brew build (manifest list) found for the release
-    build_inspector: Optional[BrewBuildImageInspector] = None
+    build_record_inspector: Optional[BuildRecordInspector] = None
     # The brew build archive (arch specific image) that should be tagged into the payload
-    archive_inspector: Optional[ArchiveImageInspector] = None
+    image_inspector: Optional[ImageInspector] = None
 
     # If the entry is for RHCOS, this value will be set
     rhcos_build: Optional[RHCOSBuildInspector] = None
@@ -275,6 +278,7 @@ class GenPayloadCli:
                  moist_run: bool = False, embargo_permit_ack: bool = False):
 
         self.runtime = runtime
+        self.payload_generator = PayloadGenerator(runtime)
         self.logger = runtime.logger if runtime else MagicMock()  # in tests, blackhole logs by default
         # release-controller IS to update (modified per arch, privacy)
         self.base_imagestream = (is_namespace, is_name)
@@ -325,6 +329,7 @@ class GenPayloadCli:
         self.logger.info(f"Collecting latest information associated with the assembly: {rt.assembly}")
         with TRACER.start_as_current_span("Calls AssemblyInspector.__init__"):
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
+            await assembly_inspector.initialize(lookup_mode='both')
 
         self.payload_entries_for_arch, self.private_payload_entries_for_arch = self.generate_payload_entries(assembly_inspector)
         assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
@@ -375,7 +380,6 @@ class GenPayloadCli:
         """
         Generate a status report of the search for inconsistencies across all payloads generated.
         """
-
         rt = self.runtime
         report = dict(
             non_release_images=[image_meta.distgit_key for image_meta in rt.get_non_release_image_metas()],
@@ -385,8 +389,14 @@ class GenPayloadCli:
                 if ii is None
             ],  # A list of metas where the assembly did not find a build
         )
-        report["viable"], report["assembly_issues"] = await self.generate_assembly_issues_report(assembly_inspector)
+        if self.runtime.build_system == 'konflux':
+            # TODO to be removed once assembly issues check is implemented for konflux
+            report["viable"] = True
+            report["assembly_issues"] = {}
+            self.payload_permitted = True
+            return report
 
+        report["viable"], report["assembly_issues"] = await self.generate_assembly_issues_report(assembly_inspector)
         self.payload_permitted = report["viable"]
 
         return report
@@ -402,11 +412,15 @@ class GenPayloadCli:
         span.add_event("Checking assembly content for inconsistencies")
         self.detect_mismatched_siblings(assembly_inspector)
         assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
+        # Build IDs can either be integers (Brew builds, e.g. 3403040)
+        # or strings (Konflux builds, e.g. 'ose-4-18-vsphere-problem-detector-j5n7r'
+        assembly_brew_build_ids = list(filter(lambda build_id: str(build_id).isdigit(), assembly_build_ids))
+        # assembly_konflux_build_ids = list(filter(lambda build_id: isinstance(build_id, str), assembly_build_ids))
 
         with rt.shared_build_status_detector() as bsd:
             # Use the list of builds associated with the group/assembly to warm up BSD caches
-            bsd.populate_archive_lists(assembly_build_ids)
-            bsd.find_shipped_builds(assembly_build_ids)
+            bsd.populate_archive_lists(assembly_brew_build_ids)
+            bsd.find_shipped_builds(assembly_brew_build_ids)
 
         # check that RPMs belonging to this assembly/group are consistent with the assembly definition.
         for rpm_meta in rt.rpm_metas():
@@ -425,7 +439,7 @@ class GenPayloadCli:
         await self.detect_extend_payload_entry_issues(assembly_inspector)
 
         # If the assembly claims to have reference nightlies, assert that our payload matches them exactly.
-        self.assembly_issues.extend(await PayloadGenerator.check_nightlies_consistency(assembly_inspector))
+        self.assembly_issues.extend(await self.payload_generator.check_nightlies_consistency(assembly_inspector))
 
         span.add_event("Summarizing assembly issue permits")
         return self.summarize_issue_permits(assembly_inspector)
@@ -437,9 +451,9 @@ class GenPayloadCli:
         """
         span = trace.get_current_span()
         self.logger.debug("Checking for mismatched sibling sources...")
-        group_images: List = assembly_inspector.get_group_release_images().values()
+        group_images: List = list(assembly_inspector.get_group_release_images().values())
         issues = []
-        for mismatched, sibling in PayloadGenerator.find_mismatched_siblings(group_images):
+        for mismatched, sibling in self.payload_generator.find_mismatched_siblings(group_images):
             issue = AssemblyIssue(
                 f"{mismatched.get_nvr()} was built from a different upstream "
                 f"source commit ({mismatched.get_source_git_commit()[:7]}) "
@@ -459,7 +473,7 @@ class GenPayloadCli:
         """
 
         return [  # (build_id, desired non-GC tag)
-            (bbii.get_brew_build_id(), bbii.get_image_meta().hotfix_brew_tag())
+            (bbii.get_build_id(), bbii.get_image_meta().hotfix_brew_tag())
             for bbii in assembly_inspector.get_group_release_images().values()
             if bbii
         ]
@@ -611,40 +625,41 @@ class GenPayloadCli:
             entries: Dict[str, PayloadEntry]  # Key of this dict is release payload tag name
             payload_issues: List[AssemblyIssue]
             public_repo = self.full_component_repo(repo_type=RepositoryType.PUBLIC)
-            entries, payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, public_repo)
+            entries, payload_issues = self.payload_generator.find_payload_entries(assembly_inspector, arch, public_repo)
 
             public_entries: Dict[str, PayloadEntry] = dict()
             for k, v in entries.items():
-                if not v.build_inspector:
+                if not v.build_record_inspector:
                     # Its RHCOS, since it doesn't have a build inspector. Put it in for now, but change once RHCOS
                     # supports private nightlies
                     public_entries[k] = v
                     continue
 
-                if v.build_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
+                if v.build_record_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
                     public_build = v.image_meta.get_latest_brew_build(default=None,
                                                                       el_target=v.image_meta.branch_el_target(),
                                                                       extra_pattern='*.p0.*')
                     if not public_build:
                         raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
 
-                    public_bbi = BrewBuildImageInspector(runtime=self.runtime, build=public_build)
-                    public_archive_inspector = public_bbi.get_image_archive_inspector(arch)
+                    public_bbi = BuildRecordInspector.get_build_record_inspector(
+                        runtime=self.runtime, build=public_build)
+                    public_image_inspector = public_bbi.get_image_inspector(arch)
 
-                    dest_pullspec = PayloadGenerator.get_mirroring_destination(
-                        public_archive_inspector.get_archive_digest(), public_repo)
-                    dest_manifest_list_pullspec = PayloadGenerator.get_mirroring_destination(
-                        public_archive_inspector.get_brew_build_inspector().get_manifest_list_digest(), public_repo)
+                    dest_pullspec = self.payload_generator.get_mirroring_destination(
+                        public_image_inspector.get_digest(), public_repo)
+                    dest_manifest_list_pullspec = self.payload_generator.get_mirroring_destination(
+                        public_image_inspector.get_manifest_list_digest(), public_repo)
                     public_entry = PayloadEntry(
                         image_meta=v.image_meta,
-                        build_inspector=public_bbi,
-                        archive_inspector=public_archive_inspector,
+                        build_record_inspector=public_bbi,
+                        image_inspector=public_image_inspector,
                         dest_pullspec=dest_pullspec,
                         dest_manifest_list_pullspec=dest_manifest_list_pullspec,
                         issues=list(),
                     )
 
-                    self.logger.info(f'Replacing embargoed image {v.build_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream')
+                    self.logger.info(f'Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream')
                     public_entries[k] = public_entry
                     # It's an embargoed build. Filter it out if its stream
                     continue
@@ -656,10 +671,11 @@ class GenPayloadCli:
 
             # Report issues for any embargoed content being made public.
             # If releasing after embargo lift, these can be permitted using 'EMBARGOED_CONTENT' code
-            embargo_issues = PayloadGenerator.embargo_issues_for_payload(public_entries, arch)
+            embargo_issues = self.payload_generator.embargo_issues_for_payload(public_entries, arch)
             self.assembly_issues.extend(embargo_issues)
 
-            private_entries, private_payload_issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
+            private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
+                assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE))
             private_entries_for_arch[arch] = private_entries
 
             # Check to see if there are private only issues, and add them to the list of assembly issues
@@ -703,7 +719,7 @@ class GenPayloadCli:
 
                     if cross_payload_requirements:
                         self.assembly_issues.extend(
-                            PayloadGenerator.find_rhcos_payload_rpm_inconsistencies(
+                            self.payload_generator.find_rhcos_payload_rpm_inconsistencies(
                                 payload_entry.rhcos_build,
                                 assembly_inspector.get_group_release_images(),
                                 cross_payload_requirements,
@@ -735,7 +751,7 @@ class GenPayloadCli:
         for privacy_mode in self.privacy_modes:  # only for relevant modes
             rhcos_builds = targeted_rhcos_builds[privacy_mode]
             rhcos_inconsistencies: Dict[str, List[str]] = \
-                PayloadGenerator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
+                self.payload_generator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
             if rhcos_inconsistencies:
                 self.assembly_issues.append(AssemblyIssue(
                     f"Found RHCOS inconsistencies in builds {rhcos_builds} "
@@ -747,7 +763,7 @@ class GenPayloadCli:
         for privacy_mode in self.privacy_modes:  # only for relevant modes
             rhcos_builds = targeted_rhcos_builds[privacy_mode]
             for rhcos_build in rhcos_builds:
-                inconsistencies = PayloadGenerator.find_rhcos_build_kernel_inconsistencies(rhcos_build)
+                inconsistencies = self.payload_generator.find_rhcos_build_kernel_inconsistencies(rhcos_build)
                 if inconsistencies:
                     self.assembly_issues.append(AssemblyIssue(
                         f"Found kernel inconsistencies in RHCOS build {rhcos_build} "
@@ -864,16 +880,22 @@ class GenPayloadCli:
         # Prevents writing the same destination twice (not supported by oc if in the same mirroring file):
         mirror_src_for_dest: Dict[str, str] = dict()
 
+        # Login to the konflux registry
+        if self.runtime.build_system == 'konflux':
+            cmd = ['oc', 'registry', 'login', '--registry', 'quay.io/redhat-user-workloads',
+                   f'--auth-basic={os.environ["KONFLUX_ART_IMAGES_USERNAME"]}:{os.environ["KONFLUX_ART_IMAGES_PASSWORD"]}']
+            await exectools.cmd_assert_async(cmd)
+
         for payload_entry in payload_entries.values():
-            if not payload_entry.archive_inspector:
+            if not payload_entry.image_inspector:
                 continue  # Nothing to mirror (e.g. RHCOS)
-            mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.archive_inspector.get_archive_pullspec()
+            mirror_src_for_dest[payload_entry.dest_pullspec] = payload_entry.image_inspector.get_pullspec()
             if payload_entry.dest_manifest_list_pullspec:
                 # For heterogeneous release payloads, if a component builds for all arches
                 # (without using -alt images), we can use the manifest list for the images directly from OSBS.
                 # This saves a significant amount of time compared to building the manifest list again.
                 mirror_src_for_dest[payload_entry.dest_manifest_list_pullspec] = \
-                    payload_entry.build_inspector.get_build_pullspec()
+                    payload_entry.build_record_inspector.get_build_pullspec()
 
         @exectools.limit_concurrency(500)
         @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
@@ -920,8 +942,8 @@ class GenPayloadCli:
         for payload_tag_name, payload_entry in payload_entries.items():
             multi_specs[private_mode].setdefault(payload_tag_name, dict())
 
-            if (private_mode is False and payload_entry.build_inspector
-               and payload_entry.build_inspector.is_under_embargo()
+            if (private_mode is False and payload_entry.build_record_inspector
+               and payload_entry.build_record_inspector.is_under_embargo()
                and self.runtime.assembly_type == AssemblyTypes.STREAM):
                 # No embargoed images for assembly stream
                 # should go to the public release controller, so we will not have
@@ -929,7 +951,7 @@ class GenPayloadCli:
                 incomplete_payload_update = True
                 continue
 
-            istags.append(PayloadGenerator.build_payload_istag(payload_tag_name, payload_entry))
+            istags.append(self.payload_generator.build_payload_istag(payload_tag_name, payload_entry))
             multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
         imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
@@ -951,8 +973,7 @@ class GenPayloadCli:
         filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}" \
                    f"{'-partial' if incomplete_payload_update else ''}.yaml"
         async with aiofiles.open(self.output_path.joinpath(filename), mode="w+", encoding="utf-8") as out_file:
-            istream_spec = PayloadGenerator.build_payload_imagestream(
-                self.runtime,
+            istream_spec = self.payload_generator.build_payload_imagestream(
                 imagestream_name, imagestream_namespace,
                 istags, self.assembly_issues
             )
@@ -1050,7 +1071,7 @@ class GenPayloadCli:
                 # Remove old inconsistency information if it exists
                 new_annotations.pop("release.openshift.io/inconsistency", None)
 
-            new_annotations.update(PayloadGenerator.build_imagestream_annotations(self.runtime, self.assembly_issues))
+            new_annotations.update(self.payload_generator.build_imagestream_annotations(self.assembly_issues))
 
             apiobj.model.metadata["annotations"] = new_annotations
 
@@ -1162,8 +1183,7 @@ class GenPayloadCli:
             # now multi_istags contains istags which all point to component manifest lists. We must
             # run oc adm release new on this set of tags -- once for each arch - to create the arch
             # specific release payloads.
-            multi_release_is = PayloadGenerator.build_payload_imagestream(
-                self.runtime,
+            multi_release_is = self.payload_generator.build_payload_imagestream(
                 imagestream_name, imagestream_namespace, multi_istags,
                 assembly_wide_inconsistencies=self.assembly_issues)
 
@@ -1228,7 +1248,7 @@ class GenPayloadCli:
             # Flow 1: Just reuse the manifest list built in brew and synced to a tag in quay.
             output_digest_pullspec = exchange_pullspec_tag_for_shasum(
                 manifest_list_dests.pop(),
-                entries[0].build_inspector.get_manifest_list_digest())
+                entries[0].image_inspector.get_manifest_list_digest())
             self.logger.info(f"Reusing brew manifest-list {output_digest_pullspec} for component {tag_name}")
         else:
             # Flow 2: Build a new manifest list and push it to quay.
@@ -1238,7 +1258,7 @@ class GenPayloadCli:
         issues = list(issue  # collect issues from each payload entry.
                       for payload_entry in entries
                       for issue in payload_entry.issues or [])
-        return PayloadGenerator.build_payload_istag(
+        return self.payload_generator.build_payload_istag(
             tag_name, PayloadEntry(
                 dest_pullspec=output_digest_pullspec,
                 issues=issues,
@@ -1287,7 +1307,6 @@ class GenPayloadCli:
         sha = await find_manifest_list_sha(output_pullspec)
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
-    @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
     async def create_multi_release_image(self, imagestream_name: str, multi_release_is: Dict, multi_release_dest: str,
                                          multi_release_name: str,
                                          multi_specs: Dict[bool, Dict[str, Dict[str, PayloadEntry]]],
@@ -1305,27 +1324,29 @@ class GenPayloadCli:
         async with aiofiles.open(multi_release_is_path, mode="w+") as mf:
             await mf.write(yaml.safe_dump(multi_release_is))
 
+        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+        async def _run(to_image, to_image_base):
+            return await exectools.cmd_assert_async([
+                "oc", "adm", "release", "new",
+                f"--name={multi_release_name}",
+                "--reference-mode=source",
+                "--keep-manifest-list",
+                f"--from-image-stream-file={str(multi_release_is_path)}",
+                f"--to-image-base={to_image_base}",
+                f"--to-image={to_image}",
+                "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
+            ])
+
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
         arch_release_dests: Dict[str, str] = dict()
-        tasks = []
         for arch, cvo_entry in multi_specs[private_mode]["cluster-version-operator"].items():
             arch_release_dests[arch] = f"{multi_release_dest}-{arch}"
             # Create the arch specific release payload containing tags pointing to manifest list
             # component images.
-            tasks.append(
-                exectools.cmd_assert_async([
-                    "oc", "adm", "release", "new",
-                    f"--name={multi_release_name}",
-                    "--reference-mode=source",
-                    "--keep-manifest-list",
-                    f"--from-image-stream-file={str(multi_release_is_path)}",
-                    f"--to-image-base={cvo_entry.dest_pullspec}",
-                    f"--to-image={arch_release_dests[arch]}",
-                    "--metadata", json.dumps({"release.openshift.io/architecture": "multi"})
-                ])
-            )
-        await asyncio.gather(*tasks)
+            # Note: Do not use asyncio.gather here because it can result in a large number of
+            # concurrent requests to the registry, which can cause unexpected EOFs/fails
+            await _run(to_image=arch_release_dests[arch], to_image_base=cvo_entry.dest_pullspec)
 
         return await self.create_multi_release_manifest_list(arch_release_dests, imagestream_name, multi_release_dest)
 
@@ -1471,29 +1492,31 @@ class GenPayloadCli:
 
 
 class PayloadGenerator:
+    def __init__(self, runtime: Runtime = None):
+        self.runtime = runtime
 
     @staticmethod
-    def find_mismatched_siblings(build_image_inspectors: Iterable[Optional[BrewBuildImageInspector]]) -> \
-            List[Tuple[BrewBuildImageInspector, BrewBuildImageInspector]]:
+    def find_mismatched_siblings(build_record_inspectors: Iterable[Optional[BuildRecordInspector]]) -> \
+            List[Tuple[BuildRecordInspector, BuildRecordInspector]]:
         """
         Sibling images are those built from the same repository. We need to throw an error
         if there are sibling built from different commits.
-        :return: Returns a list of (BrewBuildImageInspector,BrewBuildImageInspector)
+        :return: Returns a list of (BuildRecordInspector,BuildRecordInspector)
                  where the first item is a mismatched sibling of the second
         """
 
         class RepoBuildRecord(NamedTuple):
-            build_image_inspector: BrewBuildImageInspector
+            build_record_inspector: BuildRecordInspector
             source_git_commit: str
 
         # Maps SOURCE_GIT_URL -> RepoBuildRecord(SOURCE_GIT_COMMIT, DISTGIT_KEY, NVR).
         # Where the Tuple is the first build encountered claiming it is sourced from the SOURCE_GIT_URL
         repo_builds: Dict[str, RepoBuildRecord] = dict()
 
-        mismatched_siblings: List[Tuple[BrewBuildImageInspector, BrewBuildImageInspector]] = []
-        for build_image_inspector in build_image_inspectors:
+        mismatched_siblings: List[Tuple[BuildRecordInspector, BuildRecordInspector]] = []
+        for build_record_inspector in build_record_inspectors:
 
-            if not build_image_inspector:
+            if not build_record_inspector:
                 # No build for this component at present.
                 continue
 
@@ -1501,9 +1524,9 @@ class PayloadGenerator:
             # If an artist overrides one sibling's git url, but not another, the following
             # scan would not be able to detect that they were siblings. Instead, we rely on the
             # original image metadata to determine sibling-ness.
-            source_url = build_image_inspector.get_image_meta().raw_config.content.source.git.url
+            source_url = build_record_inspector.get_image_meta().raw_config.content.source.git.url
 
-            source_git_commit = build_image_inspector.get_source_git_commit()
+            source_git_commit = build_record_inspector.get_source_git_commit()
             if not source_url or not source_git_commit:
                 # This is true for distgit only components.
                 continue
@@ -1516,14 +1539,14 @@ class PayloadGenerator:
                 # Another component has build from this repo before. Make
                 # sure it built from the same commit.
                 if potential_conflict.source_git_commit != source_git_commit:
-                    mismatched_siblings.append((build_image_inspector, potential_conflict.build_image_inspector))
+                    mismatched_siblings.append((build_record_inspector, potential_conflict.build_record_inspector))
                     red_print("The following NVRs are siblings but built from different commits: "
-                              f"{potential_conflict.build_image_inspector.get_nvr()} and "
-                              f"{build_image_inspector.get_nvr()}", file=sys.stderr)
+                              f"{potential_conflict.build_record_inspector.get_nvr()} and "
+                              f"{build_record_inspector.get_nvr()}", file=sys.stderr)
             else:
                 # No conflict, so this is our first encounter for this repo; add it to our tracking dict.
                 repo_builds[source_url] = RepoBuildRecord(
-                    build_image_inspector=build_image_inspector, source_git_commit=source_git_commit)
+                    build_record_inspector=build_record_inspector, source_git_commit=source_git_commit)
 
         return mismatched_siblings
 
@@ -1595,7 +1618,7 @@ class PayloadGenerator:
     @staticmethod
     def find_rhcos_payload_rpm_inconsistencies(
             primary_rhcos_build: RHCOSBuildInspector,
-            payload_bbii: Dict[str, BrewBuildImageInspector],
+            payload_bri: Dict[str, BuildRecordInspector],
             # payload tag -> [pkg_name1, ...]
             payload_consistency_config: Dict[str, List[str]]) -> List[AssemblyIssue]:
         """
@@ -1621,7 +1644,7 @@ class PayloadGenerator:
         # check that each member consistency condition is met
         primary_rhcos_build.runtime.logger.debug(f"Running payload consistency checks against {primary_rhcos_build}")
         for payload_tag, consistent_pkgs in payload_consistency_config.items():
-            bbii = payload_bbii.get(payload_tag)
+            bbii = payload_bri.get(payload_tag)
             if not bbii:
                 issues.append(AssemblyIssue(
                     f"RHCOS consistency configuration specifies a payload tag '{payload_tag}'"
@@ -1638,14 +1661,14 @@ class PayloadGenerator:
     @staticmethod
     def validate_pkg_consistency_req(
             payload_tag: str, pkg: str,
-            bbii: BrewBuildImageInspector,
+            bri: BuildRecordInspector,
             rhcos_rpm_vrs: Dict[str, str],
             rhcos_build_id: str) -> Optional[AssemblyIssue]:
         """check that the specified package in the member is consistent with the RHCOS build"""
-        logger = bbii.runtime.logger
-        payload_tag_nvr: str = bbii.get_nvr()
+        logger = bri.runtime.logger
+        payload_tag_nvr: str = bri.get_nvr()
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
-        member_nvrs: Dict[str, Dict] = bbii.get_all_installed_package_build_dicts()  # by name
+        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts()  # by name
         try:
             build = member_nvrs[pkg]
         except KeyError:
@@ -1656,7 +1679,7 @@ class PayloadGenerator:
 
         # get names of all the actual RPMs included in this package build, because that's what we
         # have for comparison in the RHCOS metadata (not the package name).
-        rpm_names = set(rpm["name"] for rpm in bbii.get_rpms_in_pkg_build(build["build_id"]))
+        rpm_names = set(rpm["name"] for rpm in bri.get_rpms_in_pkg_build(build["build_id"]))
 
         # find package RPM names in the RHCOS build and check that they have the same version
         required_vr = "-".join([build["version"], build["release"]])
@@ -1688,8 +1711,7 @@ class PayloadGenerator:
         tag = sha256.replace(":", "-")  # sha256:abcdef -> sha256-abcdef
         return f"{dest_repo}:{tag}"
 
-    @classmethod
-    def find_payload_entries(cls, assembly_inspector: AssemblyInspector,
+    def find_payload_entries(self, assembly_inspector: AssemblyInspector,
                              arch: str, dest_repo: str) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
         """
         Returns a list of images which should be included in the architecture specific release payload.
@@ -1700,35 +1722,34 @@ class PayloadGenerator:
         :return: Map[payload_tag_name] -> PayloadEntry.
         """
 
-        members: Dict[str, PayloadEntry] = cls._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
-        members = cls._replace_missing_payload_entries(members, arch)
-        rhcos_members, issues = cls._find_rhcos_payload_entries(assembly_inspector, arch)
+        members: Dict[str, PayloadEntry] = self._find_initial_payload_entries(assembly_inspector, arch, dest_repo)
+        members = self._replace_missing_payload_entries(members, arch)
+        rhcos_members, issues = self._find_rhcos_payload_entries(assembly_inspector, arch)
         members.update(rhcos_members)
         return members, issues
 
-    @staticmethod
-    def _find_initial_payload_entries(assembly_inspector: AssemblyInspector,
+    def _find_initial_payload_entries(self, assembly_inspector: AssemblyInspector,
                                       arch: str, dest_repo: str) -> Dict[str, PayloadEntry]:
 
         # Maps release payload tag name to the PayloadEntry for the image.
         members: Dict[str, Optional[PayloadEntry]] = dict()
-        for payload_tag, archive_inspector in \
-                PayloadGenerator.get_group_payload_tag_mapping(assembly_inspector, arch).items():
+        for payload_tag, image_inspector in \
+                self.get_group_payload_tag_mapping(assembly_inspector, arch).items():
 
-            if not archive_inspector:
+            if not image_inspector:
                 # There is no build for this payload tag for this CPU arch. This
                 # will be filled in later in this method for the final list.
                 members[payload_tag] = None
                 continue
 
             members[payload_tag] = PayloadEntry(
-                image_meta=archive_inspector.get_image_meta(),
-                build_inspector=archive_inspector.get_brew_build_inspector(),
-                archive_inspector=archive_inspector,
+                image_meta=image_inspector.get_image_meta(),
+                build_record_inspector=image_inspector.get_build_inspector(),
+                image_inspector=image_inspector,
                 dest_pullspec=PayloadGenerator.get_mirroring_destination(
-                    archive_inspector.get_archive_digest(), dest_repo),
+                    image_inspector.get_digest(), dest_repo),
                 dest_manifest_list_pullspec=PayloadGenerator.get_mirroring_destination(
-                    archive_inspector.get_brew_build_inspector().get_manifest_list_digest(), dest_repo),
+                    image_inspector.get_manifest_list_digest(), dest_repo),
                 issues=list(),
             )
         return members
@@ -1809,8 +1830,7 @@ class PayloadGenerator:
             }
         }
 
-    @staticmethod
-    def build_payload_imagestream(runtime, imagestream_name: str, imagestream_namespace: str,
+    def build_payload_imagestream(self, imagestream_name: str, imagestream_namespace: str,
                                   payload_istags: Iterable[Dict],
                                   assembly_wide_inconsistencies: Iterable[AssemblyIssue]) -> Dict:
         """
@@ -1829,7 +1849,7 @@ class PayloadGenerator:
             "metadata": {
                 "name": imagestream_name,
                 "namespace": imagestream_namespace,
-                "annotations": PayloadGenerator.build_imagestream_annotations(runtime, assembly_wide_inconsistencies)
+                "annotations": self.build_imagestream_annotations(assembly_wide_inconsistencies)
             },
             "spec": {
                 "tags": list(payload_istags),
@@ -1838,8 +1858,7 @@ class PayloadGenerator:
 
         return istream_obj
 
-    @staticmethod
-    def build_pipeline_metadata_annotations(runtime) -> Dict:
+    def build_pipeline_metadata_annotations(self) -> Dict:
         """
         :return: If the metadata is available, include information like the Jenkins job URL
                  in a nightly annotation.
@@ -1848,7 +1867,7 @@ class PayloadGenerator:
 
         pipeline_metadata = {
             'release.openshift.io/build-url': os.getenv('BUILD_URL', ''),
-            'release.openshift.io/runtime-brew-event': str(runtime.brew_event),
+            'release.openshift.io/runtime-brew-event': str(self.runtime.brew_event),
         }
 
         return pipeline_metadata
@@ -1878,16 +1897,16 @@ class PayloadGenerator:
             msgs[5:] = ["(...and more)"]
         return {"release.openshift.io/inconsistency": json.dumps(msgs)}
 
-    @staticmethod
-    def build_imagestream_annotations(runtime, inconsistencies: Iterable[AssemblyIssue]) -> Dict:
+    def build_imagestream_annotations(self, inconsistencies: Iterable[AssemblyIssue]) -> Dict:
+        if self.runtime.build_system == 'konflux':
+            return {}  # TODO to be removed
         annotations = {}
-        annotations.update(PayloadGenerator.build_inconsistency_annotations(inconsistencies))
-        annotations.update(PayloadGenerator.build_pipeline_metadata_annotations(runtime))
+        annotations.update(self.build_inconsistency_annotations(inconsistencies))
+        annotations.update(self.build_pipeline_metadata_annotations())
         return annotations
 
-    @staticmethod
-    def get_group_payload_tag_mapping(assembly_inspector: AssemblyInspector,
-                                      arch: str) -> Dict[str, Optional[ArchiveImageInspector]]:
+    def get_group_payload_tag_mapping(self, assembly_inspector: AssemblyInspector,
+                                      arch: str) -> Dict[str, Optional[ImageInspector]]:
 
         """
         Each payload tag name used to map exactly to one release imagemeta. With the advent of '-alt' images,
@@ -1899,7 +1918,7 @@ class PayloadGenerator:
 
         brew_arch = brew_arch_for_go_arch(arch)  # Make certain this is brew arch nomenclature
         members: Dict[str, Optional[
-            ArchiveImageInspector]] = dict()  # Maps release payload tag name to the archive which should populate it
+            ImageInspector]] = dict()  # Maps release payload tag name to the archive which should populate it
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
 
             if build_inspector is None:
@@ -1933,21 +1952,24 @@ class PayloadGenerator:
                 # This was tag not explicitly declared, so ignore the duplicate image.
                 continue
 
-            archive_inspector = build_inspector.get_image_archive_inspector(brew_arch)
+            try:
+                image_inspector = build_inspector.get_image_inspector(brew_arch)
+            except ChildProcessError:  # raised by Konflux in case oc image info fails
+                image_inspector = None
 
-            if not archive_inspector:
+            if not image_inspector and not self.runtime.build_system == 'konflux':
+                # TODO allowing this for konflux, in the future will should always raise an exception
                 # There is no build for this CPU architecture for this image_meta/build. This finding
                 # conflicts with the `arch not in image_meta.get_arches()` check above.
                 # Best to fail.
                 raise IOError(f"{dgk} claims to be built for {image_meta.get_arches()} "
-                              f"but did not find {brew_arch} build for {build_inspector.get_brew_build_webpage_url()}")
+                              f"but did not find {brew_arch} build for {build_inspector.get_build_webpage_url()}")
 
-            members[tag_name] = archive_inspector
+            members[tag_name] = image_inspector
 
         return members
 
-    @staticmethod
-    async def _check_nightly_consistency(assembly_inspector: AssemblyInspector,
+    async def _check_nightly_consistency(self, assembly_inspector: AssemblyInspector,
                                          nightly: str, arch: str) -> List[AssemblyIssue]:
 
         runtime = assembly_inspector.runtime
@@ -1984,7 +2006,7 @@ class PayloadGenerator:
 
         payload_entries: Dict[str, PayloadEntry]
         issues: List[AssemblyIssue]
-        payload_entries, issues = PayloadGenerator.find_payload_entries(assembly_inspector, arch, "")
+        payload_entries, issues = self.find_payload_entries(assembly_inspector, arch, "")
         rhcos_container_configs = {tag.name: tag for tag in rhcos.get_container_configs(runtime)}
         for component_tag in release_info.references.spec.tags:  # For each tag in the imagestream
             payload_tag_name: str = component_tag.name  # e.g. "aws-ebs-csi-driver"
@@ -2000,15 +2022,15 @@ class PayloadGenerator:
             if not entry:
                 raise IOError(f"Did not find {nightly} payload tag {payload_tag_name} in computed assembly payload")
 
-            if entry.archive_inspector:
-                if entry.archive_inspector.get_archive_digest() != pullspec_sha:
+            if entry.image_inspector:
+                if entry.image_inspector.get_digest() != pullspec_sha:
                     # Impermissible because the artist should remove
                     # the reference nightlies from the assembly definition
                     issues.append(
                         AssemblyIssue(
                             f"{nightly} contains {payload_tag_name} sha {pullspec_sha} but assembly computed archive: "
-                            f"{entry.archive_inspector.get_archive_id()} and "
-                            f"{entry.archive_inspector.get_archive_pullspec()}", component="reference-releases"))
+                            f"{entry.image_inspector.get_archive_id()} and "
+                            f"{entry.image_inspector.get_pullspec()}", component="reference-releases"))
 
             elif entry.rhcos_build:
                 actual_digest = entry.rhcos_build.get_container_digest(rhcos_container_configs[payload_tag_name])
@@ -2038,8 +2060,9 @@ class PayloadGenerator:
 
         issues: List[AssemblyIssue] = []
         tasks = []
+        generator = PayloadGenerator()
         for arch, nightly in basis.reference_releases.primitive().items():
-            tasks.append(PayloadGenerator._check_nightly_consistency(assembly_inspector, nightly, arch))
+            tasks.append(generator._check_nightly_consistency(assembly_inspector, nightly, arch))
         results = await asyncio.gather(*tasks)
         issues.extend([issue for result in results for issue in result])
         return issues
@@ -2051,13 +2074,13 @@ class PayloadGenerator:
         """
         issues = []
         for payload_tag, entry in entries.items():
-            if not entry.build_inspector:
+            if not entry.build_record_inspector:
                 # Probably RHCOS
                 continue
 
-            if entry.build_inspector.is_under_embargo():
+            if entry.build_record_inspector.is_under_embargo():
                 issues.append(AssemblyIssue(
-                    f"Found embargoed build {entry.build_inspector.get_nvr()} in payload entries for arch {arch}",
+                    f"Found embargoed build {entry.build_record_inspector.get_nvr()} in payload entries for arch {arch}",
                     component=entry.image_meta.name,
                     code=AssemblyIssueCode.EMBARGOED_CONTENT
                 ))

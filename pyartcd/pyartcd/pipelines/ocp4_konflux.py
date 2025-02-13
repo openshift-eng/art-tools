@@ -11,6 +11,7 @@ import click
 import yaml
 
 from artcommonlib import exectools
+from artcommonlib.util import new_roundtrip_yaml_handler
 
 from pyartcd import constants, util, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -157,6 +158,53 @@ class KonfluxOcp4Pipeline:
 
         LOGGER.info("All builds completed successfully")
 
+    async def sync_images(self):
+        if self.runtime.dry_run:
+            LOGGER.info('Not syncing images in dry run mode')
+            return
+
+        LOGGER.info('Syncing images...')
+
+        record_log = self.parse_record_log()
+        if not record_log:
+            LOGGER.error('record.log not found!')
+            return
+
+        built_images = [entry['name'] for entry in record_log['image_build_konflux'] if not int(entry['status'])]
+        failed_images = [entry['name'] for entry in record_log['image_build_konflux'] if int(entry['status'])]
+        if len(failed_images) <= 10:
+            jenkins.update_description(f'Failed images: {", ".join(failed_images)}<br/>')
+        else:
+            jenkins.update_description(f'{len(failed_images)} images failed. Check record.log for details<br/>')
+
+        if not built_images:
+            # Nothing to do, skipping build-sync
+            LOGGER.info('All image builds failed, nothing to sync')
+            return
+
+        if self.version != '4.19':
+            return  # TODO to be removed
+
+        if self.assembly == 'test':
+            self.runtime.logger.warning('Skipping build-sync job for test assembly')
+            return
+
+        _, out, _ = await exectools.cmd_gather_async([
+            *self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml'])
+        exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
+        for arch in self.arches:
+            exclude_arches.remove(arch)
+
+        jenkins.start_build_sync(
+            build_version=self.version,
+            assembly=self.assembly,
+            doozer_data_path=self.data_path,
+            doozer_data_gitref=self.data_gitref,
+            build_system='konflux',
+            exclude_arches=exclude_arches,
+            SKIP_MULTI_ARCH_PAYLOAD=True,  # TODO to be removed
+        )
+
     async def init_build_plan(self):
         # Get number of images in current group
         shutil.rmtree(self.runtime.doozer_working, ignore_errors=True)
@@ -215,25 +263,40 @@ class KonfluxOcp4Pipeline:
         ])
 
     def trigger_bundle_build(self):
-        record_log_path = Path(self.runtime.doozer_working, 'record.log')
-        if not record_log_path.exists():
+        if self.skip_bundle_build:
+            LOGGER.warning("Skipping bundle build step because --skip-bundle-build flag is set")
+            return
+
+        record_log = self.parse_record_log()
+        if not record_log:
             LOGGER.warning('record.log not found, skipping bundle build')
             return
+
+        try:
+            records = record_log.get('image_build_konflux', [])
+            operator_nvrs = []
+            for record in records:
+                if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
+                    operator_nvrs.append(record['nvrs'].split(',')[0])
+            if operator_nvrs:
+                jenkins.start_olm_bundle_konflux(
+                    build_version=self.version,
+                    assembly=self.assembly,
+                    operator_nvrs=operator_nvrs,
+                    doozer_data_path=self.data_path or '',
+                    doozer_data_gitref=self.data_gitref or '',
+                )
+        except Exception as e:
+            LOGGER.exception(f"Failed to trigger bundle build: {e}")
+
+    def parse_record_log(self) -> Optional[dict]:
+        record_log_path = Path(self.runtime.doozer_working, 'record.log')
+        if not record_log_path.exists():
+            return None
+
         with record_log_path.open('r') as file:
             record_log: dict = record_util.parse_record_log(file)
-        records = record_log.get('image_build_konflux', [])
-        operator_nvrs = []
-        for record in records:
-            if record['has_olm_bundle'] == '1' and record['status'] == '0' and record.get('nvrs', None):
-                operator_nvrs.append(record['nvrs'].split(',')[0])
-        if operator_nvrs:
-            jenkins.start_olm_bundle_konflux(
-                build_version=self.version,
-                assembly=self.assembly,
-                operator_nvrs=operator_nvrs,
-                doozer_data_path=self.data_path or '',
-                doozer_data_gitref=self.data_gitref or '',
-            )
+            return record_log
 
     async def run(self):
         await self.initialize()
@@ -250,14 +313,10 @@ class KonfluxOcp4Pipeline:
         LOGGER.info(f"Building images for OCP {self.version} with release {input_release}")
         try:
             await self.build()
+
         finally:
-            if self.skip_bundle_build:
-                LOGGER.warning("Skipping bundle build step because --skip-bundle-build flag is set")
-            else:
-                try:
-                    self.trigger_bundle_build()
-                except Exception as e:
-                    LOGGER.exception(f"Failed to trigger bundle build: {e}")
+            await self.sync_images()
+            self.trigger_bundle_build()
             await self.clean_up()
 
 

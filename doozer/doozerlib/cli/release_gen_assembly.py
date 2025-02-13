@@ -18,7 +18,7 @@ from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib import brew
 from artcommonlib import rhcos, exectools
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.runtime import Runtime
 
 
@@ -143,7 +143,7 @@ class GenAssemblyCli:
         # Maps RHCOS container name(s) to brew arch name to pullspec(s) from nightly
         self.rhcos_by_tag: Dict[str, Dict[str, str]] = dict()
         # Maps component package_name to brew build dict found for nightly
-        self.component_image_builds: Dict[str, BrewBuildImageInspector] = dict()
+        self.component_image_builds: Dict[str, BrewBuildRecordInspector] = dict()
         # Dict[ package_name ] -> Dict[ el? ] -> brew build dict
         self.component_rpm_builds: Dict[str, Dict[int, Dict]] = dict()
         self.basis_event: int = 0
@@ -257,11 +257,11 @@ class GenAssemblyCli:
 
             # The brew_build_inspector will take this archive image and find the actual
             # brew build which created it.
-            image_info = await util.oc_image_info_async(payload_tag_pullspec)
+            image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec)
             image_labels = image_info['config']['config']['Labels']
             package_name = image_labels['com.redhat.component']
             build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
-            brew_build_inspector = BrewBuildImageInspector(self.runtime, build_nvr)
+            brew_build_inspector = BrewBuildRecordInspector(self.runtime, payload_tag_pullspec)
             if package_name in self.component_image_builds:
                 # If we have already encountered this package once in the list of releases we are
                 # processing, then make sure that the original NVR we found matches the new NVR.
@@ -305,7 +305,7 @@ class GenAssemblyCli:
             # short enough to ensure that no other build of this image could have
             # completed before the basis event.
 
-            completion_ts: float = brew_build_inspector.get_brew_build_dict()['completion_ts']
+            completion_ts: float = brew_build_inspector.get_build_obj()['completion_ts']
             # If the basis event for this image is > the basis_event capable of
             # sweeping images we've already analyzed, increase the basis_event_ts.
             self.basis_event_ts = max(self.basis_event_ts, completion_ts + (60.0 * 5))
@@ -358,7 +358,7 @@ class GenAssemblyCli:
                                       f'at estimated brew event {self.basis_event}. No normal reason for this to '
                                       f'happen so exiting out of caution.')
 
-            basis_event_build_dict: BrewBuildImageInspector = BrewBuildImageInspector(
+            basis_event_build_dict: BrewBuildRecordInspector = BrewBuildRecordInspector(
                 self.runtime, basis_event_dict['id'])
             basis_event_build_nvr = basis_event_build_dict.get_nvr()
 
@@ -445,7 +445,7 @@ class GenAssemblyCli:
         with self.runtime.shared_koji_client_session() as koji_api:
 
             archive_lists = brew.list_archives_by_builds(
-                build_ids=[b.get_brew_build_id() for b in self.component_image_builds.values()],
+                build_ids=[b.get_build_id() for b in self.component_image_builds.values()],
                 build_type="image",
                 session=koji_api
             )
@@ -639,7 +639,7 @@ class GenAssemblyCli:
 
     def _get_member_overrides(self):
         """
-        self.component_image_builds now contains a mapping of package_name -> BrewBuildImageInspector
+        self.component_image_builds now contains a mapping of package_name -> BuildRecordInspector
         for all images that should be included in the assembly.
 
         self.component_rpm_builds now contains a mapping of package_name to different RHEL versions
@@ -653,7 +653,7 @@ class GenAssemblyCli:
 
         for package_name in self.force_is:
             if package_name in self.component_image_builds:
-                build_inspector: BrewBuildImageInspector = self.component_image_builds[package_name]
+                build_inspector: BrewBuildRecordInspector = self.component_image_builds[package_name]
                 dgk = build_inspector.get_image_meta().distgit_key
                 image_member_overrides.append({
                     'distgit_key': dgk,

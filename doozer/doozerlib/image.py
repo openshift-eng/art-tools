@@ -11,7 +11,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from doozerlib import util
 from doozerlib import brew, coverity
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 
@@ -410,7 +410,7 @@ class ImageMetadata(Metadata):
                 builder_brew_build = ImageMetadata.builder_image_builds.get(builder_image_url, None)
 
                 if not builder_brew_build:
-                    latest_builder_image_info = Model(util.oc_image_info__caching(builder_image_url))
+                    latest_builder_image_info = Model(util.oc_image_info_for_arch__caching(builder_image_url))
                     builder_info_labels = latest_builder_image_info.config.config.Labels
                     builder_nvr_list = [builder_info_labels['com.redhat.component'], builder_info_labels['version'], builder_info_labels['release']]
 
@@ -427,7 +427,7 @@ class ImageMetadata(Metadata):
                     return self, RebuildHint(RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built')
 
             self.logger.info("Getting RPMs contained in %s", image_nvr)
-            bbii = BrewBuildImageInspector(self.runtime, image_build)
+            bbii = BrewBuildRecordInspector(self.runtime, image_build)
 
             arch_archives = bbii.get_arch_archives()
             build_arches = set(arch_archives.keys())

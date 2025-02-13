@@ -9,7 +9,7 @@ import logging
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BrewBuildRecordInspector
 
 
 class MockRuntime(object):
@@ -18,7 +18,7 @@ class MockRuntime(object):
         self.logger = logger
 
 
-class TestBrewBuildImageInspector(unittest.TestCase):
+class TestBrewBuildRecordInspector(unittest.TestCase):
 
     def setUp(self):
         self.logger = MagicMock(spec=logging.Logger)
@@ -56,7 +56,7 @@ class TestBrewBuildImageInspector(unittest.TestCase):
         self.koji_mock.getBuild.return_value = image_build_dict
         self.koji_mock.listArchives.return_value = image_archives
         fake_cmd_assert.return_value = (json.dumps(oc_info_dict), "")
-        bbii = BrewBuildImageInspector(self.runtime, image_build_dict['nvr'])
+        bbii = BrewBuildRecordInspector(self.runtime, image_build_dict['nvr'])
 
         self.assertEqual(bbii.get_nvr(), image_build_dict['nvr'])
         self.assertEqual(bbii.get_source_git_url(), 'https://github.com/openshift/sriov-network-operator')
@@ -74,7 +74,7 @@ class TestBrewBuildImageInspector(unittest.TestCase):
         self.koji_mock.getBuild = MagicMock()  # Get rid of old return_value
         self.koji_mock.getBuild.side_effect = canned_getBuild
         self.koji_mock.listRPMs.side_effect = canned_listRPMs
-        archive_inspectors = bbii.get_image_archive_inspectors()
+        archive_inspectors = bbii.get_image_inspectors()
         self.assertEqual(len(archive_inspectors), 4)  # One per image archive
 
         for ai in archive_inspectors:
@@ -83,13 +83,13 @@ class TestBrewBuildImageInspector(unittest.TestCase):
             bd = ai.get_installed_package_build_dicts()
             self.assertEqual(bd['grep']['nvr'], 'grep-3.1-6.el8')
 
-        self.assertIsNone(bbii.get_image_archive_inspector('s390x').get_installed_package_build_dicts().get('tzdata', None))  # Remove this from the resource data by hand for this test
-        self.assertIsNotNone(bbii.get_image_archive_inspector('x86_64').get_installed_package_build_dicts().get('tzdata', None))  # Remove this from the resource data by hand for this test
+        self.assertIsNone(bbii.get_image_inspector('s390x').get_installed_package_build_dicts().get('tzdata', None))  # Remove this from the resource data by hand for this test
+        self.assertIsNotNone(bbii.get_image_inspector('x86_64').get_installed_package_build_dicts().get('tzdata', None))  # Remove this from the resource data by hand for this test
         self.assertIsNotNone(bbii.get_all_installed_package_build_dicts().get('tzdata', None))  # Even though not in s390x, it should be in aggregate
         self.assertEqual(bbii.get_all_installed_package_build_dicts()['grep']['nvr'], 'grep-3.1-6.el8')  # Ensure aggregate has the same nvr for grep
 
-        self.assertEqual(bbii.get_image_archive_inspector('s390x').get_archive_pullspec(), 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-operator-must-gather:rhaos-4.9-rhel-8-containers-candidate-98861-20210726154614-s390x')
-        self.assertEqual(bbii.get_image_archive_inspector('s390x').get_archive_digest(), 'sha256:1f3ebef02669eca018dbfd2c5a65575a21e4920ebe6a5328029a5000127aaa4b')
+        self.assertEqual(bbii.get_image_inspector('s390x').get_pullspec(), 'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-sriov-operator-must-gather:rhaos-4.9-rhel-8-containers-candidate-98861-20210726154614-s390x')
+        self.assertEqual(bbii.get_image_inspector('s390x').get_digest(), 'sha256:1f3ebef02669eca018dbfd2c5a65575a21e4920ebe6a5328029a5000127aaa4b')
 
 
 if __name__ == "__main__":

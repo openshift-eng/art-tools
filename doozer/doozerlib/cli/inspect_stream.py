@@ -2,7 +2,7 @@ import click
 from pprint import pprint
 
 from artcommonlib.assembly import AssemblyIssueCode, AssemblyIssue
-from doozerlib.cli import cli
+from doozerlib.cli import cli, click_coroutine
 from doozerlib.cli.release_gen_payload import PayloadGenerator
 from doozerlib.assembly_inspector import AssemblyInspector
 
@@ -11,8 +11,9 @@ from doozerlib.assembly_inspector import AssemblyInspector
 @click.argument("code", type=click.Choice([code.name for code in AssemblyIssueCode], case_sensitive=False),
                 required=True)
 @click.option("--strict", default=False, type=bool, is_flag=True, help='Fail even if permitted')
+@click_coroutine
 @click.pass_obj
-def inspect_stream(runtime, code, strict):
+async def inspect_stream(runtime, code, strict):
     code = AssemblyIssueCode[code]
     if runtime.assembly != 'stream':
         print(f'Disregarding non-stream assembly: {runtime.assembly}. This command is only intended for stream')
@@ -20,7 +21,8 @@ def inspect_stream(runtime, code, strict):
     runtime.initialize(clone_distgits=False)
 
     if code == AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS:
-        assembly_inspector = AssemblyInspector(runtime, lookup_mode=None)
+        assembly_inspector = AssemblyInspector(runtime)
+        await assembly_inspector.initialize(lookup_mode=None)
         rhcos_builds, rhcos_inconsistencies = _check_inconsistent_rhcos_rpms(runtime, assembly_inspector)
         if rhcos_inconsistencies:
             msg = f'Found RHCOS inconsistencies in builds {rhcos_builds}'
@@ -41,7 +43,8 @@ def inspect_stream(runtime, code, strict):
             exit(0)
 
         runtime.logger.info("Checking cross-payload consistency requirements defined in group.yml")
-        assembly_inspector = AssemblyInspector(runtime, lookup_mode="images")
+        assembly_inspector = AssemblyInspector(runtime)
+        await assembly_inspector.initialize(lookup_mode="images")
         issues = _check_cross_payload_consistency_requirements(runtime, assembly_inspector, requirements)
         if issues:
             print('Payload contents consistency requirements not satisfied')

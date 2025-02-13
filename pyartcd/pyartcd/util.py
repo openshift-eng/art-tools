@@ -349,36 +349,6 @@ def log_file_content(path_to_file):
         logger.info(f.read())
 
 
-async def sync_images(version: str, assembly: str, operator_nvrs: list,
-                      doozer_data_path: str = constants.OCP_BUILD_DATA_URL, doozer_data_gitref: str = ''):
-    """
-    Run an image sync after a build. This will mirror content from internal registries to quay.
-    After a successful sync an image stream is updated with the new tags and pullspecs.
-    Also update the app registry with operator manifests.
-    If operator_nvrs is given, will only build manifests for specified operator NVRs.
-    If builds don't succeed, email and set result to UNSTABLE.
-    """
-
-    if assembly == 'test':
-        logger.warning('Skipping build-sync job for test assembly')
-    else:
-        jenkins.start_build_sync(
-            build_version=version,
-            assembly=assembly,
-            doozer_data_path=doozer_data_path,
-            doozer_data_gitref=doozer_data_gitref
-        )
-
-    if operator_nvrs:
-        jenkins.start_olm_bundle(
-            build_version=version,
-            assembly=assembly,
-            operator_nvrs=operator_nvrs,
-            doozer_data_path=doozer_data_path,
-            doozer_data_gitref=doozer_data_gitref
-        )
-
-
 def default_release_suffix():
     """
     Returns a release suffix based on current timestamp

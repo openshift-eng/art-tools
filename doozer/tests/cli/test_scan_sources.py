@@ -14,7 +14,7 @@ class TestScanSourcesCli(TestCase):
             '{"image": {"dockerImageMetadata": {"Config": {"Labels": {"org.opencontainers.image.version": "id-1"}}}}}',
             "stderr")
 
-        runtime = MagicMock(rpm_map=[])
+        runtime = MagicMock(rpm_map=[], build_system='brew')
         cli = ConfigScanSources(runtime, "kc.conf", False)
 
         self.assertEqual("id-1", cli._tagged_rhcos_id("cname", "4.2", "s390x", True))

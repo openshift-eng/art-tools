@@ -37,7 +37,7 @@ from doozerlib import state, util
 from doozerlib.brew import BuildStates
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.brew_info import BrewBuildImageInspector
+from doozerlib.build_info import BrewBuildRecordInspector
 from artcommonlib.git_helper import git_clone, gather_git
 from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
@@ -1308,7 +1308,7 @@ class ImageDistGitRepo(DistGitRepo):
                         self.logger.error(f'Unable to extract brew task information for {task_id}')
 
     def get_installed_packages(self, image_pullspec) -> list:
-        bbii = BrewBuildImageInspector(self.runtime, image_pullspec)
+        bbii = BrewBuildRecordInspector(self.runtime, image_pullspec)
         installed_packages_dict = bbii.get_all_installed_package_build_dicts()
         return sorted([p['nvr'] for p in installed_packages_dict.values()])
 
@@ -1539,7 +1539,7 @@ class ImageDistGitRepo(DistGitRepo):
 
         try:
             self.logger.debug('Retrieving image info for image %s', original_parent)
-            labels = util.oc_image_info__caching(original_parent)['config']['config']['Labels']
+            labels = util.oc_image_info_for_arch__caching(original_parent)['config']['config']['Labels']
 
             # Get builder X.Y
             major, minor, _ = extract_version_fields(labels['version'])
@@ -1758,12 +1758,12 @@ class ImageDistGitRepo(DistGitRepo):
 
             # We will infer the rhel version from the last build layer in the upstream Dockerfile
             last_layer_pullspec = parent_images[-1]
-            image_labels = util.oc_image_info__caching(last_layer_pullspec)['config']['config']['Labels']
+            image_labels = util.oc_image_info_for_arch__caching(last_layer_pullspec)['config']['config']['Labels']
             if 'version' not in image_labels or 'release' not in image_labels:
                 # This does not appear to be a brew image. We can't determine RHEL.
                 return None
 
-            bbii = BrewBuildImageInspector(self.runtime, last_layer_pullspec)
+            bbii = BrewBuildRecordInspector(self.runtime, last_layer_pullspec)
             version = bbii.get_rhel_base_version()
 
         except Exception as e:
