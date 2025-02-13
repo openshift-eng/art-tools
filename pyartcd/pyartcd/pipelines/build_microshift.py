@@ -26,7 +26,7 @@ from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (get_assembly_type,
                           isolate_el_version_in_release,
-                          get_release_name_for_assembly
+                          get_release_name_for_assembly,
                           load_group_config,
                           load_releases_config,
                           default_release_suffix,
@@ -181,7 +181,7 @@ class BuildMicroShiftPipeline:
         if self.payloads:
             raise ValueError(f"Specifying payloads for assembly type {self.assembly_type.value} is not allowed.")
 
-        release_name = util.get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
+        release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
 
         await self.slack_client.say_in_thread(f":construction: Microshift prep for assembly {self.assembly} :construction:")
 
