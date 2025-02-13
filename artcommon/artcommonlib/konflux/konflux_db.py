@@ -13,7 +13,7 @@ from sqlalchemy import Column, String, DateTime, func
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord, Engine, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, ArtifactType, KonfluxRecord, Engine
 
 SCHEMA_LEVEL = 1
 DEFAULT_SEARCH_WINDOW = 90
@@ -216,7 +216,7 @@ class KonfluxDb:
             completed_before: typing.Optional[datetime] = None,
             extra_patterns: dict = {},
             strict: bool = False,
-    ) -> typing.Optional[KonfluxBuildRecord]:
+    ) -> typing.Optional[KonfluxRecord]:
         """
         Search for the latest Konflux build information in BigQuery.
 
