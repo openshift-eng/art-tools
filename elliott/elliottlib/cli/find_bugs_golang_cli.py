@@ -16,7 +16,7 @@ from elliottlib.cli.get_golang_report_cli import golang_report_for_version
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import JIRABugTracker, JIRABug, BugzillaBugTracker, BugzillaBug
 from artcommonlib.rhcos import get_container_configs
-from elliottlib.util import get_nvrs_from_payload, get_golang_container_nvrs, get_golang_rpm_nvrs
+from elliottlib.util import get_nvrs_from_release, get_golang_container_nvrs, get_golang_rpm_nvrs
 from elliottlib import errata
 from doozerlib.cli.get_nightlies import find_rc_nightlies
 from pyartcd.util import get_release_name_for_assembly, load_releases_config
@@ -301,7 +301,7 @@ class FindBugsGolangCli:
             self._logger.info(f"Fetching go build nvrs for {self.pullspec}...")
             rhcos_images = {c['name'] for c in get_container_configs(self._runtime)}
             try:
-                nvr_map = await get_nvrs_from_payload(self.pullspec, rhcos_images)
+                nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images)
             except Exception as e:
                 self._logger.error("Does pullspec exist? To override use --pullspec. "
                                    f"Could not fetch go build nvrs for {self.pullspec}: {e}")

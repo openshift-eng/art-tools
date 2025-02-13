@@ -172,26 +172,26 @@ Fields for the short format: Release date, State, Synopsys, URL
 
 
 @cli.command("verify-payload", short_help="Verify payload contents match advisory builds")
-@click.argument("payload")
+@click.argument("payload_or_imagestream")
 @click.argument('advisory', type=int)
 @click.pass_obj
 @click_coroutine
-async def verify_payload(runtime, payload, advisory):
+async def verify_payload(runtime, payload_or_imagestream, advisory):
     """Cross-check that the builds present in PAYLOAD match the builds
 attached to ADVISORY. The payload is treated as the source of
 truth. If something is absent or different in the advisory it is
 treated as an error with the advisory.
 
 \b
-    PAYLOAD - Full pullspec of the payload to verify
+    PAYLOAD_OR_IMAGESTREAM - Full pullspec of the payload or imagestream to verify
     ADVISORY - Numerical ID of the advisory
 
 Two checks are made:
 
 \b
- 1. Missing in Advisory - No payload components are absent from the given advisory
+ 1. Missing in Advisory - No payload/imagestream components are absent from the given advisory
 
- 2. Payload Advisory Mismatch - The version-release of each payload item match what is in the advisory
+ 2. Payload/imagestream Advisory Mismatch - The version-release of each payload/imagestream item match what is in the advisory
 
 Results are summarily printed at the end of the run. They are also
 written out to summary_results.json.
@@ -209,7 +209,7 @@ written out to summary_results.json.
 
     click.echo("Found {} builds".format(len(all_advisory_nvrs)))
 
-    all_payload_nvrs = await util.get_nvrs_from_payload(payload, rhcos_images, LOGGER)
+    all_payload_nvrs = await util.get_nvrs_from_release(payload_or_imagestream, rhcos_images, LOGGER)
 
     missing_in_errata = {}
     payload_doesnt_match_errata = {}
