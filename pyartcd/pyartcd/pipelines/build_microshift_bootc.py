@@ -24,7 +24,7 @@ from pyartcd.util import (get_assembly_type,
                           get_release_name_for_assembly,
                           get_microshift_builds)
 from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
-from doozerlib.constants import ART_PROD_IMAGE_REPO
+from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -97,6 +97,27 @@ class BuildMicroShiftBootcPipeline:
         repo_url = bootc_build.image_pullspec.rsplit(":")[0]
         for arch, digest in digest_by_arch.items():
             await self.sync_to_mirror(arch, bootc_build.el_target, f"{repo_url}@{digest}")
+
+        if not self.runtime.dry_run:
+            if bootc_build.embargoed:
+                await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
+            else:
+                await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+        else:
+            self._logger("Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode")
+
+    async def sync_to_quay(self, source_pullspec, destination_repo):
+        """
+        Microshift team needs the image on quay.io/openshift-release-dev/ocp-v4.0-art-dev as well.
+        """
+        # extract tag
+        # e.g.'ose-baremetal-installer-rhel9-v4.19.0-20250210.224515' from
+        # quay.io/redhat-user-workloads/ocp-art-tenant/art-images:ose-baremetal-installer-rhel9-v4.19.0-20250210.224515
+        tag = source_pullspec.split(':')[-1]
+        destination_pullspec = f"{destination_repo}:{tag}"
+        self._logger.info(f"Syncing bootc image from {source_pullspec} to {destination_pullspec}")
+        cmd = ['oc', 'image', 'mirror', '--keep-manifest-list', source_pullspec, destination_pullspec]
+        await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
@@ -268,7 +289,7 @@ class BuildMicroShiftBootcPipeline:
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
             "--lock-upstream", bootc_image_name, "HEAD",
             "beta:images:konflux:build",
-            "--image-repo", ART_PROD_IMAGE_REPO,
+            "--image-repo", KONFLUX_DEFAULT_IMAGE_REPO,
             "--konflux-kubeconfig", kubeconfig,
             "--konflux-namespace", "ocp-art-tenant"
         ]
