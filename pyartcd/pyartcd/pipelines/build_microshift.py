@@ -97,7 +97,7 @@ class BuildMicroShiftPipeline:
 
     def load_errata_config(self, group: str, data_path: str = constants.OCP_BUILD_DATA_URL):
         try:
-            user, repo = extract_git_repo(data_path)
+            user, repo = self.extract_git_repo(data_path)
             upstream_repo = self.github_client.get_repo(f"{user}/{repo}")
             et_content = upstream_repo.get_contents("erratatool.yml", ref=group)
             et_data = yaml.load(et_content.decoded_content)
@@ -120,7 +120,7 @@ class BuildMicroShiftPipeline:
         release_name = get_release_name_for_assembly(self.group_name, self.releases_config, self.assembly)
         advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
         release_date = get_assembly_release_date(self.assembly, self.group)
-        et_data = load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
+        et_data = self.load_errata_config(self.group, self._doozer_env_vars["DOOZER_DATA_PATH"])
         boilerplate = et_data["boilerplates"]["microshift"]
         errata_api = AsyncErrataAPI()
 
@@ -143,7 +143,7 @@ class BuildMicroShiftPipeline:
             )
             advisory_info = next(iter(created_advisory["errata"].values()))
             advisory_id = advisory_info["id"]
-            resp = await errata_api.request_liveid(advisory_id)
+            await errata_api.request_liveid(advisory_id)
             self._logger.info(f"Created microshift advisory {advisory_id}")
         finally:
             await errata_api.close()
@@ -481,7 +481,7 @@ class BuildMicroShiftPipeline:
         for b in upstream_repo.get_branches():
             if b.name == branch:
                 upstream_repo.get_git_ref(f"heads/{branch}").delete()
-        fork_branch = upstream_repo.create_git_ref(f"refs/heads/{branch}", upstream_repo.get_branch(self.group).commit.sha)
+        upstream_repo.create_git_ref(f"refs/heads/{branch}", upstream_repo.get_branch(self.group).commit.sha)
         output = io.BytesIO()
         yaml.dump(release_file_content, output)
         output.seek(0)
