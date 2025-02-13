@@ -145,6 +145,8 @@ class BuildMicroShiftPipeline:
             advisory_id = advisory_info["id"]
             resp = await errata_api.request_liveid(advisory_id)
             self._logger.info(f"Created microshift advisory {advisory_id}")
+        finally:
+            await errata_api.close()
         return advisory_id
 
     async def _rebase_and_build_for_stream(self):
@@ -470,8 +472,7 @@ class BuildMicroShiftPipeline:
         title = f"Pin microshift build for {self.group} {self.assembly}"
         body = f"Created by job run {jenkins.get_build_url()}"
         upstream_repo = self.github_client.get_repo("openshift-eng/ocp-build-data")
-        release_yaml = upstream_repo.get_contents("releases.yml", ref=self.group)
-        release_file_content = yaml.load(release_yaml.decoded_content)
+        release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
         source_file_content = release_file_content
         self._pin_nvrs(nvrs, release_file_content)
         if source_file_content == release_file_content:
@@ -481,7 +482,6 @@ class BuildMicroShiftPipeline:
             if b.name == branch:
                 upstream_repo.get_git_ref(f"heads/{branch}").delete()
         fork_branch = upstream_repo.create_git_ref(f"refs/heads/{branch}", upstream_repo.get_branch(self.group).commit.sha)
-        self._logger.info("Created fork branch ref %s", fork_branch.ref)
         output = io.BytesIO()
         yaml.dump(release_file_content, output)
         output.seek(0)
@@ -490,9 +490,7 @@ class BuildMicroShiftPipeline:
         # create pr
         try:
             pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
-            pr.add_to_labels("lgtm", "approved")
             pr.merge()
-            self._logger.info(f"PR {pr.html_url} to pin microshift merged into ocp-build-data")
         except GithubException as e:
             self._logger.warning(f"Failed to update upstream repo: {e}")
         return pr.html_url
