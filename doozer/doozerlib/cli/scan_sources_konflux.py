@@ -350,8 +350,7 @@ class ConfigScanSources:
             return
 
         # Check for changes in image arches
-        # TODO: Uncomment once we are ready to build and sync all arches
-        # await self.scan_arch_changes(image_meta)
+        await self.scan_arch_changes(image_meta)
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
