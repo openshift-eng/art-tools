@@ -30,6 +30,10 @@ CLI_OPTS = {
         'env': 'DOOZER_DATA_PATH',
         'help': 'Git URL or File Path to build data',
     },
+    'data_gitref': {
+        'env': 'DOOZER_DATA_GITREF',
+        'help': 'Git ref to use for build data'
+    },
     'group': {
         'env': 'DOOZER_GROUP',
         'help': 'Sub-group directory or branch to pull build data'

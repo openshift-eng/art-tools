@@ -3,6 +3,10 @@ CLI_OPTS = {
         'env': 'ELLIOTT_DATA_PATH',
         'help': 'Git URL or File Path to build data'
     },
+    'data_gitref': {
+        'env': 'ELLIOTT_DATA_GITREF',
+        'help': 'Git ref to use for build data'
+    },
     'group': {
         'env': 'ELLIOTT_GROUP',
         'help': 'Sub-group directory or branch to pull build data'
