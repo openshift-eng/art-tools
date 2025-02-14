@@ -149,8 +149,15 @@ class Runtime(GroupRuntime):
         if no_group:
             return  # nothing past here should be run without a group
 
+        self.group_commitish = self.data_gitref
         if '@' in self.group:
-            self.group, self.group_commitish = self.group.split('@', 1)
+            self.group, temp = self.group.split('@', 1)
+            if self.group_commitish and temp != self.group_commitish:
+                click.echo(
+                    f"Cannot specify different group commit in group name {temp} and --data-gitref {self.group_commitish}")
+                exit(1)
+            else:
+                self.group_commitish = temp
         elif self.group_commitish is None:
             self.group_commitish = self.group
 
