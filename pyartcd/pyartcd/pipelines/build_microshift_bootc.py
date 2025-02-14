@@ -83,6 +83,11 @@ class BuildMicroShiftBootcPipeline:
         else:
             raise ValueError(f"Could not find bootc image build for assembly {self.assembly}")
 
+        # Login to Konflux registry
+        cmd = ['oc', 'registry', 'login', '--registry', 'quay.io/redhat-user-workloads',
+               f'--auth-basic={os.environ["KONFLUX_ART_IMAGES_USERNAME"]}:{os.environ["KONFLUX_ART_IMAGES_PASSWORD"]}']
+        await exectools.cmd_assert_async(cmd)
+
         # get image digests from manifest list for all arches
         cmd = [
             "skopeo",
