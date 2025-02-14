@@ -374,6 +374,8 @@ class KonfluxClient:
                     task["timeout"] = "12h"
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
+                case "clone-repository":
+                    _modify_param(task["params"], "refspec", f"{commit_sha}:refs/remotes/origin/{target_branch} refs/tags/*:refs/tags/*")
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
