@@ -87,6 +87,7 @@ class Runtime(GroupRuntime):
         self.load_wip = False
         self.load_disabled = False
         self.data_path = None
+        self.data_gitref = None
         self.data_dir = None
         self.group_commitish = None
         self.latest_parent_version = False

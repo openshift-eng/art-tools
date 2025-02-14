@@ -54,6 +54,7 @@ class Runtime(GroupRuntime):
         # initialize defaults in case no value is given
         self.verbose = False
         self.data_path = None
+        self.data_gitref = None
         self.group_commitish = None
         self.load_wip = False
         self.load_disabled = False
