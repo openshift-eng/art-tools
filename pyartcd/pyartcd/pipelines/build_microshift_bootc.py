@@ -83,26 +83,26 @@ class BuildMicroShiftBootcPipeline:
         else:
             raise ValueError(f"Could not find bootc image build for assembly {self.assembly}")
 
-        # get image digests from manifest list for all arches
-        cmd = [
-            "skopeo",
-            "inspect",
-            f"docker://{bootc_build.image_pullspec}",
-            "--raw"
-        ]
-        _, out, _ = await exectools.cmd_gather_async(cmd)
-        manifest_list = json.loads(out)
-        digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
-        self._logger.info("Bootc image digests by arch: %s", json.dumps(digest_by_arch, indent=4))
-        repo_url = bootc_build.image_pullspec.rsplit(":")[0]
-        for arch, digest in digest_by_arch.items():
-            await self.sync_to_mirror(arch, bootc_build.el_target, f"{repo_url}@{digest}")
-
         if not self.runtime.dry_run:
             if bootc_build.embargoed:
-                await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
+                destination_pullspec = await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
             else:
-                await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+                destination_pullspec = await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+
+            # get image digests from manifest list for all arches
+            cmd = [
+                "skopeo",
+                "inspect",
+                f"docker://{destination_pullspec}",
+                "--raw"
+            ]
+            _, out, _ = await exectools.cmd_gather_async(cmd)
+            manifest_list = json.loads(out)
+            digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
+            self._logger.info("Bootc image digests by arch: %s", json.dumps(digest_by_arch, indent=4))
+            repo_url = destination_pullspec.rsplit(":")[0]
+            for arch, digest in digest_by_arch.items():
+                await self.sync_to_mirror(arch, bootc_build.el_target, f"{repo_url}@{digest}")
         else:
             self._logger("Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode")
 
@@ -118,6 +118,7 @@ class BuildMicroShiftBootcPipeline:
         self._logger.info(f"Syncing bootc image from {source_pullspec} to {destination_pullspec}")
         cmd = ['oc', 'image', 'mirror', '--keep-manifest-list', source_pullspec, destination_pullspec]
         await asyncio.wait_for(exectools.cmd_assert_async(cmd), timeout=7200)
+        return destination_pullspec
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
