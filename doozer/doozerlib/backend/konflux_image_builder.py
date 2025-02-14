@@ -328,86 +328,82 @@ class KonfluxImageBuilder:
             logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
             return
 
-        try:
-            rebase_repo_url = build_repo.https_url
-            rebase_commit = build_repo.commit_hash
+        rebase_repo_url = build_repo.https_url
+        rebase_commit = build_repo.commit_hash
 
-            df_path = build_repo.local_dir.joinpath("Dockerfile")
-            df = DockerfileParser(str(df_path))
+        df_path = build_repo.local_dir.joinpath("Dockerfile")
+        df = DockerfileParser(str(df_path))
 
-            source_repo = df.labels['io.openshift.build.source-location']
-            commitish = df.labels['io.openshift.build.commit.id']
+        source_repo = df.labels['io.openshift.build.source-location']
+        commitish = df.labels['io.openshift.build.commit.id']
 
-            version = df.labels['version']
-            release = df.labels['release']
-            nvr = "-".join([metadata.distgit_key, version, release])
+        version = df.labels['version']
+        release = df.labels['release']
+        nvr = "-".join([metadata.distgit_key, version, release])
 
-            pipelinerun_name = pipelinerun['metadata']['name']
-            build_pipeline_url = self._konflux_client.build_pipeline_url(pipelinerun)
+        pipelinerun_name = pipelinerun['metadata']['name']
+        build_pipeline_url = self._konflux_client.build_pipeline_url(pipelinerun)
 
-            build_record_params = {
-                'name': metadata.distgit_key,
-                'version': version,
-                'release': release,
-                'el_target': f'el{isolate_el_version_in_release(release)}',
-                'arches': building_arches,
-                'embargoed': 'p1' in release.split('.'),
-                'start_time': datetime.now(tz=timezone.utc),
-                'end_time': None,
-                'nvr': nvr,
-                'group': metadata.runtime.group,
-                'assembly': metadata.runtime.assembly,
-                'source_repo': source_repo,
-                'commitish': commitish,
-                'rebase_repo_url': rebase_repo_url,
-                'rebase_commitish': rebase_commit,
-                'artifact_type': ArtifactType.IMAGE,
-                'engine': Engine.KONFLUX,
-                'outcome': outcome,
-                'parent_images': df.parent_images,
-                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
-                'build_id': pipelinerun_name,
-                'build_pipeline_url': build_pipeline_url,
-                'pipeline_commit': 'n/a'  # TODO: populate this
-            }
+        build_record_params = {
+            'name': metadata.distgit_key,
+            'version': version,
+            'release': release,
+            'el_target': f'el{isolate_el_version_in_release(release)}',
+            'arches': building_arches,
+            'embargoed': 'p1' in release.split('.'),
+            'start_time': datetime.now(tz=timezone.utc),
+            'end_time': None,
+            'nvr': nvr,
+            'group': metadata.runtime.group,
+            'assembly': metadata.runtime.assembly,
+            'source_repo': source_repo,
+            'commitish': commitish,
+            'rebase_repo_url': rebase_repo_url,
+            'rebase_commitish': rebase_commit,
+            'artifact_type': ArtifactType.IMAGE,
+            'engine': Engine.KONFLUX,
+            'outcome': outcome,
+            'parent_images': df.parent_images,
+            'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+            'build_id': pipelinerun_name,
+            'build_pipeline_url': build_pipeline_url,
+            'pipeline_commit': 'n/a'  # TODO: populate this
+        }
 
-            if outcome == KonfluxBuildOutcome.SUCCESS:
-                # results:
-                # - name: IMAGE_URL
-                #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
-                # - name: IMAGE_DIGEST
-                #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+        if outcome == KonfluxBuildOutcome.SUCCESS:
+            # results:
+            # - name: IMAGE_URL
+            #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+            # - name: IMAGE_DIGEST
+            #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
 
-                image_pullspec = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
-                image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
+            image_pullspec = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
+            image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
 
-                if not (image_pullspec and image_digest):
-                    raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                                     f"pipelinerun {pipelinerun_name}")
+            if not (image_pullspec and image_digest):
+                raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                                 f"pipelinerun {pipelinerun_name}")
 
-                start_time = pipelinerun.status.startTime
-                end_time = pipelinerun.status.completionTime
+            start_time = pipelinerun.status.startTime
+            end_time = pipelinerun.status.completionTime
 
-                installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
+            installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
 
-                build_record_params.update({
-                    'image_pullspec': image_pullspec,
-                    'installed_packages': installed_packages,
-                    'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
-                    'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
-                    'image_tag': image_digest.split('sha256:')[-1],
-                })
-            elif outcome == KonfluxBuildOutcome.FAILURE:
-                start_time = pipelinerun.status.startTime
-                end_time = pipelinerun.status.completionTime
-                build_record_params.update({
-                    'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
-                    'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
-                })
+            build_record_params.update({
+                'image_pullspec': image_pullspec,
+                'installed_packages': installed_packages,
+                'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
+                'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
+                'image_tag': image_digest.split('sha256:')[-1],
+            })
+        elif outcome == KonfluxBuildOutcome.FAILURE:
+            start_time = pipelinerun.status.startTime
+            end_time = pipelinerun.status.completionTime
+            build_record_params.update({
+                'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
+                'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
+            })
 
-            build_record = KonfluxBuildRecord(**build_record_params)
-            metadata.runtime.konflux_db.add_build(build_record)
-            logger.info(f'Konflux build info stored successfully with status {outcome}')
-
-        except Exception as err:
-            logger.error('Failed writing record to the konflux DB: %s', err)
+        build_record = KonfluxBuildRecord(**build_record_params)
+        metadata.runtime.konflux_db.add_build(build_record)
+        logger.info(f'Konflux build info stored successfully with status {outcome}')
