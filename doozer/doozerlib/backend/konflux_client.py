@@ -372,6 +372,9 @@ class KonfluxClient:
                 case "build-images":
                     has_build_images_task = True
                     task["timeout"] = "12h"
+                    _modify_param(task["params"], "SBOM_TYPE", "cyclonedx")
+                case "prefetch-dependencies":
+                    _modify_param(task["params"], "SBOM_TYPE", "cyclonedx")
                 case "apply-tags":
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
                 case "clone-repository":
