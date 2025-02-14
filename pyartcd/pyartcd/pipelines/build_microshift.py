@@ -5,6 +5,7 @@ import re
 import io
 import traceback
 import click
+import copy
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -15,6 +16,7 @@ from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_han
 from artcommonlib import exectools
 from doozerlib.util import isolate_nightly_name_components
 from elliottlib.errata_async import AsyncErrataAPI
+from errata_tool import Erratum
 from github import Github, GithubException
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -275,7 +277,7 @@ class BuildMicroShiftPipeline:
         await self._attach_builds()
         await self._sweep_bugs()
         await self._attach_cve_flaws()
-        await self._change_advisory_status()
+        await self._change_advisory_status(microshift_advisory_id)
         await self._verify_microshift_bugs(microshift_advisory_id)
         await self.slack_client.say_in_thread("Completed preparing microshift advisory.")
 
@@ -349,21 +351,15 @@ class BuildMicroShiftPipeline:
 
     # Advisory can have several pending checks, so retry it a few times
     @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))
-    async def _change_advisory_status(self):
-        """ move advisory status to QE
-        """
-        cmd = [
-            "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
-            "change-state",
-            "-s", "QE",
-            "--from", "NEW_FILES",
-            "--use-default-advisory", "microshift"
-        ]
-        if self.runtime.dry_run:
-            cmd.append("--dry-run")
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
+    async def _change_advisory_status(self, advisory_id):
+        # move advisory status to QE
+        e = Erratum(errata_id=advisory_id)
+        if e.errata_state == "QE":
+            self._logger.info(f"Target state is same as current state: {state}")
+        else:
+            e.setState(state)
+            e.commit()
+            self._logger.info(f"Changed {advisory_id} to QE")
 
     @staticmethod
     async def parse_release_payloads(payloads: Iterable[str]):
@@ -473,7 +469,7 @@ class BuildMicroShiftPipeline:
         body = f"Created by job run {jenkins.get_build_url()}"
         upstream_repo = self.github_client.get_repo("openshift-eng/ocp-build-data")
         release_file_content = yaml.load(upstream_repo.get_contents("releases.yml", ref=self.group).decoded_content)
-        source_file_content = release_file_content
+        source_file_content = copy.deepcopy(release_file_content)
         self._pin_nvrs(nvrs, release_file_content)
         if source_file_content == release_file_content:
             self._logger.warning("PR is not created: upstream already updated, nothing to change.")
@@ -492,7 +488,7 @@ class BuildMicroShiftPipeline:
             pr = upstream_repo.create_pull(title=title, body=body, base=self.group, head=branch)
             pr.merge()
         except GithubException as e:
-            self._logger.warning(f"Failed to update upstream repo: {e}")
+            self._logger.warning(f"Failed to create pr: {e}")
         return pr.html_url
 
     async def _notify_microshift_alerts(self, version_release: str):
