@@ -524,7 +524,7 @@ class PrepareReleasePipeline:
         if self.runtime.dry_run:
             _LOGGER.warning("[DRY RUN] Would have run %s", cmd)
             return
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         result = subprocess.run(cmd, stdout=PIPE, stderr=PIPE, check=False, universal_newlines=True, cwd=self.working_dir)
         if result.returncode != 0:
             raise IOError(
@@ -555,7 +555,7 @@ class PrepareReleasePipeline:
             create_cmd.append(f"--date={release_date}")
         if not self.dry_run:
             create_cmd.append("--yes")
-        _LOGGER.info("Running command: %s", create_cmd)
+        _LOGGER.info("Running command: %s", ' '.join(create_cmd))
         result = subprocess.run(create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self.working_dir)
         if result.returncode != 0:
             raise IOError(
@@ -582,7 +582,7 @@ class PrepareReleasePipeline:
             self.runtime.config["build_config"]["ocp_build_data_repo_push_url"],
             str(local_path),
         ]
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd)
 
     async def update_build_data(self, advisories: Dict[str, int], jira_issue_key: Optional[str]):
@@ -670,7 +670,7 @@ class PrepareReleasePipeline:
             cmd.append("--advance-release")
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -684,7 +684,7 @@ class PrepareReleasePipeline:
         ]
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -727,7 +727,7 @@ class PrepareReleasePipeline:
         cmd.append("--clean")
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
     async def change_advisory_state_qe(self, advisory: int):
@@ -743,7 +743,7 @@ class PrepareReleasePipeline:
         ]
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -760,7 +760,7 @@ class PrepareReleasePipeline:
         if self.dry_run:
             _LOGGER.info("Would have run: %s", cmd)
             return
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         subprocess.run(cmd, check=True, universal_newlines=True, cwd=self.working_dir)
         # elliott verify-payload always writes results to $cwd/"summary_results.json".
         # move it to a different location to avoid overwritting the result.
@@ -887,7 +887,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         ]
         if self.dry_run:
             cmd.append("--dry-run")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, cwd=self.working_dir)
         # parse record.log
         with open(self.doozer_working_dir / "record.log", "r") as file:
@@ -910,7 +910,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         if not self.dry_run and metadata_advisory:
             cmd.append("--attach")
             cmd.append(f"{metadata_advisory}")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
@@ -926,7 +926,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         cmd.append("--")
         for advisory in advisories:
             cmd.append(f"{advisory}")
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
     async def remove_builds_all(self, advisory_id):
@@ -945,7 +945,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         if self.dry_run:
             cmd.append("--dry-run")
 
-        _LOGGER.info("Running command: %s", cmd)
+        _LOGGER.info("Running command: %s", ' '.join(cmd))
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
 
 
