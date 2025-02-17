@@ -101,7 +101,6 @@ class Ocp4Pipeline:
             f'--data-path={data_path}',
             group_param
         ]
-
         self._slack_client = runtime.new_slack_client()
         self._mail_client = self.runtime.new_mail_client()
 

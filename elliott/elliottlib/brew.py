@@ -1,6 +1,7 @@
 """
 Utility functions for general interactions with Brew and Builds
 """
+from tenacity import retry, stop_after_attempt, wait_fixed
 from artcommonlib import logutil
 # stdlib
 import json
@@ -149,6 +150,7 @@ def get_builds_tags(build_nvrs, session=None):
     return [task.result for task in tasks]
 
 
+@retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(10))
 def get_brew_build(nvr, product_version='', session=None):
     """5.2.2.1. GET /api/v1/build/{id_or_nvr}
 
