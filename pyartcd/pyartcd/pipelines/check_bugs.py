@@ -98,13 +98,14 @@ class CheckBugsPipeline:
 
 
 async def slack_report(results, slack_client):
-    message = ':red-siren:  `Bug(s) requiring attention for:`'
+    slack_response = await slack_client.say(':red-siren: Bug(s) requiring attention:')
+    slack_thread = slack_response["message"]["ts"]
+
     for result in results:
-        message += f'\n:warning: *{result["version"]}*'
+        message = f':warning: *{result["version"]}*'
         for issue in result['issues']:
             message += f'\n{issue}'
-
-    await slack_client.say(message)
+        await slack_client.say(message, slack_thread)
 
 
 @cli.command('check-bugs')
