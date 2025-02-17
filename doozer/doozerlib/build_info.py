@@ -286,12 +286,13 @@ class BuildRecordInspector(ABC):
     def get_image_meta(self):
         pass
 
-    @staticmethod
-    def get_source_git_commit():
+    @abstractmethod
+    def get_source_git_commit(self):
         pass
 
     @staticmethod
     def find_non_latest_rpms():
+        # TODO must become abstract, KonfluxBuildRecordInspect must implement it
         pass
 
     @abstractmethod
@@ -666,3 +667,6 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
     def get_build_webpage_url(self):
         return self._build_record.build_pipeline_url
+
+    def get_source_git_commit(self):
+        return self._build_record.commitish
