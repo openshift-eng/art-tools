@@ -389,13 +389,6 @@ class GenPayloadCli:
                 if ii is None
             ],  # A list of metas where the assembly did not find a build
         )
-        if self.runtime.build_system == 'konflux':
-            # TODO to be removed once assembly issues check is implemented for konflux
-            report["viable"] = True
-            report["assembly_issues"] = {}
-            self.payload_permitted = True
-            return report
-
         report["viable"], report["assembly_issues"] = await self.generate_assembly_issues_report(assembly_inspector)
         self.payload_permitted = report["viable"]
 
@@ -411,6 +404,12 @@ class GenPayloadCli:
         self.logger.info("Checking assembly content for inconsistencies.")
         span.add_event("Checking assembly content for inconsistencies")
         self.detect_mismatched_siblings(assembly_inspector)
+
+        # Stopping the checks here for Konflux
+        # TODO to be re-enabled
+        if self.runtime.build_system == 'konflux':
+            return self.summarize_issue_permits(assembly_inspector)
+
         assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
         # Build IDs can either be integers (Brew builds, e.g. 3403040)
         # or strings (Konflux builds, e.g. 'ose-4-18-vsphere-problem-detector-j5n7r'
