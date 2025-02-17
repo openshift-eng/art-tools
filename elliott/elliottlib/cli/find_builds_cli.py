@@ -255,6 +255,9 @@ PRESENT advisory. Here are some examples:
                 ensure_rhcos_file_meta(advisory_id)
             if cdn_repos and not no_cdn_repos:
                 cdn_repos = set(cdn_repos)
+                if dry_run:
+                    yellow_print("[dry-run] Would've fetched and validated cdn repos for advisory {advisory_id}.")
+                    return
                 available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
                 not_available_repos = cdn_repos - available_repos
                 repos_to_enable = cdn_repos & available_repos
