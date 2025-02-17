@@ -1956,8 +1956,7 @@ class PayloadGenerator:
             except ChildProcessError:  # raised by Konflux in case oc image info fails
                 image_inspector = None
 
-            if not image_inspector and not self.runtime.build_system == 'konflux':
-                # TODO allowing this for konflux, in the future will should always raise an exception
+            if not image_inspector:
                 # There is no build for this CPU architecture for this image_meta/build. This finding
                 # conflicts with the `arch not in image_meta.get_arches()` check above.
                 # Best to fail.
