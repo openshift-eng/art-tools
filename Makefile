@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test
+.PHONY: venv tox lint test pylint
 
 venv:
 	uv venv --python 3.11
@@ -8,6 +8,9 @@ venv:
 
 lint:
 	./.venv/bin/python -m flake8
+
+pylint:
+	./.venv/bin/python -m pylint .
 
 unit:
 	./.venv/bin/python -m pytest --verbose --color=yes artcommon/tests/
