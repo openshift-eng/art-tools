@@ -79,6 +79,8 @@ class KonfluxOcp4Pipeline:
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy))
         self.image_list = [image.strip() for image in image_list.split(',')] if image_list else []
 
+        self.slack_client = runtime.new_slack_client()
+
     def image_param_from_build_plan(self):
         if self.build_plan.build_strategy == BuildStrategy.ALL:
             image_param = ''  # Doozer runtime will consider all images
@@ -114,7 +116,13 @@ class KonfluxOcp4Pipeline:
             failed_images = state['images:konflux:rebase'].get('failed-images', [])
             if not failed_images:
                 raise  # Something else went wrong
-            LOGGER.warning('Following images failed to rebase and won\'t be built: %s', ','.join(failed_images))
+
+            # Some images failed to rebase: log them, and send an alert on Slack
+            message = f'Following images failed to rebase and won\'t be built: {",".join(failed_images)}'
+            LOGGER.warning(message)
+            if self.assembly == 'stream':
+                self.slack_client.bind_channel(f'openshift-{self.version}')
+                await self.slack_client.say(f':alert: {message}')
 
             # Exclude images that failed to rebase from the build step
             if self.build_plan.build_strategy == BuildStrategy.ALL:
