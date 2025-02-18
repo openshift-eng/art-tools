@@ -287,7 +287,7 @@ class ConfigScanSources:
 
         async def _find_target_build(rpm_meta, el_target):
             rpm_name = rpm_meta.rpm_name
-            build_record = await rpm_meta.get_latest_build(el_target=el_target)
+            build_record = await rpm_meta.get_latest_build(el_target=el_target, engine=Engine.BREW.value)
             if not self.latest_rpm_build_records_map.get(rpm_name):
                 self.latest_rpm_build_records_map[rpm_name] = {}
             self.latest_rpm_build_records_map[rpm_name][el_target] = build_record
