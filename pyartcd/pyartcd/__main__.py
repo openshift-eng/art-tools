@@ -12,6 +12,7 @@ from pyartcd.pipelines.scheduled import schedule_ocp4_scan, schedule_ocp4_scan_k
 
 
 def main(args: Optional[Sequence[str]] = None):
+    # pylint: disable=no-value-for-parameter
     cli()
 
 
