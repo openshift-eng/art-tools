@@ -107,6 +107,24 @@ class Runtime(GroupRuntime):
         self.disable_gssapi = False
         self._build_data_product_cache: Model = None
 
+        # init cli options
+        self.group = None
+        self.cache_dir = None
+        self.arches = None
+        self.branch = None
+        self.releases = None
+        self.lock_runtime_uuid = None
+        self.datastore = None
+        self.enable_assemblies = None
+        self.source = None
+        self.sources = None
+        self.exclude = None
+        self.images = None
+        self.rpms = None
+        self.user = None
+        self.global_opts = None
+        self.cfg_obj = None
+
         self.stream: List[str] = []  # Click option. A list of image stream overrides from the command line.
         self.stream_overrides: Dict[str, str] = {}  # Dict of stream name -> pullspec from command line.
 
