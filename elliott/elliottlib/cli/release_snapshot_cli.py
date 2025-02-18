@@ -48,6 +48,7 @@ class CreateSnapshotCli:
 def release_snapshot_cli():
     pass
 
+
 @release_snapshot_cli.command("new", short_help="Create a new Konflux Snapshot in the given namespace for the given "
                                                 "builds")
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
@@ -63,7 +64,7 @@ def release_snapshot_cli():
 @click.pass_obj
 @click_coroutine
 async def new_snapshot(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-                 builds_file, builds, dry_run):
+                       builds_file, builds, dry_run):
     """
     Create a new Konflux Snapshot in the given namespace for the given builds
 
