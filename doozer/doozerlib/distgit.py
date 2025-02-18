@@ -42,7 +42,8 @@ from artcommonlib.git_helper import git_clone, gather_git
 from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge
+from artcommonlib.util import (convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge,
+                               isolate_el_version_in_brew_tag)
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.util import extract_version_fields
 from doozerlib.source_resolver import SourceResolver
@@ -410,7 +411,7 @@ class DistGitRepo(object):
         Extracts the RHEL version from the tag name and returns the integer value. e.g. 'rhaos-4.16-rhel-7' => 7.
         If the branch name convention is not recognized, returns None.
         """
-        return util.isolate_el_version_in_brew_tag(self.branch)
+        return isolate_el_version_in_brew_tag(self.branch)
 
     def tag(self, version, release):
         if self.runtime.local:
@@ -2079,7 +2080,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             # ART-8476 assert rhel version equivalence
             if self.should_match_upstream:
-                el_version = util.isolate_el_version_in_brew_tag(self.config.distgit.branch)
+                el_version = isolate_el_version_in_brew_tag(self.config.distgit.branch)
                 df_lines.extend([
                     '',
                     '# RHEL version in final image must match the one in ART\'s config',
