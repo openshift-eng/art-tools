@@ -1897,8 +1897,6 @@ class PayloadGenerator:
         return {"release.openshift.io/inconsistency": json.dumps(msgs)}
 
     def build_imagestream_annotations(self, inconsistencies: Iterable[AssemblyIssue]) -> Dict:
-        if self.runtime.build_system == 'konflux':
-            return {}  # TODO to be removed
         annotations = {}
         annotations.update(self.build_inconsistency_annotations(inconsistencies))
         annotations.update(self.build_pipeline_metadata_annotations())
