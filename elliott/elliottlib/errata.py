@@ -673,7 +673,6 @@ def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_sta
     :param blocking_advisory_id: advisory number of the blocker
     :param blocking_state: a valid advisory state like "SHIPPED_LIVE" (default to "SHIPPED_LIVE")
     """
-    response: requests.Response
     response = ErrataConnector()._post(f'/api/v1/erratum/{target_advisory_id}/add_blocking_errata',
                                        json={"blocking_errata": blocking_advisory_id})
     if response.status_code != requests.codes.created:
