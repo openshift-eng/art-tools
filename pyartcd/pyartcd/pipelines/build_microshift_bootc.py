@@ -1,3 +1,5 @@
+from pathlib import Path
+import tempfile
 import click
 import json
 import logging
@@ -5,7 +7,7 @@ import os
 import requests
 import asyncio
 import traceback
-from typing import Optional
+from typing import Optional, cast
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
@@ -99,17 +101,18 @@ class BuildMicroShiftBootcPipeline:
         manifest_list = json.loads(out)
         digest_by_arch = {m["platform"]["architecture"]: m["digest"] for m in manifest_list["manifests"]}
         self._logger.info("Bootc image digests by arch: %s", json.dumps(digest_by_arch, indent=4))
-        repo_url = bootc_build.image_pullspec.rsplit(":")[0]
-        for arch, digest in digest_by_arch.items():
-            await self.sync_to_mirror(arch, bootc_build.el_target, f"{repo_url}@{digest}")
 
         if not self.runtime.dry_run:
             if bootc_build.embargoed:
                 await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_PRIV_IMAGE_REPO)
             else:
                 await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
+                # sync per-arch bootc-pullspec.txt to mirror
+                await asyncio.gather(
+                    *(self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}") for arch, digest in digest_by_arch.items())
+                )
         else:
-            self._logger("Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode")
+            self._logger.warning("Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode")
 
     async def sync_to_quay(self, source_pullspec, destination_repo):
         """
@@ -126,10 +129,6 @@ class BuildMicroShiftBootcPipeline:
 
     async def sync_to_mirror(self, arch, el_target, pullspec):
         arch = brew_arch_for_go_arch(arch)
-        pullspec_file = self._working_dir / "bootc-pullspec.txt"
-        with open(pullspec_file, "w") as f:
-            f.write(pullspec)
-
         release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         ocp_dir = "ocp-dev-preview" if self.assembly_type == AssemblyTypes.PREVIEW else "ocp"
 
@@ -140,29 +139,35 @@ class BuildMicroShiftBootcPipeline:
         latest_path = f"/pub/openshift-v4/{arch}/microshift/{ocp_dir}/latest-{major}.{minor}/{el_target}"
         cloudflare_endpoint_url = os.environ['CLOUDFLARE_ENDPOINT']
 
-        async def _run_for(s3_path):
+        async def _run_for(local_path, s3_path):
             cmd = [
                 "aws", "s3", "sync",
                 "--no-progress",
                 "--exact-timestamps",
                 "--exclude", "*",
                 "--include", "bootc-pullspec.txt",
-                str(self._working_dir),
+                str(local_path),
                 f"s3://art-srv-enterprise{s3_path}",
             ]
             if self.runtime.dry_run:
                 cmd.append("--dryrun")
-            await exectools.cmd_assert_async(cmd)
 
-            # Sync to Cloudflare as well
-            cmd.extend([
-                "--profile", "cloudflare",
-                "--endpoint-url", cloudflare_endpoint_url,
-            ])
-            await exectools.cmd_assert_async(cmd)
+            await asyncio.gather(
+                # Sync to S3
+                exectools.cmd_assert_async(cmd),
+                # Sync to Cloudflare as well
+                exectools.cmd_assert_async(cmd + [
+                    "--profile", "cloudflare",
+                    "--endpoint-url", cloudflare_endpoint_url,
+                ]),
+            )
 
-        await _run_for(release_path)
-        await _run_for(latest_path)
+        with tempfile.TemporaryDirectory(dir=self._working_dir) as local_dir:
+            local_path = Path(local_dir, "bootc-pullspec.txt")
+            with open(local_path, "w") as f:
+                f.write(pullspec)
+            await _run_for(local_dir, release_path)
+            await _run_for(local_dir, latest_path)
 
     async def get_latest_bootc_build(self):
         bootc_image_name = "microshift-bootc"
@@ -181,7 +186,7 @@ class BuildMicroShiftBootcPipeline:
             artifact_type=ArtifactType.IMAGE,
             el_target='el9'
         )
-        return build
+        return cast(Optional[KonfluxBuildRecord], build)
 
     async def _build_plashet_for_bootc(self):
         microshift_plashet_name = "rhel-9-server-microshift-rpms"
