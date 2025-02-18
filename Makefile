@@ -19,4 +19,10 @@ unit:
 	./.venv/bin/python -m pytest --verbose --color=yes pyartcd/tests/
 	./.venv/bin/python -m pytest --verbose --color=yes ocp-build-data-validator/tests/
 
+functional:
+	./.venv/bin/python -m pytest --verbose --color=yes doozer/tests_functional/
+	./.venv/bin/python -m pytest --verbose --color=yes elliott/tests_functional/
+
 test: lint unit
+
+test-all: lint unit functional
