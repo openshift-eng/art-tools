@@ -265,6 +265,7 @@ class ConfigScanSources:
                     latest_rpms = koji_api.getLatestRPMS(tag=tag, package=package_name)[1]
 
                     for latest_rpm_build in latest_rpms:
+                        # pylint: disable=unsubscriptable-object
                         if not eldest_rpm_build or latest_rpm_build['creation_event_id'] < \
                                 eldest_rpm_build['creation_event_id']:
                             eldest_rpm_build = latest_rpm_build

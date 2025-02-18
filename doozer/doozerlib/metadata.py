@@ -26,6 +26,7 @@ from artcommonlib.pushd import Dir
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
+from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
@@ -125,7 +126,8 @@ class Metadata(object):
         self.private_fix: Optional[bool] = None
         """ True if the source contains embargoed (private) CVE fixes. Defaulting to None means this should be auto-determined. """
 
-        self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, self.raw_config)
+        self.config: Model = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type,
+                                                      self.distgit_key, self.raw_config)
         self.namespace, self._component_name = Metadata.extract_component_info(meta_type, self.name, self.config)
 
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
@@ -415,7 +417,7 @@ class Metadata(object):
 
         is_config = self.config['is']
 
-        if self.meta_type == 'rpm':
+        if isinstance(self, RPMMetadata):
             if el_target is None:
                 raise ValueError(
                     f'Expected el_target to be set when querying a pinned RPM component {self.distgit_key}')
@@ -474,7 +476,7 @@ class Metadata(object):
 
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
-            'name': self.distgit_key if self.meta_type == 'image' else self.rpm_name,
+            'name': self.rpm_name if isinstance(self, RPMMetadata) else self.distgit_key,
             'group': self.runtime.group,
             'outcome': outcome,
             'completed_before': completed_before,
@@ -997,6 +999,7 @@ class Metadata(object):
             use_path = path_3_11
 
         kube_version_fields = []
+        kube_commit_hash = ''
         if use_path:
             dfp = DockerfileParser(cache_content=True, fileobj=io.BytesIO(use_path.read_bytes()))
             build_versions = dfp.labels.get('io.openshift.build.versions', None)

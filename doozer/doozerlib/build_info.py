@@ -445,7 +445,7 @@ class BrewBuildRecordInspector(BuildRecordInspector):
             if el_ver:
                 return el_ver
 
-        raise None
+        return None
 
     def get_source_git_url(self) -> Optional[str]:
         """
