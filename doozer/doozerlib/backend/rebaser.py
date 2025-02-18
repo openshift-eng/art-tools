@@ -288,7 +288,8 @@ class KonfluxRebaser:
 
                 build = asyncio.run(parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX
+                    engine=Engine.KONFLUX,
+                    assembly='stream'
                 ))
 
                 if not build:
