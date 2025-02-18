@@ -26,7 +26,6 @@ from artcommonlib.pushd import Dir
 from artcommonlib.model import Missing, Model
 from doozerlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
-from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import (isolate_el_version_in_brew_tag,
                             isolate_git_commit_in_release)
@@ -417,7 +416,7 @@ class Metadata(object):
 
         is_config = self.config['is']
 
-        if isinstance(self, RPMMetadata):
+        if self.meta_type == 'rpm':
             if el_target is None:
                 raise ValueError(
                     f'Expected el_target to be set when querying a pinned RPM component {self.distgit_key}')
@@ -476,7 +475,7 @@ class Metadata(object):
 
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
-            'name': self.rpm_name if isinstance(self, RPMMetadata) else self.distgit_key,
+            'name': self.distgit_key if self.meta_type == 'image' else self.rpm_name,
             'group': self.runtime.group,
             'outcome': outcome,
             'completed_before': completed_before,
