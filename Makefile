@@ -21,7 +21,7 @@ unit:
 
 functional:
 	./.venv/bin/python -m pytest --verbose --color=yes doozer/tests_functional/
-	./.venv/bin/python -m pytest --verbose --color=yes elliott/tests_functional/
+	./.venv/bin/python -m pytest --verbose --color=yes elliott/functional_tests/
 
 test: lint unit
 
