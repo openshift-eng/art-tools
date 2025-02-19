@@ -25,6 +25,7 @@ from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, pu
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from artcommonlib import exectools
+from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
 from pyartcd.slack import SlackClient
@@ -52,6 +53,8 @@ class PrepareReleasePipeline:
         nightlies: List[str],
         package_owner: str,
         jira_token: str,
+        data_path: str,
+        data_gitref: Optional[str],
         default_advisories: bool = False,
         include_shipped: bool = False,
         skip_batch: bool = False,
@@ -60,6 +63,8 @@ class PrepareReleasePipeline:
         self.runtime = runtime
         self.assembly = assembly or "stream"
         self.release_name = None
+        self.data_path = data_path
+        self.data_gitref = data_gitref
         group_match = None
         if group:
             group_match = re.fullmatch(r"openshift-(\d+).(\d+)", group)
@@ -103,14 +108,16 @@ class PrepareReleasePipeline:
         self.doozer_working_dir = self.working_dir / "doozer-working"
         self._jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=jira_token)
         # sets environment variables for Elliott and Doozer
-        self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self._doozer_env_vars = os.environ.copy()
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self.doozer_working_dir)
         self._elliott_env_vars = os.environ.copy()
         self._elliott_env_vars["ELLIOTT_WORKING_DIR"] = str(self.elliott_working_dir)
-        if self._ocp_build_data_url:
-            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self._ocp_build_data_url
-            self._doozer_env_vars["DOOZER_DATA_PATH"] = self._ocp_build_data_url
+        if self.data_path:
+            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self.data_path
+            self._doozer_env_vars["DOOZER_DATA_PATH"] = self.data_path
+        if self.data_gitref:
+            self._elliott_env_vars["ELLIOTT_DATA_GITREF"] = self.data_gitref
+            self._doozer_env_vars["DOOZER_DATA_GITREF"] = self.data_gitref
 
         # This will be set to True if advance operator advisory is detected
         self.advance_release = False
@@ -968,11 +975,15 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="Do not filter our shipped builds, attach all builds to advisory")
 @click.option("--skip-batch", is_flag=True,
               help="Skip using batch")
+@click.option("--data-path", required=True, default=constants.OCP_BUILD_DATA_URL,
+              help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
+@click.option("--data-gitref", required=False,
+              help="(Optional) Doozer data path git [branch / tag / sha] to use")
 @pass_runtime
 @click_coroutine
 async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Optional[str], date: str,
                           package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool,
-                          include_shipped: bool, skip_batch: bool):
+                          include_shipped: bool, skip_batch: bool, data_path: str, data_gitref: Optional[str]):
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     await slack_client.say_in_thread(f":construction: prepare-release for {name if name else assembly} "
@@ -996,6 +1007,8 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             default_advisories=default_advisories,
             include_shipped=include_shipped,
             skip_batch=skip_batch,
+            data_path=data_path,
+            data_gitref=data_gitref,
         )
         await pipeline.run()
         await slack_client.say_in_thread(f":white_check_mark: @release-artists prepare-release for {name if name else assembly} completes.")
