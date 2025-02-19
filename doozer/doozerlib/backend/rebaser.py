@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 import asyncio
+import requests
 
 import bashlex
 import bashlex.errors
@@ -817,6 +818,14 @@ class KonfluxRebaser:
             # This may not satisfy all builds cachito expectations, but can help
             # folks write Dockerfiles that can be built with cachito and cachi2.
 
+            # Here is an example Dockerfile snippet we are trying to satisfy. Notice
+            # the special directory structures and files (.npmc, registry-ca.pem, cachito.env).
+            #   RUN test -d ${REMOTE_SOURCES_DIR}/cachito-gomod-with-deps || exit 1; \
+            #       cp -f $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem . \
+            #       && cp -f $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/web/{.npmrc,package-lock.json} web/ \
+            #       && source ${REMOTE_SOURCES_DIR}/cachito-gomod-with-deps/cachito.env \
+            #       RUN make install-frontend-ci && make build-frontend
+
             # The directory will serve as REMOTE_SOURCES content in the rebased
             # upstream repository.
             # i.e. COPY $REMOTE_SOURCES $REMOTE_SOURCES_DIR will resolve as
@@ -848,9 +857,32 @@ class KonfluxRebaser:
             # be copied into REMOTE_SOURCES_DIR
             gomod_deps_path.joinpath('cachito.env').touch(exist_ok=True)
 
+            # The value we will set REMOTE_SOURCES_DIR to.
+            remote_source_dir_env = '/tmp/cachito-emulation'
+
+            for npm_entry in metadata.config.cachito.packages.npm:
+                # cachito creates an .npmrc file in the NPM paths. This
+                # use to cause NPM to use an NPM server, supplied by cachito,
+                # which only supplied the component's NPM deps.
+                # See https://github.com/containerbuildsystem/cachito/blob/fe2ef761d7d8169597166e9f92ee8ef3d62a091c/README.md .
+                # Dockerfiles may reference this file. We create it in emulation mode, but do
+                # not populate it. cachi2 works fundamentally differently
+                # by re-writing package-lock.json to reference local files.
+                # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
+                if 'path' in npm_entry:
+                    app_path = gomod_deps_path.joinpath('app')
+                    npm_path = app_path.joinpath(npm_entry['path'])
+                    npm_path.mkdir(parents=True, exist_ok=True)
+                    npm_path.joinpath('.npmrc').touch(exist_ok=True)
+
             konflux_lines += [
                 f"ENV REMOTE_SOURCES={emulation_dir}",
-                f"ENV REMOTE_SOURCES_DIR=/tmp/{emulation_dir}",
+                f"ENV REMOTE_SOURCES_DIR={remote_source_dir_env}",
+                # Cachito makes application source code and dependencies available inside the app/ directory. We only make the
+                # repo source code available there.
+                "COPY . $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/",
+                # Cachito also writes a pem file which some builds erference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
+                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem"
             ]
 
         konflux_lines += [
