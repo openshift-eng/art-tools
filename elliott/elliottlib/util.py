@@ -505,31 +505,42 @@ def all_same(items: Iterable[Any]):
     return all(x == first for x in it)
 
 
-async def get_nvrs_from_payload(pullspec, rhcos_images, logger=None):
+async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=None):
     def log(msg):
         if logger:
             logger.info(msg)
 
+    # a pullspec looks like this: quay.io/openshift-release-dev/ocp-release:4.17.14-x86_64
+    # an imagestream looks like this: 4.17-art-assembly-4.17.14
+    if '@' in pullspec_or_imagestream or ':' in pullspec_or_imagestream:
+        is_pullspec = True
+    else:
+        is_pullspec = False
+
     all_payload_nvrs = {}
     log("Fetching release info...")
-    release_export_cmd = f'oc adm release info {pullspec} -o json'
+    if is_pullspec:
+        rc, stdout, stderr = await exectools.cmd_gather_async(
+            f'oc adm release info -o json -n ocp {pullspec_or_imagestream}')
+        tags = json.loads(stdout)['references']['spec']['tags']
+    else:  # it is an imagestream
+        # get image_stream and name_space out of pullspec_or_imagestream
+        image_stream = pullspec_or_imagestream.split("/")[-1]  # Get the part after /
+        name_space = pullspec_or_imagestream.split("/")[0]  # Get the part before /
 
-    rc, stdout, stderr = exectools.cmd_gather(release_export_cmd)
-    if rc != 0:
-        # Probably no point in continuing.. can't contact brew?
-        msg = f"Unable to run oc release info: out={stdout}  ; err={stderr}"
-        raise RuntimeError(msg)
+        rc, stdout, stderr = await exectools.cmd_gather_async(
+            f'oc -o json -n {name_space} get is/{image_stream}')
+        tags = json.loads(stdout)['spec']['tags']
 
-    payload_json = json.loads(stdout)
     log("Looping over payload images...")
-    log(f"{len(payload_json['references']['spec']['tags'])} images to check")
+    log(f"{len(tags)} images to check")
     cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
-            payload_json['references']['spec']['tags']]
+            tags]
 
     log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
 
-    for image, cmd, cmd_result in zip(payload_json['references']['spec']['tags'], cmds, cmd_results):
+    for image, cmd, cmd_result in zip(tags, cmds, cmd_results):
         image_name = image['name']
         rc, stdout, stderr = cmd_result
         if rc != 0:
