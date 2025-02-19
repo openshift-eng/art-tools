@@ -44,6 +44,7 @@ async def olm_bundle_konflux(
     # Create Doozer invocation
     cmd = [
         'doozer',
+        '--build-system=konflux',
         f'--assembly={assembly}',
         f'--working-dir={runtime.doozer_working}',
         f'--group=openshift-{version}@{data_gitref}' if data_gitref else f'--group=openshift-{version}',
