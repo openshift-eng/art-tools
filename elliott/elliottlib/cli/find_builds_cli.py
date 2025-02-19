@@ -254,19 +254,19 @@ PRESENT advisory. Here are some examples:
             else:
                 ensure_rhcos_file_meta(advisory_id)
             if cdn_repos and not no_cdn_repos:
-                cdn_repos = set(cdn_repos)
-                available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
-                not_available_repos = cdn_repos - available_repos
-                repos_to_enable = cdn_repos & available_repos
-                if repos_to_enable:
-                    if dry_run:
-                        yellow_print(f"[dry-run] Would've enabled CDN repos: {repos_to_enable}")
-                    else:
+                if dry_run:
+                    yellow_print(f"[dry-run] Would've enabled CDN repos: {cdn_repos}")
+                else:
+                    cdn_repos = set(cdn_repos)
+                    available_repos = set([i['repo']['name'] for i in erratum.metadataCdnRepos()])
+                    not_available_repos = cdn_repos - available_repos
+                    repos_to_enable = cdn_repos & available_repos
+                    if repos_to_enable:
                         erratum.set_cdn_repos(repos_to_enable)
-                if not_available_repos:
-                    raise ValueError("These cdn repos defined in erratatool.yml are not available for the advisory "
-                                     f"{advisory_id}: {not_available_repos}. Please remove these or request them to "
-                                     "be created.")
+                    if not_available_repos:
+                        raise ValueError("These cdn repos defined in erratatool.yml are not available for the advisory "
+                                         f"{advisory_id}: {not_available_repos}. Please remove these or request them to "
+                                         "be created.")
     except ErrataException as e:
         red_print(f'Cannot change advisory {advisory_id}: {e}')
         exit(1)
