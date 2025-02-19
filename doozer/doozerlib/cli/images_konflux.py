@@ -2,11 +2,11 @@ import asyncio
 import logging
 import traceback
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
 from artcommonlib.konflux.konflux_build_record import (
-    ArtifactType, Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord)
+    ArtifactType, Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome)
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.model import Missing
 from artcommonlib.telemetry import start_as_current_span_async
@@ -228,6 +228,8 @@ class KonfluxBundleCli:
         self.skip_checks = skip_checks
         self.release = release
         self.plr_template = plr_template
+        self._db_for_bundles = KonfluxDb()
+        self._db_for_bundles.bind(KonfluxBundleBuildRecord)
 
     async def get_operator_builds(self):
         """ Get build records for the given operator nvrs or latest build records for all operators.
@@ -257,39 +259,49 @@ class KonfluxBundleCli:
             runtime.initialize(mode='images', clone_distgits=False)
             LOGGER.info("Fetching latest operator builds from Konflux DB...")
             operator_metas: List[ImageMetadata] = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
-            records = await runtime.konflux_db.get_latest_builds(
-                names=[metadata.distgit_key for metadata in operator_metas],
-                group=runtime.group,
-                assembly=runtime.assembly,
-                artifact_type=ArtifactType.IMAGE,
-                engine=Engine.KONFLUX,
-                strict=True,
-            )
+            records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
+            not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
+            if not_found:
+                raise IOError(f"Couldn't find build records for {not_found}")
             for metadata, record in zip(operator_metas, records):
                 assert record is not None and isinstance(record, KonfluxBuildRecord)
                 dgk_records[metadata.distgit_key] = record
         return dgk_records
 
+    async def _get_bundle_build_for(self, operator_build: KonfluxBuildRecord, strict: bool = True) -> Optional[KonfluxBundleBuildRecord]:
+        """ Get bundle build record for the given operator build.
+
+        :param operator_build: Operator build record.
+        :return: Bundle build record.
+        """
+        bundle_name = f"{operator_build.name}-bundle"
+        LOGGER.info("Fetching bundle build for %s from Konflux DB...", operator_build.nvr)
+        where = {
+            "name": bundle_name,
+            "group": self.runtime.group,
+            "assembly": self.runtime.assembly,
+            "operator_nvr": operator_build.nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        if not bundle_build:
+            if strict:
+                raise IOError(f"Bundle build not found for {operator_build.name}. Please build the bundle first.")
+            return None
+        assert isinstance(bundle_build, KonfluxBundleBuildRecord)
+        return bundle_build
+
     async def _rebase_and_build(
             self,
             rebaser: KonfluxOlmBundleRebaser,
             builder: KonfluxOlmBundleBuilder,
-            db_for_bundles: KonfluxDb,
             image_meta: ImageMetadata,
             operator_build: KonfluxBuildRecord):
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
-        runtime = self.runtime
-        assembly = runtime.assembly
         input_release = self.release
         if not self.force or not input_release:
             logger.info("Checking if a previous bundle build exists...")
-            bundle_build = await db_for_bundles.get_latest_build(
-                name=image_meta.get_olm_bundle_short_name(),
-                group=runtime.group,
-                assembly=assembly,
-                engine=Engine.KONFLUX,
-                strict=False,
-            )
+            bundle_build = await self._get_bundle_build_for(operator_build, strict=False)
             if bundle_build is not None:
                 logger.info(f"A previous bundle build already exists: {bundle_build.nvr}")
                 if not self.force:
@@ -337,14 +349,13 @@ class KonfluxBundleCli:
             image_repo=self.image_repo,
             dry_run=self.dry_run,
         )
-        db_for_bundles = KonfluxDb()
-        db_for_bundles.bind(KonfluxBundleBuildRecord)
+
         builder = KonfluxOlmBundleBuilder(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES),
             group=runtime.group,
             assembly=assembly,
             source_resolver=runtime.source_resolver,
-            db=db_for_bundles,
+            db=self._db_for_bundles,
             konflux_namespace=self.konflux_namespace,
             konflux_kubeconfig=self.konflux_kubeconfig,
             konflux_context=self.konflux_context,
@@ -358,7 +369,7 @@ class KonfluxBundleCli:
         tasks = []
         for dkg, record in dgk_records.items():
             image_meta = runtime.image_map[dkg]
-            tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, db_for_bundles, image_meta, record)))
+            tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, image_meta, record)))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_tasks = []
