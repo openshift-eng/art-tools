@@ -484,6 +484,9 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
         for tag in tag_pv_map:
             # keys are rpm component names, values are nvres
             component_builds: Dict[str, Dict] = builder.from_tag("rpm", tag, inherit=False, assembly=assembly, event=runtime.brew_event)
+            # Remove "tag_name" field from the build dict because it may be outdated. _ensure_accepted_tags() will update it.
+            for build in component_builds.values():
+                build.pop("tag_name", None)
             if runtime.assembly_basis_event:
                 # If an assembly has a basis event, rpms pinned by "is" and group dependencies should take precedence over every build from the tag
                 el_version = isolate_el_version_in_brew_tag(tag)
@@ -513,12 +516,12 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
             builds.extend(component_builds.values())
 
     _ensure_accepted_tags(builds, brew_session, tag_pv_map, raise_exception=False)
-    qualified_builds = [b for b in builds if "tag_name" in b]
-    not_attachable_nvrs = [b["nvr"] for b in builds if "tag_name" not in b]
+    qualified_builds = [b for b in builds if "tag_name" in b and b["tag_name"] in tag_pv_map]
+    not_attachable_nvrs = [b["nvr"] for b in builds if "tag_name" not in b or b["tag_name"] not in tag_pv_map]
 
     if not_attachable_nvrs:
-        LOGGER.info(f"The following NVRs will not be swept because they don't have allowed tags"
-                    f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}")
+        LOGGER.warning(f"The following NVRs will not be swept because they don't have allowed tags"
+                       f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}")
 
     shipped = set()
     if include_shipped:
