@@ -110,22 +110,22 @@ class PrepareReleasePipeline:
         self._jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=jira_token)
 
         group_param = f'--group={group}'
-        if data_gitref:
-            group_param += f'@{data_gitref}'
+        if self.data_gitref:
+            group_param += f'@{self.data_gitref}'
 
         self._doozer_base_command = [
             'doozer',
             group_param,
-            f'--assembly={assembly}',
+            f'--assembly={self.assembly}',
             f'--working-dir={self.doozer_working_dir}',
-            f'--data-path={data_path}',
+            f'--data-path={self.data_path}',
         ]
         self._elliott_base_command = [
             'elliott',
             group_param,
-            f'--assembly={assembly}',
+            f'--assembly={self.assembly}',
             f'--working-dir={self.elliott_working_dir}',
-            f'--data-path={data_path}',
+            f'--data-path={self.data_path}',
         ]
         self._build_repo_dir = self.working_dir / "ocp-build-data-push"
 
