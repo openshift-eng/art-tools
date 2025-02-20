@@ -199,7 +199,7 @@ class SourceResolver:
                     cmd = ["git", "-C", source_dir, "branch", "--contains", meta.commitish]
                     exectools.cmd_assert(cmd)
                     LOGGER.info(f"Checking out commit-ish {meta.commitish}")
-                    exectools.cmd_assert(["git", "-C", source_dir, "reset", meta.commitish])
+                    exectools.cmd_assert(["git", "-C", source_dir, "reset", "--hard", meta.commitish])
 
                 # fetch public upstream source
                 if has_public_upstream:

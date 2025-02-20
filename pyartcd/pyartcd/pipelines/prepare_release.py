@@ -19,12 +19,14 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from datetime import datetime, timedelta, timezone
 
 from artcommonlib.assembly import AssemblyTypes, assembly_group_config
+from artcommonlib import git_helper
 from artcommonlib.model import Model
-from artcommonlib.util import get_assembly_release_date, new_roundtrip_yaml_handler
+from artcommonlib.util import get_assembly_release_date_async, new_roundtrip_yaml_handler, convert_remote_git_to_ssh
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
 from artcommonlib import exectools
+from pyartcd import constants
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.jira import JIRAClient
 from pyartcd.slack import SlackClient
@@ -47,10 +49,12 @@ class PrepareReleasePipeline:
         runtime: Runtime,
         group: Optional[str],
         assembly: Optional[str],
+        data_path: Optional[str],
+        data_gitref: Optional[str],
         name: Optional[str],
-        date: str,
+        date: Optional[str],
         nightlies: List[str],
-        package_owner: str,
+        package_owner: Optional[str],
         jira_token: str,
         default_advisories: bool = False,
         include_shipped: bool = False,
@@ -59,6 +63,8 @@ class PrepareReleasePipeline:
         _LOGGER.info("Initializing and verifying parameters...")
         self.runtime = runtime
         self.assembly = assembly or "stream"
+        self.data_path = data_path or self.runtime.config.get("build_config", {}).get("ocp_build_data_url") or constants.OCP_BUILD_DATA_URL
+        self.data_gitref = data_gitref
         self.release_name = None
         group_match = None
         if group:
@@ -90,7 +96,7 @@ class PrepareReleasePipeline:
             if default_advisories:
                 raise ValueError("default_advisories cannot be set for a non-stream assembly.")
 
-        self.release_date = date or get_assembly_release_date(assembly, group)
+        self.release_date = date
         self.package_owner = package_owner or self.runtime.config["advisory"]["package_owner"]
         self._slack_client = slack_client
         self.working_dir = self.runtime.working_dir.absolute()
@@ -102,15 +108,26 @@ class PrepareReleasePipeline:
         self.elliott_working_dir = self.working_dir / "elliott-working"
         self.doozer_working_dir = self.working_dir / "doozer-working"
         self._jira_client = JIRAClient.from_url(self.runtime.config["jira"]["url"], token_auth=jira_token)
-        # sets environment variables for Elliott and Doozer
-        self._ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url")
-        self._doozer_env_vars = os.environ.copy()
-        self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self.doozer_working_dir)
-        self._elliott_env_vars = os.environ.copy()
-        self._elliott_env_vars["ELLIOTT_WORKING_DIR"] = str(self.elliott_working_dir)
-        if self._ocp_build_data_url:
-            self._elliott_env_vars["ELLIOTT_DATA_PATH"] = self._ocp_build_data_url
-            self._doozer_env_vars["DOOZER_DATA_PATH"] = self._ocp_build_data_url
+
+        group_param = f'--group={group}'
+        if data_gitref:
+            group_param += f'@{data_gitref}'
+
+        self._doozer_base_command = [
+            'doozer',
+            group_param,
+            f'--assembly={assembly}',
+            f'--working-dir={self.doozer_working_dir}',
+            f'--data-path={data_path}',
+        ]
+        self._elliott_base_command = [
+            'elliott',
+            group_param,
+            f'--assembly={assembly}',
+            f'--working-dir={self.elliott_working_dir}',
+            f'--data-path={data_path}',
+        ]
+        self._build_repo_dir = self.working_dir / "ocp-build-data-push"
 
         # This will be set to True if advance operator advisory is detected
         self.advance_release = False
@@ -119,8 +136,7 @@ class PrepareReleasePipeline:
 
     async def run(self):
         self.working_dir.mkdir(parents=True, exist_ok=True)
-        build_data_repo = self.working_dir / "ocp-build-data-push"
-        shutil.rmtree(build_data_repo, ignore_errors=True)
+        shutil.rmtree(self._build_repo_dir, ignore_errors=True)
         shutil.rmtree(self.elliott_working_dir, ignore_errors=True)
         shutil.rmtree(self.doozer_working_dir, ignore_errors=True)
 
@@ -137,6 +153,13 @@ class PrepareReleasePipeline:
         self.release_version = semver.VersionInfo.parse(self.release_name).to_tuple()
         if not release_config:
             raise ValueError(f"Assembly {self.assembly} is not explicitly defined in releases.yml for group {self.group_name}.")
+        if not self.release_date:
+            _LOGGER.info("Release date not provided. Fetching release date from release schedule...")
+            try:
+                self.release_date = await get_assembly_release_date_async(self.release_name)
+            except Exception as ex:
+                raise ValueError(f"Failed to fetch release date from release schedule for {self.release_name}: {ex}")
+            _LOGGER.info("Release date: %s", self.release_date)
         group_config = assembly_group_config(Model(releases_config), self.assembly, Model(group_config)).primitive()
         nightlies = get_assembly_basis(releases_config, self.assembly).get("reference_releases", {}).values()
         self.candidate_nightlies = nightlies_with_pullspecs(nightlies)
@@ -380,7 +403,7 @@ class PrepareReleasePipeline:
                 await self._slack_client.say_in_thread(f"Unable to trigger push {impetus} advisory {advisory} to CDN stage. Details in log.")
 
     async def load_releases_config(self) -> Optional[None]:
-        repo = self.working_dir / "ocp-build-data-push"
+        repo = self._build_repo_dir
         if not repo.exists():
             await self.clone_build_data(repo)
         path = repo / "releases.yml"
@@ -496,7 +519,7 @@ class PrepareReleasePipeline:
         await PrepareReleasePipeline._ensure_batch_status(errata_api, batch, lock=True, dry_run=dry_run)
 
     async def load_group_config(self) -> Dict:
-        repo = self.working_dir / "ocp-build-data-push"
+        repo = self._build_repo_dir
         if not repo.exists():
             await self.clone_build_data(repo)
         async with aiofiles.open(repo / "group.yml", "r") as f:
@@ -504,7 +527,7 @@ class PrepareReleasePipeline:
         return yaml.load(content)
 
     async def load_errata_config(self) -> Dict:
-        repo = self.working_dir / "ocp-build-data-push"
+        repo = self._build_repo_dir
         if not repo.exists():
             await self.clone_build_data(repo)
         async with aiofiles.open(repo / "erratatool.yml", "r") as f:
@@ -513,10 +536,7 @@ class PrepareReleasePipeline:
 
     def check_blockers(self):
         # Note: --assembly option should always be "stream". We are checking blocker bugs for this release branch regardless of the sweep cutoff timestamp.
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
+        cmd = self._elliott_base_command + [
             "--assembly=stream",
             "find-bugs:blocker",
             "--exclude-status=ON_QA",
@@ -537,11 +557,7 @@ class PrepareReleasePipeline:
 
     def create_advisory(self, advisory_type: str, art_advisory_key: str, release_date: str, batch_id: int = 0) -> int:
         _LOGGER.info("Creating advisory with type %s art_advisory_key %s ...", advisory_type, art_advisory_key)
-        create_cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+        create_cmd = self._elliott_base_command + [
             "create",
             f"--type={advisory_type}",
             f"--art-advisory-key={art_advisory_key}",
@@ -569,26 +585,30 @@ class PrepareReleasePipeline:
         return advisory_num
 
     async def clone_build_data(self, local_path: Path):
-        shutil.rmtree(local_path, ignore_errors=True)
         # shallow clone ocp-build-data
-        cmd = [
-            "git",
+        repo_url = self.data_path or self.runtime.config["build_config"]["ocp_build_data_repo_push_url"]
+        repo_ssh_url = convert_remote_git_to_ssh(repo_url)
+        args = [
             "-C",
             str(self.working_dir),
             "clone",
             "-b",
             self.group_name,
             "--depth=1",
-            self.runtime.config["build_config"]["ocp_build_data_repo_push_url"],
+            repo_url,
             str(local_path),
         ]
-        _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd)
+        await git_helper.run_git_async(args)
+        if repo_ssh_url != repo_url:
+            await git_helper.run_git_async(["-C", str(local_path), "remote", "set-url", "--push", "origin", repo_ssh_url])
+        if self.data_gitref:
+            await git_helper.run_git_async(["-C", str(local_path), "fetch", "origin", self.data_gitref])
+            await git_helper.run_git_async(["-C", str(local_path), "reset", "--hard", "FETCH_HEAD"])
 
     async def update_build_data(self, advisories: Dict[str, int], jira_issue_key: Optional[str]):
         if not advisories and not jira_issue_key:
             return False
-        repo = self.working_dir / "ocp-build-data-push"
+        repo = self._build_repo_dir
         if not repo.exists():
             await self.clone_build_data(repo)
 
@@ -653,11 +673,7 @@ class PrepareReleasePipeline:
         permissive: bool = False,
         advance_release: bool = False
     ):
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+        cmd = self._elliott_base_command + [
             "find-bugs:sweep",
         ]
         if advisory:
@@ -675,10 +691,7 @@ class PrepareReleasePipeline:
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def attach_cve_flaws(self, advisory: int):
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
+        cmd = self._elliott_base_command + [
             "attach-cve-flaws",
             f"--advisory={advisory}",
         ]
@@ -707,16 +720,10 @@ class PrepareReleasePipeline:
         if not kind:
             raise ValueError("Specified impetus is not supported: %s", impetus)
 
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
-        ]
-        cmd.extend([
+        cmd = self._elliott_base_command + [
             "find-builds",
             f"--kind={kind}",
-        ])
+        ]
         if only_payload:
             cmd.append("--payload")
         if only_non_payload:
@@ -728,14 +735,10 @@ class PrepareReleasePipeline:
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     async def change_advisory_state_qe(self, advisory: int):
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+        cmd = self._elliott_base_command + [
             "change-state",
             "-s", "QE",
             "--from", "NEW_FILES",
@@ -744,15 +747,11 @@ class PrepareReleasePipeline:
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def verify_payload(self, pullspec: str, advisory: int):
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+        cmd = self._elliott_base_command + [
             "verify-payload",
             f"{pullspec}",
             f"{advisory}",
@@ -879,16 +878,13 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def build_and_attach_bundles(self, metadata_advisory: int):
         _LOGGER.info("Finding OLM bundles (will rebuild if not present)...")
-        cmd = [
-            "doozer",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+        cmd = self._doozer_base_command + [
             "olm-bundle:rebase-and-build",
         ]
         if self.dry_run:
             cmd.append("--dry-run")
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd, env=self._doozer_env_vars, cwd=self.working_dir)
+        await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
         # parse record.log
         with open(self.doozer_working_dir / "record.log", "r") as file:
             record_log = parse_record_log(file)
@@ -897,10 +893,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         if not bundle_nvrs:
             return
         _LOGGER.info("Attaching bundle builds %s to advisory %s...", bundle_nvrs, metadata_advisory)
-        cmd = [
-            "elliott",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+        cmd = self._elliott_base_command + [
             "find-builds",
             "--kind=image",
         ]
@@ -911,14 +904,11 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             cmd.append("--attach")
             cmd.append(f"{metadata_advisory}")
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     async def verify_attached_operators(self, *advisories: List[int], gather_dependencies=False):
-        cmd = [
-            "elliott",
-            f"--group={self.group_name}",
-            f"--assembly={self.assembly}",
+        cmd = self._elliott_base_command + [
             "verify-attached-operators",
         ]
         if gather_dependencies:
@@ -927,17 +917,14 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         for advisory in advisories:
             cmd.append(f"{advisory}")
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     async def remove_builds_all(self, advisory_id):
         """
         Remove all builds from advisory
         """
         _LOGGER.info(f"Removing all builds from advisory {advisory_id}")
-        cmd = [
-            "elliott",
-            f"--group={self.group_name}",
-            f"--assembly={self.assembly}",
+        cmd = self._elliott_base_command + [
             "remove-builds",
             "--all",
             f"--advisory={advisory_id}",
@@ -946,7 +933,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
             cmd.append("--dry-run")
 
         _LOGGER.info("Running command: %s", ' '.join(cmd))
-        await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, cwd=self.working_dir)
+        await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
 
 @cli.command("prepare-release")
@@ -954,6 +941,10 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="The group of components on which to operate. e.g. openshift-4.9")
 @click.option("--assembly", metavar="ASSEMBLY_NAME", required=True, default="stream",
               help="The name of an assembly to rebase & build for. e.g. 4.9.1")
+@click.option('--data-path', required=False,
+              help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
+@click.option('--data-gitref', required=False,
+              help='Doozer data path git [branch / tag / sha] to use')
 @click.option("--name", metavar="RELEASE_NAME",
               help="release name (e.g. 4.6.42)")
 @click.option("--date", metavar="YYYY-MMM-DD",
@@ -970,7 +961,8 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
               help="Skip using batch")
 @pass_runtime
 @click_coroutine
-async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Optional[str], date: str,
+async def prepare_release(runtime: Runtime, group: str, assembly: str, data_path: Optional[str], data_gitref: Optional[str],
+                          name: Optional[str], date: str,
                           package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool,
                           include_shipped: bool, skip_batch: bool):
     slack_client = runtime.new_slack_client()
@@ -988,6 +980,8 @@ async def prepare_release(runtime: Runtime, group: str, assembly: str, name: Opt
             runtime=runtime,
             group=group,
             assembly=assembly,
+            data_path=data_path,
+            data_gitref=data_gitref,
             name=name,
             date=date,
             nightlies=nightlies,
