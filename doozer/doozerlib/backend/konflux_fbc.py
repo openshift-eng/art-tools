@@ -90,8 +90,9 @@ class KonfluxFbcRebaser:
         if not channel_name:
             raise IOError("Channel name not found in bundle image")
         default_channel_name = labels.get("operators.operatorframework.io.bundle.channel.default.v1")
-        # package_name = labels.get("operators.operatorframework.io.bundle.package.v1")
         olm_bundle_name, olm_package, olm_bundle_blob = await self._fetch_olm_bundle_blob(bundle_build)
+        if olm_package != labels.get("operators.operatorframework.io.bundle.package.v1"):
+            raise IOError(f"Package name mismatch: {olm_package} != {labels.get('operators.operatorframework.io.bundle.package.v1')}")
         olm_csv_metadata = next((entry for entry in olm_bundle_blob["properties"] if entry["type"] == "olm.csv.metadata"), None)
         if not olm_csv_metadata:
             raise IOError(f"CSV metadata not found in bundle {olm_bundle_name}")
@@ -124,11 +125,10 @@ class KonfluxFbcRebaser:
         if bundle_with_skips:
             # Then we move the skips field to the new bundle
             # and add the bundle name of bundle_with_skips to the skips field
-            skips = set(bundle_with_skips['skips'])
-            del bundle_with_skips['skips']
+            skips = set(bundle_with_skips.pop('skips'))
             skips = (skips | {bundle_with_skips['name']}) - {olm_bundle_name}
 
-        idx, entry = next(((i, entry) for i, entry in enumerate(channel['entries']) if entry['name'] == olm_bundle_name), (-1, None))
+        entry = next((entry for entry in channel['entries'] if entry['name'] == olm_bundle_name), None)
         if not entry:
             logger.info("Adding bundle %s to channel %s", olm_bundle_name, channel['name'])
             entry = {"name": olm_bundle_name}

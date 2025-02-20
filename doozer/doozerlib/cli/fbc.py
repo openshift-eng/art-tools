@@ -222,7 +222,7 @@ class FbcRebaseCli:
 
         dgk_operator_builds = await self._get_operator_builds()
         bundle_builds = await self._get_bundle_builds(list(dgk_operator_builds.values()), strict=False)
-        not_found = [dkg for dkg, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None]
+        not_found = [dgk for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None]
         if not_found:
             raise IOError(f"Bundle builds not found for {not_found}. Please build the bundles first.")
         bundle_builds = cast(List[KonfluxBundleBuildRecord], bundle_builds)
@@ -241,8 +241,8 @@ class FbcRebaseCli:
             upcycle=False,
         )
         tasks = []
-        for dkg, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds):
-            operator_meta = runtime.image_map[dkg]
+        for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds):
+            operator_meta = runtime.image_map[dgk]
             tasks.append(rebaser.rebase(operator_meta, bundle_build, self.version, self.release))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_bundles = []
@@ -273,10 +273,10 @@ class FbcRebaseCli:
             # Load image metas for the given operators
             runtime.images = list(dgk_records.keys())
             runtime.initialize(mode='images', clone_distgits=False)
-            for dkg in dgk_records.keys():
-                metadata = runtime.image_map[dkg]
+            for dgk in dgk_records.keys():
+                metadata = runtime.image_map[dgk]
                 if not metadata.is_olm_operator:
-                    raise IOError(f"Operator {dkg} does not have 'update-csv' config")
+                    raise IOError(f"Operator {dgk} does not have 'update-csv' config")
         else:
             # Get latest build records for all specified operators
             runtime.initialize(mode='images', clone_distgits=False)
@@ -328,7 +328,7 @@ class FbcRebaseCli:
 
 @cli.command("beta:fbc:rebase", short_help="Refresh a group's FBC konflux source content from source content.")
 @click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
-              help="Version string to populate in Dockerfiles. \"auto\" gets version from atomic-openshift RPM")
+              help="Version string to populate in Dockerfiles.")
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
 @option_commit_message
 @option_push

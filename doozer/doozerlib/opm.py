@@ -110,13 +110,15 @@ database files to render.
     :param auth: The registry authentication information to use.
     :return: The parsed file-based catalog blobs.
     """
+    if not input:
+        raise ValueError("input must not be empty.")
     if output_format not in ["yaml", "json"]:
         raise ValueError(f"Invalid output format: {output_format}")
     args = []
     if migrate:
         args.append("--migrate")
     LOGGER.debug(f"Rendering FBC for {', '.join(input)}")
-    _, out, _ = await gather_opm(["render"] + args + ["-o", "yaml", "--", *input],
+    _, out, _ = await gather_opm(["render"] + args + ["-o", output_format, "--", *input],
                                  auth=auth)
     blobs = yaml.load_all(StringIO(out))
     return list(blobs)
