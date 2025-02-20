@@ -244,6 +244,7 @@ class KonfluxImageBuilder:
         )
 
         # Start a PipelineRun
+        hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -256,9 +257,9 @@ class KonfluxImageBuilder:
             building_arches=building_arches,
             additional_tags=additional_tags,
             skip_checks=self._config.skip_checks,
+            hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
-            image_metadata=metadata
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
