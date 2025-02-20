@@ -113,7 +113,7 @@ def plashet_config_for_major_minor(major, minor):
         "rhel-9-server-microshift-rpms": {
             "slug": "microshift-el9",
             "tag": f"rhaos-{major}.{minor}-rhel-9-candidate",
-            "product_version": f"RHEL-9-OSE-{major}.{minor}",
+            "product_version": f"OSE-{major}.{minor}-RHEL-9",
             "include_embargoed": False,
             "embargoed_tags": [],
             "include_previous_packages": [],
