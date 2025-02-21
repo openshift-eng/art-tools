@@ -21,6 +21,37 @@ yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
 
 
+class KubeCondition:
+    def __init__(self, condition_obj: Dict):
+        self.type = condition_obj.get('type')
+        self.message = condition_obj.get('message')
+        self.reason = condition_obj.get('reason')
+        self.status = condition_obj.get('status')
+        self.last_transition_time = None
+        if condition_obj.get('lastTransitionTime'):
+            self.last_transition_time = datetime.datetime.fromisoformat(condition_obj.get('lastTransitionTime').rstrip("Z"))
+
+    def is_status_true(self) -> bool:
+        return str(self.status).lower() == 'true'
+
+    def is_status_false(self) -> bool:
+        return str(self.status).lower() == 'false'
+
+    @staticmethod
+    def find_condition(obj, condition_type: str, _default: Optional["KubeCondition"] = None) -> "KubeCondition":
+        """
+        Searches a kube object's status.conditions for a specified condition type. Returns the
+        condition entry if found. Otherwise, returns _default value.
+        """
+        try:
+            for condition in obj.status.get('conditions', []):
+                if condition['type'] == condition_type:
+                    return KubeCondition(condition)
+        except AttributeError:
+            pass
+        return _default
+
+
 class KonfluxClient:
     """
     KonfluxClient is a client for interacting with the Konflux API.
@@ -247,20 +278,6 @@ class KonfluxClient:
             }
         }
         return obj
-
-    @staticmethod
-    def extract_status_condition(obj, condition_type: str, _default=None) -> Dict:
-        """
-        Searches a kube object's status.conditions for a specified condition type. Returns the
-        condition entry if found. Otherwise, returns _default value.
-        """
-        try:
-            for condition in obj.status.get('conditions', []):
-                if condition['type'] == condition_type:
-                    return condition
-        except AttributeError:
-            pass
-        return _default
 
     async def ensure_application(self, name: str, display_name: str) -> resource.ResourceInstance:
         application = self._new_application(name, display_name)
@@ -542,13 +559,12 @@ class KonfluxClient:
                     ):
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
-                        conditions = []
                         # status takes some time to appear
                         try:
-                            succeeded_condition = KonfluxClient.extract_status_condition(obj, 'Succeeded')
+                            succeeded_condition = KubeCondition.find_condition(obj, 'Succeeded')
                             if succeeded_condition:
-                                succeeded_status = succeeded_condition['status']
-                                succeeded_reason = succeeded_condition['reason']
+                                succeeded_status = succeeded_condition.status
+                                succeeded_reason = succeeded_condition.reason
                         except AttributeError:
                             pass
 
@@ -571,7 +587,7 @@ class KonfluxClient:
                                 age = current_time - creation_time
                                 age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
                                 pod_desc.append(f"\tPod {pod_name} [phase={pod_phase}][age={age_str}]")
-                            except Exception as e:
+                            except:
                                 e_str = traceback.format_exc()
                                 pod_desc.append(f"\tPod {pod_name} - unable to report information: {e_str}")
 
@@ -601,8 +617,9 @@ class KonfluxClient:
                                                     query_params={"container": container_name},
                                                 )
                                                 self._logger.warning(f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_resource}\n------END LOGS {pod_name}:{container_name}------\n')
-                                            except Exception as e:
-                                                self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}')
+                                            except:
+                                                e_str = traceback.format_exc()
+                                                self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}')
 
                             watcher.stop()
                             return obj, pods

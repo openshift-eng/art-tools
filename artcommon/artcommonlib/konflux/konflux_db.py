@@ -73,7 +73,7 @@ class KonfluxDb:
         self.logger.info('Generated DB schema:\n%s', pprint.pformat(fields))
         return fields
 
-    def add_build(self, build):
+    def add_build(self, build: konflux_build_record.KonfluxBuildRecord):
         """
         Insert a build record into Konflux DB
         """

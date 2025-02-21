@@ -19,6 +19,7 @@ GOOGLE_CLOUD_PROJECT = 'openshift-art'
 DATASET_ID = 'events'
 BUILDS_TABLE_ID = 'builds'
 BUNDLES_TABLE_ID = 'bundles'
+TASKRUN_TABLE_ID = 'taskruns'
 
 # Redis related vars
 REDIS_HOST = 'master.redis.gwprhd.use1.cache.amazonaws.com'
