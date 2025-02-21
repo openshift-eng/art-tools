@@ -137,7 +137,7 @@ def release_snapshot_cli():
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-                       builds_file, for_bundle, builds, dry_run):
+                           builds_file, for_bundle, builds, dry_run):
     """
     Create a new Konflux Snapshot in the given namespace for the given builds
 
