@@ -151,14 +151,14 @@ class KonfluxImageBuilder:
                 pipelinerun = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
-                status = pipelinerun.status.conditions[0].status
-                outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
+                succeeded_condition = self._konflux_client.extract_status_condition(pipelinerun, 'Succeeded')
+                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
                     await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches)
 
-                if status != "True":
+                if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
                                                    pipelinerun_name, pipelinerun)
                 else:

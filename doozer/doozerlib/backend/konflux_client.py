@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import datetime
 from typing import Dict, List, Optional, Sequence, Union, cast
+import traceback
 
 import aiohttp
 import jinja2
@@ -245,6 +247,20 @@ class KonfluxClient:
             }
         }
         return obj
+
+    @staticmethod
+    def extract_status_condition(obj, condition_type: str, _default=None) -> Dict:
+        """
+        Searches a kube object's status.conditions for a specified condition type. Returns the
+        condition entry if found. Otherwise, returns _default value.
+        """
+        try:
+            for condition in obj.status.get('conditions', []):
+                if condition['type'] == condition_type:
+                    return condition
+        except AttributeError:
+            pass
+        return _default
 
     async def ensure_application(self, name: str, display_name: str) -> resource.ResourceInstance:
         application = self._new_application(name, display_name)
@@ -507,10 +523,12 @@ class KonfluxClient:
             return resource.ResourceInstance(self.dyn_client, pipelinerun)
 
         api = await self._get_api("tekton.dev/v1", "PipelineRun")
+        pod_resource = await self._get_api("v1", "Pod")
 
         def _inner():
             watcher = watch.Watch()
-            status = "Not Found"
+            succeeded_status = "Not Found"
+            succeeded_reason = "Not Found"
             while True:
                 try:
                     obj = api.get(name=pipelinerun_name, namespace=namespace)
@@ -524,13 +542,65 @@ class KonfluxClient:
                     ):
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
+                        conditions = []
                         # status takes some time to appear
                         try:
-                            status = obj.status.conditions[0].status
+                            succeeded_condition = KonfluxClient.extract_status_condition(obj, 'Succeeded')
+                            if succeeded_condition:
+                                succeeded_status = succeeded_condition['status']
+                                succeeded_reason = succeeded_condition['reason']
                         except AttributeError:
                             pass
-                        self._logger.info("PipelineRun %s status: %s.", pipelinerun_name, status)
-                        if status not in ["Unknown", "Not Found"]:
+
+                        pod_desc = []
+                        pods = pod_resource.get(namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}")
+                        current_time = datetime.datetime.now()
+                        for pod in pods.items:
+                            pod_name = pod.metadata.name
+                            try:
+                                pod_phase = pod.status.phase
+                                # Calculate the pod age based on the creation timestamp
+                                creation_time_str = pod.metadata.get('creationTimestamp')
+                                if creation_time_str:
+                                    creation_time = datetime.datetime.strptime(creation_time_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=None)
+                                else:
+                                    creation_time = current_time
+                                age = current_time - creation_time
+                                age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
+                                pod_desc.append(f"\tPod {pod_name} [phase={pod_phase}][age={age_str}]")
+                            except Exception as e:
+                                e_str = traceback.format_exc()
+                                pod_desc.append(f"\tPod {pod_name} - unable to report information: {e_str}")
+
+                        self._logger.info("PipelineRun %s [status=%s][reason=%s]\n%s", pipelinerun_name, succeeded_status, succeeded_reason, '\n'.join(pod_desc))
+
+                        if succeeded_status not in ["Unknown", "Not Found"]:
+
+                            for pod in pods.items:
+                                pod_name = pod.metadata.name
+                                pod_phase = pod.status.phase
+                                if pod_phase != 'Succeeded':
+                                    self._logger.warning(f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}')
+
+                                    # Now iterate through containers and print logs for unexpected exit_code values
+                                    container_statuses = pod.status.get("containerStatuses", [])
+                                    for container_status in container_statuses:
+                                        container_name = container_status.get("name")
+                                        state = container_status.get("state", {})
+                                        terminated = state.get("terminated", {})
+                                        exit_code = terminated.get("exitCode")
+                                        if exit_code is None or exit_code != 0:
+                                            try:
+                                                log_resource = pod_resource.get(
+                                                    name=pod_name,
+                                                    namespace=namespace,
+                                                    subresource="log",
+                                                    query_params={"container": container_name},
+                                                )
+                                                self._logger.warning(f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_resource}\n------END LOGS {pod_name}:{container_name}------\n')
+                                            except Exception as e:
+                                                self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}')
+
                             watcher.stop()
                             return obj
                 except TimeoutError:

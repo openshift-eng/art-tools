@@ -5,6 +5,7 @@ import random
 import uuid
 from datetime import datetime
 from enum import Enum
+from typing import Dict, Optional
 
 from artcommonlib import constants
 
@@ -20,6 +21,16 @@ class KonfluxBuildOutcome(KonfluxEnum):
     FAILURE = 'failure'
     SUCCESS = 'success'
     PENDING = 'pending'
+
+    @classmethod
+    def extract_from_pipelinerun_succeeded_condition(cls, succeeded_condition: Optional[Dict]) -> "KonfluxBuildOutcome":
+        if succeeded_condition:
+            succeeded_status = succeeded_condition.get('status', 'Unknown')
+            if succeeded_status == 'True':
+                return cls.SUCCESS
+            elif succeeded_status == 'False':
+                return cls.FAILURE
+        return cls.PENDING
 
 
 class ArtifactType(KonfluxEnum):
