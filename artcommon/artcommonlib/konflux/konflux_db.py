@@ -167,10 +167,14 @@ class KonfluxDb:
             end_window = end_search - timedelta(days=window)
             start_window = max(end_window - timedelta(days=window_size), start_search)
             where_clauses = base_clauses + [Column('start_time', DateTime) >= start_window, Column('start_time', DateTime) < end_window]
-            rows = await self.bq_client.select(
-                where_clauses=where_clauses,
-                order_by_clause=order_by_clause,
-                limit=limit-total_rows if limit is not None else None)
+            try:
+                rows = await self.bq_client.select(
+                    where_clauses=where_clauses,
+                    order_by_clause=order_by_clause,
+                    limit=limit-total_rows if limit is not None else None)
+            except Exception as e:
+                self.logger.error('Failed executing query: %s', e)
+                raise
             self.logger.debug('Found %s builds in batch %s', rows.total_rows, (window // window_size) + 1)
             for row in rows:
                 total_rows += 1

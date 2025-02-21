@@ -2,6 +2,8 @@ import click
 import sys
 import os
 import asyncio
+import yaml
+from datetime import datetime, timezone
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -9,7 +11,10 @@ from doozerlib.util import oc_image_info_for_arch_async
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from artcommonlib import logutil
-from artcommonlib.konflux.konflux_build_record import (KonfluxRecord, KonfluxBuildRecord, KonfluxBundleBuildRecord,
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
+                                                       KonfluxBuildRecord,
+                                                       KonfluxBundleBuildRecord,
                                                        Engine)
 
 LOGGER = logutil.get_logger(__name__)
@@ -45,15 +50,22 @@ class CreateSnapshotCli:
                     registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
                     registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
                 )))
-        image_infos = await asyncio.gather(*image_info_tasks)
-        for image_info in image_infos:
-            assert image_info, "Image info not found"
+        image_infos = await asyncio.gather(*image_info_tasks, return_exceptions=True)
+        errors = [(record, result) for record, result in zip(build_records, image_infos)
+                  if isinstance(result, BaseException)]
+        if errors:
+            for record, ex in errors:
+                record: KonfluxRecord
+                LOGGER.error("Failed to inspect nvr %s pullspec %s: %s", record.nvr, record.image_pullspec, ex)
+            raise RuntimeError("Failed to inspect build pullspecs")
 
-        # now lets create the snapshot crd
+        snapshot_obj = self.new_snapshot(build_records)
+        print(yaml.dump(snapshot_obj, indent=2))
 
-
-
-    def new_snapshot(self, name: str, build_records) -> dict:
+    def new_snapshot(self, build_records) -> dict:
+        major, minor = self.runtime.get_major_minor()
+        timestamp = datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")
+        snapshot_name = f"ose-{major}-{minor}-{timestamp}"
         application_name = KonfluxImageBuilder.get_application_name(self.runtime.group)
 
         def _comp(record):
@@ -64,6 +76,7 @@ class CreateSnapshotCli:
                 "name": comp_name,
                 "source": {"url": source_url},
                 "revision": revision,
+                "containerImage": record.image_pullspec,
             }
 
         components = [_comp(record) for record in build_records]
@@ -72,7 +85,9 @@ class CreateSnapshotCli:
             "apiVersion": "appstudio.redhat.com/v1alpha1",
             "kind": "Snapshot",
             "metadata": {
-                "name": name
+                "name": snapshot_name,
+                "namespace": self.konflux_namespace,
+                "labels": {"test.appstudio.openshift.io/type": "override"},
             },
             "spec": {
                 "application": application_name,
@@ -82,9 +97,21 @@ class CreateSnapshotCli:
         return snapshot_obj
 
     async def fetch_build_records(self) -> list[KonfluxRecord]:
-        LOGGER.info("Fetching given nvrs from Konflux DB...")
-        # TODO: validate that given builds have at most 1 build per component
-        where = {"group": self.runtime.group, "engine": Engine.KONFLUX}
+        LOGGER.info("Validating given NVRs...")
+        major, minor = self.runtime.get_major_minor()
+        major_minor = f"{major}.{minor}"
+        components = set()
+        for build in self.builds:
+            nvr = parse_nvr(build)
+            if nvr['name'] in components:
+                raise ValueError(f"Multiple builds found for component {nvr['name']}. Please provide only one build per component.")
+            components.add(nvr['name'])
+
+            if major_minor not in nvr['version']:
+                raise ValueError(f"{build} does not look to belong to given group {self.runtime.group}")
+
+        LOGGER.info("Fetching NVRs from DB...")
+        where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
         records = await self.runtime.konflux_db.get_build_records_by_nvrs(self.builds, where=where, strict=True)
         return records
 
@@ -109,7 +136,7 @@ def release_snapshot_cli():
 @click.option('--dry-run', is_flag=True, help='Do not actually create the snapshot, just print what would be done.')
 @click.pass_obj
 @click_coroutine
-async def new_snapshot(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
+async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
                        builds_file, for_bundle, builds, dry_run):
     """
     Create a new Konflux Snapshot in the given namespace for the given builds
