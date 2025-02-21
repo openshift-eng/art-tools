@@ -148,7 +148,7 @@ class KonfluxImageBuilder:
                 await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches)
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
+                pipelinerun, pods = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
                 succeeded_condition = self._konflux_client.extract_status_condition(pipelinerun, 'Succeeded')

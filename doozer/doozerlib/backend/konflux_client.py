@@ -502,13 +502,13 @@ class KonfluxClient:
                 f"applications/{application}/"
                 f"pipelineruns/{pipelinerun_name}")
 
-    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None):
+    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None) -> (resource.ResourceInstance, resource.ResourceList):
         """
         Wait for a PipelineRun to complete.
 
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
-        :return: The PipelineRun.
+        :return: The PipelineRun ResourceInstance and a ResourceList of Pods associated with the PipelineRun, if any.
         """
         namespace = namespace or self.default_namespace
         if self.dry_run:
@@ -520,7 +520,7 @@ class KonfluxClient:
                 "status": {"conditions": [{"status": "True"}]}
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
-            return resource.ResourceInstance(self.dyn_client, pipelinerun)
+            return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(self.dyn_client, api_version="v1", kind="Pod")
 
         api = await self._get_api("tekton.dev/v1", "PipelineRun")
         pod_resource = await self._get_api("v1", "Pod")
@@ -559,6 +559,9 @@ class KonfluxClient:
                             pod_name = pod.metadata.name
                             try:
                                 pod_phase = pod.status.phase
+                                if pod_phase == 'Succeeded':
+                                    # Cut down on log output. No need to see successful pods again and again.
+                                    continue
                                 # Calculate the pod age based on the creation timestamp
                                 creation_time_str = pod.metadata.get('creationTimestamp')
                                 if creation_time_str:
@@ -602,7 +605,7 @@ class KonfluxClient:
                                                 self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}')
 
                             watcher.stop()
-                            return obj
+                            return obj, pods
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
