@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import pprint
 import os
 import traceback
 from dataclasses import dataclass
@@ -521,11 +522,14 @@ class KonfluxImageBuilder:
                         'pipeline_run_uid': pipeline_run_uid,
                         'success': all_containers_finished and exit_code_sum == 0,
                     }
-
-                    import pprint
-                    pprint.pprint(taskrun_record)
                     rows.append(taskrun_record)
-                taskrun_db_client.client.insert_rows_json(f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}', rows)
+
+                try:
+                    taskrun_db_client.client.insert_rows_json(f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}', rows)
+                except:
+                    logger.warning('Error inserting taskrun information in bigquery')
+                    pprint.pprint(rows)
+                    raise
         except:
             logger.warning('Error recording taskrun information in bigquery')
             traceback.print_exc()
