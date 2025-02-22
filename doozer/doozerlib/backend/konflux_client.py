@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import datetime
+import time
 from typing import Dict, List, Optional, Sequence, Union, cast
 import traceback
 
@@ -10,7 +11,7 @@ from artcommonlib import exectools
 from artcommonlib import util as art_util
 from async_lru import alru_cache
 from kubernetes import config, watch
-from kubernetes.client import ApiClient, Configuration
+from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
@@ -68,6 +69,7 @@ class KonfluxClient:
     def __init__(self, default_namespace: str, config: Configuration, dry_run: bool = False, logger: logging.Logger = LOGGER) -> None:
         self.api_client = ApiClient(configuration=config)
         self.dyn_client = DynamicClient(self.api_client)
+        self.corev1_client = CoreV1Api(self.api_client)
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
@@ -101,6 +103,9 @@ class KonfluxClient:
             kind=kind,
         )
         return api
+
+    async def _get_corev1(self):
+        return self.corev1_client
 
     def _extract_manifest_metadata(self, manifest: dict):
         """ Extract the metadata from a manifest.
@@ -519,13 +524,13 @@ class KonfluxClient:
                 f"applications/{application}/"
                 f"pipelineruns/{pipelinerun_name}")
 
-    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None) -> (resource.ResourceInstance, resource.ResourceList):
+    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None) -> (resource.ResourceInstance, List[Dict]):
         """
         Wait for a PipelineRun to complete.
 
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
-        :return: The PipelineRun ResourceInstance and a ResourceList of Pods associated with the PipelineRun, if any.
+        :return: The PipelineRun ResourceInstance and a List[Dict] with a copy of an associated Pod.
         """
         namespace = namespace or self.default_namespace
         if self.dry_run:
@@ -541,6 +546,7 @@ class KonfluxClient:
 
         api = await self._get_api("tekton.dev/v1", "PipelineRun")
         pod_resource = await self._get_api("v1", "Pod")
+        corev1_client = await self._get_corev1()
 
         def _inner():
             watcher = watch.Watch()
@@ -571,15 +577,15 @@ class KonfluxClient:
                         pod_desc = []
                         pods = pod_resource.get(namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}")
                         current_time = datetime.datetime.now()
-                        for pod in pods.items:
-                            pod_name = pod.metadata.name
+                        for pod_instance in pods.items:
+                            pod_name = pod_instance.metadata.name
                             try:
-                                pod_phase = pod.status.phase
+                                pod_phase = pod_instance.status.phase
                                 if pod_phase == 'Succeeded':
                                     # Cut down on log output. No need to see successful pods again and again.
                                     continue
                                 # Calculate the pod age based on the creation timestamp
-                                creation_time_str = pod.metadata.get('creationTimestamp')
+                                creation_time_str = pod_instance.metadata.get('creationTimestamp')
                                 if creation_time_str:
                                     creation_time = datetime.datetime.strptime(creation_time_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=None)
                                 else:
@@ -594,15 +600,22 @@ class KonfluxClient:
                         self._logger.info("PipelineRun %s [status=%s][reason=%s]\n%s", pipelinerun_name, succeeded_status, succeeded_reason, '\n'.join(pod_desc))
 
                         if succeeded_status not in ["Unknown", "Not Found"]:
-
-                            for pod in pods.items:
-                                pod_name = pod.metadata.name
-                                pod_phase = pod.status.phase
+                            time.sleep(5)  # allow final pods to update their status if they can
+                            pods_instances = pod_resource.get(namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}")
+                            # We will convert ResourceInstances to Dicts so that they can be manipulated with
+                            # extra information.
+                            pod_list: List[Dict] = list()
+                            for pod_instance in pods_instances.items:
+                                pod = pod_instance.to_dict()  # Convert to normal dict so that we can store log_output later.
+                                pod_list.append(pod)
+                                pod_name = pod.get('metadata').get('name')
+                                pod_status = pod.get('status', {})
+                                pod_phase = pod_status.get('phase')
                                 if pod_phase != 'Succeeded':
                                     self._logger.warning(f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}')
 
-                                    # Now iterate through containers and print logs for unexpected exit_code values
-                                    container_statuses = pod.status.get("containerStatuses", [])
+                                    # Now iterate through containers and record logs for unexpected exit_code values
+                                    container_statuses = pod_status.get("containerStatuses", [])
                                     for container_status in container_statuses:
                                         container_name = container_status.get("name")
                                         state = container_status.get("state", {})
@@ -610,19 +623,21 @@ class KonfluxClient:
                                         exit_code = terminated.get("exitCode")
                                         if exit_code is None or exit_code != 0:
                                             try:
-                                                log_resource = pod_resource.get(
+                                                log_response = corev1_client.read_namespaced_pod_log(
                                                     name=pod_name,
                                                     namespace=namespace,
-                                                    subresource="log",
-                                                    query_params={"container": container_name},
+                                                    container=container_name
                                                 )
-                                                self._logger.warning(f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_resource}\n------END LOGS {pod_name}:{container_name}------\n')
+                                                # stuff log information into the container_status, so that it can be
+                                                # included in the bigquery database.
+                                                container_status['log_output'] = log_response
+                                                self._logger.warning(f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n')
                                             except:
                                                 e_str = traceback.format_exc()
                                                 self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}')
 
                             watcher.stop()
-                            return obj, pods
+                            return obj, pod_list
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue

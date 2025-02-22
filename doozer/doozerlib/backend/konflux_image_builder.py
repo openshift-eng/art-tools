@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
+import pprint
 import os
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, cast
+from typing import Dict, Optional, cast, List
 
 from artcommonlib import constants as artlib_constants
 from artcommonlib import exectools, bigquery
@@ -150,7 +151,7 @@ class KonfluxImageBuilder:
                 await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches)
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun, pods = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
+                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
                 succeeded_condition = KubeCondition.find_condition(pipelinerun, 'Succeeded')
@@ -165,7 +166,7 @@ class KonfluxImageBuilder:
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pods)
+                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
@@ -332,7 +333,7 @@ class KonfluxImageBuilder:
             installed_packages.update(srpms)
         return sorted(installed_packages)
 
-    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, building_arches, pods: Optional[resource.ResourceList] = None) -> Optional[KonfluxBuildRecord]:
+    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
             logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
@@ -423,9 +424,9 @@ class KonfluxImageBuilder:
         try:
             taskrun_db_client = bigquery.BigQueryClient()
             taskrun_db_client.bind(artlib_constants.TASKRUN_TABLE_ID)
-            if pods:
+            if pod_list:
                 rows = []
-                for pod in pods.items:
+                for pod in pod_list:
 
                     def extract_datetime_from_pod_time(pod_time: Optional[str]):
                         if not pod_time:
@@ -454,7 +455,7 @@ class KonfluxImageBuilder:
 
                     containers_info = []
 
-                    def add_container_info(container: Dict, is_init_container: bool):
+                    def add_container_status(container_status: Dict, is_init_container: bool):
                         nonlocal containers_info, max_finished_time, all_containers_finished, exit_code_sum
                         container_state = 'pending'  # when there is no pod state, assume pending
                         container_started_time = None
@@ -462,7 +463,7 @@ class KonfluxImageBuilder:
                         state_reason = None
                         exit_code = None
 
-                        container_state_obj = container.get('state', {})
+                        container_state_obj = container_status.get('state', {})
                         if container_state_obj.get('waiting'):
                             container_state = 'waiting'
                             state_reason = container_state_obj.get('waiting', {}).get('reason')
@@ -486,22 +487,27 @@ class KonfluxImageBuilder:
                             all_containers_finished = False
 
                         container_info = {
-                            'name': container.get('name'),
+                            'name': container_status.get('name'),
                             'is_init': is_init_container,
-                            'image': container.get('image'),
+                            'image': container_status.get('image'),
                             'started_time': container_started_time.isoformat() if container_started_time else None,
                             'finished_time': container_finished_time.isoformat() if container_finished_time else None,
                             'state': container_state,
                             'exit_code': exit_code,
                             'reason': state_reason,
+                            # log_output is not actually part of the Pod schema.
+                            # The caller should capture logs they are interested
+                            # in and stuff it into the associated containerStatus
+                            # entry.
+                            'log_output': container_status.get('log_output')
                         }
                         containers_info.append(container_info)
 
-                    for container in pod_status['initContainerStatuses']:
-                        add_container_info(container, is_init_container=True)
+                    for container_status in pod_status['initContainerStatuses']:
+                        add_container_status(container_status, is_init_container=True)
 
-                    for container in pod_status['containerStatuses']:
-                        add_container_info(container, is_init_container=False)
+                    for container_status in pod_status['containerStatuses']:
+                        add_container_status(container_status, is_init_container=False)
 
                     taskrun_record = {
                         'creation_time': creation_timestamp.isoformat(),
@@ -521,11 +527,14 @@ class KonfluxImageBuilder:
                         'pipeline_run_uid': pipeline_run_uid,
                         'success': all_containers_finished and exit_code_sum == 0,
                     }
-
-                    import pprint
-                    pprint.pprint(taskrun_record)
                     rows.append(taskrun_record)
-                taskrun_db_client.client.insert_rows_json(f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}', rows)
+
+                try:
+                    taskrun_db_client.client.insert_rows_json(f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}', rows)
+                except:
+                    logger.warning('Error inserting taskrun information in bigquery')
+                    pprint.pprint(rows)
+                    raise
         except:
             logger.warning('Error recording taskrun information in bigquery')
             traceback.print_exc()
