@@ -482,7 +482,7 @@ class KonfluxOlmBundleBuilder:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
 
                 # Wait for the PipelineRun to complete
-                pipelinerun = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
+                pipelinerun, pods = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
                 status = pipelinerun.status.conditions[0].status
                 outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
                 logger.info(f"PipelineRun {url} completed with outcome {outcome}")
