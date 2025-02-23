@@ -554,6 +554,11 @@ class KonfluxClient:
             succeeded_reason = "Not Found"
             while True:
                 try:
+                    # If a pipelinerun runs more than an hour, successful pods
+                    # might be garbage collected. Keep track of pod state across
+                    # the pipeline run so that we can record information in bigquery.
+                    pod_history: Dict[str, Dict] = dict()
+
                     obj = api.get(name=pipelinerun_name, namespace=namespace)
                     resource_version = obj.metadata.resourceVersion
                     for event in watcher.stream(
@@ -580,6 +585,7 @@ class KonfluxClient:
                         for pod_instance in pods.items:
                             pod_name = pod_instance.metadata.name
                             try:
+                                pod_history[pod_name] = pod_instance.to_dict()  # Convert to normal dict for pod_history
                                 pod_phase = pod_instance.status.phase
                                 if pod_phase == 'Succeeded':
                                     # Cut down on log output. No need to see successful pods again and again.
@@ -604,13 +610,12 @@ class KonfluxClient:
                             pods_instances = pod_resource.get(namespace=namespace, label_selector=f"tekton.dev/pipeline={pipelinerun_name}")
                             # We will convert ResourceInstances to Dicts so that they can be manipulated with
                             # extra information.
-                            pod_list: List[Dict] = list()
                             for pod_instance in pods_instances.items:
                                 pod = pod_instance.to_dict()  # Convert to normal dict so that we can store log_output later.
-                                pod_list.append(pod)
                                 pod_name = pod.get('metadata').get('name')
                                 pod_status = pod.get('status', {})
                                 pod_phase = pod_status.get('phase')
+                                pod_history[pod_name] = pod  # Update pod history with the final snapshot
                                 if pod_phase != 'Succeeded':
                                     self._logger.warning(f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}')
 
@@ -637,7 +642,7 @@ class KonfluxClient:
                                                 self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}')
 
                             watcher.stop()
-                            return obj, pod_list
+                            return obj, list(pod_history.values())
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
