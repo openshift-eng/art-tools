@@ -37,7 +37,8 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_push(self, run_git: AsyncMock):
         await self.repo.push()
-        run_git.assert_awaited_once_with(["-C", "/path/to/repo", "push", '--follow-tags', "origin", "HEAD"])
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "HEAD"])
+        run_git.assert_any_await(["-C", "/path/to/repo", "push", "origin", "--tags"])
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("shutil.rmtree")

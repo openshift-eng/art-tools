@@ -180,7 +180,12 @@ class BuildRepo:
     async def push(self):
         """ Push changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "push", "--follow-tags", "origin", "HEAD"])
+        await git_helper.run_git_async(["-C", local_dir, "push", "origin", "HEAD"])
+        try:
+            await git_helper.run_git_async(["-C", local_dir, "push", "origin", "--tags"])
+        except Exception as e:
+            # Rebase should not fail if the tags are not pushed successfully
+            self._logger.warning(e)
 
     @staticmethod
     async def from_local_dir(local_dir: Union[str, Path], logger: Optional[logging.Logger] = None):
