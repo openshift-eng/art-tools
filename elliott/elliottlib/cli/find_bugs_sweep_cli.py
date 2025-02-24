@@ -211,6 +211,10 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
         bug_ids = {b.id for b in bugs}
         included_bug_ids = included_bug_ids - bug_ids
         included_bugs = bug_tracker.get_bugs(included_bug_ids)
+        if find_bugs_obj.cve_only:
+            logger.info("checking if cve tracker bug found in included bug list")
+            included_bugs = [ib for ib in included_bugs if ib.is_tracker_bug()]
+            logger.info(f"filtered cve tracker bug from included bug list: {[getattr(ib, 'id') for ib in included_bugs]}")
         bugs.extend(included_bugs)
     if excluded_bug_ids:
         logger.warning(f"The following {bug_tracker.type} bugs will be excluded because they are explicitly "
