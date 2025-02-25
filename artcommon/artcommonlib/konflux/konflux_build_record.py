@@ -193,6 +193,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
                  ingestion_time: datetime = None, operand_nvrs: list = [], operator_nvr: str = '',
+                 bundle_package_name: str = '', bundle_csv_name: str = '',
                  record_id: str = '', build_id: str = None, nvr: str = None):
 
         super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
@@ -200,4 +201,6 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
                          outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
+        self.bundle_package_name = bundle_package_name
+        self.bundle_csv_name = bundle_csv_name
         self.init_uuids(record_id, build_id, nvr)

@@ -93,7 +93,7 @@ class KonfluxRebaseCli:
 
 @cli.command("beta:images:konflux:rebase", short_help="Refresh a group's konflux source content from source content.")
 @click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
-              help="Version string to populate in Dockerfiles. \"auto\" gets version from atomic-openshift RPM")
+              help="Version string to populate in Dockerfiles.")
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
 @click.option("--embargoed", is_flag=True, help="Add .p1 to the release string for all images, which indicates those images have embargoed fixes")
 @click.option("--force-yum-updates", is_flag=True, default=False,
@@ -250,10 +250,10 @@ class KonfluxBundleCli:
             # Load image metas for the given operators
             runtime.images = list(dgk_records.keys())
             runtime.initialize(mode='images', clone_distgits=False)
-            for dkg in dgk_records.keys():
-                metadata = runtime.image_map[dkg]
+            for dgk in dgk_records.keys():
+                metadata = runtime.image_map[dgk]
                 if not metadata.is_olm_operator:
-                    raise DoozerFatalError(f"Operator {dkg} does not have 'update-csv' config")
+                    raise DoozerFatalError(f"Operator {dgk} does not have 'update-csv' config")
         else:
             # Get latest build records for all specified operators
             runtime.initialize(mode='images', clone_distgits=False)
@@ -367,8 +367,8 @@ class KonfluxBundleCli:
         )
 
         tasks = []
-        for dkg, record in dgk_records.items():
-            image_meta = runtime.image_map[dkg]
+        for dgk, record in dgk_records.items():
+            image_meta = runtime.image_map[dgk]
             tasks.append(asyncio.create_task(self._rebase_and_build(rebaser, builder, image_meta, record)))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)

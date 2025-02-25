@@ -4,8 +4,9 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Sequence, Union, cast
 
-from artcommonlib import git_helper, exectools
+from artcommonlib import exectools, git_helper
 from artcommonlib import util as art_util
+
 from doozerlib import constants
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution
@@ -66,7 +67,7 @@ class BuildRepo:
                 await exectools.to_thread(shutil.rmtree, local_dir)
             else:
                 self._logger.info("Reusing existing build source repository at %s", local_dir)
-                self._commit_hash = await self._get_commit_hash(local_dir)
+                self._commit_hash = await self._get_commit_hash(local_dir, strict=strict)
                 needs_clone = False
         if needs_clone:
             self._logger.info("Cloning build source repository %s on branch %s into %s...", self.url, self.branch, self.local_dir)
@@ -147,7 +148,7 @@ class BuildRepo:
         await git_helper.run_git_async(["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."])
 
     @staticmethod
-    async def _get_commit_hash(local_dir: str) -> Optional[str]:
+    async def _get_commit_hash(local_dir: str, strict: bool = False) -> Optional[str]:
         """ Get the commit hash of the current commit in the build source repository.
         :return: The commit hash of the current commit; None if the branch has no commits yet.
         """
@@ -155,6 +156,8 @@ class BuildRepo:
         if rc != 0:
             if "unknown revision or path not in the working tree" in err:
                 # This branch has no commits yet
+                if strict:
+                    raise IOError(f"No commits found in build source repository at {local_dir}")
                 return None
             raise ChildProcessError(f"Failed to get commit hash: {err}")
         return out.strip()
@@ -167,7 +170,7 @@ class BuildRepo:
         if allow_empty:
             commit_opts.append("--allow-empty")
         await git_helper.run_git_async(["-C", local_dir, "commit"] + commit_opts + ["-m", message])
-        self._commit_hash = await self._get_commit_hash(local_dir)
+        self._commit_hash = await self._get_commit_hash(local_dir, strict=True)
 
     async def tag(self, tag: str):
         """ Tag the current commit in the build source repository.
@@ -204,3 +207,102 @@ class BuildRepo:
         repo = BuildRepo(url.strip(), branch.strip(), local_dir, logger)
         repo._commit_hash = await BuildRepo._get_commit_hash(local_dir)
         return repo
+
+
+async def get_build_repo_for_image(
+        image_meta: ImageMetadata, repo_dir: Optional[Path], for_bundle: bool = False,
+        commit_hash: Optional[str] = None, upcycle: bool = False, strict: bool = False) -> BuildRepo:
+    """ Get a BuildRepo object for the build source repository of the given image.
+    If the build source repository doesn't exist, clone it into the repository directory.
+
+    :param image_meta: An ImageMetadata object for the image to get the build source repository of.
+    :param repo_dir: The directory to clone the build source repository into. None to use the default directory.
+    :param for_bundle: If True, get the build source repository for the bundle of the image instead of the image itself.
+    :param commit_hash: The commit hash of the build source repository to clone. None to use the default branch.
+    :param upcycle: If True, the local directory will be deleted and recreated if it already exists.
+    :param strict: If True, raise an exception if the branch is not found in the build source repository.
+    :return: A BuildRepo object
+    """
+    logger = LOGGER.getChild(image_meta.distgit_key)
+    runtime = image_meta.runtime
+    if for_bundle and not image_meta.is_olm_operator:
+        raise ValueError(f"Image {image_meta.qualified_key} is not an OLM operator")
+    if repo_dir is None:
+        repo_dir = Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_BUILD_SOURCES, image_meta.qualified_key if not for_bundle else image_meta.get_olm_bundle_short_name())
+    if repo_dir.exists():
+        # Load exiting build source repository
+        logger.info("Loading existing build repository %s...", repo_dir)
+        build_repo = await BuildRepo.from_local_dir(repo_dir, logger=logger)
+        if commit_hash and commit_hash != build_repo.commit_hash:
+            raise IOError(f"Build repository in {repo_dir} is not at commit {commit_hash}")
+        logger.info("Build repository loaded from %s", repo_dir)
+    else:
+        # Resolve the source of the image
+        source = None
+        if not image_meta.has_source():
+            raise IOError(f"Image {image_meta.qualified_key} doesn't have upstream source. This is no longer supported.")
+        logger.info("Resolving source...")
+        source_resolver = runtime.source_resolver
+        assert source_resolver is not None, "SourceResolver is None; Doozer bug?"
+        source = cast(SourceResolution, await exectools.to_thread(source_resolver.resolve_source, image_meta, no_clone=True))
+        # Clone the build source repository
+        clone_branch = None
+        if commit_hash is None:
+            # Use the default branch
+            if not for_bundle:
+                branch_format = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}"
+            else:
+                branch_format = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}"
+            clone_branch = branch_format.format_map({
+                "group": runtime.group,
+                "assembly_name": runtime.assembly,
+                "distgit_key": image_meta.distgit_key,
+            })
+        logger.info("Cloning build repository...")
+        build_repo = BuildRepo(url=source.url, branch=clone_branch, local_dir=repo_dir, logger=logger)
+        await build_repo.ensure_source(upcycle=upcycle, strict=strict)
+        if commit_hash:
+            await build_repo.fetch(commit_hash, strict=True)
+        logger.info("Build repository cloned to %s", repo_dir)
+    if commit_hash:
+        logger.info("Switching to commit %s...", commit_hash)
+        await build_repo.switch(commit_hash, detach=True)
+    return build_repo
+
+
+async def get_build_repos_for_images(image_metas: Sequence[ImageMetadata], base_dir: Optional[Path], upcycle: bool = False, strict: bool = False) -> List[BuildRepo]:
+    """ Get a list of BuildRepo objects for the build source repositories of the given images.
+    If a build source repository doesn't exist, clone it into the base directory.
+
+    :param image_metas: A list of ImageMetadata objects for the images to get the build source repositories of.
+    :param base_dir: The base directory to clone the build source repositories into. None to use the default directory.
+    :param upcycle: If True, the local directory will be deleted and recreated if it already exists.
+    :param strict: If True, raise an exception if the branch is not found in the build source repository.
+    :return: A list of BuildRepo objects
+    """
+    tasks = []
+    for image_meta in image_metas:
+        repo_dir = None
+        if base_dir is not None:
+            repo_dir = base_dir.joinpath(image_meta.qualified_key)
+        tasks.append(get_build_repo_for_image(image_meta, repo_dir, for_bundle=False, upcycle=upcycle, strict=strict))
+    return await asyncio.gather(*tasks)
+
+
+async def get_build_repos_for_bundles(operator_metas: Sequence[ImageMetadata], base_dir: Optional[Path], upcycle: bool = False, strict: bool = False) -> List[BuildRepo]:
+    """ Get a list of BuildRepo objects for the bundle build source repositories of the given OLM operators.
+    If a bundle build source repository doesn't exist, clone it into the base directory.
+
+    :param operator_metas: A list of ImageMetadata objects for the OLM operators to get the bundle build source repositories of.
+    :param base_dir: The base directory to clone the bundle build source repositories into. None to use the default directory.
+    :param upcycle: If True, the local directory will be deleted and recreated if it already exists.
+    :param strict: If True, raise an exception if the branch is not found in the build source repository.
+    :return: A list of BuildRepo objects
+    """
+    tasks = []
+    for operator_meta in operator_metas:
+        bundle_dir = None
+        if base_dir is not None:
+            bundle_dir = base_dir.joinpath(operator_meta.get_olm_bundle_short_name())
+        tasks.append(get_build_repo_for_image(operator_meta, bundle_dir, for_bundle=True, upcycle=upcycle, strict=strict))
+    return await asyncio.gather(*tasks)
