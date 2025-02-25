@@ -74,6 +74,14 @@ class KonfluxClient:
         self.dry_run = dry_run
         self._logger = logger
 
+    def verify_connection(self):
+        try:
+            self.corev1_client.get_api_resources()
+            self._logger.info("Successfully authenticated to the Kubernetes cluster.")
+        except Exception as e:
+            self._logger.error(f"Failed to authenticate to the Kubernetes cluster: {e}")
+            raise
+
     @staticmethod
     def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
         """ Create a KonfluxClient from a kubeconfig file.

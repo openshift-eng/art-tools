@@ -2,8 +2,9 @@ import click
 import sys
 import os
 import asyncio
-import yaml
 from datetime import datetime, timezone
+
+from kubernetes.dynamic import exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -35,6 +36,7 @@ class CreateSnapshotCli:
                                                              config_file=self.konflux_kubeconfig,
                                                              context=self.konflux_context,
                                                              dry_run=self.dry_run)
+        self._konflux_client.verify_connection()
 
         # These will be needed for image inspection
         for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
@@ -49,6 +51,14 @@ class CreateSnapshotCli:
             self.runtime.konflux_db.bind(KonfluxBundleBuildRecord)
         else:
             self.runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        api_verison, kind_snapshot = "appstudio.redhat.com/v1alpha1", "Snapshot"
+        # Ensure the Snapshot CRD is accessible
+        try:
+            await self._konflux_client._get_api()
+        except exceptions.ResourceNotFoundError:
+            raise RuntimeError(f"Cannot access {api_verison} {kind_snapshot} in the cluster. Passed the right kubeconfig?")
+
         build_records: list[KonfluxRecord] = await self.fetch_build_records()
 
         # make sure pullspec is live for each build
@@ -70,7 +80,8 @@ class CreateSnapshotCli:
             raise RuntimeError("Failed to inspect build pullspecs")
 
         snapshot_obj = self.new_snapshot(build_records)
-        print(yaml.dump(snapshot_obj, indent=2))
+        created = await self._konflux_client._create(snapshot_obj)
+        print(created)
 
     def new_snapshot(self, build_records) -> dict:
         major, minor = self.runtime.get_major_minor()
