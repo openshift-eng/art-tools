@@ -559,14 +559,23 @@ class KonfluxClient:
                     # the pipeline run so that we can record information in bigquery.
                     pod_history: Dict[str, Dict] = dict()
 
-                    obj = api.get(name=pipelinerun_name, namespace=namespace)
-                    resource_version = obj.metadata.resourceVersion
                     for event in watcher.stream(
                         api.get,
-                        resource_version=resource_version,
+                        # Specifying resource_version=0 tells the API to pull the current
+                        # version of the object, give us an update, and then watch for new
+                        # events. Combined with timeout_seconds, it ensures we periodically print an
+                        # update about the current running pods for the pipeline
+                        resource_version=0,
                         namespace=namespace,
                         serialize=False,
-                        field_selector=f"metadata.name={pipelinerun_name}"
+                        field_selector=f"metadata.name={pipelinerun_name}",
+                        # timeout_seconds specifies a server side timeout. If there
+                        # is no activity during this period, the for loop will exit
+                        # gracefully. This ensures we will at least log *something*
+                        # while waiting for a long pipelinerun. If we somehow miss
+                        # an event, it also ensures we will come back and check
+                        # the object with an explicit get at least once per period.
+                        timeout_seconds=5*60
                     ):
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
@@ -603,7 +612,13 @@ class KonfluxClient:
                                 e_str = traceback.format_exc()
                                 pod_desc.append(f"\tPod {pod_name} - unable to report information: {e_str}")
 
-                        self._logger.info("PipelineRun %s [status=%s][reason=%s]\n%s", pipelinerun_name, succeeded_status, succeeded_reason, '\n'.join(pod_desc))
+                        # Count all successful pods, not just ones that are still around.
+                        successful_pods = 0
+                        for _, pod in pod_history.items():
+                            if pod.get('status', {}).get('phase') == 'Succeeded':
+                                successful_pods += 1
+
+                        self._logger.info("PipelineRun %s [status=%s][reason=%s]; pods[total=%d][successful=%d][extant=%d]\n%s", pipelinerun_name, succeeded_status, succeeded_reason, len(pod_history), successful_pods, len(pods.items), '\n'.join(pod_desc))
 
                         if succeeded_status not in ["Unknown", "Not Found"]:
                             time.sleep(5)  # allow final pods to update their status if they can
@@ -643,6 +658,7 @@ class KonfluxClient:
 
                             watcher.stop()
                             return obj, list(pod_history.values())
+                    self._logger.info("No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name)
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)
                     continue
