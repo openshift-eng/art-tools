@@ -104,11 +104,18 @@ class CreateSnapshotCli:
 
             source_url = record.source_repo
             revision = record.commitish
+
+            # pullspec is in the form of registry/image:tag
+            # we need to provide snapshot with digest which is stored in image_tag
+            image = record.image_pullspec.split(':')
+            digest = record.image_tag
+            pullspec = f"{image[0]}@sha256:{digest}"
+
             return {
                 "name": comp_name,
                 "source": {"url": source_url},
                 "revision": revision,
-                "containerImage": record.image_pullspec,
+                "containerImage": pullspec
             }
 
         components = [await _comp(record) for record in build_records]
