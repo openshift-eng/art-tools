@@ -130,8 +130,21 @@ class KonfluxRebaser:
             await build_repo.commit(commit_message, allow_empty=True)
 
             # Tag the commit
-            tag = f"{actual_version}-{actual_release}"
-            await build_repo.tag(tag)
+            # 1. components should have tagging modes in metadata; tagging_mode:  `disabled | enabled | legacy` .
+            # 2. images should default to `disabled` / not tagging the repo (to reduce unnecessary noise)
+            # 3. `enabled`, for images, would be the new standard, including `+`.
+            # 4. `legacy`, for images, would not include the `+` .
+            # 5. rpms components should default to using `legacy`
+            tagging_mode = metadata.config.konflux.get("tagging_mode", "disabled")  # For images, default is disabled. i.e. don't tag
+
+            tag = None
+            if tagging_mode == "legacy":
+                tag = f"{actual_version}-{actual_release}"
+            elif tagging_mode == "enabled":
+                tag = f"{actual_version}-{actual_release}+{metadata.distgit_key}"
+
+            if tag:
+                await build_repo.tag(tag)
 
             # Push changes
             if push:
