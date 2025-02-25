@@ -127,7 +127,8 @@ class KonfluxClient:
         namespace = manifest["metadata"].get("namespace", self.default_namespace)
         return api_version, kind, name, namespace
 
-    async def _get(self, api_version: str, kind: str, name: str, namespace: str, strict: bool = True):
+    async def _get(self, api_version: str, kind: str, name: str,
+                   namespace: Optional[str] = None, strict: bool = True):
         """ Get a resource by name and namespace.
 
         :param api_version: The API version.
@@ -140,14 +141,15 @@ class KonfluxClient:
         api = await self._get_api(api_version, kind)
         resource = None
         try:
-            resource = await exectools.to_thread(api.get, name=name, namespace=namespace)
+            resource = await exectools.to_thread(api.get, name=name, namespace=namespace or self.default_namespace)
         except exceptions.NotFoundError:
             if strict:
                 raise
         return resource
 
     @alru_cache
-    async def _get__caching(self, api_version: str, kind: str, name: str, namespace: str, strict: bool = True):
+    async def _get__caching(self, api_version: str, kind: str, name: str,
+                            namespace: Optional[str] = None, strict: bool = True):
         """ Get a resource by name and namespace, with caching.
 
         :param api_version: The API version.
