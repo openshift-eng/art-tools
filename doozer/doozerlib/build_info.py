@@ -445,7 +445,7 @@ class BrewBuildRecordInspector(BuildRecordInspector):
             if el_ver:
                 return el_ver
 
-        return None
+        raise ValueError(f"Unable to determine RHEL base version for {self.get_nvr()}")
 
     def get_source_git_url(self) -> Optional[str]:
         """
