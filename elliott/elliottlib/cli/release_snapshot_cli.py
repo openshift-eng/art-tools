@@ -10,6 +10,7 @@ from elliottlib.runtime import Runtime
 from doozerlib.util import oc_image_info_for_arch_async
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.backend.konflux_client import KonfluxClient
 from artcommonlib import logutil
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
@@ -30,6 +31,15 @@ class CreateSnapshotCli:
         self.for_bundle = for_bundle
         self.builds = builds
         self.dry_run = dry_run
+        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_namespace,
+                                                             config_file=self.konflux_kubeconfig,
+                                                             context=self.konflux_context,
+                                                             dry_run=self.dry_run)
+
+        # These will be needed for image inspection
+        for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
+            if secret not in os.environ:
+                raise EnvironmentError(f"Missing required environment variable {secret}")
 
     async def run(self):
         self.runtime.initialize()
