@@ -4,15 +4,12 @@ import re
 import datetime
 from typing import Any, List, Optional, Tuple, Union
 
-from artcommonlib.util import (isolate_el_version_in_brew_tag,
-                               isolate_git_commit_in_release)
+from artcommonlib.util import isolate_el_version_in_brew_tag
 from artcommonlib.brew import BuildStates
 from artcommonlib import logutil
 from artcommonlib.model import Missing, Model
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from artcommonlib.konflux.konflux_build_record import (KonfluxBuildRecord,
-                                                       KonfluxBuildOutcome,
-                                                       Engine)
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome
 
 CONFIG_MODES = [
     'enabled',  # business as usual

@@ -14,17 +14,16 @@ from dockerfile_parse import DockerfileParser
 from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
                       wait_fixed)
 
-from artcommonlib import logutil, exectools, assertion
-from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
+from artcommonlib import exectools
+from artcommonlib.assembly import assembly_metadata_config
 from artcommonlib.pushd import Dir
-from artcommonlib.model import Missing, Model
+from artcommonlib.model import Model
 from artcommonlib.metadata import MetadataBase
 import doozerlib
 from artcommonlib.brew import BuildStates
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
 from doozerlib.source_resolver import SourceResolver
-from artcommonlib.util import (isolate_el_version_in_brew_tag,
-                               isolate_git_commit_in_release)
+from doozerlib.util import isolate_git_commit_in_release
 
 
 class CgitAtomFeedEntry(NamedTuple):
