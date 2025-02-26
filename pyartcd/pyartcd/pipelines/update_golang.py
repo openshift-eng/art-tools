@@ -373,14 +373,12 @@ class UpdateGolangPipeline:
                 fork_file = fork_repo.get_contents("group.yml", ref=branch_name)
                 fork_repo.update_file("group.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
             # create pr
-            try:
-                build_url = jenkins.get_build_url()
-                body = f"Created by job run {build_url}" if build_url else ""
-                pr = upstream_repo.create_pull(title=title, body=body, base=branch_name, head=f"openshift-bot:{branch_name}")
-                self._logger.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
-                await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
-            except GithubException as e:
-                self._logger.warning(f"Failed to create pr to bump golang builder: {e}")
+            build_url = jenkins.get_build_url()
+            body = f"Created by job run {build_url}" if build_url else ""
+            _LOGGER.info(f'Creating pr to base={branch}, head=openshift-bot:{branch-name}')
+            pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
+            self._logger.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
+            await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
         else:
             if self.tag_builds:
                 await self._slack_client.say_in_thread("No pr created, please double check if it's expected because new build get tagged.")
