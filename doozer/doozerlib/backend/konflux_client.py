@@ -7,19 +7,23 @@ import traceback
 
 import aiohttp
 import jinja2
-from artcommonlib import exectools
-from artcommonlib import util as art_util
 from async_lru import alru_cache
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
+from artcommonlib import exectools
+from artcommonlib import util as art_util
 from doozerlib import constants
-from doozerlib.image import ImageMetadata
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
+
+API_VERSION = "appstudio.redhat.com/v1alpha1"
+KIND_SNAPSHOT = "Snapshot"
+KIND_COMPONENT = "Component"
+KIND_APPLICATION = "Application"
 
 
 class KubeCondition:
@@ -281,8 +285,8 @@ class KonfluxClient:
     @staticmethod
     def _new_application(name: str, display_name: str) -> dict:
         obj = {
-            "apiVersion": "appstudio.redhat.com/v1alpha1",
-            "kind": "Application",
+            "apiVersion": API_VERSION,
+            "kind": KIND_APPLICATION,
             "metadata": {
                 "name": name
             },
@@ -302,8 +306,8 @@ class KonfluxClient:
     def _new_component(name: str, application: str, component_name: str,
                        image_repo: Optional[str], source_url: Optional[str], revision: Optional[str]) -> dict:
         obj = {
-            "apiVersion": "appstudio.redhat.com/v1alpha1",
-            "kind": "Component",
+            "apiVersion": API_VERSION,
+            "kind": KIND_COMPONENT,
             "metadata": {
                 "name": name,
                 "annotations": {

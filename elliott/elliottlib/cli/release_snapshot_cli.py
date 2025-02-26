@@ -11,7 +11,7 @@ from elliottlib.runtime import Runtime
 from doozerlib.util import oc_image_info_for_arch_async
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
-from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT
 from artcommonlib import logutil
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
@@ -20,11 +20,6 @@ from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
                                                        Engine)
 
 LOGGER = logutil.get_logger(__name__)
-
-api_version = "appstudio.redhat.com/v1alpha1"
-kind_snapshot = "Snapshot"
-kind_component = "Component"
-kind_application = "Application"
 
 
 class CreateSnapshotCli:
@@ -59,9 +54,9 @@ class CreateSnapshotCli:
 
         # Ensure the Snapshot CRD is accessible
         try:
-            await self._konflux_client._get_api(api_version, kind_snapshot)
+            await self._konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
         except exceptions.ResourceNotFoundError:
-            raise RuntimeError(f"Cannot access {api_version} {kind_snapshot} in the cluster. Passed the right kubeconfig?")
+            raise RuntimeError(f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?")
 
         build_records: list[KonfluxRecord] = await self.fetch_build_records()
 
@@ -94,13 +89,13 @@ class CreateSnapshotCli:
         application_name = KonfluxImageBuilder.get_application_name(self.runtime.group)
 
         # make sure application exists
-        await self._konflux_client._get(api_version, kind_application, application_name)
+        await self._konflux_client._get(API_VERSION, KIND_APPLICATION, application_name)
 
         async def _comp(record):
             comp_name = KonfluxImageBuilder.get_component_name(application_name, record.name)
 
             # make sure component exists
-            await self._konflux_client._get(api_version, kind_component, comp_name)
+            await self._konflux_client._get(API_VERSION, KIND_COMPONENT, comp_name)
 
             source_url = record.source_repo
             revision = record.commitish
@@ -125,8 +120,8 @@ class CreateSnapshotCli:
         components = [await _comp(record) for record in build_records]
 
         snapshot_obj = {
-            "apiVersion": "appstudio.redhat.com/v1alpha1",
-            "kind": "Snapshot",
+            "apiVersion": API_VERSION,
+            "kind": KIND_SNAPSHOT,
             "metadata": {
                 "name": snapshot_name,
                 "namespace": self.konflux_namespace,
