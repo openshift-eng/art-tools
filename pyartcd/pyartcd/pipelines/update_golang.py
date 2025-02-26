@@ -215,7 +215,7 @@ class UpdateGolangPipeline:
                 raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
 
         _LOGGER.info("Updating streams.yml with found builder images")
-        await self._slack_client.say_in_thread(f"new golang builders available {builder_nvrs.values()}")
+        await self._slack_client.say_in_thread(f"new golang builders available {', '.join(builder_nvrs.values())}")
         await self.update_golang_streams(go_version, builder_nvrs)
 
         await move_golang_bugs(
@@ -373,14 +373,11 @@ class UpdateGolangPipeline:
                 fork_file = fork_repo.get_contents("group.yml", ref=branch_name)
                 fork_repo.update_file("group.yml", update_message, output.read(), fork_file.sha, branch=branch_name)
             # create pr
-            try:
-                build_url = jenkins.get_build_url()
-                body = f"Created by job run {build_url}" if build_url else ""
-                pr = upstream_repo.create_pull(title=title, body=body, base=branch_name, head=f"openshift-bot:{branch_name}")
-                self._logger.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
-                await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
-            except GithubException as e:
-                self._logger.warning(f"Failed to create pr to bump golang builder: {e}")
+            build_url = jenkins.get_build_url()
+            body = f"Created by job run {build_url}" if build_url else ""
+            pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
+            _LOGGER.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
+            await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
         else:
             if self.tag_builds:
                 await self._slack_client.say_in_thread("No pr created, please double check if it's expected because new build get tagged.")
