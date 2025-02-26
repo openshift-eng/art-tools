@@ -29,7 +29,6 @@ from elliottlib import util as elliottutil
 _LOGGER = logging.getLogger(__name__)
 yaml = new_roundtrip_yaml_handler()
 
-
 def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     build_tag = f'rhaos-{ocp_version}-rhel-{el_v}-build'
     parsed_nvr = parse_nvr(nvr)
@@ -44,13 +43,11 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
                  f'build and then run `brew regen-repo {build_tag}` to make it available.')
     return False
 
-
 def get_latest_nvr_in_tag(tag: str, package: str, koji_session) -> str:
     latest_build = koji_session.listTagged(tag, latest=True, package=package, inherit=False)
     if not latest_build:
         return None
     return latest_build[0]['nvr']
-
 
 async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool:
     if not is_latest_build(ocp_version, el_v, nvr, koji_session):
@@ -67,7 +64,6 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
     return True
-
 
 def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
     match = re.fullmatch(r"(\d).(\d+)", ocp_version)
@@ -111,7 +107,6 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
         el_nvr_map[el_version] = nvr
     return go_version, el_nvr_map
 
-
 async def move_golang_bugs(ocp_version: str,
                            cves: List[str] = None,
                            nvrs: List[str] = None,
@@ -141,7 +136,6 @@ async def move_golang_bugs(ocp_version: str,
     if dry_run:
         cmd.append('--dry-run')
     await exectools.cmd_assert_async(cmd)
-
 
 class UpdateGolangPipeline:
     def __init__(self, runtime: Runtime,
@@ -376,8 +370,9 @@ class UpdateGolangPipeline:
             try:
                 build_url = jenkins.get_build_url()
                 body = f"Created by job run {build_url}" if build_url else ""
-                pr = upstream_repo.create_pull(title=title, body=body, base=branch_name, head=f"openshift-bot:{branch_name}")
-                self._logger.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
+                _LOGGER.info(f"body={body} | base={branch_name} | head=openshift-bot:{branch_name}")
+                pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
+                _LOGGER.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
                 await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
             except GithubException as e:
                 self._logger.warning(f"Failed to create pr to bump golang builder: {e}")
@@ -470,7 +465,6 @@ class UpdateGolangPipeline:
         tags = [t['name'] for t in self.koji_session.listTags(build=nvr)]
         prefix = f'module-go-toolset-rhel{el_v}-'
         return next((t for t in tags if t.startswith(prefix) and not t.endswith('-build')), None)
-
 
 @cli.command('update-golang')
 @click.option('--ocp-version', required=True, help='OCP version to update golang for, e.g. 4.16')
