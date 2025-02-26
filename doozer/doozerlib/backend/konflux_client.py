@@ -16,41 +16,9 @@ from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
 from doozerlib import constants
-from doozerlib.image import ImageMetadata
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
-
-
-class KubeCondition:
-    def __init__(self, condition_obj: Dict):
-        self.type = condition_obj.get('type')
-        self.message = condition_obj.get('message')
-        self.reason = condition_obj.get('reason')
-        self.status = condition_obj.get('status')
-        self.last_transition_time = None
-        if condition_obj.get('lastTransitionTime'):
-            self.last_transition_time = datetime.datetime.fromisoformat(condition_obj.get('lastTransitionTime').rstrip("Z"))
-
-    def is_status_true(self) -> bool:
-        return str(self.status).lower() == 'true'
-
-    def is_status_false(self) -> bool:
-        return str(self.status).lower() == 'false'
-
-    @staticmethod
-    def find_condition(obj, condition_type: str, _default: Optional["KubeCondition"] = None) -> "KubeCondition":
-        """
-        Searches a kube object's status.conditions for a specified condition type. Returns the
-        condition entry if found. Otherwise, returns _default value.
-        """
-        try:
-            for condition in obj.status.get('conditions', []):
-                if condition['type'] == condition_type:
-                    return KubeCondition(condition)
-        except AttributeError:
-            pass
-        return _default
 
 
 class KonfluxClient:
@@ -524,14 +492,24 @@ class KonfluxClient:
                 f"applications/{application}/"
                 f"pipelineruns/{pipelinerun_name}")
 
-    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None) -> (resource.ResourceInstance, List[Dict]):
+    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None,
+                                   overall_timeout_timedelta: Optional[datetime.timedelta] = None,
+                                   pending_timeout_timedelta: Optional[datetime.timedelta] = None) -> (resource.ResourceInstance, List[Dict]):
         """
         Wait for a PipelineRun to complete.
 
         :param pipelinerun_name: The name of the PipelineRun.
         :param namespace: The namespace of the PipelineRun.
+        :param overall_timeout_timedelta: Maximum time to wait for pipeline to complete before canceling it (defaults to 5 hour)
+        :param pending_timeout_timedelta: Maximum time to wait for a pending pod in a pipeline to run before cancelling the pipeline (defaults to 1 hour)
         :return: The PipelineRun ResourceInstance and a List[Dict] with a copy of an associated Pod.
         """
+        if overall_timeout_timedelta is None:
+            overall_timeout_timedelta = datetime.timedelta(hours=5)
+
+        if pending_timeout_timedelta is None:
+            pending_timeout_timedelta = datetime.timedelta(hours=1)
+
         namespace = namespace or self.default_namespace
         if self.dry_run:
             await asyncio.sleep(3)
@@ -549,15 +527,19 @@ class KonfluxClient:
         corev1_client = await self._get_corev1()
 
         def _inner():
+            nonlocal overall_timeout_timedelta
             watcher = watch.Watch()
             succeeded_status = "Not Found"
             succeeded_reason = "Not Found"
+            timeout_datetime = datetime.datetime.now() + overall_timeout_timedelta
+
+            # If a pipelinerun runs more than an hour, successful pods
+            # might be garbage collected. Keep track of pod state across
+            # the pipeline run so that we can record information in bigquery.
+            pod_history: Dict[str, Dict] = dict()
+
             while True:
                 try:
-                    # If a pipelinerun runs more than an hour, successful pods
-                    # might be garbage collected. Keep track of pod state across
-                    # the pipeline run so that we can record information in bigquery.
-                    pod_history: Dict[str, Dict] = dict()
 
                     for event in watcher.stream(
                         api.get,
@@ -578,10 +560,11 @@ class KonfluxClient:
                         timeout_seconds=5*60
                     ):
                         assert isinstance(event, Dict)
+                        cancel_pipelinerun = False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
                         try:
-                            succeeded_condition = KubeCondition.find_condition(obj, 'Succeeded')
+                            succeeded_condition = art_util.KubeCondition.find_condition(obj, 'Succeeded')
                             if succeeded_condition:
                                 succeeded_status = succeeded_condition.status
                                 succeeded_reason = succeeded_condition.reason
@@ -606,6 +589,11 @@ class KonfluxClient:
                                 else:
                                     creation_time = current_time
                                 age = current_time - creation_time
+
+                                if pod_phase == 'Pending' and age > pending_timeout_timedelta:
+                                    self._logger.error("PipelineRun %s pod pending for over an hour; cancelling run", pipelinerun_name, str(overall_timeout_timedelta))
+                                    cancel_pipelinerun = True
+
                                 age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
                                 pod_desc.append(f"\tPod {pod_name} [phase={pod_phase}][age={age_str}]")
                             except:
@@ -658,6 +646,30 @@ class KonfluxClient:
 
                             watcher.stop()
                             return obj, list(pod_history.values())
+
+                        if datetime.datetime.now() > timeout_datetime:
+                            self._logger.error("PipelineRun %s has run longer than timeout %s; cancelling run", pipelinerun_name, str(overall_timeout_timedelta))
+                            cancel_pipelinerun = True
+
+                        if cancel_pipelinerun:
+                            self._logger.info("PipelineRun %s is being cancelled", pipelinerun_name)
+                            try:
+                                # Setting spec.status in the PipelineRun should cause tekton to start canceling the pipeline.
+                                # This includes terminating pods associated with the run.
+                                api.patch(
+                                    name=obj.metadata.name,
+                                    namespace=namespace,
+                                    body={
+                                        'spec': {
+                                            'status': 'Cancelled'
+                                        }
+                                    },
+                                    content_type="application/merge-patch+json"
+                                )
+                            except:
+                                self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
+                                traceback.print_exc()
+
                     self._logger.info("No updates for PipelineRun %s during watch timeout period; requerying", pipelinerun_name)
                 except TimeoutError:
                     self._logger.error("Timeout waiting for PipelineRun %s to complete", pipelinerun_name)

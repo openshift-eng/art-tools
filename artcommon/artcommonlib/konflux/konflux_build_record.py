@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Dict, Optional
 
 from artcommonlib import constants
+from artcommonlib import util as artlib_util
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,14 +22,21 @@ class KonfluxBuildOutcome(KonfluxEnum):
     FAILURE = 'failure'
     SUCCESS = 'success'
     PENDING = 'pending'
+    TIMEOUT = 'timeout'
+    CANCELLED = 'cancelled'
 
     @classmethod
-    def extract_from_pipelinerun_succeeded_condition(cls, succeeded_condition: Optional[Dict]) -> "KonfluxBuildOutcome":
+    def extract_from_pipelinerun_succeeded_condition(cls, succeeded_condition: Optional[artlib_util.KubeCondition]) -> "KonfluxBuildOutcome":
         if succeeded_condition:
-            succeeded_status = succeeded_condition.get('status', 'Unknown')
-            if succeeded_status == 'True':
+            assert succeeded_condition.type == 'Succeeded'
+            if succeeded_condition.is_status_true():
                 return cls.SUCCESS
-            elif succeeded_status == 'False':
+            else:
+                reason = succeeded_condition.reason
+                if reason == 'Cancelled':
+                    return cls.CANCELLED
+                if reason == 'Timeout':
+                    return cls.TIMEOUT
                 return cls.FAILURE
         return cls.PENDING
 
