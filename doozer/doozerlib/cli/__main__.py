@@ -262,6 +262,8 @@ installonly_limit=3
         yellow_print('Creating cachedir: {}'.format(cachedir))
         exectools.cmd_assert('mkdir -p {}'.format(cachedir))
 
+    metadata_dir = None
+    yc_file = None
     try:
         # If corrupted, reposync metadata can interfere with subsequent runs.
         # Ensure we have a clean space for each invocation.
@@ -350,6 +352,7 @@ def analyze_debug_log(debug_log):
 
 def main():
     try:
+        # pylint: disable=no-value-for-parameter
         cli(obj={})
     except DoozerFatalError as ex:
         # Allow capturing actual tool errors and print them

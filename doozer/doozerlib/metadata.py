@@ -125,7 +125,8 @@ class Metadata(object):
         self.private_fix: Optional[bool] = None
         """ True if the source contains embargoed (private) CVE fixes. Defaulting to None means this should be auto-determined. """
 
-        self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type, self.distgit_key, self.raw_config)
+        self.config: Model = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type,
+                                                      self.distgit_key, self.raw_config)
         self.namespace, self._component_name = Metadata.extract_component_info(meta_type, self.name, self.config)
 
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
@@ -997,6 +998,7 @@ class Metadata(object):
             use_path = path_3_11
 
         kube_version_fields = []
+        kube_commit_hash = ''
         if use_path:
             dfp = DockerfileParser(cache_content=True, fileobj=io.BytesIO(use_path.read_bytes()))
             build_versions = dfp.labels.get('io.openshift.build.versions', None)

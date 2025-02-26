@@ -171,6 +171,7 @@ class RPMMetadata(Metadata):
                 max_golang_nevr = None
                 for build in latest_builds:
                     nevr = (build["name"], build["epoch"], build["version"], build["release"])
+                    # pylint: disable=unsubscriptable-object
                     if max_golang_nevr is None or label_compare(nevr[1:], max_golang_nevr[1:]) > 0:
                         max_golang_nevr = nevr
                 if max_golang_nevr is None:

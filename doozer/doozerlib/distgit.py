@@ -298,7 +298,7 @@ class DistGitRepo(object):
         return source_dir
 
     def _get_diff(self):
-        return None  # to actually record a diff, child classes must override this function
+        raise NotImplementedError  # to actually record a diff, child classes must override this function
 
     def add_distgits_diff(self, diff):
         return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)

@@ -25,7 +25,7 @@ class DBLibException(Exception):
     """
 
     def __init__(self, message):
-        super(self.__class__, self).__init__(message)
+        super().__init__(message)
         self.message = message
 
     @as_native_str

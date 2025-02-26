@@ -642,7 +642,7 @@ class GenPayloadCli:
                         raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
 
                     public_bbi = BuildRecordInspector.get_build_record_inspector(
-                        runtime=self.runtime, build=public_build)
+                        runtime=self.runtime, build_obj=public_build)
                     public_image_inspector = public_bbi.get_image_inspector(arch)
 
                     dest_pullspec = self.payload_generator.get_mirroring_destination(
