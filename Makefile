@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test
+.PHONY: venv tox lint test pylint
 
 venv:
 	uv venv --python 3.11
@@ -9,6 +9,9 @@ venv:
 lint:
 	./.venv/bin/python -m flake8
 
+pylint:
+	./.venv/bin/python -m pylint .
+
 unit:
 	./.venv/bin/python -m pytest --verbose --color=yes artcommon/tests/
 	./.venv/bin/python -m pytest --verbose --color=yes doozer/tests/
@@ -16,4 +19,10 @@ unit:
 	./.venv/bin/python -m pytest --verbose --color=yes pyartcd/tests/
 	./.venv/bin/python -m pytest --verbose --color=yes ocp-build-data-validator/tests/
 
+functional:
+	./.venv/bin/python -m pytest --verbose --color=yes doozer/tests_functional/
+	./.venv/bin/python -m pytest --verbose --color=yes elliott/functional_tests/
+
 test: lint unit
+
+test-all: lint unit functional

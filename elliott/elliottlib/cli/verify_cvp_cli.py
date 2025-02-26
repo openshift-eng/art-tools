@@ -228,15 +228,10 @@ def print_report(report: Dict):
             yellow_print(nvr)
 
 
-@exectools.limit_concurrency(limit=32)
-async def get_latest_image_build(image: ImageMetadata) -> List[Dict]:
-    return await exectools.to_thread(progress_func, image.get_latest_build, file=sys.stderr)
-
-
 async def get_latest_image_builds(image_metas: Iterable[ImageMetadata]):
     pbar_header(
         'Generating list of images: ',
         f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...',
         seq=image_metas, file=sys.stderr)
-    builds: List[Dict] = await asyncio.gather(*[get_latest_image_build(image) for image in image_metas])
+    builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
     return builds

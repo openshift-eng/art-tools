@@ -8,7 +8,6 @@ import click
 from artcommonlib.konflux.konflux_build_record import (
     ArtifactType, Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome)
 from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.model import Missing
 from artcommonlib.telemetry import start_as_current_span_async
 from doozerlib import constants
 from doozerlib.backend.konflux_image_builder import (KonfluxImageBuilder,
