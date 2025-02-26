@@ -113,8 +113,12 @@ class CreateSnapshotCli:
 
             return {
                 "name": comp_name,
-                "source": {"url": source_url},
-                "revision": revision,
+                "source": {
+                    "git": {
+                        "url": source_url,
+                        "revision": revision,
+                    }
+                },
                 "containerImage": pullspec
             }
 
