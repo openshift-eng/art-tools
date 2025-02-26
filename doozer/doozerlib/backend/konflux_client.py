@@ -409,7 +409,7 @@ class KonfluxClient:
             match task["name"]:
                 case "build-images":
                     has_build_images_task = True
-                    task["timeout"] = "12h"
+                    task["timeout"] = "4h"
                     _modify_param(task["params"], "SBOM_TYPE", "cyclonedx")
                 case "prefetch-dependencies":
                     _modify_param(task["params"], "SBOM_TYPE", "cyclonedx")
