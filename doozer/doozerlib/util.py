@@ -277,6 +277,7 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     return major_minor, brew_arch, is_private
 
 
+# https://code.activestate.com/recipes/577504/
 def total_size(o, handlers=None, verbose=False):
     """ Returns the approximate memory footprint an object and all of its contents.
 
