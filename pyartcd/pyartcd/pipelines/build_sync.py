@@ -60,7 +60,7 @@ class BuildSyncPipeline:
         self.build_system = build_system
         self.logger = runtime.logger
         self.working_dir = self.runtime.working_dir
-        self.fail_count_name = f'count:build-sync-failure:{assembly}:{version}'
+        self.fail_count_name = f'count:build-sync-failure:{build_system}:{assembly}:{version}'
         self.job_run = get_build_url()
 
         self.slack_client = self.runtime.new_slack_client()
@@ -75,6 +75,11 @@ class BuildSyncPipeline:
         """
         Comment the link to this jenkins build on the assembly PR if it was triggered automatically
         """
+
+        # Skipping for konflux at the moment
+        # TODO to be removed once Konflux is the primary build system
+        if self.build_system == 'konflux':
+            return
 
         # Keeping in try-except so that job doesn't fail because of any error here
         try:
@@ -152,16 +157,15 @@ class BuildSyncPipeline:
     async def handle_success(self):
         if self.assembly != 'stream':
             # Comment on the PR that the job succeeded
-            text_body = f"Build sync job [run]({self.job_run}) succeeded!"
-            await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say(f"@release-artists <{self.job_run}|build-sync> "
-                                        f"for assembly {self.assembly} succeeded!")
+            await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
+            await self.slack_client.say(f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build-sync> "
+                                        f"for assembly `{self.assembly}` succeeded!")
 
         #  All good: delete fail counter
         if self.assembly == 'stream' and not self.runtime.dry_run:
             current_count = await redis.get_value(self.fail_count_name)
             if current_count and int(current_count) > 1:
-                await self.slack_client.say(f"<{self.job_run}|build-sync> succeeded!")
+                await self.slack_client.say(f"<{self.job_run}|build-sync> for `{self.build_system.capitalize()}` succeeded!")
 
             res = await redis.delete_key(self.fail_count_name)
             if res:
@@ -431,9 +435,8 @@ class BuildSyncPipeline:
 
     async def handle_failure(self):
         if self.assembly != 'stream':
-            text_body = f"Build sync job [run]({self.job_run}) failed!"
-            await self.comment_on_assembly_pr(text_body)
-            await self.slack_client.say(f"@release-artists <{self.job_run}|build sync> "
+            await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) failed!")
+            await self.slack_client.say(f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> "
                                         f"for assembly {self.assembly} failed!")
 
         # Increment failure count
@@ -484,12 +487,13 @@ class BuildSyncPipeline:
         if fail_count % forum_release_notify_frequency == 0:
             # For GA releases, let forum-ocp-release know why no new builds
             phase = SoftwareLifecyclePhase.from_name(self.group_runtime.group_config['software_lifecycle']['phase'])
-            if phase == SoftwareLifecyclePhase.RELEASE:
+            if phase == SoftwareLifecyclePhase.RELEASE and self.build_system == 'brew':
+                # TODO 'brew' condition must be removed once Konflux is the primary build system
                 await self.notify_failures('#forum-ocp-release', report, fail_count)
 
     async def notify_failures(self, channel, assembly_report, fail_count):
-        msg = (f'Pipeline has failed to assemble release payload for {self.version} '
-               f'(assembly {self.assembly}) {fail_count} times.')
+        msg = (f'Pipeline has failed to assemble `{self.build_system.capitalize()}` release payload for {self.version} '
+               f'(assembly `{self.assembly}`) {fail_count} times.')
         self.slack_client.bind_channel(channel)
         slack_response = await self.slack_client.say(msg)
         slack_thread = slack_response["message"]["ts"]
