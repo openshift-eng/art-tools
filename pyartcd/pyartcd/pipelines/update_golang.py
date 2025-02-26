@@ -209,7 +209,7 @@ class UpdateGolangPipeline:
                 raise ValueError(f'Failed to find existing builder(s) for rhel version(s): {missing_in}')
 
         _LOGGER.info("Updating streams.yml with found builder images")
-        await self._slack_client.say_in_thread(f"new golang builders available {builder_nvrs.values()}")
+        await self._slack_client.say_in_thread(f"new golang builders available {', '.join(builder_nvrs.values())}")
         await self.update_golang_streams(go_version, builder_nvrs)
 
         await move_golang_bugs(
