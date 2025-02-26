@@ -56,23 +56,6 @@ def isolate_el_version_in_brew_tag(tag: Union[str, int]) -> Optional[int]:
     return int(el_version_match[1]) if el_version_match else None
 
 
-def isolate_git_commit_in_release(release: str) -> Optional[str]:
-    """
-    Given a release field, determines whether it contains
-    .git.<commit> information or .g<commit> (new style). If it does, it returns the value
-    of <commit>. If it is not found, None is returned.
-    """
-    match = re.match(r'.*\.git\.([a-f0-9]+)(?:\.+|$)', release)
-    if match:
-        return match.group(1)
-
-    match = re.match(r'.*\.g([a-f0-9]+)(?:\.+|$)', release)
-    if match:
-        return match.group(1)
-
-    return None
-
-
 def new_roundtrip_yaml_handler():
     """
     Creates and returns a configured YAML handler with specific formatting settings.
