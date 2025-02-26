@@ -197,11 +197,18 @@ class KonfluxOcp4Pipeline:
             self.runtime.logger.warning('Skipping build-sync job for test assembly')
             return
 
-        _, out, _ = await exectools.cmd_gather_async([
-            *self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml'])
-        exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
-        for arch in self.arches:
-            exclude_arches.remove(arch)
+        # Determine arches to be excluded as the difference between the group configured arches,
+        # and the arches selected from current build. If self.arches is empty, it means that we're building all arches
+        # and no arches should be excluded
+        if not self.arches:
+            exclude_arches = []
+
+        else:
+            _, out, _ = await exectools.cmd_gather_async([
+                *self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml'])
+            exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
+            for arch in self.arches:
+                exclude_arches.remove(arch)
 
         jenkins.start_build_sync(
             build_version=self.version,
