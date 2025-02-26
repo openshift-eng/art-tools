@@ -762,11 +762,7 @@ class PrepareReleasePipeline:
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
     def verify_payload(self, pullspec_or_imagestream: str, advisory: int):
-        cmd = [
-            "elliott",
-            f"--working-dir={self.elliott_working_dir}",
-            f"--group={self.group_name}",
-            "--assembly", self.assembly,
+       cmd = self._elliott_base_command + [
             "verify-payload",
             f"{pullspec_or_imagestream}",
             f"{advisory}",
