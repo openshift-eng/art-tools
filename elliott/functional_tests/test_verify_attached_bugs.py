@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from collections import namedtuple
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from functional_tests import constants
 import subprocess
@@ -11,20 +11,6 @@ from elliottlib.cli.verify_attached_bugs_cli import BugValidator
 
 
 class VerifyBugs(unittest.TestCase):
-
-    def setUp(self):
-        self.patchers = [
-            patch(f"elliottlib.cli.verify_attached_bugs_cli.{it}", lambda x: x)
-            for it in ["red_print", "green_print"]
-        ]
-        for p in self.patchers:
-            # disable the printed output during tests (remove this to debug...)
-            p.start()
-
-    def tearDown(self):
-        for p in self.patchers:
-            p.stop()
-
     def runtime_fixture(self):
         GitData = namedtuple('GitData', ['data'])
 

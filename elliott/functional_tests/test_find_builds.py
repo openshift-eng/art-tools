@@ -4,27 +4,27 @@ from functional_tests import constants
 
 # This test may start failing once this version is EOL and we either change the
 # ocp-build-data bugzilla schema or all of the non-shipped builds are garbage-collected.
-version = "4.3"
+version = "4.12"
 
 
 class FindBuildsTestCase(unittest.TestCase):
     def test_find_rpms(self):
-        out = subprocess.check_output(
-            constants.ELLIOTT_CMD
-            + [
-                "--assembly=stream", f"--group=openshift-{version}", "find-builds", "--kind=rpm",
-            ]
-        )
-        self.assertIn("may be attached to an advisory", out.decode("utf-8"))
+        cmd = constants.ELLIOTT_CMD + [
+            "--assembly=stream", f"--group=openshift-{version}", "find-builds", "--kind=rpm",
+        ]
+        result = subprocess.run(cmd, capture_output=True)
+        self.assertEqual(result.returncode, 0,
+                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertRegex(result.stderr.decode(), "Found \\d+ builds")
 
     def test_find_images(self):
-        out = subprocess.check_output(
-            constants.ELLIOTT_CMD
-            + [
-                f"--group=openshift-{version}", "-i", "openshift-enterprise-cli", "find-builds", "--kind=image",
-            ]
-        )
-        self.assertIn("may be attached to an advisory", out.decode("utf-8"))
+        cmd = constants.ELLIOTT_CMD + [
+            f"--group=openshift-{version}", "-i", "openshift-enterprise-cli", "find-builds", "--kind=image",
+        ]
+        result = subprocess.run(cmd, capture_output=True)
+        self.assertEqual(result.returncode, 0,
+                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertRegex(result.stderr.decode(), "Found \\d+ builds")
 
     def test_change_state(self):
         """To attach a build to an advisory, it will be attempted to set the
@@ -40,7 +40,8 @@ class FindBuildsTestCase(unittest.TestCase):
         ]
         result = subprocess.run(command, capture_output=True)
 
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 1,
+                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
         self.assertIn('Cannot change state', result.stdout.decode())
 
 
