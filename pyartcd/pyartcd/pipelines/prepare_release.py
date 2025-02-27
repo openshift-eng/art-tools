@@ -593,7 +593,7 @@ class PrepareReleasePipeline:
             str(self.working_dir),
             "clone",
             "-b",
-            self.group_name,
+            self.data_gitref or self.group_name,
             "--depth=1",
             repo_url,
             str(local_path),
