@@ -1,6 +1,6 @@
 from functools import lru_cache
 import logging
-from typing import OrderedDict, Optional, Tuple, Iterable, List
+from typing import OrderedDict, Optional, Tuple, Iterable, List, Dict
 from datetime import datetime, timezone, timedelta, date
 import re
 import asyncio
@@ -332,3 +332,34 @@ async def _limit_concurrency(tasks: List, limit: int):
         )
         while done:
             yield done.pop()
+
+
+class KubeCondition:
+    def __init__(self, condition_obj: Dict):
+        self.type = condition_obj.get('type')
+        self.message = condition_obj.get('message')
+        self.reason = condition_obj.get('reason')
+        self.status = condition_obj.get('status')
+        self.last_transition_time = None
+        if condition_obj.get('lastTransitionTime'):
+            self.last_transition_time = datetime.fromisoformat(condition_obj.get('lastTransitionTime').rstrip("Z"))
+
+    def is_status_true(self) -> bool:
+        return str(self.status).lower() == 'true'
+
+    def is_status_false(self) -> bool:
+        return str(self.status).lower() == 'false'
+
+    @staticmethod
+    def find_condition(obj, condition_type: str, _default: Optional["KubeCondition"] = None) -> "KubeCondition":
+        """
+        Searches a kube object's status.conditions for a specified condition type. Returns the
+        condition entry if found. Otherwise, returns _default value.
+        """
+        try:
+            for condition in obj.get('status', {}).get('conditions', []):
+                if condition['type'] == condition_type:
+                    return KubeCondition(condition)
+        except AttributeError:
+            pass
+        return _default
