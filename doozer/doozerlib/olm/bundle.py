@@ -15,6 +15,7 @@ from koji import ClientSession
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib import pushd, exectools
+from artcommonlib.brew import BuildStates
 from doozerlib import brew, util
 from doozerlib.runtime import Runtime
 
@@ -72,7 +73,7 @@ class OLMBundle(object):
         """
         prefix = f"{self.bundle_brew_component}-{self.operator_dict['version']}.{self.operator_dict['release']}-"
         bundle_package_id = self.brew_session.getPackageID(self.bundle_brew_component, strict=True)
-        builds = self.brew_session.listBuilds(packageID=bundle_package_id, pattern=prefix + "*", state=brew.BuildStates.COMPLETE.value,
+        builds = self.brew_session.listBuilds(packageID=bundle_package_id, pattern=prefix + "*", state=BuildStates.COMPLETE.value,
                                               queryOpts={'limit': 1, 'order': '-creation_event_id'}, completeBefore=None)
         if not builds:
             return None
