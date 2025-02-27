@@ -5,10 +5,11 @@ import pprint
 import os
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional, cast, List
 
+from artcommonlib import util as artlib_util
 from artcommonlib import constants as artlib_constants
 from artcommonlib import exectools, bigquery
 from artcommonlib.arch_util import go_arch_for_brew_arch
@@ -23,7 +24,7 @@ from packageurl import PackageURL
 
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_client import KonfluxClient, KubeCondition
+from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
@@ -151,17 +152,15 @@ class KonfluxImageBuilder:
                 await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches)
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
-                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace)
+                timeout_timedelta = None
+                if metadata.config.konflux.build_timeout:
+                    timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
+
+                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta)
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
-                succeeded_condition = KubeCondition.find_condition(pipelinerun, 'Succeeded')
-
-                if succeeded_condition.is_status_true():
-                    outcome = KonfluxBuildOutcome.SUCCESS
-                elif succeeded_condition.is_status_false():
-                    outcome = KonfluxBuildOutcome.FAILURE
-                else:
-                    outcome = KonfluxBuildOutcome.PENDING
+                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
@@ -169,7 +168,7 @@ class KonfluxImageBuilder:
                     await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
-                    error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed",
+                    error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
                                                    pipelinerun_name, pipelinerun)
                 else:
                     metadata.build_status = True
@@ -397,25 +396,19 @@ class KonfluxImageBuilder:
                 raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
                                  f"pipelinerun {pipelinerun_name}")
 
-            start_time = pipelinerun.status.startTime
-            end_time = pipelinerun.status.completionTime
-
             installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
 
             build_record_params.update({
                 'image_pullspec': image_pullspec,
                 'installed_packages': installed_packages,
-                'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
-                'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ'),
                 'image_tag': image_digest.split('sha256:')[-1],
             })
-        elif outcome == KonfluxBuildOutcome.FAILURE:
-            start_time = pipelinerun.status.startTime
-            end_time = pipelinerun.status.completionTime
-            build_record_params.update({
-                'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ'),
-                'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ')
-            })
+
+        if pipelinerun.status:
+            if pipelinerun.status.startTime:
+                build_record_params['start_time'] = datetime.strptime(pipelinerun.status.startTime, '%Y-%m-%dT%H:%M:%SZ')
+            if pipelinerun.status.completionTime:  # Pending will not have a completion time
+                build_record_params['end_time'] = datetime.strptime(pipelinerun.status.completionTime, '%Y-%m-%dT%H:%M:%SZ')
 
         build_record = KonfluxBuildRecord(**build_record_params)
         metadata.runtime.konflux_db.add_build(build_record)
@@ -450,8 +443,8 @@ class KonfluxImageBuilder:
                     if pod_status.get('startTime'):
                         pod_start_time = extract_datetime_from_pod_time(pod_status.get('startTime'))
 
-                    pod_scheduled_condition = KubeCondition.find_condition(pod, 'PodScheduled')
-                    pod_initialized_condition = KubeCondition.find_condition(pod, 'Initialized')
+                    pod_scheduled_condition = artlib_util.KubeCondition.find_condition(pod, 'PodScheduled')
+                    pod_initialized_condition = artlib_util.KubeCondition.find_condition(pod, 'Initialized')
 
                     containers_info = []
 
