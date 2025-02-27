@@ -56,14 +56,6 @@ class KonfluxImageBuilderConfig:
 class KonfluxImageBuilder:
     """ This class is responsible for building container images with Konflux. """
 
-    # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/getting-started/multi-platform-builds.md
-    SUPPORTED_ARCHES = {
-        "x86_64": "linux/x86_64",
-        "s390x": "linux/s390x",
-        "ppc64le": "linux/ppc64le",
-        "aarch64": "linux/arm64",
-    }
-
     def __init__(
         self,
         config: KonfluxImageBuilderConfig,
