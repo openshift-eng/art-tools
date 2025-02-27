@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import datetime
@@ -341,6 +342,7 @@ class KonfluxClient:
             del obj["metadata"]["namespace"]
         # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
+        obj["metadata"]["annotations"]["art-jenkins-job-url"] = os.getenv("BUILD_URL", "n/a")
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
