@@ -1,21 +1,95 @@
-from io import StringIO
+import base64
+import json
 import logging
+import os
 import re
+from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import List, Optional
 
-from ruamel.yaml import YAML
 from artcommonlib import exectools
+from ruamel.yaml import YAML
 from semver import VersionInfo
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 yaml = YAML(typ='safe')
 yaml.default_flow_style = False
+yaml.preserve_quotes = True
+yaml.explicit_start = True
+yaml.width = 1024 * 1024
+
+
+@dataclass
+class OpmRegistryAuth:
+    """ Dataclass for storing registry authentication information.
+
+    :param path: The path to the registry credentials file. If provided, username, password, and registry_url are ignored.
+    :param username: The username to use for the registry. If provided, password is required.
+    :param password: The password to use for the registry. If username is not provided, this is used as the auth token.
+    :param registry_url: The URL of the registry to authenticate. Default is "quay.io".
+    """
+    path: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    registry_url: Optional[str] = None
+
+
+async def gather_opm(
+        args: List[str],
+        auth: Optional[OpmRegistryAuth] = None,
+        **kwargs
+):
+    """ Run opm with the given arguments and return the result.
+
+    :param args: The arguments to pass to opm.
+    :param auth: The registry authentication information to use.
+    :param kwargs: Additional keyword arguments to pass to exectools.cmd_gather_async.
+    :return: The return code, stdout, and stderr of the opm command.
+    """
+    # Build the basic auth string
+    auth_content = None
+    if auth:
+        if auth.path:
+            auth_content = Path(auth.path).read_text()
+        else:
+            auth_token = None
+            if auth.username:
+                if not auth.password:
+                    raise ValueError("password is required when using a username.")
+                auth_token = base64.b64encode(f'{auth.username}:{auth.password}'.encode()).decode()
+            elif auth.password:  # Use the password as the auth token
+                auth_token = auth.password
+            if auth_token:
+                auth_content = json.dumps({
+                    'auths': {
+                        auth.registry_url or "quay.io": {
+                            'auth': auth_token,
+                        }
+                    }
+                })
+
+    if not auth_content:
+        LOGGER.warning("No registry auth provided. Running opm without auth.")
+        rc, out, err = await exectools.cmd_gather_async(["opm", *args], **kwargs)
+        return rc, out, err
+
+    with TemporaryDirectory(prefix="_doozer_") as auth_dir:
+        auth_file = Path(auth_dir, "config.json")
+        auth_file.write_text(auth_content)
+        env = kwargs.pop("env", None)
+        env = env.copy() if env is not None else os.environ.copy()
+        env["DOCKER_CONFIG"] = str(auth_dir)  # Set the DOCKER_CONFIG environment variable to the auth directory for opm
+        rc, out, err = await exectools.cmd_gather_async(["opm", *args], env=env, **kwargs)
+    return rc, out, err
 
 
 async def verify_opm():
     """ Verify that opm is installed and at least version 1.47.0 """
     try:
-        _, out, _ = await exectools.cmd_gather_async(["opm", "version"])
+        _, out, _ = await gather_opm(["version"])
     except FileNotFoundError:
         raise FileNotFoundError("opm binary not found.")
     m = re.search(r"OpmVersion:\"v([^\"]+)\"", out)
@@ -26,19 +100,31 @@ async def verify_opm():
         raise IOError(f"opm version {version} is too old. Please upgrade to at least 1.47.0.")
 
 
-async def render(catalog: str, output_format: str = "yaml"):
+@retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
+async def render(*input: str, output_format: str = "yaml", migrate: bool = False,
+                 auth: Optional[OpmRegistryAuth] = None) -> List[dict]:
     """
-    Run `opm render` on the given index and return the parsed file-based catalog blobs.
+    Run `opm render` on the given input and return the parsed file-based catalog blobs.
 
-    :param catalog: The catalog to render.
+    :param input: The catalog images, file-based catalog directories, bundle images, and sqlite
+database files to render.
     :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
+    :param migrate: Whether to Perform all available schema migrations on the rendered FBC.
+    :param auth: The registry authentication information to use.
+    :return: The parsed file-based catalog blobs.
     """
+    if not input:
+        raise ValueError("input must not be empty.")
     if output_format not in ["yaml", "json"]:
         raise ValueError(f"Invalid output format: {output_format}")
-    LOGGER.debug(f"Rendering catalog {catalog}")
-    _, out, _ = await exectools.cmd_gather_async(["opm", "render", "-o", "yaml", "--", catalog])
+    args = []
+    if migrate:
+        args.append("--migrate")
+    LOGGER.debug(f"Rendering FBC for {', '.join(input)}")
+    _, out, _ = await gather_opm(["render"] + args + ["-o", output_format, "--", *input],
+                                 auth=auth)
     blobs = yaml.load_all(StringIO(out))
-    return blobs
+    return list(blobs)
 
 
 async def generate_basic_template(catalog_file: Path, template_file: Path, output_format: str = "yaml"):
@@ -53,9 +139,7 @@ async def generate_basic_template(catalog_file: Path, template_file: Path, outpu
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Generating basic template {template_file} from {catalog_file}")
     with open(template_file, 'w') as out:
-        await exectools.cmd_assert_async([
-            "opm", "alpha", "convert-template", "basic", "-o", output_format, "--", str(catalog_file),
-        ], stdout=out)
+        await gather_opm(["alpha", "convert-template", "basic", "-o", output_format, "--", str(catalog_file)], stdout=out)
 
 
 async def render_catalog_from_template(template_file: Path, catalog_file: Path, migrate_level: str = "none", output_format: str = "yaml"):
@@ -73,9 +157,7 @@ async def render_catalog_from_template(template_file: Path, catalog_file: Path, 
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Rendering catalog {catalog_file} from template {template_file}")
     with open(catalog_file, 'w') as out:
-        await exectools.cmd_assert_async([
-            "opm", "alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o", output_format, "--", str(template_file),
-        ], stdout=out)
+        await gather_opm(["alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o", output_format, "--", str(template_file)], stdout=out)
 
 
 async def generate_dockerfile(dest_dir: Path, dc_dir_name: str, base_image: str, builder_image: str):
@@ -91,6 +173,14 @@ async def generate_dockerfile(dest_dir: Path, dc_dir_name: str, base_image: str,
         "--base-image", base_image,
     ]
     LOGGER.debug(f"Generating FBC Dockerfile in {dest_dir}")
-    await exectools.cmd_assert_async(
-        ["opm", "generate", "dockerfile"] + options + ["--", dc_dir_name],
-        cwd=dest_dir)
+    await gather_opm(["generate", "dockerfile"] + options + ["--", dc_dir_name], cwd=dest_dir)
+
+
+async def validate(catalog_dir: Path):
+    """
+    Validate the file-based catalog in a given directory
+
+    :param catalog_dir: The directory containing the file-based catalog.
+    """
+    LOGGER.debug(f"Validating FBC in {catalog_dir}")
+    await gather_opm(["validate", "--", str(catalog_dir)])
