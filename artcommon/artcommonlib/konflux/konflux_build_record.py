@@ -5,7 +5,7 @@ import random
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Union
 
 from artcommonlib import constants
 from artcommonlib import util as artlib_util
@@ -201,6 +201,7 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
                  outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
                  build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
                  ingestion_time: datetime = None, operand_nvrs: list = [], operator_nvr: str = '',
+                 bundle_package_name: str = None, bundle_csv_name: str = None,
                  record_id: str = '', build_id: str = None, nvr: str = None):
 
         super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
@@ -208,4 +209,27 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
                          outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
         self.operand_nvrs = operand_nvrs
         self.operator_nvr = operator_nvr
+        self.bundle_package_name = bundle_package_name
+        self.bundle_csv_name = bundle_csv_name
+        self.init_uuids(record_id, build_id, nvr)
+
+
+class KonfluxFbcBuildRecord(KonfluxRecord):
+    TABLE_ID = constants.FBCS_TABLE_ID
+
+    def __init__(self, name: str = '', group: Optional[str] = '', version: str = '', release: str = '', assembly: Union[str, None] = '',
+                 source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
+                 start_time: datetime = None, end_time: Optional[datetime] = None,
+                 engine: Engine = Engine.KONFLUX,
+                 image_pullspec: Optional[str] = None, image_tag: Optional[str] = None,
+                 outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, art_job_url: str = '',
+                 build_pipeline_url: str = '', pipeline_commit: str = '', schema_level: int = 0,
+                 ingestion_time: datetime = None, bundle_nvrs: List[str] = [], arches: List[str] = [],
+                 record_id: str = '', build_id: str = '', nvr: str = ''):
+
+        super().__init__(name, group, version, release, assembly, source_repo, commitish, rebase_repo_url,
+                         rebase_commitish, start_time, end_time, engine, image_pullspec, image_tag,
+                         outcome, art_job_url, build_pipeline_url, pipeline_commit, schema_level, ingestion_time)
+        self.bundle_nvrs = bundle_nvrs
+        self.arches = arches
         self.init_uuids(record_id, build_id, nvr)

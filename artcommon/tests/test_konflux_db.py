@@ -325,6 +325,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('ingestion_time', 'TIMESTAMP', 'REQUIRED'),
             SchemaField('operand_nvrs', 'STRING', 'REPEATED', None, None, (), None),
             SchemaField('operator_nvr', 'STRING', 'REQUIRED', None, None, (), None),
+            SchemaField('bundle_package_name', 'STRING', 'REQUIRED'),
+            SchemaField('bundle_csv_name', 'STRING', 'REQUIRED'),
             SchemaField('record_id', 'STRING', 'REQUIRED'),
             SchemaField('build_id', 'STRING', 'REQUIRED'),
             SchemaField('nvr', 'STRING', 'REQUIRED'),

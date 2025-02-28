@@ -43,7 +43,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
 
         mock_file = mock_open.return_value.__aenter__.return_value
 
-        await self.rebaser._create_oit_files(bundle_dir, operator_nvr, operands)
+        await self.rebaser._create_oit_files("test-operator", "test-operator.v1.0.1", bundle_dir, operator_nvr, operands)
 
         mock_mkdir.assert_called_once_with(exist_ok=True)
         mock_open.assert_called_once_with(bundle_dir / ".oit" / "olm_bundle_info.yaml", "w")
@@ -349,7 +349,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump({
             'packageName': 'test-package',
-            'channels': [{'name': 'test-channel'}]
+            'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}]
         })
 
         new_content = """
@@ -391,9 +391,11 @@ spec:
             'operators.operatorframework.io.bundle.package.v1': 'test-package',
         }, input_release)
         mock_create_container_yaml.assert_called_once_with(Path("/path/to/bundle/dir/container.yaml"))
-        mock_create_oit_files.assert_called_once_with(bundle_dir, 'test-distgit-key-1.0-1', {
-            'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
-        })
+        mock_create_oit_files.assert_called_once_with(
+            'test-package', 'test-operator.v1.0.0',
+            bundle_dir, 'test-distgit-key-1.0-1', {
+                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
+            })
 
     async def test_rebase_dir_no_update_csv(self):
         metadata = MagicMock()
@@ -646,7 +648,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             }
         })
 
-        await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS,
+        await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
                                               'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
 
         self.db.add_build.assert_called_once()
@@ -714,7 +716,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             }
         })
 
-        await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.FAILURE,
+        await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.FAILURE,
                                               'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
 
         self.db.add_build.assert_called_once()
@@ -787,7 +789,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.builder._db = None
 
         with self.assertLogs(self.builder._logger, level='WARNING') as cm:
-            await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS,
+            await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
                                                   'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
             self.assertIn('Konflux DB connection is not initialized, not writing build record to the Konflux DB.', cm.output[0])
 
@@ -839,6 +841,6 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.db.add_build.side_effect = Exception("Test exception")
 
         with self.assertLogs(self.builder._logger, level='ERROR') as cm:
-            await self.builder._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.SUCCESS,
+            await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
                                                   'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
             self.assertIn('Failed writing record to the konflux DB: Test exception', cm.output[0])
