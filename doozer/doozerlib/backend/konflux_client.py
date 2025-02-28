@@ -2,6 +2,7 @@ import os
 import asyncio
 import logging
 import datetime
+import random
 import time
 from typing import Dict, List, Optional, Sequence, Union, cast
 import traceback
@@ -29,10 +30,10 @@ class KonfluxClient:
     # https://konflux.pages.redhat.com/docs/users/getting-started/multi-platform-builds.html
     # The arch to Konflux VM name mapping. The specs for each of the VMs can be seen in the doc link shared above.
     SUPPORTED_ARCHES = {
-        "x86_64": "linux/x86_64",
-        "s390x": "linux-large/s390x",
-        "ppc64le": "linux-large/ppc64le",
-        "aarch64": "linux/arm64",
+        "x86_64": ["linux/x86_64"],
+        "s390x": ["linux-large/s390x"],
+        "ppc64le": ["linux-large/ppc64le", "linux/ppc64le"],
+        "aarch64": ["linux/arm64"],
     }
 
     def __init__(self, default_namespace: str, config: Configuration, dry_run: bool = False, logger: logging.Logger = LOGGER) -> None:
@@ -452,7 +453,7 @@ class KonfluxClient:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
 
         # If vm_override is not one and an override exists for a particular arch, use that. Otherwise, use the default
-        build_platforms = [vm_override[arch] if vm_override and arch in vm_override else self.SUPPORTED_ARCHES[arch] for arch in building_arches]
+        build_platforms = [vm_override[arch] if vm_override and arch in vm_override else random.choice(self.SUPPORTED_ARCHES[arch]) for arch in building_arches]
 
         pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
             generate_name=generate_name,
