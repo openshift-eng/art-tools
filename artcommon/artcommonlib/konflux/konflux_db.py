@@ -368,7 +368,6 @@ class KonfluxDb:
                                         strict: bool = True) -> typing.List[KonfluxRecord]:
         """ Get build records by NVRS.
         Note that this function only searches for the build records in the last 3 years.
-
         :param nvrs: The NVRS of the builds.
         :param outcome: The outcome of the builds.
         :param where: Additional fields to filter the build records.
