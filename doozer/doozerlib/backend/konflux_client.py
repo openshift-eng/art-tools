@@ -593,7 +593,7 @@ class KonfluxClient:
                                 age = current_time - creation_time
 
                                 if pod_phase == 'Pending' and age > pending_timeout_timedelta:
-                                    self._logger.error("PipelineRun %s pod pending for over an hour; cancelling run", pipelinerun_name, str(overall_timeout_timedelta))
+                                    self._logger.error("PipelineRun %s pod %s pending beyond threshold %s; cancelling run", pipelinerun_name, pod_name, str(pending_timeout_timedelta))
                                     cancel_pipelinerun = True
 
                                 age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
