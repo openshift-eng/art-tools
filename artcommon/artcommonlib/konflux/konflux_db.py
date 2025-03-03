@@ -8,7 +8,6 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import Column, String, DateTime, func
 
 from artcommonlib import bigquery
@@ -148,9 +147,19 @@ class KonfluxDb:
 
         base_clauses = []
         where = where or {}
+
+        # Unless otherwise specified, only look for builds in 'success' or 'failure' state
+        if 'outcome' not in where:
+            base_clauses.append(Column('outcome', String).in_(['success', 'failure']))
+
         for col_name, col_value in where.items():
             if col_value is not None:
-                base_clauses.append(Column(col_name, String) == col_value)
+                if isinstance(col_value, list):
+                    # Translating into queries like "AND outcome IN ('success', 'failed')"
+                    col_value = [str(outcome) for outcome in col_value]
+                    base_clauses.append(Column(col_name, String).in_(col_value))
+                else:
+                    base_clauses.append(Column(col_name, String) == col_value)
             else:
                 base_clauses.append(Column(col_name, String).is_(None))
         extra_patterns = extra_patterns or {}
