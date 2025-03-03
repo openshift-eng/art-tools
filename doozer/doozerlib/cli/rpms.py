@@ -333,14 +333,6 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
 
         nvr = build["nvr"]
 
-        with open(rpm.specfile) as specfile:
-            rpmspec = specfile.read().splitlines()
-            try:
-                commitish = [line for line in rpmspec if "Update to source commit" in line][0].split(" ")[-1].split("/")[-1]
-            except IndexError:
-                rpm.logger.warning('Could not determine commitish for rpm %s', rpm.rpm_name)
-                commitish = ''
-
         build_record = KonfluxBuildRecord(
             name=rpm.rpm_name,
             group=runtime.group,
@@ -351,8 +343,8 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             arches=rpm.get_arches(),
             installed_packages=[],
             parent_images=[],
-            source_repo=convert_remote_git_to_https(rpm.source.git.url),
-            commitish=commitish,
+            source_repo=rpm.public_upstream_url,
+            commitish=rpm.pre_init_sha,
             rebase_repo_url=rebase_repo_url,
             rebase_commitish=rebase_commitish,
             embargoed="p1" in rpm.release.split("."),
