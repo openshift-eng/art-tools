@@ -19,6 +19,7 @@ class Lock(enum.Enum):
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
+    BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
     SCAN = 'lock:scan:{version}'
     SCAN_KONFLUX = 'lock:scan-konflux:{version}'
 
@@ -79,6 +80,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.BUILD_SYNC: {
+        'retry_count': 36000,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+    },
+    Lock.BUILD_SYNC_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
