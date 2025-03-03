@@ -567,8 +567,8 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
 
             await locks.run_with_lock(
                 coro=pipeline.run(),
-                lock=locks.Lock.BUILD_SYNC,
-                lock_name=locks.Lock.BUILD_SYNC.value.format(version=version),
+                lock=locks.Lock.BUILD_SYNC_KONFLUX,
+                lock_name=locks.Lock.BUILD_SYNC_KONFLUX.value.format(version=version),
                 lock_id=lock_identifier
             )
         else:
