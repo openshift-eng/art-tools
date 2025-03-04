@@ -45,6 +45,7 @@ KONFLUX_DEFAULT_NAMESPACE = f"{KONFLUX_UI_DEFAULT_WORKSPACE}-tenant"
 MAX_KONFLUX_BUILD_QUEUE_SIZE = 25  # how many concurrent Konflux pipeline can we spawn per OCP version?
 KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-konflux-template-push.yaml"
 KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-bundle-konflux-template-push.yaml"
+KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL = "https://github.com/openshift-priv/art-konflux-template/raw/refs/heads/main/.tekton/art-fbc-konflux-template-push.yaml"
 ART_FBC_GIT_REPO = "git@github.com:openshift-priv/art-fbc.git"
 REGISTRY_PROXY_BASE_URL = "registry-proxy.engineering.redhat.com"
 BREW_REGISTRY_BASE_URL = "brew.registry.redhat.io"
