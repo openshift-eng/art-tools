@@ -57,6 +57,7 @@ class Ocp4ScanPipeline:
                 build_version=self.version,
                 assembly='stream',
                 image_list=image_list,
+                limit_arches=['x86_64', 'aarch64', 's390x']  # TODO remove once we have full capacity
             )
 
         else:
