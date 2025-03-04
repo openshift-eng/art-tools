@@ -38,6 +38,7 @@ KONFLUX_DEFAULT_PIPRLINE_DOCKER_BUILD_BUNDLE_PULLSPEC = "quay.io/konflux-ci/tekt
 KONFLUX_DEFAULT_IMAGE_REPO = "quay.io/redhat-user-workloads/ocp-art-tenant/art-images"   # FIXME: If we change clusters this URL will change
 ART_PROD_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev"
 ART_PROD_PRIV_IMAGE_REPO = "quay.io/openshift-release-dev/ocp-v4.0-art-dev-priv"
+DELIVERY_IMAGE_REGISTRY = "registry.redhat.io"
 KONFLUX_UI_HOST = "https://konflux.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com"
 KONFLUX_UI_DEFAULT_WORKSPACE = "ocp-art"  # associated with ocp-art-tenant
 KONFLUX_DEFAULT_NAMESPACE = f"{KONFLUX_UI_DEFAULT_WORKSPACE}-tenant"

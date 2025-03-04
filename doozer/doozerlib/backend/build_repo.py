@@ -4,8 +4,9 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Sequence, Union, cast
 
-from artcommonlib import git_helper, exectools
+from artcommonlib import exectools, git_helper
 from artcommonlib import util as art_util
+
 from doozerlib import constants
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution
@@ -66,7 +67,7 @@ class BuildRepo:
                 await exectools.to_thread(shutil.rmtree, local_dir)
             else:
                 self._logger.info("Reusing existing build source repository at %s", local_dir)
-                self._commit_hash = await self._get_commit_hash(local_dir)
+                self._commit_hash = await self._get_commit_hash(local_dir, strict=strict)
                 needs_clone = False
         if needs_clone:
             self._logger.info("Cloning build source repository %s on branch %s into %s...", self.url, self.branch, self.local_dir)
@@ -147,7 +148,7 @@ class BuildRepo:
         await git_helper.run_git_async(["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."])
 
     @staticmethod
-    async def _get_commit_hash(local_dir: str) -> Optional[str]:
+    async def _get_commit_hash(local_dir: str, strict: bool = False) -> Optional[str]:
         """ Get the commit hash of the current commit in the build source repository.
         :return: The commit hash of the current commit; None if the branch has no commits yet.
         """
@@ -155,6 +156,8 @@ class BuildRepo:
         if rc != 0:
             if "unknown revision or path not in the working tree" in err:
                 # This branch has no commits yet
+                if strict:
+                    raise IOError(f"No commits found in build source repository at {local_dir}")
                 return None
             raise ChildProcessError(f"Failed to get commit hash: {err}")
         return out.strip()
@@ -167,7 +170,7 @@ class BuildRepo:
         if allow_empty:
             commit_opts.append("--allow-empty")
         await git_helper.run_git_async(["-C", local_dir, "commit"] + commit_opts + ["-m", message])
-        self._commit_hash = await self._get_commit_hash(local_dir)
+        self._commit_hash = await self._get_commit_hash(local_dir, strict=True)
 
     async def tag(self, tag: str):
         """ Tag the current commit in the build source repository.
