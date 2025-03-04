@@ -295,7 +295,7 @@ class AssemblyPinBuildsCli:
 @click.argument("nvrs", metavar="NVR", required=False, nargs=-1)
 @click.option("--pr", metavar="PR", required=False, help="Pin all builds for the given PR")
 @click.option("--why", metavar="REASON", required=True, help="Reason for pinning")
-@pass_runtime
+@click.pass_obj
 @click_coroutine
 async def assembly_pin_builds_cli(runtime: Runtime, nvrs: List[str], pr: Optional[str], why: str):
     """
