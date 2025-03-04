@@ -52,8 +52,20 @@ class Runtime(GroupRuntime):
         super().__init__(**kwargs)
 
         # initialize defaults in case no value is given
+        self.group = None
+        self.group_dir = None
+        self.enable_assemblies = None
+        self.branch = None
+        self.images = None
+        self.rpms = None
+        self.exclude = None
+        self.cfg_obj = None
         self.verbose = False
         self.data_path = None
+        self.data_dir = None
+        self.gitdata = None
+        self.konflux_release_path = None
+        self.konflux_gitdata = None
         self.group_commitish = None
         self.load_wip = False
         self.load_disabled = False
@@ -271,10 +283,9 @@ class Runtime(GroupRuntime):
     def get_bug_tracker(self, bug_tracker_type) -> BugTracker:
         if bug_tracker_type in self._bug_trackers:
             return self._bug_trackers[bug_tracker_type]
+        bug_tracker_cls = JIRABugTracker
         if bug_tracker_type == 'bugzilla':
             bug_tracker_cls = BugzillaBugTracker
-        elif bug_tracker_type == 'jira':
-            bug_tracker_cls = JIRABugTracker
         self._bug_trackers[bug_tracker_type] = bug_tracker_cls(bug_tracker_cls.get_config(self))
         return self._bug_trackers[bug_tracker_type]
 
@@ -339,6 +350,16 @@ class Runtime(GroupRuntime):
 
         except gitdata.GitDataException as ex:
             raise ElliottFatalError(ex)
+
+        if self.konflux_release_path:
+            release_path, commitish = self.konflux_release_path, None
+            if '@' in self.konflux_release_path:
+                release_path, commitish = self.konflux_release_path.split('@')
+            try:
+                self.konflux_gitdata = gitdata.GitData(data_path=release_path, clone_dir=self.working_dir,
+                                                       commitish=commitish, logger=self._logger)
+            except gitdata.GitDataException as ex:
+                raise ElliottFatalError(ex)
 
     def get_releases_config(self):
         if self.releases_config is not None:

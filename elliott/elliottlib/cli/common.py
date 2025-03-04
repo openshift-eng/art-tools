@@ -34,6 +34,10 @@ context_settings = dict(help_option_names=['-h', '--help'])
     metavar='PATH', default=None,
     help='Git repo or directory containing groups metadata')
 @click.option(
+    '--konflux-release-path',
+    metavar='PATH', default=None,
+    help='Git repo or dir containing konflux release metadata')
+@click.option(
     '--group', '-g',
     default=None, metavar='NAME',
     help='The group of images on which to operate.')
