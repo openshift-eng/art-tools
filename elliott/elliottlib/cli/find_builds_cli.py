@@ -436,7 +436,7 @@ def _ensure_accepted_tags(builds: List[Dict], brew_session: koji.ClientSession, 
     """
     builds = [b for b in builds if "tag_name" not in b]  # filters out builds whose accepted tag is already set
     unknown_tags_builds = [b for b in builds if "_tags" not in b]  # finds builds whose tags are not cached
-    build_tag_lists = brew.get_builds_tags(unknown_tags_builds, brew_session)
+    build_tag_lists = brew.get_builds_tags([b['nvr'] for b in unknown_tags_builds], brew_session)
     for build, tags in zip(unknown_tags_builds, build_tag_lists):
         build["_tags"] = {tag['name'] for tag in tags}
     # Finds and sets the accepted tag (rhaos-x.y-rhel-z-[candidate|hotfix]) for each build
