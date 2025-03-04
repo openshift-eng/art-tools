@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 from artcommonlib.model import Model
 from doozerlib.image import ImageMetadata
 from doozerlib.metadata import Metadata, CgitAtomFeedEntry, RebuildHintCode
-from artcommonlib.brew import BuildStates
+from doozerlib.brew import BuildStates
 
 
 class TestMetadata(TestCase):

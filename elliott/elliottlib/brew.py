@@ -11,6 +11,7 @@ import threading
 import time
 import re
 from datetime import datetime
+from enum import Enum
 from typing import Dict, Iterable, List, Optional, Tuple, BinaryIO
 
 # 3rd party
@@ -364,6 +365,14 @@ API. This is the body content of the erratum add_builds endpoint."""
             'build': self.nvr,
             'file_types': [self.file_type],
         }
+
+
+class BuildStates(Enum):
+    BUILDING = 0
+    COMPLETE = 1
+    DELETED = 2
+    FAILED = 3
+    CANCELED = 4
 
 
 class KojiWrapperOpts(object):

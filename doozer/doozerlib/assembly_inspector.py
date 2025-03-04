@@ -458,7 +458,7 @@ class AssemblyInspector:
                     continue
                 # Get tagged rpm builds in rhaos tag
                 component_builds: Dict[str, Dict] = builder.from_tag(tag, inherit=True, assembly=self.runtime.assembly, event=self.runtime.brew_event)
-                el_version = artutil.isolate_el_version_in_brew_tag(tag)
+                el_version = util.isolate_el_version_in_brew_tag(tag)
                 if not el_version:
                     continue
                 # Remove member rpms

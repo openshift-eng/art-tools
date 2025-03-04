@@ -412,7 +412,9 @@ async def _fetch_builds_by_kind_image(runtime: Runtime, tag_pv_map: Dict[str, st
         'Generating list of images: ',
         f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...')
 
-    tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
+    tasks = [exectools.to_thread(
+        progress_func,
+        functools.partial(image.get_latest_build, el_target=image.branch_el_target())) for image in image_metas]
     brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
 
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
@@ -473,7 +475,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     pinned_nvrs = set()
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
-            tasks = [rpm.get_latest_build(default=None, el_target=tag) for rpm in runtime.rpm_metas()]
+            tasks = [exectools.to_thread(progress_func, functools.partial(rpm.get_latest_build, default=None, el_target=tag)) for rpm in runtime.rpm_metas()]
             builds_for_tag = await asyncio.gather(*tasks)
             builds.extend(filter(lambda b: b is not None, builds_for_tag))
 
