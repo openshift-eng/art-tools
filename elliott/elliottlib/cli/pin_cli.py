@@ -6,8 +6,8 @@ import os
 
 from artcommonlib.model import Model, ListModel
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
-from doozerlib import Runtime
-from doozerlib.cli import cli, pass_runtime, click_coroutine
+from elliottlib import Runtime
+from doozerlib.cli import cli, click_coroutine
 from doozerlib.brew import get_build_objects
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.release_util import isolate_el_version_in_release
