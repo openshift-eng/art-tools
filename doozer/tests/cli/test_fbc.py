@@ -23,8 +23,9 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
             keep_templates=False, push=True, fbc_repo="https://example.com/test/fbc.git", message="Test commit",
             dest_dir="/tmp/fbc")
 
+    @mock.patch("doozerlib.cli.fbc.opm.verify_opm")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter.import_from_index_image")
-    async def test_run(self, mock_import_from_index_image: mock.Mock):
+    async def test_run(self, mock_import_from_index_image: mock.Mock, verify_opm: mock.Mock):
         self.runtime.ordered_image_metas.return_value = [
             mock.MagicMock(is_olm_operator=True, distgit_key="foo", **{"get_olm_bundle_short_name.return_value": "foo-bundle"}),
             mock.MagicMock(is_olm_operator=True, distgit_key="bar", **{"get_olm_bundle_short_name.return_value": "bar-bundle"})

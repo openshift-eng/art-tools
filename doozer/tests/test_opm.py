@@ -8,17 +8,17 @@ from doozerlib.opm import (generate_basic_template, generate_dockerfile,
 
 class TestOpm(unittest.IsolatedAsyncioTestCase):
 
-    @patch('doozerlib.opm.exectools.cmd_gather_async', new_callable=AsyncMock)
-    async def test_verify_opm(self, mock_cmd_gather_async):
-        mock_cmd_gather_async.return_value = (0, 'OpmVersion:"v1.47.0"', '')
+    @patch('doozerlib.opm.gather_opm', new_callable=AsyncMock)
+    async def test_verify_opm(self, mock_gather_opm):
+        mock_gather_opm.return_value = (0, 'OpmVersion:"v1.47.0"', '')
         await verify_opm()
-        mock_cmd_gather_async.assert_called_once_with(['opm', 'version'])
+        mock_gather_opm.assert_called_once_with(['version'])
 
-        mock_cmd_gather_async.return_value = (0, 'OpmVersion:"v1.46.0"', '')
+        mock_gather_opm.return_value = (0, 'OpmVersion:"v1.46.0"', '')
         with self.assertRaises(IOError, msg="opm version 1.46.0 is too old. Please upgrade to at least 1.47.0."):
             await verify_opm()
 
-        mock_cmd_gather_async.side_effect = FileNotFoundError
+        mock_gather_opm.side_effect = FileNotFoundError
         with self.assertRaises(FileNotFoundError, msg="opm binary not found. Please install opm."):
             await verify_opm()
 
