@@ -432,9 +432,9 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
             mock.MagicMock(),
             mock.MagicMock(),
         ]
-        metas[0].get_latest_build = mock.AsyncMock(return_value={"nvr": "a-4.9.0-202107020000.p0"})
-        metas[1].get_latest_build = mock.AsyncMock(return_value={"nvr": "b-4.9.0-202107020100.p0"})
-        metas[2].get_latest_build = mock.AsyncMock(return_value={"nvr": "c-4.9.0-202107020200.p0"})
+        metas[0].get_latest_build.return_value = {"nvr": "a-4.9.0-202107020000.p0"}
+        metas[1].get_latest_build.return_value = {"nvr": "b-4.9.0-202107020100.p0"}
+        metas[2].get_latest_build.return_value = {"nvr": "c-4.9.0-202107020200.p0"}
         actual = await bzutil.approximate_cutoff_timestamp(mock.ANY, koji_api, metas)
         self.assertEqual(datetime(2021, 7, 2, 2, 0, 0, 0, tzinfo=timezone.utc).timestamp(), actual)
 

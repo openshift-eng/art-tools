@@ -4,7 +4,6 @@ from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_e
     assembly_streams_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.pushd import Dir
-from artcommonlib.util import isolate_el_version_in_brew_tag
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolver
 
@@ -1086,7 +1085,7 @@ class Runtime(GroupRuntime):
         # Otherwise, the caller is asking us to determine the branch for
         # a specific RHEL version. Pull apart the default group branch
         # and replace it wth the targeted version.
-        el_ver: int = isolate_el_version_in_brew_tag(el_target)
+        el_ver: int = util.isolate_el_version_in_brew_tag(el_target)
         match = re.match(r'^(.*)rhel-\d+(.*)$', self.branch)
         el_specific_branch: str = f'{match.group(1)}rhel-{el_ver}{match.group(2)}'
         return el_specific_branch

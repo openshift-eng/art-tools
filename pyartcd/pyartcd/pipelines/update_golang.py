@@ -22,8 +22,7 @@ from pyartcd.constants import GITHUB_OWNER
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from pyartcd.git import GitRepository
-from artcommonlib.brew import BuildStates
-from doozerlib.brew import watch_task_async
+from doozerlib.brew import BuildStates, watch_task_async
 from elliottlib.constants import GOLANG_BUILDER_CVE_COMPONENT
 from elliottlib import util as elliottutil
 

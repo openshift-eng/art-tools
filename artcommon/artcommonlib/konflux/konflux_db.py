@@ -25,7 +25,7 @@ class KonfluxDb:
         self.bq_client = bigquery.BigQueryClient()
         self.record_cls = None
 
-    def bind(self, record_cls: KonfluxRecord):
+    def bind(self, record_cls: type):
         """
         Binds the DB client to a specific table, via the KonfluxRecord class definition that represents it.
         When bound, all insert/select statements will target that table, until the DB is bound to a different one.

@@ -1,5 +1,5 @@
 from future.utils import bytes_to_native_str
-from artcommonlib.metadata import CONFIG_MODES
+from . import metadata
 import yaml
 import sys
 import csv
@@ -7,7 +7,7 @@ import io
 
 
 VALID_UPDATES = {
-    'mode': CONFIG_MODES,
+    'mode': metadata.CONFIG_MODES,
 }
 
 

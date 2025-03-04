@@ -10,7 +10,6 @@ from ghapi.core import GhApi
 
 from artcommonlib import gitdata
 from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
-from artcommonlib.metadata import CONFIG_MODES
 from doozerlib import metadata, Runtime
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.config import MetaDataConfig as mdc
@@ -294,7 +293,7 @@ def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
 
 
 @cli.command("config:update-mode", short_help="Update config(s) mode. enabled|disabled|wip")
-@click.argument("mode", nargs=1, metavar="MODE", type=click.Choice(CONFIG_MODES))  # new mode value
+@click.argument("mode", nargs=1, metavar="MODE", type=click.Choice(metadata.CONFIG_MODES))  # new mode value
 @click.option('--push/--no-push', default=False, is_flag=True,
               help='Push changes back to config repo. --no-push is default')
 @option_config_commit_msg
