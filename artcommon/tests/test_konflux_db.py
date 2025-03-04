@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from google.cloud.bigquery import SchemaField, Row
 
 from artcommonlib import constants
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome, \
+    Engine
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 
@@ -44,40 +45,48 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         start_search = datetime(2024, 9, 23, 9, 0, 0, 0, tzinfo=timezone.utc)
         await anext(self.db.search_builds_by_fields(start_search=start_search, where={}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         end_search = start_search + timedelta(days=7)
         await anext(self.db.search_builds_by_fields(start_search=start_search, end_search=end_search, where={}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00+00:00'"
-            " AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` DESC")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            f"ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(start_search=start_search, where=None), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
             "ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(start_search=start_search,
                                                     where={'name': 'ironic', 'group': 'openshift-4.18'}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name = 'ironic' AND `group` = 'openshift-4.18' AND "
+            f"start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
             " ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(start_search=start_search, where={'name': None}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name IS NULL AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name IS NULL AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00'"
             " ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(start_search=start_search, where={'name': None, 'group': None}), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name IS NULL AND `group` IS NULL "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` DESC")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name IS NULL AND `group` IS NULL "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(
@@ -85,8 +94,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time'), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' AND `group` = 'openshift-4.18' "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` DESC")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name = 'ironic' AND `group` = 'openshift-4.18' "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` DESC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(
@@ -94,8 +105,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time', sorting='ASC'), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' AND `group` = 'openshift-4.18' "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name = 'ironic' AND `group` = 'openshift-4.18' "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(
@@ -103,8 +116,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time', sorting='ASC', limit=0), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' AND `group` = 'openshift-4.18' "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC LIMIT 0")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name = 'ironic' AND `group` = 'openshift-4.18' "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC LIMIT 0")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(
@@ -112,8 +127,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
             order_by='start_time', sorting='ASC', limit=10), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' AND `group` = 'openshift-4.18' "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC LIMIT 10")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"name = 'ironic' AND `group` = 'openshift-4.18' "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC LIMIT 10")
 
         query_mock.reset_mock()
         with self.assertRaises(AssertionError):
@@ -128,8 +145,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             extra_patterns={'name': 'installer'},
             order_by='start_time', sorting='ASC', limit=10), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE REGEXP_CONTAINS(name, 'installer') "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC LIMIT 10")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"REGEXP_CONTAINS(name, 'installer') "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC LIMIT 10")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(
@@ -137,8 +156,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             extra_patterns={'name': '^ose-installer$'},
             order_by='start_time', sorting='ASC', limit=10), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE REGEXP_CONTAINS(name, '^ose-installer$') "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC LIMIT 10")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"REGEXP_CONTAINS(name, '^ose-installer$') "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC LIMIT 10")
 
         query_mock.reset_mock()
         await anext(self.db.search_builds_by_fields(
@@ -146,8 +167,24 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             extra_patterns={'name': 'installer', 'group': 'openshift'},
             order_by='start_time', sorting='ASC', limit=10), None)
         query_mock.assert_called_once_with(
-            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE REGEXP_CONTAINS(name, 'installer') AND REGEXP_CONTAINS(`group`, 'openshift') "
-            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' ORDER BY `start_time` ASC LIMIT 10")
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            f"REGEXP_CONTAINS(name, 'installer') AND REGEXP_CONTAINS(`group`, 'openshift') "
+            "AND start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC LIMIT 10")
+
+        query_mock.reset_mock()
+        await anext(self.db.search_builds_by_fields(
+            start_search=start_search,
+            where={
+                'engine': [Engine.BREW, Engine.KONFLUX],
+                'name': ['ironic', 'ose-installer']
+            },
+            order_by='start_time', sorting='ASC', limit=10), None)
+        query_mock.assert_called_once_with(
+            f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
+            "engine IN ('brew', 'konflux') AND name IN ('ironic', 'ose-installer') AND "
+            "start_time >= '2024-09-23 09:00:00+00:00' AND start_time < '2024-09-30 09:00:00+00:00' "
+            "ORDER BY `start_time` ASC LIMIT 10")
 
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
     async def test_search_builds_by_fields_windowed(self, mock_query_async: AsyncMock):
@@ -168,10 +205,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             where={'name': 'ironic', 'group': 'openshift-4.18'},
         )]
         expected_queries = [
-            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-12-02 12:00:00+00:00' AND start_time < '2025-01-01 12:00:00+00:00' ORDER BY `start_time` DESC",
-            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-11-02 12:00:00+00:00' AND start_time < '2024-12-02 12:00:00+00:00' ORDER BY `start_time` DESC",
-            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-10-03 12:00:00+00:00' AND start_time < '2024-11-02 12:00:00+00:00' ORDER BY `start_time` DESC",
-            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-10-01 08:00:00+00:00' AND start_time < '2024-10-03 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE outcome IN ('success', 'failure') AND name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-12-02 12:00:00+00:00' AND start_time < '2025-01-01 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE outcome IN ('success', 'failure') AND name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-11-02 12:00:00+00:00' AND start_time < '2024-12-02 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE outcome IN ('success', 'failure') AND name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-10-03 12:00:00+00:00' AND start_time < '2024-11-02 12:00:00+00:00' ORDER BY `start_time` DESC",
+            "SELECT * FROM `builds` WHERE outcome IN ('success', 'failure') AND name = 'ironic' AND `group` = 'openshift-4.18' AND start_time >= '2024-10-01 08:00:00+00:00' AND start_time < '2024-10-03 12:00:00+00:00' ORDER BY `start_time` DESC",
         ]
         actual_queries = [call[0][0] for call in mock_query_async.await_args_list]
         self.assertListEqual(actual_queries, expected_queries)
