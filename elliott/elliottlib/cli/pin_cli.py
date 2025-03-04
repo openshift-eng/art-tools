@@ -1,20 +1,21 @@
-import click
 from typing import List, Optional
+import click
 import yaml
 import requests
 import os
 
 from artcommonlib.model import Model, ListModel
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
-from elliottlib import Runtime
-from doozerlib.cli import cli, click_coroutine
-from doozerlib.brew import get_build_objects
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib import logutil
 from artcommonlib.arch_util import brew_arch_for_go_arch
-from doozerlib.rhcos import RHCOSBuildFinder
 from artcommonlib.rhcos import get_container_configs, get_container_pullspec
+from elliottlib import Runtime
+from elliottlib.cli.common import cli, click_coroutine
+from doozerlib.brew import get_build_objects
+from doozerlib.rhcos import RHCOSBuildFinder
+
 
 LOGGER = logutil.get_logger(__name__)
 
