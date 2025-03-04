@@ -342,7 +342,7 @@ class GenPayloadCli:
         self.assess_assembly_viability()
         await self.sync_payloads()  # even when not permitted, produce what we _would have_ synced
 
-        if self.payload_permitted:
+        if self.payload_permitted or self.emergency_ignore_issues:
             exit(0)
 
         red_print("DO NOT PROCEED WITH THIS ASSEMBLY PAYLOAD -- not all detected issues are permitted.",
