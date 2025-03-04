@@ -233,7 +233,6 @@ class FbcRebaseCli:
         where = {
             "name": bundle_name,
             "group": self.runtime.group,
-            "assembly": self.runtime.assembly,
             "operator_nvr": operator_build.nvr,
             "outcome": str(KonfluxBuildOutcome.SUCCESS),
         }
