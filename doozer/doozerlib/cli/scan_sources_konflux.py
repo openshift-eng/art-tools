@@ -28,7 +28,7 @@ from doozerlib.rpmcfg import RPMMetadata
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
 from artcommonlib.release_util import isolate_timestamp_in_release
-from doozerlib.util import oc_image_info_for_arch_async__caching, isolate_el_version_in_brew_tag
+from doozerlib.util import oc_image_info_for_arch_async__caching
 
 DEFAULT_THRESHOLD_HOURS = 6
 
@@ -759,7 +759,7 @@ class ConfigScanSources:
                               for target in rpm_meta.determine_rhel_targets()])
             else:
                 tasks.extend([
-                    check_rpm_target(rpm_meta, f'el{isolate_el_version_in_brew_tag(target)}')
+                    check_rpm_target(rpm_meta, f'el{artcommonlib.util.isolate_el_version_in_brew_tag(target)}')
                     for target in self.runtime.group_config.build_profiles.rpm.default.targets
                 ])
         await asyncio.gather(*tasks)

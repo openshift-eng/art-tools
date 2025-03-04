@@ -16,6 +16,7 @@ from artcommonlib.assembly import assembly_type, AssemblyTypes
 from artcommonlib.build_util import find_latest_builds
 from artcommonlib.logutil import get_logger
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.util import isolate_el_version_in_brew_tag
 from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr, compare_nvr
 from requests_kerberos import HTTPKerberosAuth
@@ -25,7 +26,7 @@ from doozerlib.exceptions import DoozerFatalError
 from doozerlib.plashet import PlashetBuilder
 from doozerlib.runtime import Runtime
 from doozerlib.brew import get_builds_tags
-from doozerlib.util import (isolate_el_version_in_brew_tag, mkdirs, strip_epoch, to_nvre)
+from doozerlib.util import mkdirs, strip_epoch, to_nvre
 from elliottlib import errata
 
 ERRATA_API_URL = "https://errata.engineering.redhat.com/api/v1/"

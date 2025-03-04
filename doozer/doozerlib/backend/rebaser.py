@@ -20,9 +20,9 @@ from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
 from artcommonlib.util import deep_merge
+from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.brew import BuildStates
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
