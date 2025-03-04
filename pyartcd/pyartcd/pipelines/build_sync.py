@@ -551,6 +551,16 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         embargo_permit_ack=embargo_permit_ack,
         build_system=build_system
     )
+
+    if build_system == 'brew':
+        lock = locks.Lock.BUILD_SYNC
+        lock_name = locks.Lock.BUILD_SYNC.value.format(version=version)
+    elif build_system == 'konflux':
+        lock = locks.Lock.BUILD_SYNC_KONFLUX
+        lock_name = locks.Lock.BUILD_SYNC_KONFLUX.value.format(version=version)
+    else:
+        raise ValueError(f'Invalid build system: {build_system}')
+
     span = trace.get_current_span()
     span.set_attributes({
         "pyartcd.param.dry_run": runtime.dry_run,
@@ -567,8 +577,8 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
 
             await locks.run_with_lock(
                 coro=pipeline.run(),
-                lock=locks.Lock.BUILD_SYNC_KONFLUX,
-                lock_name=locks.Lock.BUILD_SYNC_KONFLUX.value.format(version=version),
+                lock=lock,
+                lock_name=lock_name,
                 lock_id=lock_identifier
             )
         else:
