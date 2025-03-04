@@ -350,7 +350,8 @@ class ConfigScanSources:
             return
 
         # Check for changes in image arches
-        await self.scan_arch_changes(image_meta)
+        # TODO remove once we have full capacity
+        # await self.scan_arch_changes(image_meta)
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
