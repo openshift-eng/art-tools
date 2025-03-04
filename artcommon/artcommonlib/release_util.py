@@ -42,7 +42,7 @@ def isolate_assembly_in_release(release: str) -> Optional[str]:
 
 def isolate_el_version_in_release(release: str) -> Optional[int]:
     """
-    Given a release field, determines whether is contains
+    Given a release field, determines whether it contains
     a RHEL version. If it does, it returns the version value as an int.
     If it is not found, None is returned.
     """

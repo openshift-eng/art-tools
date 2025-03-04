@@ -339,18 +339,28 @@ class KonfluxDb:
         self.logger.warning('No builds found for NVR %s', nvr)
         return None
 
-    async def get_build_records_by_nvrs(self, nvrs: typing.Sequence[str], outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.List[KonfluxRecord]:
+    async def get_build_records_by_nvrs(self, nvrs: typing.Sequence[str],
+                                        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+                                        where: typing.Optional[typing.Dict[str, typing.Any]] = None,
+                                        strict: bool = True) -> typing.List[KonfluxRecord]:
         """ Get build records by NVRS.
         Note that this function only searches for the build records in the last 3 years.
-
         :param nvrs: The NVRS of the builds.
         :param outcome: The outcome of the builds.
+        :param where: Additional fields to filter the build records.
+        :param strict: If True, raise an exception if any build record is not found.
         :return: The build records.
         """
         nvrs = list(nvrs)
+        if not where:
+            where = {}
+        else:
+            if "nvr" in where or "outcome" in where:
+                raise ValueError("'nvr' and 'outcome' fields are reserved and should not be used in the 'where' "
+                                 "parameter")
 
         async def _task(nvr):
-            where = {"nvr": nvr, "outcome": str(outcome)}
+            where.update({"nvr": nvr, "outcome": str(outcome)})
             return await anext(self.search_builds_by_fields(where=where, limit=1, strict=True))
         tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
         records = await asyncio.gather(*tasks, return_exceptions=True)
