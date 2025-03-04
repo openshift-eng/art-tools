@@ -46,7 +46,7 @@ class AssemblyPinBuildsCli:
         art_rpms_by_comp = {r.get_component_name(): r for r in self.runtime.rpm_map.values()}
 
         images, art_rpms, non_art_rpms, rhcos = [], [], [], []
-        major, minor = self.runtime.get_major_minor_fields()
+        major, minor = self.runtime.get_major_minor()
         nvrs = set(self.nvrs)
         for nvr in nvrs:
             parsed = parse_nvr(nvr)
@@ -165,6 +165,7 @@ class AssemblyPinBuildsCli:
 
     def pin_images(self, art_images_by_comp, images):
         changed = False
+        self.assembly_config["members"].setdefault("images", ListModel([]))
         pinned_member_images = self.assembly_config["members"]["images"].primitive()
         pinned_member_images = {i["distgit_key"]: i for i in pinned_member_images}
         for i in images:
@@ -192,6 +193,7 @@ class AssemblyPinBuildsCli:
 
     def pin_rpms(self, art_rpms_by_comp, rpms):
         changed = False
+        self.assembly_config["members"].setdefault("rpms", ListModel([]))
         pinned_member_rpms = self.assembly_config["members"]["rpms"].primitive()
         pinned_member_rpms = {r["distgit_key"]: r for r in pinned_member_rpms}
         for r in rpms:
@@ -273,7 +275,8 @@ class AssemblyPinBuildsCli:
             brew_arch = brew_arch_for_go_arch(arch)
             LOGGER.info(f"Getting RHCOS pullspecs for build {build_id}-{brew_arch}...")
             for container_conf in get_container_configs(self.runtime):
-                version = self.runtime.get_minor_version()
+                major, minor = self.runtime.get_major_minor()
+                version = f"{major}.{minor}"
                 finder = RHCOSBuildFinder(self.runtime, version, brew_arch, False)
                 if container_conf.name not in rhcos_info:
                     rhcos_info[container_conf.name] = {"images": {}}
@@ -283,6 +286,7 @@ class AssemblyPinBuildsCli:
                 )
                 rhcos_info[container_conf.name]["images"][arch] = pullspec
 
+        self.assembly_config["group"].setdefault("rhcos", Model({}))
         current_rhcos = self.assembly_config["group"]["rhcos"].primitive()
         if current_rhcos != rhcos_info:
             self.assembly_config["group"]["rhcos"] = Model(rhcos_info)
