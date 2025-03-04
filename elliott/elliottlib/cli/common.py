@@ -6,6 +6,7 @@ import click
 
 from artcommonlib import dotconfig
 from artcommonlib.format_util import red_prefix, green_prefix, yellow_print
+from artcommonlib.constants import KONFLUX_RELEASE_DATA_URL
 from elliottlib import Runtime, constants, __version__, errata
 from elliottlib.cli import cli_opts
 
@@ -33,6 +34,12 @@ context_settings = dict(help_option_names=['-h', '--help'])
     '--data-path',
     metavar='PATH', default=None,
     help='Git repo or directory containing groups metadata')
+@click.option(
+    '--konflux-release-path',
+    metavar='PATH', default=None,
+    help="Git repo or directory containing group metadata for konflux release e.g."
+         f" {KONFLUX_RELEASE_DATA_URL}. Defaults to the default branch of the repo - to point to a "
+         "branch/commit use repo@commitish")
 @click.option(
     '--group', '-g',
     default=None, metavar='NAME',
