@@ -3,10 +3,14 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildOutcome, KonfluxBundleBuildRecord)
 
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.backend.konflux_fbc import KonfluxFbcImporter, KonfluxFbcRebaser
+from doozerlib.backend.konflux_client import KonfluxClient
+from doozerlib.backend.konflux_fbc import (KonfluxFbcBuilder,
+                                           KonfluxFbcImporter,
+                                           KonfluxFbcRebaser)
 from doozerlib.image import ImageMetadata
 from doozerlib.opm import yaml
 
@@ -440,3 +444,156 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual["test-package2"]["olm.package"]["test-package2"], {"schema": "olm.package", "name": "test-package2"})
         self.assertEqual(actual["test-package2"]["olm.channel"]["test-channel2"], {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"})
         self.assertEqual(actual["test-package2"]["olm.bundle"]["test-bundle2"], {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"})
+
+
+class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
+
+    def setUp(self):
+        self.base_dir = Path("/tmp/konflux_fbc_builder")
+        self.group = "test-group"
+        self.assembly = "test-assembly"
+        self.db = MagicMock()
+        self.fbc_repo = "https://example.com/fbc-repo.git"
+        self.konflux_namespace = "test-namespace"
+        self.konflux_kubeconfig = "/path/to/kube/config"
+        self.konflux_context = None
+        self.image_repo = "quay.io/test-repo"
+        self.skip_checks = False
+        self.pipelinerun_template_url = "https://example.com/template.yaml"
+        self.dry_run = False
+        self.record_logger = MagicMock()
+        self.logger = MagicMock()
+
+        with patch("doozerlib.backend.konflux_fbc.KonfluxClient", spec=KonfluxClient) as MockKonfluxClient:
+            self.kube_client = MockKonfluxClient.from_kubeconfig.return_value = AsyncMock(spec=KonfluxClient)
+            self.builder = KonfluxFbcBuilder(
+                base_dir=self.base_dir,
+                group=self.group,
+                assembly=self.assembly,
+                db=self.db,
+                fbc_repo=self.fbc_repo,
+                konflux_namespace=self.konflux_namespace,
+                konflux_kubeconfig=self.konflux_kubeconfig,
+                konflux_context=self.konflux_context,
+                image_repo=self.image_repo,
+                skip_checks=self.skip_checks,
+                pipelinerun_template_url=self.pipelinerun_template_url,
+                dry_run=self.dry_run,
+                record_logger=self.record_logger,
+                logger=self.logger
+            )
+
+    async def test_start_build(self):
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "foo"
+        build_repo = MagicMock(spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef")
+        kube_client = self.kube_client
+        kube_client.build_pipeline_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
+        pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
+            **{"metadata.name": "test-pipeline-run-name"}
+        )
+
+        result = await self.builder._start_build(metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger)
+        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group-foo", display_name="fbc-test-group-foo")
+        kube_client.ensure_component.assert_awaited_once_with(
+            name="fbc-test-group-foo",
+            application="fbc-test-group-foo",
+            component_name="fbc-test-group-foo",
+            image_repo="test-image-pullspec",
+            source_url=build_repo.https_url,
+            revision=build_repo.branch,
+        )
+        kube_client.start_pipeline_run_for_image_build.assert_awaited_once_with(
+            generate_name='fbc-test-group-foo-',
+            namespace='test-namespace',
+            application_name='fbc-test-group-foo',
+            component_name='fbc-test-group-foo',
+            git_url='https://example.com/foo.git',
+            commit_sha="deadbeef",
+            target_branch='test-branch',
+            output_image='test-image-pullspec',
+            vm_override={},
+            building_arches=['x86_64', 's390x'],
+            additional_tags=[],
+            skip_checks=False,
+            hermetic=True,
+            dockerfile='catalog.Dockerfile',
+            pipelinerun_template_url='https://example.com/template.yaml',
+        )
+        self.assertEqual(result, (pplr, "https://example.com/pipelinerun/test-pipeline-run-name"))
+
+    @patch("pathlib.Path.exists", return_value=False)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._update_konflux_db")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
+    @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    async def test_build(self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists):
+        mock_konflux_client = self.kube_client
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-distgit-key"
+        build_repo = MockBuildRepo.return_value
+        build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
+        mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
+        mock_konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipeline")
+        mock_start_build.return_value = (MagicMock(**{"metadata.name": "test-pipelinerun-name"}), "https://example.com/pipeline")
+        mock_pipelinerun = {"metadata": {"name": "test-pipelinerun-name"}, "status": {"conditions": [{"type": "Succeeded", "status": "True"}]}}
+        mock_konflux_client.wait_for_pipelinerun.return_value = (mock_pipelinerun, [])
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {"__doozer_version": "1.0.0", "__doozer_release": "1", "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1"}
+        mock_dfp.labels = {}
+
+        await self.builder.build(metadata)
+        MockBuildRepo.assert_called_once_with(
+            url=self.fbc_repo,
+            branch="art-test-group-assembly-test-assembly-fbc-test-distgit-key",
+            local_dir=self.base_dir.joinpath(metadata.distgit_key),
+            logger=ANY,
+        )
+        build_repo.ensure_source.assert_called_once_with(strict=True)
+        MockDockerfileParser.assert_called_once_with(str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile")))
+        all_arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        mock_update_konflux_db.assert_has_awaits([
+            call(metadata, build_repo, mock_start_build.return_value[0], KonfluxBuildOutcome.PENDING, all_arches, logger=ANY),
+            call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
+        ])
+        mock_konflux_client.wait_for_pipelinerun.assert_called_once_with("test-pipelinerun-name", namespace="test-namespace")
+        self.builder._record_logger.add_record.assert_called_once_with(
+            "build_fbc_konflux",
+            status=0, name='test-distgit-key', message='Success', task_id='test-pipelinerun-name', task_url='https://example.com/pipeline', fbc_nvr='test-distgit-key-fbc-1.0.0-1', bundle_nvrs='foo-bundle-1.0.0-1')
+        MockBuildRepo.from_local_dir.assert_not_called()
+
+    @patch("pathlib.Path.exists", return_value=True)
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._update_konflux_db")
+    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
+    @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
+    @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    async def test_build_with_existing_repo(self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists):
+        mock_konflux_client = self.kube_client
+        metadata = MagicMock(spec=ImageMetadata)
+        metadata.distgit_key = "test-distgit-key"
+        build_repo = MockBuildRepo.from_local_dir.return_value
+        build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
+        mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
+        mock_konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipeline")
+        mock_start_build.return_value = (MagicMock(**{"metadata.name": "test-pipelinerun-name"}), "https://example.com/pipeline")
+        mock_pipelinerun = {"metadata": {"name": "test-pipelinerun-name"}, "status": {"conditions": [{"type": "Succeeded", "status": "True"}]}}
+        mock_konflux_client.wait_for_pipelinerun.return_value = (mock_pipelinerun, [])
+
+        mock_dfp = MockDockerfileParser.return_value
+        mock_dfp.envs = {"__doozer_version": "1.0.0", "__doozer_release": "1", "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1"}
+        mock_dfp.labels = {}
+
+        await self.builder.build(metadata)
+        MockBuildRepo.assert_not_called()
+        MockDockerfileParser.assert_called_once_with(str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile")))
+        all_arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+        mock_update_konflux_db.assert_has_awaits([
+            call(metadata, build_repo, mock_start_build.return_value[0], KonfluxBuildOutcome.PENDING, all_arches, logger=ANY),
+            call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
+        ])
+        mock_konflux_client.wait_for_pipelinerun.assert_called_once_with("test-pipelinerun-name", namespace="test-namespace")
+        self.builder._record_logger.add_record.assert_called_once_with(
+            "build_fbc_konflux",
+            status=0, name='test-distgit-key', message='Success', task_id='test-pipelinerun-name', task_url='https://example.com/pipeline', fbc_nvr='test-distgit-key-fbc-1.0.0-1', bundle_nvrs='foo-bundle-1.0.0-1')
+        MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)

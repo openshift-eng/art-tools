@@ -3,17 +3,24 @@ import asyncio
 import logging
 import os
 import shutil
+from datetime import datetime, timezone
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from artcommonlib.konflux.konflux_build_record import KonfluxBundleBuildRecord
+from artcommonlib import util as artlib_util
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildOutcome, KonfluxBundleBuildRecord, KonfluxFbcBuildRecord)
+from artcommonlib.konflux.konflux_db import (Engine, KonfluxBuildOutcome,
+                                             KonfluxDb)
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
+from kubernetes.dynamic import resource
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 
@@ -460,3 +467,297 @@ class KonfluxFbcRebaser:
                 raise IOError(f"Couldn't determine package name for unknown schema: {schema}")
             categorized_blobs.setdefault(package_name, {}).setdefault(schema, {})[blob["name"]] = blob
         return categorized_blobs
+
+
+class KonfluxFbcBuildError(Exception):
+    def __init__(self, message: str, pipelinerun_name: str, pipelinerun: Optional[resource.ResourceInstance]) -> None:
+        super().__init__(message)
+        self.pipelinerun_name = pipelinerun_name
+        self.pipelinerun = pipelinerun
+
+
+class KonfluxFbcBuilder:
+    def __init__(
+            self,
+            base_dir: Path,
+            group: str,
+            assembly: str,
+            db: KonfluxDb,
+            fbc_repo: str,
+            konflux_namespace: str,
+            konflux_kubeconfig: Optional[str] = None,
+            konflux_context: Optional[str] = None,
+            image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
+            skip_checks: bool = False,
+            pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+            dry_run: bool = False,
+            record_logger: Optional[RecordLogger] = None,
+            logger: logging.Logger = LOGGER):
+        self.base_dir = base_dir
+        self.group = group
+        self.assembly = assembly
+        self._db = db
+        self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
+        self.konflux_namespace = konflux_namespace
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.konflux_context = konflux_context
+        self.image_repo = image_repo
+        self.skip_checks = skip_checks
+        self.pipelinerun_template_url = pipelinerun_template_url
+        self.dry_run = dry_run
+        self._record_logger = record_logger
+        self._logger = logger.getChild(self.__class__.__name__)
+        self._konflux_client = KonfluxClient.from_kubeconfig(konflux_namespace, konflux_kubeconfig, konflux_context, dry_run=self.dry_run)
+
+    async def build(self, metadata: ImageMetadata):
+        bundle_short_name = metadata.get_olm_bundle_short_name()
+        logger = self._logger.getChild(f"[{bundle_short_name}]")
+        logger.info("Building FBC for %s", metadata.distgit_key)
+
+        record = {
+            'status': -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            "name": metadata.distgit_key,
+            "message": "Unknown failure",
+            "task_id": "n/a",
+            "task_url": "n/a",
+            "fbc_nvr": "n/a",
+            "bundle_nvrs": "n/a",
+        }
+
+        try:
+            # Clone or load the FBC repository
+            repo_dir = self.base_dir.joinpath(metadata.distgit_key)
+            build_repo = None
+            if repo_dir.exists():
+                logger.info("Loading existing FBC repository...")
+                build_repo = await BuildRepo.from_local_dir(repo_dir, logger)
+                logger.info("FBC repository loaded from %s", repo_dir)
+            else:
+                build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map({
+                    "group": self.group,
+                    "assembly_name": self.assembly,
+                    "distgit_key": metadata.distgit_key,
+                })
+                logger.info("Cloning bundle repository %s branch %s into %s", self.fbc_repo, build_branch, repo_dir)
+                build_repo = BuildRepo(
+                    url=self.fbc_repo,
+                    branch=build_branch,
+                    local_dir=repo_dir,
+                    logger=logger,
+                )
+                await build_repo.ensure_source(strict=True)
+                logger.info("FBC repository cloned to %s", repo_dir)
+
+            # Parse catalog.Dockerfile
+            dfp = DockerfileParser(str(repo_dir.joinpath("catalog.Dockerfile")))
+            version = dfp.envs.get("__doozer_version")
+            release = dfp.envs.get("__doozer_release")
+            if not version or not release:
+                raise ValueError("Version and release not found in the catalog.Dockerfile. Did you rebase?")
+            logger.info("Version: %s, Release: %s", version, release)
+            bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs")
+            if bundle_nvrs:
+                record["bundle_nvrs"] = bundle_nvrs
+
+            # Start FBC build
+            logger.info("Starting FBC build...")
+            retries = 3
+            name = metadata.distgit_key + "-fbc"
+            nvr = f"{name}-{version}-{release}"
+            record["fbc_nvr"] = nvr
+            output_image = f"{self.image_repo}:{nvr}"
+
+            # FBC needs to be built for all supported arches.
+            arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
+            for attempt in range(1, retries + 1):
+                logger.info("Build attempt %d/%d", attempt, retries)
+                pipelinerun, url = await self._start_build(
+                    metadata=metadata,
+                    build_repo=build_repo,
+                    output_image=output_image,
+                    arches=arches,
+                    logger=logger,
+                )
+                pipelinerun_name = pipelinerun.metadata.name
+                record["task_id"] = pipelinerun_name
+                record["task_url"] = url
+                if not self.dry_run:
+                    await self._update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, arches, logger=logger)
+                else:
+                    logger.info("Dry run: Would have inserted build record in Konflux DB")
+
+                logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
+                pipelinerun, _ = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self.konflux_namespace)
+                logger.info("PipelineRun %s completed", pipelinerun_name)
+
+                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
+
+                if self.dry_run:
+                    logger.info("Dry run: Would have inserted build record in Konflux DB")
+                else:
+                    await self._update_konflux_db(metadata, build_repo, pipelinerun, outcome, arches, logger=logger)
+
+                if outcome is not KonfluxBuildOutcome.SUCCESS:
+                    error = KonfluxFbcBuildError(f"Konflux image build for {metadata.distgit_key} failed",
+                                                 pipelinerun_name, pipelinerun)
+                else:
+                    error = None
+                    metadata.build_status = True
+                    record["message"] = "Success"
+                    record["status"] = 0
+                    break
+            if error:
+                record['message'] = str(error)
+                raise error
+        finally:
+            if self._record_logger:
+                self._record_logger.add_record("build_fbc_konflux", **record)
+        return pipelinerun_name, pipelinerun
+
+    async def _start_build(
+            self,
+            metadata: ImageMetadata,
+            build_repo: BuildRepo,
+            output_image: str,
+            arches: Sequence[str],
+            logger: logging.Logger):
+        """ Start a build with Konflux. """
+        if not build_repo.commit_hash:
+            raise IOError("Bundle repository must have a commit to build. Did you rebase?")
+        # Ensure the Application resource exists
+        # Openshift doesn't allow dots or underscores in any of its fields, so we replace them with dashes
+        app_name = f"fbc-{self.group.replace('openshift-', 'ocp-')}-{metadata.distgit_key}".replace(".", "-").replace("_", "-")
+        logger.info(f"Using Konflux application: {app_name}")
+        konflux_client = self._konflux_client
+        await konflux_client.ensure_application(name=app_name, display_name=app_name)
+        logger.info(f"Konflux application {app_name} created")
+        # Ensure the Component resource exists
+        component_name = app_name  # Use the same name as the application
+        logger.info(f"Creating Konflux component: {component_name}")
+        dest_image_repo = output_image.split(":")[0]
+        await konflux_client.ensure_component(
+            name=component_name,
+            application=app_name,
+            component_name=component_name,
+            image_repo=dest_image_repo,
+            source_url=build_repo.https_url,
+            revision=build_repo.branch,
+        )
+        logger.info(f"Konflux component {component_name} created")
+        # Create a new pipeline run
+        logger.info("Starting Konflux pipeline run...")
+        additional_tags = []
+        pipelinerun = await konflux_client.start_pipeline_run_for_image_build(
+            generate_name=f"{component_name}-",
+            namespace=self.konflux_namespace,
+            application_name=app_name,
+            component_name=component_name,
+            git_url=build_repo.https_url,
+            commit_sha=build_repo.commit_hash,
+            target_branch=build_repo.branch or build_repo.commit_hash,
+            output_image=output_image,
+            vm_override={},
+            building_arches=arches,  # FBC should be built for all supported arches
+            additional_tags=list(additional_tags),
+            skip_checks=self.skip_checks,
+            hermetic=True,
+            dockerfile="catalog.Dockerfile",
+            pipelinerun_template_url=self.pipelinerun_template_url,
+        )
+        url = konflux_client.build_pipeline_url(pipelinerun)
+        logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
+        return pipelinerun, url
+
+    async def _update_konflux_db(self, metadata: ImageMetadata, build_repo: BuildRepo,
+                                 pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
+                                 arches: Sequence[str],
+                                 logger: Optional[logging.Logger] = None):
+        logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
+        db = self._db
+        if not db or db.record_cls != KonfluxFbcBuildRecord:
+            logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
+            return
+        try:
+            rebase_repo_url = build_repo.https_url
+            rebase_commit = build_repo.commit_hash
+
+            df_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
+            dfp = DockerfileParser(str(df_path))
+
+            name = metadata.distgit_key + "-fbc"
+            version = dfp.envs.get("__doozer_version")
+            release = dfp.envs.get("__doozer_release")
+            assert version and release, "Version and release not found in the catalog.Dockerfile. Did you rebase?"
+
+            bundle_nvrs = dfp.envs.get("__doozer_bundle_nvrs", "").split(",")
+            source_repo = dfp.labels.get('io.openshift.build.source-location')
+            commitish = dfp.labels.get('io.openshift.build.commit.id')
+
+            nvr = "-".join([name, version, release])
+
+            pipelinerun_name = pipelinerun.metadata.name
+            build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
+
+            build_record_params = {
+                'name': metadata.get_olm_bundle_short_name(),
+                'version': version,
+                'release': release,
+                'start_time': datetime.now(tz=timezone.utc),
+                'end_time': None,
+                'nvr': nvr,
+                'group': metadata.runtime.group,
+                'assembly': metadata.runtime.assembly,
+                'source_repo': source_repo or "n/a",
+                'commitish': commitish or "n/a",
+                'rebase_repo_url': rebase_repo_url,
+                'rebase_commitish': rebase_commit,
+                'engine': Engine.KONFLUX,
+                'outcome': str(outcome),
+                'art_job_url': os.getenv('BUILD_URL', 'n/a'),
+                'build_id': pipelinerun_name,
+                'build_pipeline_url': build_pipeline_url,
+                'pipeline_commit': 'n/a',  # TODO: populate this
+                'bundle_nvrs': bundle_nvrs,
+                'arches': arches,
+            }
+
+            match outcome:
+                case KonfluxBuildOutcome.SUCCESS:
+                    # results:
+                    # - name: IMAGE_URL
+                    #   value: quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:ose-network-metrics-daemon-rhel9-v4.18.0-20241001.151532
+                    # - name: IMAGE_DIGEST
+                    #   value: sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807
+
+                    image_pullspec = next((r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_URL'), None)
+                    image_digest = next((r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_DIGEST'), None)
+
+                    if not (image_pullspec and image_digest):
+                        raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                                         f"pipelinerun {pipelinerun_name}")
+
+                    start_time = pipelinerun.status.startTime
+                    end_time = pipelinerun.status.completionTime
+
+                    build_record_params.update({
+                        'image_pullspec': image_pullspec,
+                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        'image_tag': image_digest.removeprefix('sha256:'),
+                    })
+                case KonfluxBuildOutcome.FAILURE:
+                    start_time = pipelinerun.status.startTime
+                    end_time = pipelinerun.status.completionTime
+                    build_record_params.update({
+                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                    })
+
+            build_record = KonfluxFbcBuildRecord(**build_record_params)
+            db.add_build(build_record)
+            logger.info(f'Konflux build info stored successfully with status {outcome}')
+
+        except Exception as err:
+            logger.error('Failed writing record to the konflux DB: %s', err)
+            raise
