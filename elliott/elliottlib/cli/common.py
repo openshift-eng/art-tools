@@ -65,6 +65,8 @@ context_settings = dict(help_option_names=['-h', '--help'])
     help='Show debug output on console.')
 @click.option("--brew-event", metavar='EVENT', type=click.INT, default=None,
               help="Lock koji clients from runtime to this brew event.")
+@click.option("--build-system", default='brew', envvar='BUILD_SYSTEM',
+              help="Which build system (Brew/Konflux) to consider when searching for builds.")
 @click.pass_context
 def cli(ctx, **kwargs):
     cfg = dotconfig.Config(
