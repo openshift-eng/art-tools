@@ -73,6 +73,7 @@ class KonfluxOcp4Pipeline:
             f'--assembly={assembly}',
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
+            '--build-system=konflux',
             group_param
         ]
 
