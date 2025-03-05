@@ -386,13 +386,15 @@ class ConfigScanSources:
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
         build_arches = set(build_record.arches)
 
-        if target_arches != build_arches:
-            self.add_image_meta_change(
-                image_meta,
-                RebuildHint(
-                    RebuildHintCode.ARCHES_CHANGE,
-                    f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
-            )
+        for arch in target_arches:
+            if arch not in build_arches:
+                self.add_image_meta_change(
+                    image_meta,
+                    RebuildHint(
+                        RebuildHintCode.ARCHES_CHANGE,
+                        f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
+                )
+                return
 
     @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
