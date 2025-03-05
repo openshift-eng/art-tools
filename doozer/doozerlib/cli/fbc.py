@@ -159,6 +159,7 @@ class FbcRebaseCli:
             push=self.push,
             fbc_repo=self.fbc_repo,
             upcycle=runtime.upcycle,
+            record_logger=runtime.record_logger,
         )
         tasks = []
         for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds):

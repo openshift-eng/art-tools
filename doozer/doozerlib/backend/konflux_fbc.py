@@ -15,6 +15,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
+from doozerlib.record_logger import RecordLogger
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -213,6 +214,8 @@ class KonfluxFbcRebaser:
             push: bool,
             fbc_repo: str,
             upcycle: bool,
+            record_logger: Optional[RecordLogger] = None,
+            logger: Optional[logging.Logger] = None,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.group = group
@@ -223,39 +226,59 @@ class KonfluxFbcRebaser:
         self.push = push
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.upcycle = upcycle
-        self._logger = LOGGER.getChild(self.__class__.__name__)
+        self._record_logger = record_logger
+        self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
     async def rebase(self, metadata: ImageMetadata, bundle_build: KonfluxBundleBuildRecord, version: str, release: str):
         bundle_short_name = metadata.get_olm_bundle_short_name()
         logger = self._logger.getChild(f"[{bundle_short_name}]")
         repo_dir = self.base_dir.joinpath(metadata.distgit_key)
 
-        # Clone the FBC repo
-        fbc_build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map({
-            "group": self.group,
-            "assembly_name": self.assembly,
-            "distgit_key": metadata.distgit_key,
-        })
-        logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
-        build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
-        await build_repo.ensure_source(upcycle=self.upcycle, strict=True)  # FIXME: Currently rebasing against an empty FBC repo is not supported
+        name = metadata.distgit_key + "-fbc"
+        nvr = f"{name}-{version}-{release}"
+        record = {
+            'status': -1,  # Status defaults to failure until explicitly set by success. This handles raised exceptions.
+            "name": metadata.distgit_key,
+            "message": "Unknown failure",
+            "fbc_nvr": nvr,
+            "bundle_nvrs": ','.join([str(bundle_build.nvr)]),  # Currently we only support rebasing for one bundle at a time
+        }
 
-        # Update the FBC repo
-        await self._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
+        try:
+            # Clone the FBC repo
+            fbc_build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map({
+                "group": self.group,
+                "assembly_name": self.assembly,
+                "distgit_key": metadata.distgit_key,
+            })
+            logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
+            build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
+            await build_repo.ensure_source(upcycle=self.upcycle, strict=True)  # FIXME: Currently rebasing against an empty FBC repo is not supported
 
-        # Validate the updated catalog
-        logger.info("Validating the updated catalog")
-        await opm.validate(build_repo.local_dir.joinpath("catalog"))
+            # Update the FBC repo
+            await self._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
 
-        # Commit and push the changes
-        addtional_message = f"\n\n---\noperator: {bundle_build.operator_nvr}\noperands: {','.join(bundle_build.operand_nvrs)}"
-        await build_repo.commit(self.commit_message + addtional_message, allow_empty=True)
-        if self.push:
-            await build_repo.push()
-        else:
-            logger.info("Not pushing changes to remote repository")
+            # Validate the updated catalog
+            logger.info("Validating the updated catalog")
+            await opm.validate(build_repo.local_dir.joinpath("catalog"))
 
-        logger.info("rebase complete")
+            # Commit and push the changes
+            addtional_message = f"\n\n---\noperator: {bundle_build.operator_nvr}\noperands: {','.join(bundle_build.operand_nvrs)}"
+            await build_repo.commit(self.commit_message + addtional_message, allow_empty=True)
+            if self.push:
+                await build_repo.push()
+            else:
+                logger.info("Not pushing changes to remote repository")
+
+            record["message"] = "Success"
+            record["status"] = 0
+            logger.info("rebase complete")
+        except Exception as error:
+            record['message'] = str(error)
+            raise
+        finally:
+            if self._record_logger:
+                self._record_logger.add_record("rebase_fbc_konflux", **record)
 
     async def _rebase_dir(self, metadata: ImageMetadata, build_repo: BuildRepo, bundle_build: KonfluxBundleBuildRecord,
                           version: str, release: str, logger: logging.Logger):

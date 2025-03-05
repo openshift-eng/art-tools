@@ -223,6 +223,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.distgit_key = "test-distgit-key"
         bundle_build = MagicMock(
             spec=KonfluxBundleBuildRecord,
+            nvr="foo-bundle-1.0.0-1",
             operator_nvr="foo-operator-1.0.0-1",
             operand_nvrs=["foo-operand-1.0.0-1"],
         )
@@ -255,6 +256,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         metadata.distgit_key = "test-distgit-key"
         bundle_build = MagicMock(
             spec=KonfluxBundleBuildRecord,
+            nvr="foo-bundle-1.0.0-1",
             operator_nvr="foo-operator-1.0.0-1",
             operand_nvrs=["foo-operand-1.0.0-1"],
         )
