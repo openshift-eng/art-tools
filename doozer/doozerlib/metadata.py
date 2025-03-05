@@ -284,12 +284,12 @@ class Metadata(object):
         """
         return [self.hotfix_brew_tag()]
 
-    def get_arches(self, konflux: bool = False):
+    def get_arches(self):
         """
         :return: Returns the list of architecture this image/rpm should build for. This is an intersection
         of config specific arches & globally enabled arches in group.yml
         """
-        global_arches = self.runtime.get_global_konflux_arches() if konflux else self.runtime.get_global_arches()
+        global_arches = self.runtime.get_global_konflux_arches() if self.runtime.build_system == 'konflux' else self.runtime.get_global_arches()
 
         if self.config.arches:
             ca = self.config.arches
