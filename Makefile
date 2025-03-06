@@ -7,19 +7,22 @@ venv:
 	cd elliott && uv pip install '.[tests]'
 
 lint:
-	./.venv/bin/python -m flake8
+	uv run -m flake8
 
 pylint:
-	./.venv/bin/python -m pylint .
+	uv run -m pylint .
 
 unit:
-	./.venv/bin/python -m pytest --verbose --color=yes artcommon/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes doozer/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes elliott/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes pyartcd/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes ocp-build-data-validator/tests/
+	uv run -m pytest --verbose --color=yes artcommon/tests/
+	uv run -m pytest --verbose --color=yes doozer/tests/
+	uv run -m pytest --verbose --color=yes elliott/tests/
+	uv run -m pytest --verbose --color=yes pyartcd/tests/
+	uv run -m pytest --verbose --color=yes ocp-build-data-validator/tests/
 
 functional-elliott:
-	./.venv/bin/python -m pytest --verbose --color=yes elliott/functional_tests/
+	uv run -m pytest --verbose --color=yes elliott/functional_tests/
+
+functional-doozer:
+	uv run -m pytest --verbose --color=yes doozer/tests_functional
 
 test: lint unit
