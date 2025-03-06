@@ -139,17 +139,12 @@ class CreateSnapshotCli:
 
     async def fetch_build_records(self) -> list[KonfluxRecord]:
         LOGGER.info("Validating given NVRs...")
-        major, minor = self.runtime.get_major_minor()
-        major_minor = f"{major}.{minor}"
         components = set()
         for build in self.builds:
             nvr = parse_nvr(build)
             if nvr['name'] in components:
                 raise ValueError(f"Multiple builds found for component {nvr['name']}. Please provide only one build per component.")
             components.add(nvr['name'])
-
-            if major_minor not in nvr['version']:
-                raise ValueError(f"{build} does not look to belong to given group {self.runtime.group}")
 
         LOGGER.info("Fetching NVRs from DB...")
         where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
@@ -158,12 +153,11 @@ class CreateSnapshotCli:
 
 
 @cli.group("snapshot", short_help="Commands for managing Konflux Snapshots")
-def release_snapshot_cli():
+def snapshot_cli():
     pass
 
 
-@release_snapshot_cli.command("new", short_help="Create a new Konflux Snapshot in the given namespace for the given "
-                                                "builds (NVRs)")
+@snapshot_cli.command("new", short_help="Create a new Konflux Snapshot in the given namespace for the given builds (NVRs)")
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
@@ -183,7 +177,10 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
     Create a new Konflux Snapshot in the given namespace for the given builds
 
     \b
-    $ elliott snapshot new --builds-file builds.txt
+    $ elliott -g openshift-4.18 snapshot new --builds-file builds.txt
+
+    \b
+    $ elliott -g openshift-4.18 snapshot new nvr1 nvr2 nvr3 --apply
     """
     if bool(builds) and bool(builds_file):
         raise click.BadParameter("Use only one of --build or --builds-file")
@@ -192,7 +189,7 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
     if not konflux_kubeconfig:
-        raise ValueError(f"Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
 
     if builds_file:
         if builds_file == "-":
@@ -200,5 +197,5 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
         builds = [line.strip() for line in builds_file.readlines()]
 
     pipeline = CreateSnapshotCli(runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-                                 for_bundle, builds, dry_run = not apply)
+                                 for_bundle, builds, dry_run=not apply)
     await pipeline.run()

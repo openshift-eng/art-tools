@@ -2,7 +2,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch, ANY, Mock
 import os
 
-from elliottlib.cli.release_snapshot_cli import CreateSnapshotCli
+from elliottlib.cli.snapshot_cli import CreateSnapshotCli
 
 
 class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
@@ -29,8 +29,8 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         del os.environ['KONFLUX_ART_IMAGES_USERNAME']
         del os.environ['KONFLUX_ART_IMAGES_PASSWORD']
 
-    @patch("elliottlib.cli.release_snapshot_cli.CreateSnapshotCli.get_timestamp", return_value="timestamp")
-    @patch("elliottlib.cli.release_snapshot_cli.oc_image_info_for_arch_async")
+    @patch("elliottlib.cli.snapshot_cli.CreateSnapshotCli.get_timestamp", return_value="timestamp")
+    @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
     @patch("doozerlib.backend.konflux_client.KonfluxClient")
     @patch("elliottlib.runtime.Runtime")
     async def test_run_happy_path(self, mock_runtime, mock_konflux_client, mock_oc_image_info, *_):

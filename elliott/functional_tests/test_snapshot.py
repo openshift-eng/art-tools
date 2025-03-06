@@ -1,5 +1,7 @@
 import unittest
 import subprocess
+
+from doozerlib.backend.konflux_client import KIND_SNAPSHOT, API_VERSION
 from functional_tests import constants
 
 
@@ -12,7 +14,7 @@ class NewSnapshotTestCase(unittest.TestCase):
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(result.returncode, 0,
                          msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
-        self.assertRegex(result.stderr.decode(), "Would have created appstudio.redhat.com/v1alpha1/Snapshot")
+        self.assertRegex(result.stderr.decode(), f"Would have created {API_VERSION}/{KIND_SNAPSHOT}")
 
 
 if __name__ == '__main__':
