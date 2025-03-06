@@ -9,8 +9,10 @@ from typing import (Awaitable, Dict, List, Optional, Tuple, Union,
 import doozerlib
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch
 from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rpm_utils import to_nevra
 from doozerlib import brew, util
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
@@ -290,9 +292,8 @@ class BuildRecordInspector(ABC):
     def get_source_git_commit(self):
         pass
 
-    @staticmethod
-    def find_non_latest_rpms():
-        # TODO must become abstract, KonfluxBuildRecordInspect must implement it
+    @abstractmethod
+    def find_non_latest_rpms(self, *_):
         pass
 
     @abstractmethod
@@ -670,3 +671,49 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
     def get_source_git_commit(self):
         return self._build_record.commitish
+
+    async def find_non_latest_rpms(self, package_rpm_finder: PackageRpmFinder):
+        meta = self.get_image_meta()
+        logger = meta.logger or self.runtime.logger
+
+        # Get the list of RPMs from package NVRs
+        installed_rpms = package_rpm_finder.get_brew_rpms_from_build_record(self._build_record, self.runtime)
+        installed_rpms_for_arch = {}
+
+        for rpm in installed_rpms:
+            # Exclude RPMs exempted by scan-sources
+            is_exempt, pattern = meta.is_rpm_exempt(rpm['name'])
+            if is_exempt:
+                logger.debug(f"{to_nevra(rpm)} is exempt from rpm change detection by '{pattern}'")
+            else:
+                installed_rpms_for_arch.setdefault(rpm['arch'], []).append(rpm)
+
+        if not installed_rpms_for_arch:
+            return {}
+
+        # Get latest RPM nvrs across build arches from repos enabled in current image
+        logger.info('Checking whether any of the installed rpms is outdated in %s', meta.distgit_key)
+        group_repos = self.runtime.repos
+        non_latest_rpms_for_arch = {}
+
+        for arch in self._build_record.arches:
+            enabled_repos = sorted(
+                {r.name for r in group_repos.values() if r.enabled} | set(meta.config.get("enabled_repos", [])))
+            if not enabled_repos:  # no enabled repos
+                logger.warning(
+                    "Skipping non-latest rpms check for image %s because it doesn't have enabled_repos configured.",
+                    meta.distgit_key)
+                return {}
+
+            repodatas = await asyncio.gather(
+                *(group_repos[repo_name].get_repodata(arch) for repo_name in enabled_repos))
+            logger.info('Looking for outdated RPMs in build %s...', self._build_record.nvr)
+            non_latest_rpms = OutdatedRPMFinder().find_non_latest_rpms(
+                installed_rpms_for_arch[arch], repodatas, logger=cast(logging.Logger, logger))
+            if non_latest_rpms:
+                logger.warning('Found outdated RPMs in %s for arch %s', self._build_record.nvr, arch)
+                non_latest_rpms_for_arch[arch] = non_latest_rpms
+            else:
+                logger.info('All RPMs up-to-date in %s for arch %s', self._build_record.nvr, arch)
+
+        return non_latest_rpms_for_arch

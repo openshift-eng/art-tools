@@ -8,7 +8,7 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime, func
+from sqlalchemy import Column, String, DateTime, func, Null, BinaryExpression
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -187,7 +187,11 @@ class KonfluxDb:
                 if limit is not None and total_rows >= limit:
                     return
         if total_rows == 0:
-            self.logger.warning('No builds found with the given criteria')
+            # We can print out BinaryExpression search clause, but it gets much trickier with Function
+            # that comes into play when extra_patterns is used, so exclude those cases
+            self.logger.warning('No builds found with the given criteria: %s',
+                                [f"{clause.left}={clause.right.value if not isinstance(clause.right, Null) else clause.right}"
+                                 for clause in base_clauses if isinstance(clause, BinaryExpression)])
             if strict:
                 raise IOError('No builds found with the given criteria')
 
