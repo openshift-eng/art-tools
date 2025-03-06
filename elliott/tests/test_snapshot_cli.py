@@ -31,11 +31,11 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.snapshot_cli.CreateSnapshotCli.get_timestamp", return_value="timestamp")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
-    @patch("doozerlib.backend.konflux_client.KonfluxClient")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
-    async def test_run_happy_path(self, mock_runtime, mock_konflux_client, mock_oc_image_info, *_):
+    async def test_run_happy_path(self, mock_runtime, mock_konflux_client_init, mock_oc_image_info, *_):
         mock_runtime.return_value = self.runtime
-        mock_konflux_client.return_value = self.konflux_client
+        mock_konflux_client_init.return_value = self.konflux_client
         mock_oc_image_info.return_value = AsyncMock()
 
         build_records = [
@@ -93,11 +93,11 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 }
             })
 
-    @patch("doozerlib.backend.konflux_client.KonfluxClient")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch('elliottlib.runtime.Runtime')
-    async def test_fetch_build_records_validation(self, mock_runtime, mock_konflux_client):
+    async def test_fetch_build_records_validation(self, mock_runtime, mock_konflux_client_init):
         mock_runtime.return_value = self.runtime
-        mock_konflux_client.from_kubeconfig.return_value = self.konflux_client
+        mock_konflux_client_init.return_value = self.konflux_client
 
         mock_records = ['mock_row1', 'mock_row2']
         self.runtime.konflux_db.get_build_records_by_nvrs = AsyncMock(return_value=mock_records)
