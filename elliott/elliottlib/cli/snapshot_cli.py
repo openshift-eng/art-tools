@@ -23,25 +23,19 @@ LOGGER = logutil.get_logger(__name__)
 
 
 class CreateSnapshotCli:
-    def __init__(self, runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
+    def __init__(self, runtime: Runtime, konflux_config: dict, image_repo_creds_config: dict,
                  for_bundle: bool, builds: list, dry_run: bool):
         self.runtime = runtime
-        self.konflux_kubeconfig = konflux_kubeconfig
-        self.konflux_context = konflux_context
-        self.konflux_namespace = konflux_namespace
+        self.konflux_config = konflux_config
         self.for_bundle = for_bundle
         self.builds = builds
         self.dry_run = dry_run
-        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_namespace,
-                                                             config_file=self.konflux_kubeconfig,
-                                                             context=self.konflux_context,
+        self.image_repo_creds_config = image_repo_creds_config
+        self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
+                                                             config_file=self.konflux_config['kubeconfig'],
+                                                             context=self.konflux_config['context'],
                                                              dry_run=self.dry_run)
-        self._konflux_client.verify_connection()
-
-        # These will be needed for image inspection
-        for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
-            if secret not in os.environ:
-                raise EnvironmentError(f"Missing required environment variable {secret}")
+        self.konflux_client.verify_connection()
 
     async def run(self):
         self.runtime.initialize()
@@ -54,7 +48,7 @@ class CreateSnapshotCli:
 
         # Ensure the Snapshot CRD is accessible
         try:
-            await self._konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
         except exceptions.ResourceNotFoundError:
             raise RuntimeError(f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?")
 
@@ -66,8 +60,8 @@ class CreateSnapshotCli:
             image_info_tasks.append(asyncio.create_task(
                 oc_image_info_for_arch_async(
                     record.image_pullspec,
-                    registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
-                    registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                    registry_username=self.image_repo_creds_config['username'],
+                    registry_password=self.image_repo_creds_config['password'],
                 )))
         image_infos = await asyncio.gather(*image_info_tasks, return_exceptions=True)
         errors = [(record, result) for record, result in zip(build_records, image_infos)
@@ -79,7 +73,7 @@ class CreateSnapshotCli:
             raise RuntimeError("Failed to inspect build pullspecs")
 
         snapshot_obj = await self.new_snapshot(build_records)
-        created = await self._konflux_client._create(snapshot_obj)
+        created = await self.konflux_client._create(snapshot_obj)
         print(created)
 
     @staticmethod
@@ -92,13 +86,13 @@ class CreateSnapshotCli:
         application_name = KonfluxImageBuilder.get_application_name(self.runtime.group)
 
         # make sure application exists
-        await self._konflux_client._get(API_VERSION, KIND_APPLICATION, application_name)
+        await self.konflux_client._get(API_VERSION, KIND_APPLICATION, application_name)
 
         async def _comp(record):
             comp_name = KonfluxImageBuilder.get_component_name(application_name, record.name)
 
             # make sure component exists
-            await self._konflux_client._get(API_VERSION, KIND_COMPONENT, comp_name)
+            await self.konflux_client._get(API_VERSION, KIND_COMPONENT, comp_name)
 
             source_url = record.source_repo
             revision = record.commitish
@@ -127,7 +121,7 @@ class CreateSnapshotCli:
             "kind": KIND_SNAPSHOT,
             "metadata": {
                 "name": snapshot_name,
-                "namespace": self.konflux_namespace,
+                "namespace": self.konflux_config['namespace'],
                 "labels": {"test.appstudio.openshift.io/type": "override"},
             },
             "spec": {
@@ -191,11 +185,27 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
     if not konflux_kubeconfig:
         raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
 
+    # These will be needed for image inspection
+    for secret in ['KONFLUX_ART_IMAGES_USERNAME', 'KONFLUX_ART_IMAGES_PASSWORD']:
+        if secret not in os.environ:
+            raise EnvironmentError(f"Missing required environment variable {secret}")
+
+    image_repo_creds_config = {
+        'username': os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+        'password': os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+    }
+
     if builds_file:
         if builds_file == "-":
             builds_file = sys.stdin
         builds = [line.strip() for line in builds_file.readlines()]
 
-    pipeline = CreateSnapshotCli(runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
+    konflux_config = {
+        'kubeconfig': konflux_kubeconfig,
+        'namespace': konflux_namespace,
+        'context': konflux_context,
+    }
+
+    pipeline = CreateSnapshotCli(runtime, konflux_config, image_repo_creds_config,
                                  for_bundle, builds, dry_run=not apply)
     await pipeline.run()

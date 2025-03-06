@@ -1,6 +1,5 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch, ANY, Mock
-import os
 
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli
 
@@ -9,14 +8,17 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock()
         self.runtime.group = "openshift-4.18"
-        self.konflux_namespace = "test-namespace"
-        self.konflux_kubeconfig = None
-        self.konflux_context = None
+        self.konflux_config = dict(
+            namespace = "test-namespace",
+            kubeconfig = "/path/to/kubeconfig",
+            context = None,
+        )
+        self.image_repo_creds_config = dict(
+            username = "test_user",
+            password = "test_pass"
+        )
         self.for_bundle = False
         self.dry_run = False
-
-        os.environ['KONFLUX_ART_IMAGES_USERNAME'] = 'test_user'
-        os.environ['KONFLUX_ART_IMAGES_PASSWORD'] = 'test_password'
 
         self.runtime.konflux_db.bind.return_value = None
         self.runtime.get_major_minor.return_value = (4, 18)
@@ -24,10 +26,6 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
         self.konflux_client = AsyncMock()
         self.konflux_client.verify_connection.return_value = True
-
-    def tearDown(self):
-        del os.environ['KONFLUX_ART_IMAGES_USERNAME']
-        del os.environ['KONFLUX_ART_IMAGES_PASSWORD']
 
     @patch("elliottlib.cli.snapshot_cli.CreateSnapshotCli.get_timestamp", return_value="timestamp")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
@@ -62,9 +60,8 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         with patch.object(CreateSnapshotCli, 'fetch_build_records', return_value=build_records):
             cli = CreateSnapshotCli(
                 runtime=self.runtime,
-                konflux_kubeconfig=self.konflux_kubeconfig,
-                konflux_context=self.konflux_context,
-                konflux_namespace=self.konflux_namespace,
+                konflux_config=self.konflux_config,
+                image_repo_creds_config=self.image_repo_creds_config,
                 for_bundle=self.for_bundle,
                 builds=['test-nvr-1', 'test-nvr-2'],
                 dry_run=self.dry_run
@@ -105,9 +102,8 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
         cli = CreateSnapshotCli(
             runtime=self.runtime,
-            konflux_kubeconfig=self.konflux_kubeconfig,
-            konflux_context=self.konflux_context,
-            konflux_namespace=self.konflux_namespace,
+            konflux_config=self.konflux_config,
+            image_repo_creds_config=self.image_repo_creds_config,
             for_bundle=self.for_bundle,
             builds=builds,
             dry_run=self.dry_run,
