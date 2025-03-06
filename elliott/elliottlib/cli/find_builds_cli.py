@@ -498,15 +498,16 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
 
                 # Honors pinned NVRs by "is"
                 pinned_by_is = builder.from_pinned_by_is(el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map)
-                _ensure_accepted_tags(pinned_by_is.values(), brew_session, tag_pv_map)
-                pinned_nvrs.update([b['nvr'] for b in pinned_by_is.values()])
+                if pinned_by_is:
+                    _ensure_accepted_tags(pinned_by_is.values(), brew_session, tag_pv_map)
+                    pinned_nvrs.update([b['nvr'] for b in pinned_by_is.values()])
 
-                # Builds pinned by "is" should take precedence over every build from tag
-                for component, pinned_build in pinned_by_is.items():
-                    if component in component_builds and pinned_build["id"] != component_builds[component]["id"]:
-                        LOGGER.warning("Swapping stream nvr %s for pinned nvr %s...", component_builds[component]["nvr"], pinned_build["nvr"])
+                    # Builds pinned by "is" should take precedence over every build from tag
+                    for component, pinned_build in pinned_by_is.items():
+                        if component in component_builds and pinned_build["id"] != component_builds[component]["id"]:
+                            LOGGER.warning("Swapping stream nvr %s for pinned nvr %s...", component_builds[component]["nvr"], pinned_build["nvr"])
 
-                component_builds.update(pinned_by_is)  # pinned rpms take precedence over those from tags
+                    component_builds.update(pinned_by_is)  # pinned rpms take precedence over those from tags
 
                 # Honors group dependencies
                 group_deps = builder.from_group_deps(el_version, runtime.group_config, runtime.rpm_map)  # the return value doesn't include any ART managed rpms
