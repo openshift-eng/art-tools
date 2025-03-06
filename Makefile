@@ -5,21 +5,25 @@ venv:
 	./install.sh
 	uv pip install -r doozer/requirements-dev.txt -r pyartcd/requirements-dev.txt -r ocp-build-data-validator/requirements-dev.txt
 	cd elliott && uv pip install '.[tests]'
+	source venv/bin/activate
 
 lint:
-	./.venv/bin/python -m flake8
+	python3 -m flake8
 
 pylint:
-	./.venv/bin/python -m pylint .
+	python3 -m pylint .
 
 unit:
-	./.venv/bin/python -m pytest --verbose --color=yes artcommon/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes doozer/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes elliott/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes pyartcd/tests/
-	./.venv/bin/python -m pytest --verbose --color=yes ocp-build-data-validator/tests/
+	python3 -m pytest --verbose --color=yes artcommon/tests/
+	python3 -m pytest --verbose --color=yes doozer/tests/
+	python3 -m pytest --verbose --color=yes elliott/tests/
+	python3 -m pytest --verbose --color=yes pyartcd/tests/
+	python3 -m pytest --verbose --color=yes ocp-build-data-validator/tests/
 
 functional-elliott:
-	./.venv/bin/python -m pytest --verbose --color=yes elliott/functional_tests/
+	python3 -m pytest --verbose --color=yes elliott/functional_tests/
+
+functional-doozer:
+	python3 -m pytest --verbose --color=yes doozer/tests_functional
 
 test: lint unit
