@@ -211,6 +211,41 @@ class KonfluxImageBuilder:
                 await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
 
+    def _prefetch(self, metadata: ImageMetadata):
+        """
+        https://issues.redhat.com/browse/ART-11902
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        if not metadata.config.cachito.enabled:
+            logger.info(f"cachito/cachi2 disabled for {metadata.distgit_key}")
+            return
+
+        prefetch = []
+        package_managers = metadata.config.content.source.pkg_managers
+
+        if "gomod" in package_managers:
+            paths = metadata.config.cachito.packages.get("gomod", [])
+
+            flag = False
+            for path in paths:
+                prefetch.append({"type": "gomod", "path": path})
+                flag = True
+
+            if not flag:
+                prefetch.append({"type": "gomod", "path": "."})
+
+        if "npm" in package_managers:
+            paths = metadata.config.cachito.packages.get("npm", [])
+
+            flag = False
+            for path in paths:
+                prefetch.append({"type": "npm", "path": path})
+                flag = True
+
+            if not flag:
+                prefetch.append({"type": "npm", "path": "."})
+
+
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
                            output_image: str, additional_tags: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
