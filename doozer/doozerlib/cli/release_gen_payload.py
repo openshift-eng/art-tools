@@ -615,7 +615,10 @@ class GenPayloadCli:
 
         public_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
         private_entries_for_arch: Dict[str, Dict[str, PayloadEntry]] = dict()  # arch => img tag => PayloadEntry
-        for arch in self.runtime.arches:
+
+        arches = self.runtime.group_config.konflux.arches if self.runtime.build_system == 'konflux' else self.runtime.arches
+
+        for arch in arches:
             if arch in self.exclude_arch:
                 self.logger.info(f"Excluding payload files architecture: {arch}")
                 continue
