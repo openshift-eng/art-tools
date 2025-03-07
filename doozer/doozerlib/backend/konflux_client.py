@@ -329,7 +329,7 @@ class KonfluxClient:
 
     async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                                git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                               build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                                               build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
                                                hermetic: Optional[bool] = None,
                                                dockerfile: Optional[str] = None,
@@ -386,6 +386,9 @@ class KonfluxClient:
         _modify_param(params, "build-platforms", list(build_platforms))
         if dockerfile:
             _modify_param(params, "dockerfile", dockerfile)
+
+        if prefetch:
+            _modify_param(params, "prefetch-input", prefetch)
         if hermetic is not None:
             _modify_param(params, "hermetic", hermetic)
 
@@ -439,6 +442,7 @@ class KonfluxClient:
         output_image: str,
         vm_override: dict,
         building_arches: Sequence[str],
+        prefetch: Optional[list] = None,
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
@@ -464,8 +468,8 @@ class KonfluxClient:
         :param skip_checks: Whether to skip checks.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
         :param image_metadata: Image metadata
-        :param dockerfile: Override the Dockerfile to use.
         :param pipelinerun_template_url: The URL to the PipelineRun template.
+        :param prefetch: The param values for Konflux prefetch dependencies task
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -491,6 +495,7 @@ class KonfluxClient:
             additional_tags=additional_tags,
             dockerfile=dockerfile,
             pipelinerun_template_url=pipelinerun_template_url,
+            prefetch=prefetch
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)

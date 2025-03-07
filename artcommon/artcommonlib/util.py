@@ -7,10 +7,12 @@ import asyncio
 
 import aiohttp
 import requests
+from pathlib import Path
 from semver import VersionInfo
 from tenacity import retry, wait_fixed, stop_after_attempt
 from ruamel.yaml import YAML
 from artcommonlib.constants import RELEASE_SCHEDULES
+from artcommonlib.model import ListModel, Missing
 from urllib.parse import quote
 
 LOGGER = logging.getLogger(__name__)
@@ -382,3 +384,45 @@ class KubeCondition:
         except AttributeError:
             pass
         return _default
+
+
+def is_cachito_enabled(metadata, group_config, logger):
+    """
+    Cachito will be configured if `cachito.enabled` is True in image metadata or `cachito.enabled` is True in group config.
+    https://osbs.readthedocs.io/en/latest/users.html#remote-sources
+    """
+    cachito_enabled = False
+    if metadata.config.cachito.enabled:
+        cachito_enabled = True
+        logger.info("cachito/cachi2 enabled from metadata config")
+    elif metadata.config.cachito.enabled is Missing:
+        if group_config.cachito.enabled:
+            cachito_enabled = True
+            logger.info("cachito/cachi2 enabled from group config")
+        elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
+            logger.warning(
+                f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in "
+                "image metadata or group config.")
+    if cachito_enabled and not metadata.has_source():
+        logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)
+        cachito_enabled = False
+    return cachito_enabled
+
+
+def detect_package_managers(metadata, dest_dir: Path):
+    """ Detect and return package managers used by the source
+    :return: a list of package managers
+    """
+    if not dest_dir or not dest_dir.is_dir():
+        raise FileNotFoundError(f"Distgit directory for image {metadata.distgit_key} hasn't been cloned.")
+    pkg_manager_files = {
+        "gomod": ["go.mod"],
+        "npm": ["npm-shrinkwrap.json", "package-lock.json"],
+        "pip": ["requirements.txt", "requirements-build.txt"],
+        "yarn": ["yarn.lock"],
+    }
+    pkg_managers: List[str] = []
+    for pkg_manager, files in pkg_manager_files.items():
+        if any(dest_dir.joinpath(file).is_file() for file in files):
+            pkg_managers.append(pkg_manager)
+    return pkg_managers

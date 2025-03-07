@@ -17,6 +17,7 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
                                                        KonfluxBuildRecord)
+from artcommonlib.model import Missing, ListModel
 from artcommonlib.release_util import isolate_el_version_in_release
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource
@@ -138,7 +139,12 @@ class KonfluxImageBuilder:
             error = None
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
-                pipelinerun = await self._start_build(metadata, build_repo, building_arches, output_image, additional_tags)
+                pipelinerun = await self._start_build(metadata=metadata,
+                                                      build_repo=build_repo,
+                                                      building_arches=building_arches,
+                                                      output_image=output_image,
+                                                      additional_tags=additional_tags,
+                                                      dest_dir=dest_dir)
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.build_pipeline_url(pipelinerun)
@@ -225,8 +231,89 @@ class KonfluxImageBuilder:
         name = f"ose-{name.removeprefix('openshift-')}"
         return name
 
+    @staticmethod
+    def _is_cachi2_enabled(metadata, logger=None):
+        """
+        Determine if cachi2 is enabled or not
+        image config override > group config override > fallback to cachito config
+        """
+        logger = logger or LOGGER
+        cachi2_config_override = metadata.config.konflux.cachi2.enabled
+        cachi2_group_override = metadata.runtime.group_config.konflux.cachi2.enabled
+
+        if cachi2_config_override not in [Missing, None]:
+            # If cachi2 override is defined in image metadata
+            cachi2_enabled = cachi2_config_override
+            logger.info("cachi2 enabled from metadata config")
+        elif cachi2_group_override not in [Missing, None]:
+            # If cachi2 override is defined in group metadata
+            cachi2_enabled = cachi2_group_override
+            logger.info("cachi2 enabled from group config")
+        else:
+            # Enable cachi2 based on cachito config
+            logger.info("cachi2 override not found. fallback to use cachito config")
+            cachi2_enabled = artlib_util.is_cachito_enabled(metadata=metadata,
+                                                            group_config=metadata.runtime.group_config, logger=logger)
+
+        return cachi2_enabled
+
+    def _prefetch(self, metadata: ImageMetadata, dest_dir: Optional[Path] = None) -> list:
+        """
+        To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
+        brew) to fetch packages and make it available to the build task (which ideally will be hermetic)
+        https://issues.redhat.com/browse/ART-11902
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        cachi2_enabled = self._is_cachi2_enabled(metadata=metadata, logger=logger)
+
+        if not cachi2_enabled:
+            logger.info("Not setting pre-fetch since cachi2 not enabled")
+            return []
+
+        prefetch = []
+        required_package_managers = metadata.config.content.source.pkg_managers
+
+        if required_package_managers in [Missing, None]:
+            # We assume that dest_dir is the current directory by default
+            required_package_managers = artlib_util.detect_package_managers(metadata=metadata, dest_dir=dest_dir)
+
+        if required_package_managers in [Missing, None]:
+            raise ValueError(f"{required_package_managers} should not be empty if cachi2 is enabled")
+
+        for package_manager in ["gomod", "npm", "pip", "yarn"]:
+            if package_manager in required_package_managers:
+                paths: dict = metadata.config.cachito.packages.get(package_manager, [])
+
+                flag = False
+                data = {"type": package_manager}
+                for path in paths:
+                    data = {"type": package_manager}
+                    for entry, values in path.items():
+                        if entry == "path":
+                            data["path"] = values
+
+                        if entry in ["requirements_files", "requirements_build_files"]:
+                            if "requirements_files" not in data:
+                                data["requirements_files"] = []
+                            if entry == "requirements_files":
+                                data["requirements_files"] = data["requirements_files"] + values
+                            if entry == "requirements_build_files":
+                                data["requirements_files"] = data["requirements_files"] + values
+                        flag = True
+                    prefetch.append(data)
+
+                if not flag:
+                    data["path"] = "."
+                    prefetch.append(data)
+
+        if prefetch:
+            logger.info(f"Adding pre-fetch params: {prefetch}")
+
+        return prefetch
+
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
-                           output_image: str, additional_tags: list[str]):
+                           output_image: str, additional_tags: list[str], dest_dir: Optional[Path] = None):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not build_repo.commit_hash:
             raise IOError(f"The build branch {build_repo.branch} doesn't have any commits in the build repository {build_repo.https_url}")
@@ -255,6 +342,9 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
+
+        prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir)
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -270,6 +360,7 @@ class KonfluxImageBuilder:
             hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
+            prefetch=prefetch,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
