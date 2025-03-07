@@ -221,30 +221,19 @@ class KonfluxImageBuilder:
             return
 
         prefetch = []
-        package_managers = metadata.config.content.source.pkg_managers
+        required_package_managers = metadata.config.content.source.pkg_managers
 
-        if "gomod" in package_managers:
-            paths = metadata.config.cachito.packages.get("gomod", [])
+        for package_manager in ["gomod", "npm"]:
+            if package_manager in required_package_managers:
+                paths = metadata.config.cachito.packages.get(package_manager, [])
 
-            flag = False
-            for path in paths:
-                prefetch.append({"type": "gomod", "path": path})
-                flag = True
+                flag = False
+                for path in paths:
+                    prefetch.append({"type": package_manager, "path": path})
+                    flag = True
 
-            if not flag:
-                prefetch.append({"type": "gomod", "path": "."})
-
-        if "npm" in package_managers:
-            paths = metadata.config.cachito.packages.get("npm", [])
-
-            flag = False
-            for path in paths:
-                prefetch.append({"type": "npm", "path": path})
-                flag = True
-
-            if not flag:
-                prefetch.append({"type": "npm", "path": "."})
-
+                if not flag:
+                    prefetch.append({"type": package_manager, "path": "."})
 
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
                            output_image: str, additional_tags: list[str]):
