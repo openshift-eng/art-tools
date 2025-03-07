@@ -872,31 +872,53 @@ class KonfluxRebaser:
 
             # The value we will set REMOTE_SOURCES_DIR to.
             remote_source_dir_env = '/tmp/cachito-emulation'
+            pkg_managers = self._detect_package_managers(metadata, dest_dir)
 
-            for npm_entry in metadata.config.cachito.packages.npm:
-                # cachito creates an .npmrc file in the "npm" package manager paths. This
-                # used to cause NPM to use an NPM server, supplied by cachito,
-                # which only supplied the component's NPM deps.
-                # See https://github.com/containerbuildsystem/cachito/blob/fe2ef761d7d8169597166e9f92ee8ef3d62a091c/README.md .
-                # Dockerfiles may reference this file. We create it in emulation mode, but do
-                # not populate it. cachi2 works fundamentally differently
-                # by re-writing package-lock.json to reference local files.
-                # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
-                if 'path' in npm_entry:
+            if "npm" in pkg_managers:
+                flag = False
+                for npm_entry in metadata.config.cachito.packages.npm:
+                    # cachito creates an .npmrc file in the "npm" package manager paths. This
+                    # used to cause NPM to use an NPM server, supplied by cachito,
+                    # which only supplied the component's NPM deps.
+                    # See https://github.com/containerbuildsystem/cachito/blob/fe2ef761d7d8169597166e9f92ee8ef3d62a091c/README.md .
+                    # Dockerfiles may reference this file. We create it in emulation mode, but do
+                    # not populate it. cachi2 works fundamentally differently
+                    # by re-writing package-lock.json to reference local files.
+                    # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
+                    app_path = gomod_deps_path.joinpath('app').joinpath(npm_entry.get('path', '.'))
+                    app_path.mkdir(parents=True, exist_ok=True)
+                    app_path.joinpath('.npmrc').touch(exist_ok=True)
+                    flag = True
+
+                if not flag:
+                    # In some cases, in image config, metadata.config.content.source.pkg_managers will be populated
+                    # ref: https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/backend/rebaser.py#L1217
+                    # but metadata.config.cachito.packages.npm will be empty.
+                    # In that case, we assume that the path is the current directory
                     app_path = gomod_deps_path.joinpath('app')
-                    app_path = app_path.joinpath(npm_entry['path'])
                     app_path.mkdir(parents=True, exist_ok=True)
                     app_path.joinpath('.npmrc').touch(exist_ok=True)
 
-            for npm_entry in metadata.config.cachito.packages.yarn:
-                # cachito creates an .npmrc/.yarnrc files in the "yarn" package manager paths. This
-                # used to cause NPM/yarn to use servers supplied by cachito,
-                # cachi2 works fundamentally differently
-                # by re-writing package-lock.json to reference local files.
-                # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
-                if 'path' in npm_entry:
+            if "yarn" in pkg_managers:
+                flag = False
+                for npm_entry in metadata.config.cachito.packages.yarn:
+                    # cachito creates an .npmrc/.yarnrc files in the "yarn" package manager paths. This
+                    # used to cause NPM/yarn to use servers supplied by cachito,
+                    # cachi2 works fundamentally differently
+                    # by re-writing package-lock.json to reference local files.
+                    # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
+                    app_path = gomod_deps_path.joinpath('app').joinpath(npm_entry.get('path', '.'))
+                    app_path.mkdir(parents=True, exist_ok=True)
+                    app_path.joinpath('.npmrc').touch(exist_ok=True)
+                    app_path.joinpath('.yarnrc').touch(exist_ok=True)
+                    flag = True
+
+                if not flag:
+                    # In some cases, in image config, metadata.config.content.source.pkg_managers will be populated
+                    # but metadata.config.cachito.packages.npm will be empty.
+                    # ref https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/backend/rebaser.py#L1217
+                    # In that case, we assume that the path is the current directory
                     app_path = gomod_deps_path.joinpath('app')
-                    app_path = app_path.joinpath(npm_entry['path'])
                     app_path.mkdir(parents=True, exist_ok=True)
                     app_path.joinpath('.npmrc').touch(exist_ok=True)
                     app_path.joinpath('.yarnrc').touch(exist_ok=True)
