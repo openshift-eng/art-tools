@@ -895,7 +895,7 @@ class KonfluxRebaser:
                         # ref: https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/backend/rebaser.py#L1217
                         # but metadata.config.cachito.packages.npm will be empty.
                         # In that case, we assume that the path is the current directory
-                        app_path = gomod_deps_path.joinpath('app').joinpath('.')
+                        app_path = gomod_deps_path.joinpath('app')
                         app_path.mkdir(parents=True, exist_ok=True)
                         app_path.joinpath('.npmrc').touch(exist_ok=True)
 
@@ -918,7 +918,7 @@ class KonfluxRebaser:
                         # but metadata.config.cachito.packages.npm will be empty.
                         # ref https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/backend/rebaser.py#L1217
                         # In that case, we assume that the path is the current directory
-                        app_path = gomod_deps_path.joinpath('app').joinpath('.')
+                        app_path = gomod_deps_path.joinpath('app')
                         app_path.mkdir(parents=True, exist_ok=True)
                         app_path.joinpath('.npmrc').touch(exist_ok=True)
                         app_path.joinpath('.yarnrc').touch(exist_ok=True)
