@@ -235,6 +235,8 @@ class KonfluxImageBuilder:
                 if not flag:
                     prefetch.append({"type": package_manager, "path": "."})
 
+        return prefetch
+
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
                            output_image: str, additional_tags: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -286,6 +288,7 @@ class KonfluxImageBuilder:
             hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
+            prefetch=self._prefetch(metadata)
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")

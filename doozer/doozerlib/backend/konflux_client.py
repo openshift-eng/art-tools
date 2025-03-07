@@ -314,7 +314,7 @@ class KonfluxClient:
 
     async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                                git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                               build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
+                                               build_platforms: Sequence[str], prefetch, git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
                                                hermetic: Optional[bool] = None,
                                                pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
@@ -368,6 +368,7 @@ class KonfluxClient:
         _modify_param(params, "skip-checks", skip_checks)
         _modify_param(params, "build-source-image", "true")  # Have to be true always to satisfy Enterprise Contract Policy
         _modify_param(params, "build-platforms", list(build_platforms))
+        _modify_param(params, "prefetch-input", prefetch)
         if hermetic is not None:
             _modify_param(params, "hermetic", hermetic)
 
@@ -421,6 +422,7 @@ class KonfluxClient:
         output_image: str,
         vm_override: dict,
         building_arches: Sequence[str],
+        prefetch: list,
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
@@ -470,6 +472,7 @@ class KonfluxClient:
             hermetic=hermetic,
             additional_tags=additional_tags,
             pipelinerun_template_url=pipelinerun_template_url,
+            prefetch=prefetch
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
