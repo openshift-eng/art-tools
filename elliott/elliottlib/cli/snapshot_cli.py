@@ -32,9 +32,9 @@ class CreateSnapshotCli:
         self.dry_run = dry_run
         self.image_repo_creds_config = image_repo_creds_config
         self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
-                                                             config_file=self.konflux_config['kubeconfig'],
-                                                             context=self.konflux_config['context'],
-                                                             dry_run=self.dry_run)
+                                                            config_file=self.konflux_config['kubeconfig'],
+                                                            context=self.konflux_config['context'],
+                                                            dry_run=self.dry_run)
         self.konflux_client.verify_connection()
 
     async def run(self):

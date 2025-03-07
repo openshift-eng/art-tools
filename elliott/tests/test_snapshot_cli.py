@@ -9,13 +9,13 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.runtime = MagicMock()
         self.runtime.group = "openshift-4.18"
         self.konflux_config = dict(
-            namespace = "test-namespace",
-            kubeconfig = "/path/to/kubeconfig",
-            context = None,
+            namespace="test-namespace",
+            kubeconfig="/path/to/kubeconfig",
+            context=None,
         )
         self.image_repo_creds_config = dict(
-            username = "test_user",
-            password = "test_pass"
+            username="test_user",
+            password="test_pass"
         )
         self.for_bundle = False
         self.dry_run = False
