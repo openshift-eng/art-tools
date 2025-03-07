@@ -872,7 +872,7 @@ class KonfluxRebaser:
 
             # The value we will set REMOTE_SOURCES_DIR to.
             remote_source_dir_env = '/tmp/cachito-emulation'
-            pkg_managers = metadata.config.content.source.pkg_managers
+            pkg_managers = self._detect_package_managers(metadata, dest_dir)
 
             if "npm" in pkg_managers:
                 flag = False
@@ -885,21 +885,19 @@ class KonfluxRebaser:
                     # not populate it. cachi2 works fundamentally differently
                     # by re-writing package-lock.json to reference local files.
                     # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
-                    if 'path' in npm_entry:
-                        app_path = gomod_deps_path.joinpath('app')
-                        app_path = app_path.joinpath(npm_entry['path'])
-                        app_path.mkdir(parents=True, exist_ok=True)
-                        app_path.joinpath('.npmrc').touch(exist_ok=True)
-                        flag = True
-
-                if not flag:
-                    # In some cases, in image config, metadata.config.content.source.pkg_managers will be populated
-                    # but metadata.config.cachito.packages.npm will be emtpy. In that case, we assume that the path
-                    # is the current directory
-                    app_path = gomod_deps_path.joinpath('app')
-                    app_path = app_path.joinpath(".")
+                    app_path = gomod_deps_path.joinpath('app').joinpath(npm_entry.get('path', '.'))
                     app_path.mkdir(parents=True, exist_ok=True)
                     app_path.joinpath('.npmrc').touch(exist_ok=True)
+                    flag = True
+                else:
+                    if not flag:
+                        # In some cases, in image config, metadata.config.content.source.pkg_managers will be populated
+                        # ref: https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/backend/rebaser.py#L1217
+                        # but metadata.config.cachito.packages.npm will be empty.
+                        # In that case, we assume that the path is the current directory
+                        app_path = gomod_deps_path.joinpath('app').joinpath('.')
+                        app_path.mkdir(parents=True, exist_ok=True)
+                        app_path.joinpath('.npmrc').touch(exist_ok=True)
 
             if "yarn" in pkg_managers:
                 flag = False
@@ -909,23 +907,21 @@ class KonfluxRebaser:
                     # cachi2 works fundamentally differently
                     # by re-writing package-lock.json to reference local files.
                     # https://github.com/hermetoproject/cachi2/blob/2235854bfc5cb76ea168cb04d50be16efce9fa0a/docs/npm.md
-                    if 'path' in npm_entry:
-                        app_path = gomod_deps_path.joinpath('app')
-                        app_path = app_path.joinpath(npm_entry['path'])
-                        app_path.mkdir(parents=True, exist_ok=True)
-                        app_path.joinpath('.npmrc').touch(exist_ok=True)
-                        app_path.joinpath('.yarnrc').touch(exist_ok=True)
-                        flag = True
-
-                if not flag:
-                    # In some cases, in image config, metadata.config.content.source.pkg_managers will be populated
-                    # but metadata.config.cachito.packages.yarn will be emtpy. In that case, we assume that the path
-                    # is the current directory
-                    app_path = gomod_deps_path.joinpath('app')
-                    app_path = app_path.joinpath(".")
+                    app_path = gomod_deps_path.joinpath('app').joinpath(npm_entry.get('path', '.'))
                     app_path.mkdir(parents=True, exist_ok=True)
                     app_path.joinpath('.npmrc').touch(exist_ok=True)
                     app_path.joinpath('.yarnrc').touch(exist_ok=True)
+                    flag = True
+                else:
+                    if not flag:
+                        # In some cases, in image config, metadata.config.content.source.pkg_managers will be populated
+                        # but metadata.config.cachito.packages.npm will be empty.
+                        # ref https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/backend/rebaser.py#L1217
+                        # In that case, we assume that the path is the current directory
+                        app_path = gomod_deps_path.joinpath('app').joinpath('.')
+                        app_path.mkdir(parents=True, exist_ok=True)
+                        app_path.joinpath('.npmrc').touch(exist_ok=True)
+                        app_path.joinpath('.yarnrc').touch(exist_ok=True)
 
             konflux_lines += [
                 f"ENV REMOTE_SOURCES={emulation_dir}",
