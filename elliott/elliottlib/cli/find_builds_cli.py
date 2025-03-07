@@ -414,7 +414,6 @@ async def _fetch_builds_by_kind_image(runtime: Runtime, tag_pv_map: Dict[str, st
 
     tasks = [image.get_latest_build(el_target=image.branch_el_target()) for image in image_metas]
     brew_latest_builds: List[Dict] = list(await asyncio.gather(*tasks))
-    brew_latest_builds = [b for b in brew_latest_builds if b]
     _ensure_accepted_tags(brew_latest_builds, brew_session, tag_pv_map)
     shipped = set()
     if include_shipped:
@@ -434,11 +433,6 @@ def _ensure_accepted_tags(builds: List[Dict], brew_session: koji.ClientSession, 
     Tag names are required because they are associated with Errata product versions.
     For those build dicts whose tags are unknown, we need to query from Brew.
     """
-    # do some sanity checks before calling brew api
-    builds = [b for b in builds if b]
-    if not builds:
-        raise ValueError(f"Invalid builds param: {builds}")
-
     builds = [b for b in builds if "tag_name" not in b]  # filters out builds whose accepted tag is already set
     unknown_tags_builds = [b for b in builds if "_tags" not in b]  # finds builds whose tags are not cached
     build_tag_lists = brew.get_builds_tags([b['nvr'] for b in unknown_tags_builds], brew_session)
@@ -478,9 +472,9 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
     pinned_nvrs = set()
     if member_only:  # Sweep only member rpms
         for tag in tag_pv_map:
-            tasks = [rpm.get_latest_build(default=None, el_target=tag) for rpm in runtime.rpm_metas()]
+            tasks = [rpm.get_latest_build(default=None, el_target=tag) for rpm in runtime.rpm_metas() if tag in rpm.determine_targets()]
             builds_for_tag = await asyncio.gather(*tasks)
-            builds.extend(filter(lambda b: bool(b), builds_for_tag))
+            builds.extend(filter(lambda b: b is not None, builds_for_tag))
 
     else:  # Sweep all tagged rpms
         builder = BuildFinder(brew_session, logger=LOGGER)
@@ -519,6 +513,10 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
                 pinned_nvrs.update([b['nvr'] for b in group_deps.values()])
             builds.extend(component_builds.values())
 
+    if builds:
+        LOGGER.info(f"Find builds {builds}")
+    else:
+        return []
     _ensure_accepted_tags(builds, brew_session, tag_pv_map, raise_exception=False)
     qualified_builds = [b for b in builds if "tag_name" in b and b["tag_name"] in tag_pv_map]
     not_attachable_nvrs = [b["nvr"] for b in builds if "tag_name" not in b or b["tag_name"] not in tag_pv_map]
