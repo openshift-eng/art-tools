@@ -872,7 +872,7 @@ class KonfluxRebaser:
 
             # The value we will set REMOTE_SOURCES_DIR to.
             remote_source_dir_env = '/tmp/cachito-emulation'
-            pkg_managers = self._detect_package_managers(metadata, dest_dir)
+            pkg_managers = metadata.config.content.source.pkg_managers.primitive()
 
             if "npm" in pkg_managers:
                 flag = False
