@@ -283,7 +283,8 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
-        prefetch = self._prefetch(metadata) if metadata.config.get("prefetch", {}).get("prefetch") else None
+        # prefetch = self._prefetch(metadata) if metadata.config.get("prefetch", {}).get("prefetch") else None
+        prefetch = self._prefetch(metadata)
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
