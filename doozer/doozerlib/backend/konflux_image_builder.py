@@ -235,6 +235,9 @@ class KonfluxImageBuilder:
                 if not flag:
                     prefetch.append({"type": package_manager, "path": "."})
 
+        if not prefetch:
+            logger.info(f"Adding pre-fetch params: {prefetch}")
+
         return prefetch
 
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
