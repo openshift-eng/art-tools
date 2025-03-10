@@ -233,14 +233,14 @@ class KonfluxImageBuilder:
                 for entry, values in entries[0].items():
                     if entry == "path":
                         data["path"] = values
-                    if entry == "requirements_files":
-                        if not data["requirements_files"]:
+
+                    if entry in ["requirements_files", "requirements_build_files"]:
+                        if "requirements_files" not in data:
                             data["requirements_files"] = []
-                        data["requirements_files"] = data["requirements_files"] + values
-                    if entry == "requirements_build_files":
-                        if not data["requirements_files"]:
-                            data["requirements_files"] = []
-                        data["requirements_files"] = data["requirements_files"] + values
+                        if entry == "requirements_files":
+                            data["requirements_files"] = data["requirements_files"] + values
+                        if entry == "requirements_build_files":
+                            data["requirements_files"] = data["requirements_files"] + values
                     flag = True
 
                 if not flag:
