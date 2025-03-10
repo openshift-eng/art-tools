@@ -234,8 +234,12 @@ class KonfluxImageBuilder:
                     if entry == "path":
                         data["path"] = values
                     if entry == "requirements_files":
+                        if not data["requirements_files"]:
+                            data["requirements_files"] = []
                         data["requirements_files"] = data["requirements_files"] + values
                     if entry == "requirements_build_files":
+                        if not data["requirements_files"]:
+                            data["requirements_files"] = []
                         data["requirements_files"] = data["requirements_files"] + values
                     flag = True
 
