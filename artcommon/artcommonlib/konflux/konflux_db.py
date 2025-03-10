@@ -176,10 +176,14 @@ class KonfluxDb:
             end_window = end_search - timedelta(days=window)
             start_window = max(end_window - timedelta(days=window_size), start_search)
             where_clauses = base_clauses + [Column('start_time', DateTime) >= start_window, Column('start_time', DateTime) < end_window]
-            rows = await self.bq_client.select(
-                where_clauses=where_clauses,
-                order_by_clause=order_by_clause,
-                limit=limit-total_rows if limit is not None else None)
+            try:
+                rows = await self.bq_client.select(
+                    where_clauses=where_clauses,
+                    order_by_clause=order_by_clause,
+                    limit=limit-total_rows if limit is not None else None)
+            except Exception as e:
+                self.logger.error('Failed executing query: %s', e)
+                raise
             self.logger.debug('Found %s builds in batch %s', rows.total_rows, (window // window_size) + 1)
             for row in rows:
                 total_rows += 1
@@ -339,18 +343,29 @@ class KonfluxDb:
         self.logger.warning('No builds found for NVR %s', nvr)
         return None
 
-    async def get_build_records_by_nvrs(self, nvrs: typing.Sequence[str], outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.List[KonfluxRecord]:
+    async def get_build_records_by_nvrs(self, nvrs: typing.Sequence[str],
+                                        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+                                        where: typing.Optional[typing.Dict[str, typing.Any]] = None,
+                                        strict: bool = True) -> typing.List[KonfluxRecord]:
         """ Get build records by NVRS.
         Note that this function only searches for the build records in the last 3 years.
 
         :param nvrs: The NVRS of the builds.
         :param outcome: The outcome of the builds.
+        :param where: Additional fields to filter the build records.
+        :param strict: If True, raise an exception if any build record is not found.
         :return: The build records.
         """
         nvrs = list(nvrs)
+        if not where:
+            where = {}
+        else:
+            if "nvr" in where or "outcome" in where:
+                raise ValueError("'nvr' and 'outcome' fields are reserved and should not be used in the 'where' "
+                                 "parameter")
 
         async def _task(nvr):
-            where = {"nvr": nvr, "outcome": str(outcome)}
+            where.update({"nvr": nvr, "outcome": str(outcome)})
             return await anext(self.search_builds_by_fields(where=where, limit=1, strict=True))
         tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
         records = await asyncio.gather(*tasks, return_exceptions=True)

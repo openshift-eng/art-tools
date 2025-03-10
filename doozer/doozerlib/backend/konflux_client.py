@@ -9,18 +9,23 @@ import traceback
 
 import aiohttp
 import jinja2
-from artcommonlib import exectools
-from artcommonlib import util as art_util
 from async_lru import alru_cache
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
 
+from artcommonlib import exectools
+from artcommonlib import util as art_util
 from doozerlib import constants
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
+
+API_VERSION = "appstudio.redhat.com/v1alpha1"
+KIND_SNAPSHOT = "Snapshot"
+KIND_COMPONENT = "Component"
+KIND_APPLICATION = "Application"
 
 
 class KonfluxClient:
@@ -43,6 +48,14 @@ class KonfluxClient:
         self.default_namespace = default_namespace
         self.dry_run = dry_run
         self._logger = logger
+
+    def verify_connection(self):
+        try:
+            self.corev1_client.get_api_resources()
+            self._logger.info("Successfully authenticated to the Kubernetes cluster.")
+        except Exception as e:
+            self._logger.error(f"Failed to authenticate to the Kubernetes cluster: {e}")
+            raise
 
     @staticmethod
     def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
@@ -89,7 +102,8 @@ class KonfluxClient:
         namespace = manifest["metadata"].get("namespace", self.default_namespace)
         return api_version, kind, name, namespace
 
-    async def _get(self, api_version: str, kind: str, name: str, namespace: str, strict: bool = True):
+    async def _get(self, api_version: str, kind: str, name: str,
+                   namespace: Optional[str] = None, strict: bool = True):
         """ Get a resource by name and namespace.
 
         :param api_version: The API version.
@@ -102,14 +116,15 @@ class KonfluxClient:
         api = await self._get_api(api_version, kind)
         resource = None
         try:
-            resource = await exectools.to_thread(api.get, name=name, namespace=namespace)
+            resource = await exectools.to_thread(api.get, name=name, namespace=namespace or self.default_namespace)
         except exceptions.NotFoundError:
             if strict:
                 raise
         return resource
 
     @alru_cache
-    async def _get__caching(self, api_version: str, kind: str, name: str, namespace: str, strict: bool = True):
+    async def _get__caching(self, api_version: str, kind: str, name: str,
+                            namespace: Optional[str] = None, strict: bool = True):
         """ Get a resource by name and namespace, with caching.
 
         :param api_version: The API version.
@@ -241,8 +256,8 @@ class KonfluxClient:
     @staticmethod
     def _new_application(name: str, display_name: str) -> dict:
         obj = {
-            "apiVersion": "appstudio.redhat.com/v1alpha1",
-            "kind": "Application",
+            "apiVersion": API_VERSION,
+            "kind": KIND_APPLICATION,
             "metadata": {
                 "name": name
             },
@@ -262,8 +277,8 @@ class KonfluxClient:
     def _new_component(name: str, application: str, component_name: str,
                        image_repo: Optional[str], source_url: Optional[str], revision: Optional[str]) -> dict:
         obj = {
-            "apiVersion": "appstudio.redhat.com/v1alpha1",
-            "kind": "Component",
+            "apiVersion": API_VERSION,
+            "kind": KIND_COMPONENT,
             "metadata": {
                 "name": name,
                 "annotations": {
