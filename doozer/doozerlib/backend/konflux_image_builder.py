@@ -223,17 +223,24 @@ class KonfluxImageBuilder:
         prefetch = []
         required_package_managers = metadata.config.content.source.pkg_managers
 
-        for package_manager in ["gomod", "npm"]:
+        for package_manager in ["gomod", "npm", "pip"]:
             if package_manager in required_package_managers:
-                paths = metadata.config.cachito.packages.get(package_manager, [])
+                entries = metadata.config.cachito.packages.get(package_manager, [])
 
                 flag = False
-                for path in paths:
-                    prefetch.append({"type": package_manager, "path": path["path"]})
+                data = {"type": package_manager}
+                for entry in entries:
+                    if entry == "path":
+                        data["path"] = entry["path"]
+                    if entry == "requirements_files":
+                        data["requirements_files"] = data["requirements_files"] + entry["requirements_files"]
+                    if entry == "requirements_build_files":
+                        data["requirements_files"] = data["requirements_files"] + entry["requirements_build_files"]
                     flag = True
 
                 if not flag:
-                    prefetch.append({"type": package_manager, "path": "."})
+                    data = {"path": "."}
+                prefetch.append(data)
 
         if prefetch:
             logger.info(f"Adding pre-fetch params: {prefetch}")
@@ -276,6 +283,8 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
+        prefetch = self._prefetch(metadata) if metadata.config.get("prefetch", {}).get("prefetch") else None
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -291,7 +300,7 @@ class KonfluxImageBuilder:
             hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
-            prefetch=self._prefetch(metadata)
+            prefetch=prefetch
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
