@@ -16,6 +16,7 @@ from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord)
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
+from artcommonlib import util as artlib_util
 from dockerfile_parse import DockerfileParser
 
 from doozerlib import constants, util
@@ -491,16 +492,17 @@ class KonfluxOlmBundleBuilder:
 
                 # Wait for the PipelineRun to complete
                 pipelinerun, pods = await konflux_client.wait_for_pipelinerun(pipelinerun_name, self.konflux_namespace)
-                status = pipelinerun.status.conditions[0].status
-                outcome = KonfluxBuildOutcome.SUCCESS if status == "True" else KonfluxBuildOutcome.FAILURE
-                logger.info(f"PipelineRun {url} completed with outcome {outcome}")
+                logger.info("PipelineRun %s completed", pipelinerun_name)
+
+                succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
+                outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
                 # Update the Konflux DB with the final outcome
                 if not self.dry_run:
                     await self._update_konflux_db(metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs)
                 else:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
-                if status != "True":
+                if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxOlmBundleBuildError(f"Konflux bundle image build for {metadata.distgit_key} failed", pipelinerun_name, pipelinerun)
                     logger.error(f"{error}: {url}")
                 else:
@@ -561,6 +563,7 @@ class KonfluxOlmBundleBuilder:
             building_arches=["x86_64"],  # We always build bundles on x86_64
             additional_tags=list(additional_tags),
             skip_checks=skip_checks,
+            hermetic=True,
             pipelinerun_template_url=self.pipelinerun_template_url,
         )
         url = konflux_client.build_pipeline_url(pipelinerun)
