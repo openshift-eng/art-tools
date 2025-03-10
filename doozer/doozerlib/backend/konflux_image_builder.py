@@ -211,6 +211,47 @@ class KonfluxImageBuilder:
                 await asyncio.sleep(20)  # check every 20 seconds
         return parent_members
 
+    def _prefetch(self, metadata: ImageMetadata):
+        """
+        https://issues.redhat.com/browse/ART-11902
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+        if not metadata.config.cachito.enabled:
+            logger.info(f"cachito/cachi2 disabled for {metadata.distgit_key}")
+            return
+
+        prefetch = []
+        required_package_managers = metadata.config.content.source.pkg_managers
+
+        for package_manager in ["gomod", "npm", "pip"]:
+            if package_manager in required_package_managers:
+                entries: dict = metadata.config.cachito.packages.get(package_manager, [])
+                logger.info(f"entries: {entries}")
+
+                flag = False
+                data = {"type": package_manager}
+                for entry, values in entries[0].items():
+                    if entry == "path":
+                        data["path"] = values
+
+                    if entry in ["requirements_files", "requirements_build_files"]:
+                        if "requirements_files" not in data:
+                            data["requirements_files"] = []
+                        if entry == "requirements_files":
+                            data["requirements_files"] = data["requirements_files"] + values
+                        if entry == "requirements_build_files":
+                            data["requirements_files"] = data["requirements_files"] + values
+                    flag = True
+
+                if not flag:
+                    data = {"path": "."}
+                prefetch.append(data)
+
+        if prefetch:
+            logger.info(f"Adding pre-fetch params: {prefetch}")
+
+        return prefetch
+
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
                            output_image: str, additional_tags: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -247,6 +288,9 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
+        # prefetch = self._prefetch(metadata) if metadata.config.get("prefetch", {}).get("prefetch") else None
+        prefetch = self._prefetch(metadata)
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -262,6 +306,7 @@ class KonfluxImageBuilder:
             hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
+            prefetch=prefetch
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
