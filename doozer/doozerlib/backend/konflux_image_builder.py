@@ -235,7 +235,7 @@ class KonfluxImageBuilder:
                 if not flag:
                     prefetch.append({"type": package_manager, "path": "."})
 
-        if not prefetch:
+        if prefetch:
             logger.info(f"Adding pre-fetch params: {prefetch}")
 
         return prefetch
