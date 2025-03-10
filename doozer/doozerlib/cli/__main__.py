@@ -39,7 +39,7 @@ from doozerlib.cli.images import images_clone, images_list, images_push_distgit,
     images_print, distgit_config_template, query_rpm_version
 from doozerlib.cli.images_konflux import images_konflux_rebase
 from doozerlib.cli.images_konflux import images_konflux_build
-from doozerlib.cli.fbc import fbc_import
+from doozerlib.cli.fbc import fbc_import, fbc_rebase
 
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.util import analyze_debug_timing
