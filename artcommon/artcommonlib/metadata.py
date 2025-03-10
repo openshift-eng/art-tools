@@ -481,8 +481,8 @@ class MetadataBase(object):
             return default
         return build_record
 
-    async def get_latest_brew_build_async(self, **kwargs) -> Model:
-        return Model(await asyncio.to_thread(self.get_latest_brew_build, **kwargs))
+    async def get_latest_brew_build_async(self, **kwargs):
+        return await asyncio.to_thread(self.get_latest_brew_build, **kwargs)
 
     async def get_latest_build(self, **kwargs):
         """

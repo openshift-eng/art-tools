@@ -145,8 +145,6 @@ def get_builds_tags(build_nvrs, session=None):
     tasks = []
     with session.multicall(strict=True) as m:
         for nvr in build_nvrs:
-            if not (isinstance(nvr, str) or isinstance(nvr, int)):
-                raise ValueError(f"expected str or int but got {type(nvr)}")
             tasks.append(m.listTags(build=nvr))
     return [task.result for task in tasks]
 
