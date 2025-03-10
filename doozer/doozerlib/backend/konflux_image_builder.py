@@ -225,17 +225,18 @@ class KonfluxImageBuilder:
 
         for package_manager in ["gomod", "npm", "pip"]:
             if package_manager in required_package_managers:
-                entries = metadata.config.cachito.packages.get(package_manager, [])
+                entries: dict = metadata.config.cachito.packages.get(package_manager, [])
+                logger.info(f"entries for {package_manager}: {entries}")
 
                 flag = False
                 data = {"type": package_manager}
-                for entry in entries:
+                for entry, values in entries.items():
                     if entry == "path":
-                        data["path"] = entry["path"]
+                        data["path"] = values
                     if entry == "requirements_files":
-                        data["requirements_files"] = data["requirements_files"] + entry["requirements_files"]
+                        data["requirements_files"] = data["requirements_files"] + values
                     if entry == "requirements_build_files":
-                        data["requirements_files"] = data["requirements_files"] + entry["requirements_build_files"]
+                        data["requirements_files"] = data["requirements_files"] + values
                     flag = True
 
                 if not flag:
