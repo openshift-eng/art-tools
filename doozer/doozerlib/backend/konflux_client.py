@@ -370,7 +370,7 @@ class KonfluxClient:
         _modify_param(params, "build-platforms", list(build_platforms))
 
         # if prefetch:
-        #     _modify_param(params, "prefetch-input", prefetch)
+        _modify_param(params, "prefetch-input", prefetch)
         if hermetic is not None:
             _modify_param(params, "hermetic", hermetic)
 
