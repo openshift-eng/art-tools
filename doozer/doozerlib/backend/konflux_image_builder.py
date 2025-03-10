@@ -229,7 +229,7 @@ class KonfluxImageBuilder:
 
                 flag = False
                 for path in paths:
-                    prefetch.append({"type": package_manager, "path": path})
+                    prefetch.append({"type": package_manager, "path": path["path"]})
                     flag = True
 
                 if not flag:
