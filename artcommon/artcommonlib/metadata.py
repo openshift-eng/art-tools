@@ -156,15 +156,15 @@ class MetadataBase(object):
         if namespace == "apbs":
             component_name = "%s-apb" % component_name
 
+        default_build_system = build_system is None or build_system == Engine.BREW.value
         # Only true in case of Brew components
         # In Konflux, we do not set `-container` suffix
         if namespace == "containers":
-            # be permissive if build_system is not set
-            if not build_system or build_system == Engine.BREW.value:
+            if default_build_system:
                 component_name = "%s-container" % component_name
 
         # Brew specific config can override component name
-        if build_system == Engine.BREW.value:
+        if default_build_system:
             if config_model.distgit.component is not Missing:
                 component_name = config_model.distgit.component
 
