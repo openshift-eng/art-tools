@@ -17,6 +17,7 @@ class Lock(enum.Enum):
     BUILD = 'lock:build:{version}'
     BUILD_KONFLUX = 'lock:build-konflux:{version}'
     MASS_REBUILD = 'lock:mass-rebuild-serializer'
+    KONFLUX_MASS_REBUILD = 'lock:konflux-mass-rebuild-serializer'
     SIGNING = 'lock:signing:{signing_env}'
     BUILD_SYNC = 'lock:build-sync:{version}'
     BUILD_SYNC_KONFLUX = 'lock:build-sync-konflux:{version}'
@@ -25,7 +26,8 @@ class Lock(enum.Enum):
 
 
 class Keys(enum.Enum):
-    MASS_REBUILD_QUEUE = 'appdata:mass-rebuild-queue'
+    BREW_MASS_REBUILD_QUEUE = 'appdata:brew:mass-rebuild-queue'
+    KONFLUX_MASS_REBUILD_QUEUE = 'appdata:konflux:mass-rebuild-queue'
 
 
 # Use a BIG timeout value so that locks do not silently expire.
@@ -70,6 +72,11 @@ LOCK_POLICY = {
         'lock_timeout': DEFAULT_LOCK_TIMEOUT
     },
     Lock.MASS_REBUILD: {
+        'retry_count': 36000 * 8,
+        'retry_delay_min': 0.1,
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+    },
+    Lock.KONFLUX_MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
         'lock_timeout': DEFAULT_LOCK_TIMEOUT

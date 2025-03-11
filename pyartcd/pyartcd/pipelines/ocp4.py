@@ -19,6 +19,7 @@ from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.s3 import sync_repo_to_s3_mirror
 from artcommonlib import redis
+from pyartcd.util import mass_rebuild_score
 
 
 class BuildPlan:
@@ -797,15 +798,9 @@ class Ocp4Pipeline:
 
         jenkins.update_description(f'<hr />Build results:<br/><br/>{timing_report}<br/>')
 
-    def _mass_rebuild_score(self) -> int:
-        """For the ocp_version (e.g. `4.16`) return an integer score value
-        Higher the score, higher the priority
-        """
-        return round(float(self.version.stream) * 100)  # '4.16' -> 416
-
     async def _request_mass_rebuild(self):
-        queue = locks.Keys.MASS_REBUILD_QUEUE.value
-        mapping = {self.version.stream: self._mass_rebuild_score()}
+        queue = locks.Keys.BREW_MASS_REBUILD_QUEUE.value
+        mapping = {self.version.stream: mass_rebuild_score(self.version.stream)}
 
         # add yourself to the queue
         # if queue does not exist, it will be created with the value
