@@ -9,7 +9,7 @@ from artcommonlib.brew import BuildStates
 from artcommonlib import logutil
 from artcommonlib.model import Missing, Model
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
 
 CONFIG_MODES = [
     'enabled',  # business as usual
@@ -44,8 +44,8 @@ class MetadataBase(object):
 
         self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type,
                                                self.distgit_key, self.raw_config)
-        self.namespace, self._component_name = MetadataBase.extract_component_info(meta_type, self.name, self.config)
-
+        self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config,
+                                                                           self.runtime.build_system)
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
         if self.mode not in CONFIG_MODES:
             raise ValueError('Invalid mode for {}'.format(self.config_filename))
@@ -121,14 +121,15 @@ class MetadataBase(object):
             el_targets.append(el_ver)
         return el_targets
 
-    @classmethod
-    def extract_component_info(cls, meta_type: str, meta_name: str, config_model: Model) -> Tuple[str, str]:
+    @staticmethod
+    def extract_component_info(meta_type: str, meta_name: str, config_model: Model, build_system: str) -> Tuple[str, str]:
         """
         Determine the component information for either RPM or Image metadata
         configs.
         :param meta_type: 'rpm' or 'image'
         :param meta_name: The name of the component's distgit
         :param config_model: The configuration for the metadata.
+        :param build_system: The runtime build system in use
         :return: Return (namespace, component_name)
         """
 
@@ -155,11 +156,16 @@ class MetadataBase(object):
         if namespace == "apbs":
             component_name = "%s-apb" % component_name
 
+        # Only true in case of Brew components
+        # In Konflux, we do not set `-container` suffix
         if namespace == "containers":
-            component_name = "%s-container" % component_name
+            if build_system == Engine.BREW.value:
+                component_name = "%s-container" % component_name
 
-        if config_model.distgit.component is not Missing:
-            component_name = config_model.distgit.component
+        # Brew specific config can override component name
+        if build_system == Engine.BREW.value:
+            if config_model.distgit.component is not Missing:
+                component_name = config_model.distgit.component
 
         return namespace, component_name
 
