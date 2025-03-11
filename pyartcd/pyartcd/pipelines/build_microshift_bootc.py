@@ -219,7 +219,11 @@ class BuildMicroShiftBootcPipeline:
                                      f" {url}, but could not find it. Use --force to rebuild plashet.")
 
                 microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
-                expected_microshift_nvr = next(n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9)
+                expected_microshift_nvr = next((n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9), None)
+                if not expected_microshift_nvr:
+                    message = f"Could not find el9 microshift nvr for assembly {self.assembly}. Please investigate"
+                    self._logger.info(message)
+                    raise ValueError(message)
                 if actual_nvr != expected_microshift_nvr:
                     self._logger.info(f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed.")
                     return True
