@@ -370,6 +370,9 @@ class ConfigScanSources:
         # Check for RPM changes
         await self.scan_rpm_changes(image_meta)
 
+        # Check for changes in extra packages
+        await self.scan_extra_packages(image_meta)
+
     def find_upstream_commit_hash(self, meta: Metadata):
         """
         Get the upstream latest commit hash using git ls-remote
@@ -714,7 +717,53 @@ class ConfigScanSources:
         else:
             self.logger.info('No package changes detected for %s', build_record.nvr)
 
-        # TODO check extra_packages https://github.com/openshift-eng/art-tools/blob/main/doozer/doozerlib/image.py#L369
+    @skip_check_if_changing
+    async def scan_extra_packages(self, image_meta: ImageMetadata):
+        """
+        Very rarely, an image might need to pull a package that is not actually installed in the
+        builder image or in the final image.
+        e.g. https://github.com/openshift/ironic-ipa-downloader/blob/999c80f17472d5dbbd4775d901e1be026b239652/Dockerfile.ocp#L11-L14
+        This is programmatically undetectable through koji queries. So we allow extra scan-sources hints to
+        be placed in the image metadata.
+        """
+
+        extra_packages = self.runtime.group_config.config.scan_sources.extra_packages
+        if extra_packages is Missing:
+            return
+
+        with self.runtime.pooled_koji_client_session() as koji_api:
+            for package_details in extra_packages:
+                extra_package_name = package_details.name
+                extra_package_brew_tag = package_details.tag
+
+                # Example of queryHistory: https://gist.github.com/jupierce/943b845c07defe784522fd9fd76f4ab0
+                extra_latest_tagging_infos = koji_api.queryHistory(
+                    table='tag_listing', tag=extra_package_brew_tag,
+                    package=extra_package_name, active=True)['tag_listing']
+
+                if not extra_latest_tagging_infos:
+                    self.logger.warning(f'{image_meta.distgit_key} unable to find tagging event for for extra_packages '
+                                        f'{extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error.')
+                    continue
+
+                extra_latest_tagging_infos.sort(key=lambda event: event['create_event'])
+
+                # We have information about the most recent time this package was tagged into the
+                # relevant tag. Why the tagging event and not the build time? Well, the build could have been
+                # made long ago, but only tagged into the relevant tag recently.
+                extra_latest_tagging_event = extra_latest_tagging_infos[-1]['create_event']
+
+                # Convert the Brew event to a timestamp
+                result = koji_api.getEvent(extra_latest_tagging_event)
+                extra_latest_tagging_timestamp = datetime.fromtimestamp(result['ts'], tz=timezone.utc)
+
+                # Compare that with the Konflux build time
+                build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+                if extra_latest_tagging_timestamp > build_record.start_time:
+                    return self, RebuildHint(
+                        RebuildHintCode.PACKAGE_CHANGE,
+                        f'Image {image_meta.distgit_key} is sensitive to extra_packages {extra_package_name} '
+                        f'which changed at event {extra_latest_tagging_event}')
 
     async def check_changing_rpms(self):
         """
