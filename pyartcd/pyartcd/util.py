@@ -669,6 +669,7 @@ async def get_microshift_builds(group, assembly, env):
         "find-builds",
         "-k", "rpm",
         "--member-only",
+        "--include-shipped",
     ]
     with TemporaryDirectory() as tmpdir:
         path = f"{tmpdir}/out.json"
