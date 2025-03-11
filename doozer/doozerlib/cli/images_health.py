@@ -11,7 +11,7 @@ from doozerlib import Runtime
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.constants import ART_BUILD_HISTORY_URL
 
-DELTA_DAYS = 30  # look at latest 30 days
+DELTA_DAYS = 90  # look at latest 90 days
 
 
 class ImagesHealthPipeline:
@@ -73,7 +73,6 @@ class ImagesHealthPipeline:
     async def get_concerns(self, image_meta, engine):
         key = image_meta.distgit_key
         builds = await self.query(image_meta, engine)
-        builds = [build for build in builds if build.outcome != KonfluxBuildOutcome.PENDING]
         if not builds:
             self.logger.info('Image build for %s has never been attempted during last %s days',
                              image_meta.distgit_key, DELTA_DAYS)
