@@ -230,7 +230,7 @@ class BuildMicroShiftBootcPipeline:
                 self._logger.info(f"Plashet has the expected microshift nvr {expected_microshift_nvr}")
                 return False
 
-        rebuild_needed = await _rebuild_needed() or self.force_plashet_sync
+        rebuild_needed = self.force_plashet_sync or await _rebuild_needed()
         if not rebuild_needed:
             self._logger.info("Skipping plashet sync for %s", microshift_plashet_name)
             return
