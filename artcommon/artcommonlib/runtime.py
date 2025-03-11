@@ -18,11 +18,9 @@ class GroupRuntime(ABC):
         self.quiet = False
         self._logger = None
         self.debug_log_path = None
-
         self.working_dir = None
-
         self.initialized = False
-
+        self.build_system = None
         self.konflux_db = None
 
         for key, val in kwargs.items():

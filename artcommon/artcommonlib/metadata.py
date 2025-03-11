@@ -159,7 +159,8 @@ class MetadataBase(object):
         # Only true in case of Brew components
         # In Konflux, we do not set `-container` suffix
         if namespace == "containers":
-            if build_system == Engine.BREW.value:
+            # be permissive if build_system is not set
+            if not build_system or build_system == Engine.BREW.value:
                 component_name = "%s-container" % component_name
 
         # Brew specific config can override component name

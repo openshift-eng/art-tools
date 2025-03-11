@@ -17,7 +17,7 @@ class TestImageMetadata(unittest.TestCase):
         are not included in a formal release.
         """
 
-        rt = flexmock(logger=flexmock(debug=lambda *_: None), assembly=None, build_system='brew')
+        rt = flexmock(logger=flexmock(debug=lambda *_: None), assembly=None, build_system=None)
         rt.should_receive("get_releases_config")
 
         data_obj = flexmock(name="test",
