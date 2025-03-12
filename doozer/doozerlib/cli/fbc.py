@@ -1,15 +1,20 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import click
+from artcommonlib.konflux.konflux_build_record import (
+    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord)
+from artcommonlib.konflux.konflux_db import KonfluxDb
 
 from doozerlib import constants, opm
-from doozerlib.backend.konflux_fbc import KonfluxFbcImporter
+from doozerlib.backend.konflux_fbc import KonfluxFbcImporter, KonfluxFbcRebaser
 from doozerlib.cli import (cli, click_coroutine, option_commit_message,
-                           pass_runtime)
+                           option_push, pass_runtime,
+                           validate_semver_major_minor_patch)
 from doozerlib.exceptions import DoozerFatalError
+from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
 
 LOGGER = logging.getLogger(__name__)
@@ -97,4 +102,175 @@ async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates
     doozer --group=openshift-4.17 beta:fbc:import registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
     cli = FbcImportCli(runtime=runtime, index_image=from_index, keep_templates=keep_templates, push=push, fbc_repo=fbc_repo, message=message, dest_dir=dest_dir)
+    await cli.run()
+
+
+class FbcRebaseCli:
+    def __init__(
+            self,
+            runtime: Runtime,
+            version: str,
+            release: str,
+            commit_message: str,
+            push: bool,
+            fbc_repo: str,
+            operator_nvrs: Tuple[str, ...]):
+        self.runtime = runtime
+        self.version = version
+        self.release = release
+        self.commit_message = commit_message
+        self.push = push
+        self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
+        self.operator_nvrs = operator_nvrs
+        self._logger = LOGGER.getChild("FbcRebaseCli")
+        self._db_for_bundles = KonfluxDb()
+        self._db_for_bundles.bind(KonfluxBundleBuildRecord)
+
+    async def run(self):
+        runtime = self.runtime
+        logger = self._logger.getChild("run")
+        if runtime.images and self.operator_nvrs:
+            raise click.BadParameter("Do not specify operator NVRs when --images is specified")
+        runtime.initialize(config_only=True)
+        assembly = runtime.assembly
+        if assembly is None:
+            raise ValueError("Assemblies feature is disabled for this group. This is no longer supported.")
+        assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
+        konflux_db = runtime.konflux_db
+        konflux_db.bind(KonfluxBuildRecord)
+
+        dgk_operator_builds = await self._get_operator_builds()
+        bundle_builds = await self._get_bundle_builds(list(dgk_operator_builds.values()), strict=False)
+        not_found = [dgk for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None]
+        if not_found:
+            raise IOError(f"Bundle builds not found for {not_found}. Please build the bundles first.")
+        bundle_builds = cast(List[KonfluxBundleBuildRecord], bundle_builds)
+
+        assert runtime.source_resolver is not None, "source_resolver is not initialized. Doozer bug?"
+        assert runtime.group_config is not None, "group_config is not initialized. Doozer bug?"
+
+        rebaser = KonfluxFbcRebaser(
+            base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
+            group=runtime.group,
+            assembly=assembly,
+            version=self.version,
+            release=self.release,
+            commit_message=self.commit_message,
+            push=self.push,
+            fbc_repo=self.fbc_repo,
+            upcycle=runtime.upcycle,
+            record_logger=runtime.record_logger,
+        )
+        tasks = []
+        for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds):
+            operator_meta = runtime.image_map[dgk]
+            tasks.append(rebaser.rebase(operator_meta, bundle_build, self.version, self.release))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failed_bundles = []
+        for dgk, bundle_build, result in zip(dgk_operator_builds.keys(), bundle_builds, results):
+            if isinstance(result, Exception):
+                failed_bundles.append(bundle_build.nvr)
+                LOGGER.error(f"Failed to rebase FBC for {bundle_build.nvr} ({dgk}): {result}")
+        if failed_bundles:
+            raise DoozerFatalError(f"Failed to rebase FBC for bundles: {', '.join(failed_bundles)}")
+        logger.info("Rebase complete")
+
+    async def _get_operator_builds(self):
+        """ Get build records for the given operator nvrs or latest build records for all operators.
+
+        :return: A dictionary of operator name to build records.
+        """
+        runtime = self.runtime
+        assert runtime.konflux_db is not None, "konflux_db is not initialized. Doozer bug?"
+        assert runtime.assembly is not None, "assembly is not initialized. Doozer bug?"
+        dgk_records: Dict[str, KonfluxBuildRecord] = {}  # operator name to build records
+        if self.operator_nvrs:
+            # Get build records for the given operator nvrs
+            LOGGER.info("Fetching given nvrs from Konflux DB...")
+            records = await runtime.konflux_db.get_build_records_by_nvrs(self.operator_nvrs)
+            for record in records:
+                assert record is not None and isinstance(record, KonfluxBuildRecord), "Invalid record. Doozer bug?"
+                dgk_records[record.name] = record
+            # Load image metas for the given operators
+            runtime.images = list(dgk_records.keys())
+            runtime.initialize(mode='images', clone_distgits=False)
+            for dgk in dgk_records.keys():
+                metadata = runtime.image_map[dgk]
+                if not metadata.is_olm_operator:
+                    raise IOError(f"Operator {dgk} does not have 'update-csv' config")
+        else:
+            # Get latest build records for all specified operators
+            runtime.initialize(mode='images', clone_distgits=False)
+            LOGGER.info("Fetching latest operator builds from Konflux DB...")
+            operator_metas: List[ImageMetadata] = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
+            records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
+            not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
+            if not_found:
+                raise IOError(f"Couldn't find build records for {not_found}")
+            for metadata, record in zip(operator_metas, records):
+                assert record is not None and isinstance(record, KonfluxBuildRecord)
+                dgk_records[metadata.distgit_key] = record
+        return dgk_records
+
+    async def _get_bundle_builds(self, operator_builds: Sequence[KonfluxBuildRecord], strict: bool = True) -> List[Optional[KonfluxBundleBuildRecord]]:
+        """ Get bundle build records for the given operator builds.
+
+        :param operator_builds: operator builds.
+        :return: A list of bundle build records.
+        """
+        logger = self._logger.getChild("get_bundle_builds")
+        logger.info("Fetching bundle builds from Konflux DB...")
+        builds = await asyncio.gather(*(self._get_bundle_build_for(operator_build, strict=strict) for operator_build in operator_builds))
+        return builds
+
+    async def _get_bundle_build_for(self, operator_build: KonfluxBuildRecord, strict: bool = True) -> Optional[KonfluxBundleBuildRecord]:
+        """ Get bundle build record for the given operator build.
+
+        :param operator_build: Operator build record.
+        :return: Bundle build record.
+        """
+        bundle_name = f"{operator_build.name}-bundle"
+        LOGGER.info("Fetching bundle build for %s from Konflux DB...", operator_build.nvr)
+        where = {
+            "name": bundle_name,
+            "group": self.runtime.group,
+            "operator_nvr": operator_build.nvr,
+            "outcome": str(KonfluxBuildOutcome.SUCCESS),
+        }
+        bundle_build = await anext(self._db_for_bundles.search_builds_by_fields(where=where, limit=1), None)
+        if not bundle_build:
+            if strict:
+                raise IOError(f"Bundle build not found for {operator_build.name}. Please build the bundle first.")
+            return None
+        assert isinstance(bundle_build, KonfluxBundleBuildRecord)
+        return bundle_build
+
+
+@cli.command("beta:fbc:rebase", short_help="Refresh a group's FBC konflux source content")
+@click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
+              help="Version string to populate in Dockerfiles.")
+@click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
+@option_commit_message
+@option_push
+@click.option("--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO)
+@click.argument('operator_nvrs', nargs=-1, required=False)
+@pass_runtime
+@click_coroutine
+async def fbc_rebase(
+    runtime: Runtime,
+    version: str,
+    release: str,
+    message: str,
+    push: bool,
+    fbc_repo: str,
+    operator_nvrs: Tuple[str, ...]
+):
+    """
+    Refresh a group's FBC source content
+
+    The group's FBC konflux source content will be updated to include OLM bundles of the runtime assembly. The group's Dockerfiles will be
+    updated to use the specified version and release.
+    """
+    cli = FbcRebaseCli(runtime=runtime, version=version, release=release,
+                       commit_message=message, push=push, fbc_repo=fbc_repo, operator_nvrs=operator_nvrs)
     await cli.run()
