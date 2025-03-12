@@ -66,7 +66,7 @@ from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.remove_builds_cli import remove_builds_cli
 from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.snapshot_cli import snapshot_cli
-from elliottlib.cli.pin_cli import assembly_pin_builds_cli
+from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli
 
 # 3rd party
 import click
