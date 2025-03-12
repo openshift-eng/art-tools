@@ -1837,7 +1837,7 @@ class KonfluxRebaser:
         """
         builds = [build async for build in self._runtime.konflux_db.search_builds_by_fields(
             where={
-                'name': metadata.get_component_name(),
+                'name': metadata.distgit_key,
                 'outcome': str(KonfluxBuildOutcome.SUCCESS),
                 'group': self._runtime.group
             }
