@@ -29,7 +29,9 @@ class AssemblyPinBuildsCli:
         self.assembly_config = None
 
     async def run(self):
+        # load disabled configs to enable processing of special components like microshift
         self.runtime.initialize(mode='both', disabled=True)
+
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
         releases_config = self.runtime.get_releases_config()
         self.assembly_config = releases_config["releases"][self.runtime.assembly]["assembly"]
@@ -86,7 +88,14 @@ class AssemblyPinBuildsCli:
 
         assembly_changed = images_changed or art_rpms_changed or non_art_rpms_changed or rhcos_changed
         if assembly_changed:
-            print(yaml.dump(self.assembly_config.primitive()))
+            out = {
+                "releases": {
+                    self.runtime.assembly: {
+                        "assembly": self.assembly_config.primitive()
+                    }
+                }
+            }
+            print(yaml.dump(out))
         else:
             LOGGER.info("No change in assembly config. Pins already exist.")
 
