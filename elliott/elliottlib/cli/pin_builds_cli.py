@@ -21,11 +21,12 @@ LOGGER = logutil.get_logger(__name__)
 
 
 class AssemblyPinBuildsCli:
-    def __init__(self, runtime: Runtime, nvrs: List[str], pr: str, why: str):
+    def __init__(self, runtime: Runtime, nvrs: List[str], pr: str, why: str, github_token: str):
         self.runtime = runtime
         self.nvrs = nvrs
         self.pr = pr
         self.why = why
+        self.github_token = github_token
         self.assembly_config = None
 
     async def run(self):
@@ -37,8 +38,6 @@ class AssemblyPinBuildsCli:
         self.assembly_config = releases_config["releases"][self.runtime.assembly]["assembly"]
 
         if self.pr:
-            if not os.environ.get('GITHUB_TOKEN'):
-                raise ValueError("GITHUB_TOKEN must be set in the environment.")
             # get all builds for the PR
             self.nvrs = await self.get_nvrs_for_pr()
             if not self.nvrs:
@@ -117,7 +116,7 @@ class AssemblyPinBuildsCli:
         if not (images and rpms):
             raise ValueError(f"No ART components found building from {repo_url}")
 
-        merge_commit, branch = self.get_pr_merge_commit(self.pr)
+        merge_commit, branch = self.get_pr_merge_commit(self.pr, self.github_token)
         # we don't need to validate version of branch since we will validate it in the db
         LOGGER.info(f"PR merged to {branch} with commit {merge_commit}")
 
@@ -143,14 +142,14 @@ class AssemblyPinBuildsCli:
         return nvrs
 
     @staticmethod
-    def get_pr_merge_commit(pr_url):
+    def get_pr_merge_commit(pr_url, auth_token):
         repo_url = pr_url.split("/pull")[0]
         org_repo_suffix = repo_url.split("github.com/")[1]
         github_api_repo_url = "https://api.github.com/repos"
         pr_api_url = f"{github_api_repo_url}/{org_repo_suffix}/pulls/{pr_url.split('/')[-1]}"
         LOGGER.info('Fetching url %s', pr_api_url)
         response = requests.get(pr_api_url, headers={
-            "Authorization": f"token {os.environ['GITHUB_TOKEN']}",
+            "Authorization": f"token {auth_token}",
             "Accept": "application/json"
         })
         response.raise_for_status()
@@ -333,5 +332,11 @@ async def assembly_pin_builds_cli(runtime: Runtime, nvrs: List[str], pr: Optiona
     if sum([bool(nvrs), bool(pr)]) != 1:
         raise click.UsageError("Exactly one of NVRs or PR is required.")
 
-    pipeline = AssemblyPinBuildsCli(runtime, nvrs, pr, why)
+    github_token = None
+    if pr:
+        github_token = os.environ.get('GITHUB_TOKEN')
+        if not github_token:
+            raise ValueError("GITHUB_TOKEN must be set in the environment to query PR information")
+
+    pipeline = AssemblyPinBuildsCli(runtime, nvrs, pr, why, github_token)
     await pipeline.run()
