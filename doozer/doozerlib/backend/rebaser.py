@@ -8,14 +8,12 @@ import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
-import asyncio
-import requests
 
 import bashlex
 import bashlex.errors
 import yaml
 from artcommonlib import exectools, release_util
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine, KonfluxBuildOutcome
 from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
@@ -124,7 +122,14 @@ class KonfluxRebaser:
 
             # Rebase the image in the build repository
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
-            actual_version, actual_release, _ = await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
+            actual_version, actual_release, _ = await self._rebase_dir(
+                metadata=metadata,
+                source=source,
+                build_repo=build_repo,
+                version=version,
+                input_release=input_release,
+                force_yum_updates=force_yum_updates,
+                image_repo=image_repo)
 
             # Commit changes
             await build_repo.commit(commit_message, allow_empty=True)
@@ -156,7 +161,7 @@ class KonfluxRebaser:
             # notify child images
             metadata.rebase_event.set()
 
-    def _rebase_dir(
+    async def _rebase_dir(
             self,
             metadata: ImageMetadata,
             source: Optional[SourceResolution],
@@ -223,7 +228,7 @@ class KonfluxRebaser:
             failed_parents = [parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status]
             if failed_parents:
                 raise IOError(f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}")
-            downstream_parents, parent_private_fix = self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
+            downstream_parents, parent_private_fix = await self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
             # If any of the parent images are private, this image is private
             if parent_private_fix:
                 private_fix = True
@@ -247,8 +252,8 @@ class KonfluxRebaser:
         # Given an input release string, make an actual release string
         # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p0.assembly.stream.gdeadbee.el9
         release = self._make_actual_release_string(metadata, input_release, private_fix, source)
-        self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
-                               image_repo, uuid_tag)
+        await self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
+                                     image_repo, uuid_tag)
         metadata.private_fix = private_fix
 
         self._update_dockerignore(build_repo.local_dir)
@@ -264,7 +269,7 @@ class KonfluxRebaser:
             with open(docker_ignore_path, "a") as file:
                 file.write("\n!/.oit/**\n")
 
-    def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
+    async def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """ Resolve the parent images for the given image metadata."""
         image_from = metadata.config.get('from', {})
         parents = image_from.get("builder", []).copy()
@@ -276,7 +281,7 @@ class KonfluxRebaser:
         mapped_images: List[Tuple[str, bool]] = []
         for parent, original_parent in zip(parents, dfp.parent_images):
             if "member" in parent:
-                mapped_images.append(self._resolve_member_parent(parent["member"], original_parent, image_repo, uuid_tag))
+                mapped_images.append(await self._resolve_member_parent(parent["member"], original_parent, image_repo, uuid_tag))
             elif "image" in parent:
                 mapped_images.append((parent["image"], False))
             elif "stream" in parent:
@@ -288,7 +293,7 @@ class KonfluxRebaser:
         private_fix = any(private_fix for _, private_fix in mapped_images)
         return downstream_parents, private_fix
 
-    def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
+    async def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
         """ Resolve the parent image for the given image metadata."""
         parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
         private_fix = False
@@ -300,10 +305,10 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                build = asyncio.run(parent_metadata.get_latest_build(
+                build = await parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
                     engine=Engine.KONFLUX
-                ))
+                )
 
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
@@ -568,7 +573,7 @@ class KonfluxRebaser:
             with df_path.open('w', encoding="utf-8") as df:
                 df.write(new_dockerfile_data)
 
-    def _update_build_dir(self, metadata: ImageMetadata, dest_dir: Path,
+    async def _update_build_dir(self, metadata: ImageMetadata, dest_dir: Path,
                           source: Optional[SourceResolution],
                           version: str, release: str, downstream_parents: Optional[List[str]],
                           force_yum_updates: bool, image_repo: str, uuid_tag: str):
@@ -585,7 +590,7 @@ class KonfluxRebaser:
             self._update_dockerfile(metadata, source, df_path, version, release, downstream_parents,
                                     force_yum_updates, uuid_tag, dest_dir)
 
-            self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
+            await self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
             return version, release
 
@@ -1685,7 +1690,7 @@ class KonfluxRebaser:
             raise IOError('{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(metadata.distgit_key, bundle_manifests_dir))
         return str(csvs[0]), image_refs
 
-    def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str, image_repo: str, uuid_tag: str):
+    async def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str, image_repo: str, uuid_tag: str):
         csv_config = metadata.config.get('update-csv', None)
         if not csv_config:
             return
@@ -1716,10 +1721,10 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                build = asyncio.run(meta.get_latest_build(
+                build = await meta.get_latest_build(
                     el_target=f'el{meta.branch_el_target()}',
                     engine=Engine.KONFLUX
-                ))
+                )
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
                 v = build.version
@@ -1804,7 +1809,7 @@ class KonfluxRebaser:
                     sr_file.truncate()
                     sr_file.write(sr_file_str)
 
-        previous_build_versions = self._find_previous_versions(metadata)
+        previous_build_versions = await self._find_previous_versions(metadata)
         if previous_build_versions:
             # We need to inject "skips" versions for https://issues.redhat.com/browse/OCPBUGS-6066 .
             # We have the versions, but it needs to be written into the CSV under spec.skips.
@@ -1826,30 +1831,16 @@ class KonfluxRebaser:
             # Re-write the CSV content.
             Path(csv_file).write_text(yaml.dump(csv_obj))
 
-    def _find_previous_versions(self, metadata: ImageMetadata, pattern_suffix='') -> Set[str]:
+    async def _find_previous_versions(self, metadata: ImageMetadata, pattern_suffix='') -> Set[str]:
         """
         Returns: Searches brew for builds of this operator in order and processes them into a set of versions.
         These version may or may not have shipped.
         """
-        # FIXME: This is based on Brew/OSBS. Needs to figure out how to do this with Konflux
-        with self._runtime.pooled_koji_client_session() as koji_api:
-            component_name = metadata.get_component_name()
-            package_info = koji_api.getPackage(component_name)  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
-            if not package_info:
-                raise IOError(f'No brew package is defined for {component_name}')
-            package_id = package_info['id']  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
-            pattern_prefix = f'{component_name}-v{metadata.branch_major_minor()}.'
-            builds = koji_api.listBuilds(packageID=package_id,
-                                         state=BuildStates.COMPLETE.value,
-                                         pattern=f'{pattern_prefix}{pattern_suffix}*')
-            nvrs: Set[str] = set([build['nvr'] for build in builds])
-            # NVRS should now be a set including entries like 'cluster-nfd-operator-container-v4.10.0-202211280957.p0.ga42b581.assembly.stream'
-            # We need to convert these into versions like "4.11.0-202205250107"
-            versions: Set[str] = set()
-            for nvr in nvrs:
-                without_component = nvr[len(f'{component_name}-v'):]  # e.g. "4.10.0-202211280957.p0.ga42b581.assembly.stream"
-                version_components = without_component.split('.')[0:3]  # e.g. ['4', '10', '0-202211280957']
-                version = '.'.join(version_components)
-                versions.add(version)
-
-            return versions
+        builds = [build async for build in self._runtime.konflux_db.search_builds_by_fields(
+            where={
+                'name': metadata.get_component_name(),
+                'outcome': str(KonfluxBuildOutcome.SUCCESS),
+                'group': self._runtime.group
+            }
+        )]
+        return set([f'{build.version.strip("v")}-{build.release.split(".")[0]}' for build in builds])
