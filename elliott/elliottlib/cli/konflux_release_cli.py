@@ -16,6 +16,7 @@ LOGGER = logutil.get_logger(__name__)
 
 CONTEXT_KEYS = ["stage", "prod", "fbc"]
 KONFLUX_KEYS = ["releasePlan", "snapshot", "releaseNotes"]
+ALLOWED_KEYS = CONTEXT_KEYS + KONFLUX_KEYS
 
 
 class CreateReleaseCli:
@@ -51,30 +52,33 @@ class CreateReleaseCli:
         except exceptions.ResourceNotFoundError:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
 
-        # Merge global and local context into release_config
-        # all keys except these will be ignored for creating releases
-        allowed_keys = CONTEXT_KEYS + KONFLUX_KEYS
-        def get_release_config(raw_config, context):
-            config = {k: v for k, v in raw_config.items() if k in allowed_keys}
-            if context:
-                print(f"processing {context=} in {raw_config.keys()=}")
-                keys = context.split('.')
-                top_key = keys[0]
-                if top_key not in CONTEXT_KEYS:
-                    raise ValueError(f"context can only be one of {CONTEXT_KEYS}. found `{top_key}`")
-                next_context = '.'.join(keys[1:])
-                local_config_raw = raw_config.get(top_key, {})
-                if not isinstance(local_config_raw, dict):
-                    raise ValueError(f"context value should be a dict. found {type(local_config_raw)}")
-                local_config = {k: v for k, v in local_config_raw.items() if k in allowed_keys}
-                config.update(local_config)
-                return get_release_config(config, next_context)
-            return config
-
-        self.release_config = get_release_config(release_config_raw, self.release_context)
+        self.release_config = self.get_release_config(release_config_raw, self.release_context)
         release_obj = await self.new_release(self.release_config)
         created = await self.konflux_client._create(release_obj)
         print(created)
+
+    @staticmethod
+    def get_release_config(global_config_raw: dict, context: str):
+        """
+        Construct a konflux release config based on special context keys and konflux keys
+        Merge global and local dicts based on a special context key.
+        Nested local dicts can override (relative) global dict values
+        context key can be nested e.g key1.key2.key3
+        """
+        global_config = {k: v for k, v in global_config_raw.items() if k in ALLOWED_KEYS}
+        if context:
+            keys = context.split('.')
+            top_key = keys[0]
+            if top_key not in CONTEXT_KEYS:
+                raise ValueError(f"context can only be one of {CONTEXT_KEYS}. found `{top_key}`")
+            next_context = '.'.join(keys[1:])
+            local_config_raw = global_config.get(top_key, {})
+            if not isinstance(local_config_raw, dict):
+                raise ValueError(f"context value should be a dict. found {type(local_config_raw)}")
+            local_config = {k: v for k, v in local_config_raw.items() if k in ALLOWED_KEYS}
+            global_config.update(local_config)
+            return CreateReleaseCli.get_release_config(global_config, next_context)
+        return global_config
 
     async def new_release(self, release_config: dict) -> dict:
         missing = [k for k in KONFLUX_KEYS if k not in release_config.keys()]
