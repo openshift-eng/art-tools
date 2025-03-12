@@ -88,7 +88,7 @@ class BuildMicroShiftPipeline:
             await self._rebase_and_build_for_stream()
         else:
             # Check if microshift advisory is defined in assembly
-            if 'microshift' not in advisories:
+            if 'microshift' not in advisories or advisories.get("microshift") <= 0:
                 self.advisory_num = await self.create_microshift_advisory()
             await self._rebase_and_build_for_named_assembly()
             await self._trigger_microshift_sync()
