@@ -29,7 +29,7 @@ class AssemblyPinBuildsCli:
         self.assembly_config = None
 
     async def run(self):
-        self.runtime.initialize(mode='both')
+        self.runtime.initialize(mode='both', disabled=True)
         self.runtime.konflux_db.bind(KonfluxBuildRecord)
         releases_config = self.runtime.get_releases_config()
         self.assembly_config = releases_config["releases"][self.runtime.assembly]["assembly"]
