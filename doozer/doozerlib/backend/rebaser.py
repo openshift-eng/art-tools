@@ -18,7 +18,6 @@ from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
 from artcommonlib.util import deep_merge
-from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.image import ImageMetadata
@@ -574,9 +573,9 @@ class KonfluxRebaser:
                 df.write(new_dockerfile_data)
 
     async def _update_build_dir(self, metadata: ImageMetadata, dest_dir: Path,
-                          source: Optional[SourceResolution],
-                          version: str, release: str, downstream_parents: Optional[List[str]],
-                          force_yum_updates: bool, image_repo: str, uuid_tag: str):
+                                source: Optional[SourceResolution],
+                                version: str, release: str, downstream_parents: Optional[List[str]],
+                                force_yum_updates: bool, image_repo: str, uuid_tag: str):
         with exectools.Dir(dest_dir):
             self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
 
