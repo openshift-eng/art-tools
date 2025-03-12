@@ -684,3 +684,10 @@ async def get_microshift_builds(group, assembly, env):
     # and they include the assembly name in its build name
     # so make sure found nvrs are related to assembly
     return [n for n in nvrs if isolate_assembly_in_release(n) == assembly]
+
+
+def mass_rebuild_score(version: str) -> int:
+    """For the ocp_version (e.g. `4.16`) return an integer score value
+    Higher the score, higher the priority
+    """
+    return round(float(version) * 100)  # '4.16' -> 416

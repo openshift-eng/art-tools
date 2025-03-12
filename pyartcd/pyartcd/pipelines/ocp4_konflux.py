@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 import click
 import yaml
 
-from artcommonlib import exectools
+from artcommonlib import exectools, redis
 from artcommonlib.util import new_roundtrip_yaml_handler
 
 from pyartcd import constants, util, jenkins, locks
@@ -18,6 +18,7 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd import record as record_util
+from pyartcd.util import mass_rebuild_score
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +53,8 @@ class EnumEncoder(json.JSONEncoder):
 class KonfluxOcp4Pipeline:
     def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str], image_build_strategy: Optional[str],
                  image_list: Optional[str], version: str, data_gitref: Optional[str],
-                 kubeconfig: Optional[str], skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...], plr_template: str):
+                 kubeconfig: Optional[str], skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...],
+                 plr_template: str, lock_identifier: str):
         self.runtime = runtime
         self.assembly = assembly
         self.version = version
@@ -63,6 +65,10 @@ class KonfluxOcp4Pipeline:
         self.skip_rebase = skip_rebase
         self.skip_bundle_build = skip_bundle_build
         self.plr_template = plr_template
+        self.lock_identifier = lock_identifier
+
+        # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
+        self.mass_rebuild = False
 
         group_param = f'--group=openshift-{version}'
         if data_gitref:
@@ -140,14 +146,14 @@ class KonfluxOcp4Pipeline:
                 self.build_plan.images_excluded.extend(failed_images)
 
     async def build(self):
+        if self.build_plan.build_strategy == BuildStrategy.ONLY and not self.build_plan.images_included:
+            LOGGER.warning('No images will be built')
+            return
+
         cmd = self._doozer_base_command.copy()
         if self.arches:
             cmd.append("--arches")
             cmd.append(",".join(self.arches))
-
-        if self.build_plan.build_strategy == BuildStrategy.ONLY and not self.build_plan.images_included:
-            LOGGER.warning('No images will be built')
-            return
 
         cmd.extend([
             '--latest-parent-version',
@@ -231,6 +237,7 @@ class KonfluxOcp4Pipeline:
         if self.build_plan.build_strategy == BuildStrategy.ALL:
             self.build_plan.images_included = []
             self.build_plan.images_excluded = []
+            self.mass_rebuild = True
             jenkins.update_title('[mass rebuild]')
             jenkins.update_description(f'Images: building {self.build_plan.active_image_count} images.<br/>')
 
@@ -249,6 +256,10 @@ class KonfluxOcp4Pipeline:
             else:
                 jenkins.update_description(f'Images: building {n_images} images.<br/>')
 
+            # It's a mass rebuild if we included more than half of all active images in the group
+            if n_images > self.build_plan.active_image_count / 2:
+                self.mass_rebuild = True
+
         else:  # build_plan.build_strategy == BuildStrategy.EXCEPT
             self.build_plan.images_included = []
             self.build_plan.images_excluded = self.image_list
@@ -260,6 +271,10 @@ class KonfluxOcp4Pipeline:
                                            f'{",".join(self.build_plan.images_excluded)}.<br/>')
             else:
                 jenkins.update_description(f'Images: building {n_images} images.<br/>')
+
+            # It's a mass rebuild if we excluded less than half of all active images in the group
+            if n_images < self.build_plan.active_image_count / 2:
+                self.mass_rebuild = True
 
         self.runtime.logger.info('Initial build plan:\n%s', self.build_plan)
 
@@ -314,6 +329,24 @@ class KonfluxOcp4Pipeline:
             record_log: dict = record_util.parse_record_log(file)
             return record_log
 
+    async def request_mass_rebuild(self):
+        await self.slack_client.say(
+            f':konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:')
+
+        queue = locks.Keys.KONFLUX_MASS_REBUILD_QUEUE.value
+        mapping = {self.version: mass_rebuild_score(self.version)}
+        await redis.call('zadd', queue, mapping, nx=True)
+        self.runtime.logger.info('Queued in for mass rebuild lock')
+
+        return await locks.enqueue_for_lock(
+            coro=self.build(),
+            lock=Lock.KONFLUX_MASS_REBUILD,
+            lock_name=Lock.KONFLUX_MASS_REBUILD.value,
+            lock_id=self.lock_identifier,
+            ocp_version=self.version,
+            version_queue_name=queue
+        )
+
     async def run(self):
         await self.initialize()
 
@@ -328,7 +361,10 @@ class KonfluxOcp4Pipeline:
 
         LOGGER.info(f"Building images for OCP {self.version} with release {input_release}")
         try:
-            await self.build()
+            if self.mass_rebuild:
+                await self.request_mass_rebuild()
+            else:
+                await self.build()
 
         finally:
             await self.sync_images()
@@ -382,7 +418,8 @@ async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional
         skip_rebase=skip_rebase,
         skip_bundle_build=skip_bundle_build,
         arches=arches,
-        plr_template=plr_template)
+        plr_template=plr_template,
+        lock_identifier=lock_identifier)
 
     if ignore_locks:
         await pipeline.run()
