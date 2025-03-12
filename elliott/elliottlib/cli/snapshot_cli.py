@@ -170,7 +170,7 @@ def snapshot_cli():
     help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
 )
-@click.option('--apply', is_flag=True, help='Create the snapshot in cluster')
+@click.option('--apply', is_flag=True, help='Create the snapshot in cluster (False by default)')
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,

@@ -26,6 +26,8 @@ API_VERSION = "appstudio.redhat.com/v1alpha1"
 KIND_SNAPSHOT = "Snapshot"
 KIND_COMPONENT = "Component"
 KIND_APPLICATION = "Application"
+KIND_RELEASE = "Release"
+KIND_RELEASE_PLAN = "ReleasePlan"
 
 
 class KonfluxClient:
