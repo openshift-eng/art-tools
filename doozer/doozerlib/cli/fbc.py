@@ -1,15 +1,19 @@
 import asyncio
 import logging
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import click
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord)
+    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord)
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 from doozerlib import constants, opm
-from doozerlib.backend.konflux_fbc import KonfluxFbcImporter, KonfluxFbcRebaser
+from doozerlib.backend.konflux_fbc import (KonfluxFbcBuilder,
+                                           KonfluxFbcImporter,
+                                           KonfluxFbcRebaser)
 from doozerlib.cli import (cli, click_coroutine, option_commit_message,
                            option_push, pass_runtime,
                            validate_semver_major_minor_patch)
@@ -273,4 +277,75 @@ async def fbc_rebase(
     """
     cli = FbcRebaseCli(runtime=runtime, version=version, release=release,
                        commit_message=message, push=push, fbc_repo=fbc_repo, operator_nvrs=operator_nvrs)
+    await cli.run()
+
+
+class FbcBuildCli:
+    def __init__(self, runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
+                 konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, plr_template: str,
+                 dry_run: bool):
+        self.runtime = runtime
+        self.konflux_kubeconfig = konflux_kubeconfig
+        self.konflux_context = konflux_context
+        self.konflux_namespace = konflux_namespace
+        self.image_repo = image_repo
+        self.skip_checks = skip_checks
+        self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
+        self.plr_template = plr_template
+        self._fbc_db = KonfluxDb()
+        self._fbc_db.bind(KonfluxFbcBuildRecord)
+        self.dry_run = dry_run
+
+    async def run(self):
+        runtime = self.runtime
+        runtime.initialize(mode='images', clone_distgits=False)
+        operator_metas: List[ImageMetadata] = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
+        builder = KonfluxFbcBuilder(
+            base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
+            group=runtime.group,
+            assembly=runtime.assembly,
+            db=self._fbc_db,
+            fbc_repo=self.fbc_repo,
+            konflux_kubeconfig=self.konflux_kubeconfig,
+            konflux_context=self.konflux_context,
+            konflux_namespace=self.konflux_namespace,
+            image_repo=self.image_repo,
+            skip_checks=self.skip_checks,
+            pipelinerun_template_url=self.plr_template,
+            dry_run=self.dry_run,
+            record_logger=runtime.record_logger,
+        )
+        tasks = []
+        for operator_meta in operator_metas:
+            tasks.append(builder.build(operator_meta))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        failed_tasks = []
+        for operator_meta, result in zip(operator_metas, results):
+            if isinstance(result, Exception):
+                failed_tasks.append(operator_meta.distgit_key)
+                stack_trace = ''.join(traceback.TracebackException.from_exception(result).format())
+                LOGGER.error(f"Failed to build FBC for {operator_meta.distgit_key}: {result}; {stack_trace}")
+        if failed_tasks:
+            raise DoozerFatalError(f"Failed to rebase FBC for bundles: {', '.join(failed_tasks)}")
+        LOGGER.info("FBC build complete")
+
+
+@cli.command("beta:fbc:build", short_help="Build the FBC source content")
+@click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
+@click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
+@click.option('--konflux-namespace', metavar='NAMESPACE', default=constants.KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
+@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
+@click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
+@click.option('--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO)
+@click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
+@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+              help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template')
+@pass_runtime
+@click_coroutine
+async def fbc_build(runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
+                    konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, dry_run: bool,
+                    plr_template: str):
+    cli = FbcBuildCli(runtime=runtime, konflux_kubeconfig=konflux_kubeconfig, konflux_context=konflux_context,
+                      konflux_namespace=konflux_namespace, image_repo=image_repo, skip_checks=skip_checks,
+                      fbc_repo=fbc_repo, plr_template=plr_template, dry_run=dry_run)
     await cli.run()

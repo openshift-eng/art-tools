@@ -317,6 +317,7 @@ class KonfluxClient:
                                                build_platforms: Sequence[str], git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
                                                hermetic: Optional[bool] = None,
+                                               dockerfile: Optional[str] = None,
                                                pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
             additional_tags = []
@@ -368,6 +369,8 @@ class KonfluxClient:
         _modify_param(params, "skip-checks", skip_checks)
         _modify_param(params, "build-source-image", "true")  # Have to be true always to satisfy Enterprise Contract Policy
         _modify_param(params, "build-platforms", list(build_platforms))
+        if dockerfile:
+            _modify_param(params, "dockerfile", dockerfile)
         if hermetic is not None:
             _modify_param(params, "hermetic", hermetic)
 
@@ -425,6 +428,7 @@ class KonfluxClient:
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
         hermetic: Optional[bool] = None,
+        dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
     ):
         """
@@ -445,6 +449,7 @@ class KonfluxClient:
         :param skip_checks: Whether to skip checks.
         :param hermetic: Whether to build the image in a hermetic environment. If None, the default value is used.
         :param image_metadata: Image metadata
+        :param dockerfile: Override the Dockerfile to use.
         :param pipelinerun_template_url: The URL to the PipelineRun template.
         :return: The PipelineRun resource.
         """
@@ -469,6 +474,7 @@ class KonfluxClient:
             skip_checks=skip_checks,
             hermetic=hermetic,
             additional_tags=additional_tags,
+            dockerfile=dockerfile,
             pipelinerun_template_url=pipelinerun_template_url,
         )
         if self.dry_run:
@@ -560,7 +566,7 @@ class KonfluxClient:
                         # while waiting for a long pipelinerun. If we somehow miss
                         # an event, it also ensures we will come back and check
                         # the object with an explicit get at least once per period.
-                        timeout_seconds=5*60
+                        timeout_seconds=5 * 60
                     ):
                         assert isinstance(event, Dict)
                         cancel_pipelinerun = False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
