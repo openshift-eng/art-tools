@@ -204,22 +204,20 @@ class WatchReleaseCli:
     async def run(self):
         self.runtime.initialize(no_group=True)
         release_obj = await self.konflux_client.wait_for_release(self.release, overall_timeout_timedelta=timedelta(hours=self.timeout))
-        released_condition = next(c for c in release_obj['status']['conditions'] if c['type'] == 'Released')
+        released_condition = next(c for c in release_obj['status']['conditions'] if c['type'] == "Released")
         reason = released_condition.get('reason')
         status = released_condition.get('status')
-        keys_exist = reason is not None and status is not None
-        if keys_exist:
-            success = reason == "Succeeded" and status == "True"
-            if success:
-                print("Release successful!")
-                exit(0)
-            else:
-                message = released_condition.get('message')
-                if message == "Release processing failed on managed pipelineRun":
-                    managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
-                    message += f" {managed_plr}"
-                print(f"Release failed! Konflux message: {message}")
-                exit(1)
+        success = reason == "Succeeded" and status == "True"
+        if success:
+            print("Release successful!")
+            exit(0)
+        else:
+            message = released_condition.get('message')
+            if message == "Release processing failed on managed pipelineRun":
+                managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
+                message += f" {managed_plr}"
+            print(f"Release failed! Konflux message: {message}")
+            exit(1)
 
 
 @konflux_release_cli.command("watch", short_help="Watch and report on status of a given Konflux Release")
