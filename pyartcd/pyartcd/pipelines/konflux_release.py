@@ -68,7 +68,6 @@ class KonfluxReleasePipeline:
         top_key = next(k for k in release_obj.keys())
         return release_obj.get(top_key, {}).get('metadata', {}).get('name')
 
-
     async def watch_release(self, release_name, timeout=5) -> int:
         cmd = self._elliott_base_command + [
             "release",
