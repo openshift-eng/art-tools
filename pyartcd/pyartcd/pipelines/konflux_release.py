@@ -49,9 +49,13 @@ class KonfluxReleasePipeline:
         cmd = self._elliott_base_command + [
             "release",
             "new",
-            f"--filename={self.config_filename}",
-            f"--context={self.release_context}",
         ]
+        if self.config_filename:
+            cmd.append(f"--filename={self.config_filename}")
+        if self.release_context:
+            cmd.append(f"--context={self.release_context}")
+        if self.force:
+            cmd.append("--force")
         if not self.dry_run:
             cmd.append("--apply")
         await exectools.cmd_assert_async(cmd)
