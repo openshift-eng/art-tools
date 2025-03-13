@@ -204,10 +204,13 @@ class WatchReleaseCli:
     async def run(self):
         self.runtime.initialize(no_group=True)
         release_obj = await self.konflux_client.wait_for_release(self.release, overall_timeout_timedelta=timedelta(hours=self.timeout))
+
+        # Assume that these will be available
         released_condition = next(c for c in release_obj['status']['conditions'] if c['type'] == "Released")
         reason = released_condition.get('reason')
         status = released_condition.get('status')
         success = reason == "Succeeded" and status == "True"
+
         if success:
             print("Release successful!")
             exit(0)
