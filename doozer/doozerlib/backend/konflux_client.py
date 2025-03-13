@@ -711,7 +711,7 @@ class KonfluxClient:
         return await exectools.to_thread(_inner)
 
     async def wait_for_release(self, release_name: str, namespace: Optional[str] = None,
-                              overall_timeout_timedelta: Optional[datetime.timedelta] = None) -> resource.ResourceInstance:
+                               overall_timeout_timedelta: Optional[datetime.timedelta] = None) -> resource.ResourceInstance:
         """
         Wait for a Release to complete.
 
