@@ -67,6 +67,6 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         build_inspector.get_all_installed_package_build_dicts.return_value = {
             "kernel": {"nvr": "kernel-1.2.3-1", "id": 1}
         }
-        issues = ai.check_installed_rpms_in_image("foo", build_inspector)
+        issues = ai.check_installed_rpms_in_image("foo", build_inspector, None)
         self.assertEqual(issues, [])
     pass
