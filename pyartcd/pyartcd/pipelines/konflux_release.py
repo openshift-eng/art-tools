@@ -77,8 +77,8 @@ class KonfluxReleasePipeline:
 @pass_runtime
 @click_coroutine
 async def konflux_release(runtime: Runtime, konflux_release_path: str, group: str, assembly: str, config_filename: str,
-                          release_env: str, force: bool):
+                          env: str, force: bool):
     pipeline = KonfluxReleasePipeline(runtime=runtime, konflux_release_path=konflux_release_path, group=group,
                                       assembly=assembly, config_filename=config_filename,
-                                      release_env=release_env, force=force)
+                                      release_env=env, force=force)
     await pipeline.run()
