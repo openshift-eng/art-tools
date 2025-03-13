@@ -437,6 +437,8 @@ cli.add_command(find_bugs_golang_cli)
 cli.add_command(remove_builds_cli)
 cli.add_command(get_golang_report_cli)
 cli.add_command(snapshot_cli)
+cli.add_command(new_release_cli)
+cli.add_command(watch_release_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point

@@ -724,8 +724,18 @@ class KonfluxClient:
             overall_timeout_timedelta = datetime.timedelta(hours=5)
 
         namespace = namespace or self.default_namespace
-
         api = await self._get_api(API_VERSION, KIND_RELEASE)
+
+        if self.dry_run:
+            await asyncio.sleep(3)
+            release = {
+                "metadata": {"name": release_name, "namespace": namespace},
+                "apiVersion": API_VERSION,
+                "kind": KIND_RELEASE,
+                "status": {"conditions": [{"type": "Released", "status": "True", "reason": "Succeeded"}]}
+            }
+            self._logger.info(f"[DRY RUN] Would have waited for Release {release_name} to complete")
+            return resource.ResourceInstance(self.dyn_client, release)
 
         def _inner():
             nonlocal overall_timeout_timedelta

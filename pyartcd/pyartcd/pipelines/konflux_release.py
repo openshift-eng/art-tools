@@ -1,9 +1,12 @@
 import click
+import yaml
 
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from artcommonlib.constants import KONFLUX_RELEASE_DATA_URL
-from artcommonlib import exectools
+from artcommonlib import exectools, logutil
+
+LOGGER = logutil.get_logger(__name__)
 
 
 class KonfluxReleasePipeline:
@@ -43,7 +46,8 @@ class KonfluxReleasePipeline:
             self._elliott_base_command.append(f'--assembly={self.assembly}')
 
     async def run(self):
-        await self.create_release()
+        release_name = await self.create_release()
+        await self.watch_release(release_name)
 
     async def create_release(self) -> int:
         cmd = self._elliott_base_command + [
@@ -57,6 +61,23 @@ class KonfluxReleasePipeline:
             cmd.append("--force")
         if not self.dry_run:
             cmd.append("--apply")
+        _, out, err = await exectools.cmd_gather_async(cmd)
+        LOGGER.info(err)
+        release_obj = yaml.safe_load(out)
+        # This could change over time so don't hardcode it
+        top_key = next(k for k in release_obj.keys())
+        return release_obj.get(top_key, {}).get('metadata', {}).get('name')
+
+
+    async def watch_release(self, release_name, timeout=5) -> int:
+        cmd = self._elliott_base_command + [
+            "release",
+            "watch",
+            release_name,
+            f"--timeout={timeout}",
+        ]
+        if self.dry_run:
+            cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd)
 
 
