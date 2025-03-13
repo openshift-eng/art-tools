@@ -9,6 +9,7 @@ from elliottlib.runtime import Runtime
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE
 from artcommonlib import logutil
+from artcommonlib.constants import KONFLUX_RELEASE_DATA_URL
 
 
 LOGGER = logutil.get_logger(__name__)
@@ -35,6 +36,8 @@ class CreateReleaseCli:
         self.release_config = None
 
     async def run(self):
+        if not self.runtime.konflux_release_path:
+            self.runtime.konflux_release_path = KONFLUX_RELEASE_DATA_URL
         self.runtime.initialize()
 
         if not self.filename:

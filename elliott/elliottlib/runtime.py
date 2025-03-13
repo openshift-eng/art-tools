@@ -7,6 +7,7 @@ import tempfile
 from multiprocessing import Lock, RLock
 import time
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import click
 import yaml
@@ -351,10 +352,26 @@ class Runtime(GroupRuntime):
         except gitdata.GitDataException as ex:
             raise ElliottFatalError(ex)
 
+        # clone only if explicitly set
         if self.konflux_release_path:
-            release_path, commitish = self.konflux_release_path, None
+            release_path, commitish = self.konflux_release_path, "main"
             if '@' in self.konflux_release_path:
                 release_path, commitish = self.konflux_release_path.split('@')
+
+            # TODO: find a better solution
+            if 'gitlab.cee.redhat.com' in release_path:
+                gitlab_auth_token = os.environ.get('GITLAB_TOKEN')
+                if not gitlab_auth_token:
+                    self._logger.info("GITLAB_TOKEN not found to be set")
+                else:
+                    try:
+                        parsed_url = urlparse(release_path)
+                        scheme = parsed_url.scheme
+                        rest_of_the_url = release_path[len(scheme + "://"):]
+                        release_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
+                    except Exception as e:
+                        self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {release_path}: {e}")
+
             try:
                 self.konflux_gitdata = gitdata.GitData(data_path=release_path, clone_dir=self.working_dir,
                                                        commitish=commitish, logger=self._logger)
