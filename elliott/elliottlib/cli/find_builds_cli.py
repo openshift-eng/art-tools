@@ -137,7 +137,6 @@ PRESENT advisory. Here are some examples:
         builds = [line.strip() for line in builds_file.readlines()]
 
     runtime.initialize(mode='images' if kind == 'image' else 'rpms')
-    exit(0)
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
     tag_pv_map = et_data.get('brew_tag_product_version_mapping')
