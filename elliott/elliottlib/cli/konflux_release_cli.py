@@ -14,14 +14,24 @@ from artcommonlib.constants import KONFLUX_RELEASE_DATA_URL
 
 LOGGER = logutil.get_logger(__name__)
 
-CONTEXT_KEYS = ["stage", "prod", "fbc"]
-KONFLUX_KEYS = ["releasePlan", "snapshot", "releaseNotes"]
+ENV_KEYS = ["stage", "prod"]
+
+# Konflux keys required to create a release
+REQUIRED_KONFLUX_KEYS = ["releasePlan", "snapshot", "releaseNotes"]
+
+# Konflux keys that can be globally set
+# releasePlan is specific to env so do not allow it to be globally set
+ALLOWED_TOP_LEVEL_KONFLUX_KEYS = ["snapshot", "releaseNotes"]
+
+# Keys that contain metadata about an existing Konflux release/advisory
 EXISTING_RELEASE_KEYS = ["releaseName", "advisoryName", "advisoryInternalUrl"]
-ALLOWED_KEYS = CONTEXT_KEYS + KONFLUX_KEYS + EXISTING_RELEASE_KEYS
+
+ALLOWED_ENV_KEYS = REQUIRED_KONFLUX_KEYS + EXISTING_RELEASE_KEYS
+ALLOWED_TOP_LEVEL_KEYS = ALLOWED_TOP_LEVEL_KONFLUX_KEYS + ENV_KEYS
 
 
 class CreateReleaseCli:
-    def __init__(self, runtime: Runtime, filename: str, context: str, konflux_config: dict, dry_run: bool, force: bool):
+    def __init__(self, runtime: Runtime, filename: str, release_env: str, konflux_config: dict, dry_run: bool, force: bool):
         self.runtime = runtime
         self.filename = filename
         self.konflux_config = konflux_config
@@ -32,7 +42,7 @@ class CreateReleaseCli:
                                                             context=self.konflux_config['context'],
                                                             dry_run=self.dry_run)
         self.konflux_client.verify_connection()
-        self.release_context = context
+        self.release_env = release_env
         self.release_config = None
 
     async def run(self):
@@ -56,7 +66,7 @@ class CreateReleaseCli:
         except exceptions.ResourceNotFoundError:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
 
-        self.release_config = self.get_release_config(release_config_raw, self.release_context)
+        self.release_config = self.get_release_config(release_config_raw, self.release_env)
 
         if not self.force:
             for key in EXISTING_RELEASE_KEYS:
@@ -70,36 +80,32 @@ class CreateReleaseCli:
         print(created)
 
     @staticmethod
-    def get_release_config(global_config_raw: dict, context: str):
+    def get_release_config(global_config_raw: dict, env: str):
         """
-        Construct a konflux release config based on special context keys and konflux keys
-        Merge global and local dicts based on a special context key.
-        Nested local dicts can override (relative) global dict values
-        context key can be nested e.g key1.key2.key3
+        Construct a konflux release config based on env and konflux keys
         """
-        global_config = {k: v for k, v in global_config_raw.items() if k in ALLOWED_KEYS}
-        if context:
-            keys = context.split('.')
-            top_key = keys[0]
-            if top_key not in CONTEXT_KEYS:
-                raise ValueError(f"context can only be one of {CONTEXT_KEYS}. found `{top_key}`")
-            next_context = '.'.join(keys[1:])
-            local_config_raw = global_config.get(top_key, {})
-            if not isinstance(local_config_raw, dict):
-                raise ValueError(f"context value should be a dict. found {type(local_config_raw)}")
-            local_config = {k: v for k, v in local_config_raw.items() if k in ALLOWED_KEYS}
-            global_config.update(local_config)
-            return CreateReleaseCli.get_release_config(global_config, next_context)
+        global_config = {k: v for k, v in global_config_raw.items() if k in ALLOWED_TOP_LEVEL_KEYS}
+        if env not in ENV_KEYS:
+            raise ValueError(f"env can only be one of {ENV_KEYS}. found `{env}`")
+
+        env_config_raw = global_config.get(env, {})
+        if not isinstance(env_config_raw, dict):
+            raise ValueError(f"env value should be a dict. found {type(env_config_raw)}")
+        env_config = {k: v for k, v in env_config_raw.items() if k in ALLOWED_ENV_KEYS}
+        global_config.update(env_config)
         return global_config
 
     async def new_release(self, release_config: dict) -> dict:
-        missing = [k for k in KONFLUX_KEYS if k not in release_config.keys()]
+        missing = [k for k in REQUIRED_KONFLUX_KEYS if k not in release_config.keys()]
         if missing:
             raise ValueError(f"Required konflux keys for release not found: {missing}")
 
         major, minor = self.runtime.get_major_minor()
         timestamp = datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")
-        release_name = f"ose-{major}-{minor}-{timestamp}"
+
+        # make sure no '.' in env name
+        env_str = self.release_env.replace(".", "-")
+        release_name = f"ose-{major}-{minor}-{env_str}-{timestamp}"
 
         release_plan = release_config['releasePlan']
         snapshot = release_config['snapshot']
@@ -142,8 +148,8 @@ def konflux_release_cli():
 @konflux_release_cli.command("new", short_help="Create a new Konflux Release in the given namespace for the given "
                                                "konflux-release-data configuration")
 @click.option('--filename', metavar='FILENAME', help='Release config filename to use. Defaults to assembly name')
-@click.option('--context', metavar='RELEASE_CONTEXT',
-              help='The release context to use from the config file e.g. stage, prod, fbc.stage, etc.')
+@click.option('--env', metavar='RELEASE_ENV', required=True,
+              help='The release environment to operate on in the config file e.g. stage, prod')
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
@@ -151,14 +157,14 @@ def konflux_release_cli():
 @click.option('--force', is_flag=True, help='Proceed even if an associated release/advisory detected')
 @click.pass_obj
 @click_coroutine
-async def new_release_cli(runtime: Runtime, filename, context, konflux_kubeconfig, konflux_context, konflux_namespace,
+async def new_release_cli(runtime: Runtime, filename, env, konflux_kubeconfig, konflux_context, konflux_namespace,
                           apply, force):
     """
     Create a new Konflux Release in the given namespace based on the config provided
     \b
     $ elliott -g openshift-4.18 --assembly 4.18.2 --konflux-release-path
     "https://gitlab.cee.redhat.com/sidsharm/ocp-konflux-release-data@add_4.19.0_test_release"
-    release new
+    release new --env stage
     """
     if not konflux_kubeconfig:
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -174,7 +180,7 @@ async def new_release_cli(runtime: Runtime, filename, context, konflux_kubeconfi
 
     pipeline = CreateReleaseCli(runtime,
                                 filename=filename,
-                                context=context,
+                                release_env=env,
                                 konflux_config=konflux_config,
                                 dry_run=not apply,
                                 force=force)

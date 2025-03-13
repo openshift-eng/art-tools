@@ -15,7 +15,7 @@ class KonfluxReleasePipeline:
                  assembly: str,
                  konflux_release_path: str,
                  config_filename: str,
-                 release_context: str,
+                 release_env: str,
                  force: bool):
         self.runtime = runtime
         self.group = group
@@ -23,7 +23,7 @@ class KonfluxReleasePipeline:
         self.force = force
         self.konflux_release_path = konflux_release_path
         self.config_filename = config_filename
-        self.release_context = release_context
+        self.release_env = release_env
 
         self._working_dir = self.runtime.working_dir.absolute()
 
@@ -49,11 +49,10 @@ class KonfluxReleasePipeline:
         cmd = self._elliott_base_command + [
             "release",
             "new",
+            f"--env={self.release_env}",
         ]
         if self.config_filename:
             cmd.append(f"--filename={self.config_filename}")
-        if self.release_context:
-            cmd.append(f"--context={self.release_context}")
         if self.force:
             cmd.append("--force")
         if not self.dry_run:
@@ -72,14 +71,14 @@ class KonfluxReleasePipeline:
               help="(Optional) The name of the associated assembly e.g. 4.18.1")
 @click.option("--config-filename", metavar="CONFIG_FILENAME",
               help="(Optional) Release config filename to use. Defaults to assembly name")
-@click.option("--release-context", metavar="RELEASE_CONTEXT",
-              help="(Optional) The release context to use from the config file e.g. stage, prod, fbc.stage, etc.")
+@click.option("--env", metavar="RELEASE_ENV", required=True,
+              help="The release env to operate on in the config file e.g. stage, prod")
 @click.option('--force', is_flag=True, help='Proceed even if an associated release/advisory detected')
 @pass_runtime
 @click_coroutine
 async def konflux_release(runtime: Runtime, konflux_release_path: str, group: str, assembly: str, config_filename: str,
-                          release_context: str, force: bool):
+                          release_env: str, force: bool):
     pipeline = KonfluxReleasePipeline(runtime=runtime, konflux_release_path=konflux_release_path, group=group,
                                       assembly=assembly, config_filename=config_filename,
-                                      release_context=release_context, force=force)
+                                      release_env=release_env, force=force)
     await pipeline.run()
