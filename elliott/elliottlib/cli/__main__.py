@@ -66,7 +66,7 @@ from elliottlib.cli.find_bugs_golang_cli import find_bugs_golang_cli
 from elliottlib.cli.remove_builds_cli import remove_builds_cli
 from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.snapshot_cli import snapshot_cli
-from elliottlib.cli.konflux_release_cli import new_release_cli
+from elliottlib.cli.konflux_release_cli import new_release_cli, watch_release_cli
 
 
 # 3rd party

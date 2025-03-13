@@ -1,6 +1,7 @@
+import datetime
 import click
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from kubernetes.dynamic import exceptions
 
@@ -184,4 +185,68 @@ async def new_release_cli(runtime: Runtime, filename, env, konflux_kubeconfig, k
                                 konflux_config=konflux_config,
                                 dry_run=not apply,
                                 force=force)
+    await pipeline.run()
+
+
+class WatchReleaseCli:
+    def __init__(self, runtime: Runtime, release: str, konflux_config: dict, timeout: int):
+        self.runtime = runtime
+        self.release = release
+        self.konflux_config = konflux_config
+        self.timeout = timeout
+        self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
+                                                            config_file=self.konflux_config['kubeconfig'],
+                                                            context=self.konflux_config['context'])  # do not make any modifications
+        self.konflux_client.verify_connection()
+
+    async def run(self):
+        self.runtime.initialize(no_group=True)
+        release_obj = await self.konflux_client.wait_for_release(self.release, overall_timeout_timedelta=timedelta(hours=self.timeout))
+        released_condition = next(c for c in release_obj['status']['conditions'] if c['type'] == 'Released')
+        reason = released_condition.get('reason')
+        status = released_condition.get('status')
+        keys_exist = reason is not None and status is not None
+        if keys_exist:
+            success = reason == "Succeeded" and status == "True"
+            if success:
+                print("Release successful!")
+                exit(0)
+            else:
+                message = released_condition.get('message')
+                if message == "Release processing failed on managed pipelineRun":
+                    managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
+                    message += f" {managed_plr}"
+                print(f"Release failed! Konflux message: {message}")
+                exit(1)
+
+
+@konflux_release_cli.command("watch", short_help="Watch and report on status of a given Konflux Release")
+@click.argument("release", metavar='RELEASE_NAME', nargs=1)
+@click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
+@click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
+@click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
+@click.option('--timeout', metavar='TIMEOUT_HOURS', type=click.INT, default=5,
+              help='Time to wait, in hours. Set 0 to report and exit.')
+@click.pass_obj
+@click_coroutine
+async def watch_release_cli(runtime: Runtime, release, konflux_kubeconfig, konflux_context, konflux_namespace, timeout):
+    """
+    Watch the given Konflux Release and report on its status
+    \b
+
+    $ elliott release watch ose-4-18-stage-202503131819 --konflux-namespace ocp-art-tenant
+    """
+    if not konflux_kubeconfig:
+        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
+    if not konflux_kubeconfig:
+        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+
+    konflux_config = {
+        'kubeconfig': konflux_kubeconfig,
+        'namespace': konflux_namespace,
+        'context': konflux_context,
+    }
+
+    pipeline = WatchReleaseCli(runtime, release=release, konflux_config=konflux_config, timeout=timeout)
     await pipeline.run()

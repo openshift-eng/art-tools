@@ -709,3 +709,74 @@ class KonfluxClient:
                     raise
 
         return await exectools.to_thread(_inner)
+
+    async def wait_for_release(self, release_name: str, namespace: Optional[str] = None,
+                              overall_timeout_timedelta: Optional[datetime.timedelta] = None) -> resource.ResourceInstance:
+        """
+        Wait for a Release to complete.
+
+        :param release_name: The name of the Release.
+        :param namespace: The namespace of the Release.
+        :param overall_timeout_timedelta: Maximum time to wait for release to complete before exiting (defaults to 5 hour)
+        :return: The Release ResourceInstance
+        """
+        if overall_timeout_timedelta is None:
+            overall_timeout_timedelta = datetime.timedelta(hours=5)
+
+        namespace = namespace or self.default_namespace
+
+        api = await self._get_api(API_VERSION, KIND_RELEASE)
+
+        def _inner():
+            nonlocal overall_timeout_timedelta
+            watcher = watch.Watch()
+            released_status = "Not Found"
+            released_reason = "Not Found"
+            timeout_datetime = datetime.datetime.now() + overall_timeout_timedelta
+
+            while True:
+                try:
+                    for event in watcher.stream(
+                        api.get,
+                        resource_version=0,
+                        namespace=namespace,
+                        serialize=False,
+                        field_selector=f"metadata.name={release_name}",
+                        timeout_seconds=5 * 60
+                    ):
+                        assert isinstance(event, Dict)
+                        obj = resource.ResourceInstance(api, event["object"])
+                        # status takes some time to appear
+                        try:
+                            released_condition = art_util.KubeCondition.find_condition(obj, 'Released')
+                            if released_condition:
+                                released_status = released_condition.status
+                                released_reason = released_condition.reason
+                        except AttributeError:
+                            pass
+
+                        self._logger.info("Release %s [status=%s][reason=%s]", release_name, released_status, released_reason)
+
+                        if released_status not in ["Unknown", "Not Found"]:
+                            watcher.stop()
+                            return obj
+
+                        if datetime.datetime.now() > timeout_datetime:
+                            self._logger.info("Timeout reached. Exiting..")
+                            watcher.stop()
+                            return obj
+
+                    self._logger.info("No updates for Release %s during watch timeout period; requerying",
+                                      release_name)
+                except TimeoutError:
+                    self._logger.error("Timeout waiting for Release %s to complete", release_name)
+                    continue
+                except exceptions.ApiException as e:
+                    if e.status == 410:
+                        # If the last result is too old, an `ApiException` exception will be thrown with
+                        # `code` 410. In that case we have to recover by retrying without resource_version.
+                        self._logger.debug("%s: Resource version is too old. Recovering...", release_name)
+                        continue
+                    raise
+
+        return await exectools.to_thread(_inner)
