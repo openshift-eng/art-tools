@@ -276,6 +276,9 @@ class KonfluxOcp4Pipeline:
             if n_images < self.build_plan.active_image_count / 2:
                 self.mass_rebuild = True
 
+        if self.mass_rebuild:
+            jenkins.update_title(' [MASS REBUILD]')
+
         self.runtime.logger.info('Initial build plan:\n%s', self.build_plan)
 
     async def initialize(self):
