@@ -48,7 +48,7 @@ class KonfluxReleasePipeline:
     async def create_release(self) -> int:
         cmd = self._elliott_base_command + [
             "release",
-            "new"
+            "new",
             f"--filename={self.config_filename}",
             f"--context={self.release_context}",
         ]
