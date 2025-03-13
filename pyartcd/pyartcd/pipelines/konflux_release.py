@@ -31,7 +31,7 @@ class KonfluxReleasePipeline:
             self.konflux_release_path = KONFLUX_RELEASE_DATA_URL
 
         self.dry_run = self.runtime.dry_run
-        self.elliott_working_dir = self.working_dir / "elliott-working"
+        self.elliott_working_dir = self._working_dir / "elliott-working"
 
         self._elliott_base_command = [
             'elliott',
