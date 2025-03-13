@@ -1,6 +1,5 @@
 import click
 import os
-import yaml
 from datetime import datetime, timezone
 
 from kubernetes.dynamic import exceptions
@@ -16,15 +15,17 @@ LOGGER = logutil.get_logger(__name__)
 
 CONTEXT_KEYS = ["stage", "prod", "fbc"]
 KONFLUX_KEYS = ["releasePlan", "snapshot", "releaseNotes"]
-ALLOWED_KEYS = CONTEXT_KEYS + KONFLUX_KEYS
+EXISTING_RELEASE_KEYS = ["releaseName", "advisoryName", "advisoryInternalUrl"]
+ALLOWED_KEYS = CONTEXT_KEYS + KONFLUX_KEYS + EXISTING_RELEASE_KEYS
 
 
 class CreateReleaseCli:
-    def __init__(self, runtime: Runtime, filename: str, context: str, konflux_config: dict, dry_run: bool):
+    def __init__(self, runtime: Runtime, filename: str, context: str, konflux_config: dict, dry_run: bool, force: bool):
         self.runtime = runtime
         self.filename = filename
         self.konflux_config = konflux_config
         self.dry_run = dry_run
+        self.force = force
         self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
                                                             config_file=self.konflux_config['kubeconfig'],
                                                             context=self.konflux_config['context'],
@@ -53,6 +54,14 @@ class CreateReleaseCli:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
 
         self.release_config = self.get_release_config(release_config_raw, self.release_context)
+
+        if not self.force:
+            for key in EXISTING_RELEASE_KEYS:
+                val = self.release_config.get(key)
+                if val and val != 'N/A':
+                    raise ValueError(f"existing release key is not empty: {key}={val}. "
+                                     "use --force if you still want to proceed")
+
         release_obj = await self.new_release(self.release_config)
         created = await self.konflux_client._create(release_obj)
         print(created)
@@ -129,17 +138,18 @@ def konflux_release_cli():
 
 @konflux_release_cli.command("new", short_help="Create a new Konflux Release in the given namespace for the given "
                                                "konflux-release-data configuration")
-@click.option('--filename', metavar='FILENAME', help='Release config filename to use. Defaults to passed assembly')
+@click.option('--filename', metavar='FILENAME', help='Release config filename to use. Defaults to assembly name')
 @click.option('--context', metavar='RELEASE_CONTEXT',
               help='The release context to use from the config file e.g. stage, prod, fbc.stage, etc.')
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
 @click.option('--apply', is_flag=True, help='Create the release in cluster (False by default)')
+@click.option('--force', is_flag=True, help='Proceed even if an associated release/advisory detected')
 @click.pass_obj
 @click_coroutine
 async def new_release_cli(runtime: Runtime, filename, context, konflux_kubeconfig, konflux_context, konflux_namespace,
-                          apply):
+                          apply, force):
     """
     Create a new Konflux Release in the given namespace based on the config provided
     \b
@@ -159,5 +169,10 @@ async def new_release_cli(runtime: Runtime, filename, context, konflux_kubeconfi
         'context': konflux_context,
     }
 
-    pipeline = CreateReleaseCli(runtime, filename, context, konflux_config, dry_run=not apply)
+    pipeline = CreateReleaseCli(runtime,
+                                filename=filename,
+                                context=context,
+                                konflux_config=konflux_config,
+                                dry_run=not apply,
+                                force=force)
     await pipeline.run()
