@@ -3,34 +3,31 @@ import logging
 import os
 import re
 import traceback
-import click
-import subprocess
 from collections import namedtuple
-from subprocess import PIPE
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import click
+from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, new_roundtrip_yaml_handler, get_assembly_release_date
-from artcommonlib import exectools
+from artcommonlib.util import (get_assembly_release_date,
+                               get_ocp_version_from_group,
+                               new_roundtrip_yaml_handler)
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from semver import VersionInfo
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from pyartcd import constants, oc, util, jenkins
+from pyartcd import constants, jenkins, oc, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_type,
-                          isolate_el_version_in_release,
-                          get_release_name_for_assembly,
-                          load_group_config,
-                          load_releases_config,
-                          default_release_suffix,
-                          get_microshift_builds)
+from pyartcd.util import (default_release_suffix, get_assembly_type,
+                          get_microshift_builds, get_release_name_for_assembly,
+                          isolate_el_version_in_release, load_group_config,
+                          load_releases_config)
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -95,8 +92,8 @@ class BuildMicroShiftPipeline:
             await self._trigger_build_microshift_bootc()
             await self._prepare_advisory(self.advisory_num if self.advisory_num else advisories['microshift'])
 
-    def create_microshift_advisory(self) -> int:
-        release_name = get_release_name_for_assembly(self.group_name, self.releases_config, self.assembly)
+    async def create_microshift_advisory(self) -> int:
+        release_name = get_release_name_for_assembly(self.group, self.releases_config, self.assembly)
         advisory_type = "RHEA" if VersionInfo.parse(release_name).to_tuple()[2] == 0 else "RHBA"
         release_date = get_assembly_release_date(self.assembly, self.group)
         self._logger.info("Creating advisory with type %s art_advisory_key microshift ...", advisory_type)
@@ -113,18 +110,15 @@ class BuildMicroShiftPipeline:
             f"--package-owner={self.runtime.config['advisory']['package_owner']}",
             f"--date={release_date}",
             "--with-liveid",
-            "--batch-id=0"
-            "--yes"
+            "--batch-id=0",
         ]
-        self._logger.info("Running command: %s", create_cmd)
-        result = subprocess.run(create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self._working_dir)
-        if result.returncode != 0:
-            raise IOError(
-                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
-            )
+        if not self.runtime.dry_run:
+            create_cmd.append("--yes")
+        _, out, _ = await exectools.cmd_gather_async(create_cmd, env=self._elliott_env_vars, stderr=None)
         match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", out
         )
+        assert match is not None
         advisory_num = int(match[1])
         self._logger.info("Created microshift advisory %s", advisory_num)
         return advisory_num
