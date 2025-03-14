@@ -518,9 +518,9 @@ class ConfigScanSources:
                     self.logger.info('Ignoring digest change since commit message indicates noop')
                 else:
                     self.logger.warning('Would have rebuild %s because of metadata config change', image_meta.distgit_key)
-                    # self.add_image_meta_change(image_meta,
-                    #                            RebuildHint(RebuildHintCode.CONFIG_CHANGE,
-                    #                                        'Metadata configuration change'))
+                    self.add_image_meta_change(image_meta,
+                                               RebuildHint(RebuildHintCode.CONFIG_CHANGE,
+                                                           'Metadata configuration change'))
 
         except IOError:
             # IOError is raised by fetch_cgit_file() when config_digest could not be found

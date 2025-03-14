@@ -3,12 +3,13 @@ import hashlib
 import json
 from multiprocessing import Event
 from typing import (Any, Dict, List, Optional, Set, Tuple)
-from copy import deepcopy
+from copy import copy
 
 import doozerlib
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
+from artcommonlib.util import deep_merge
 from doozerlib import util
 from doozerlib import brew, coverity
 from doozerlib.build_info import BrewBuildRecordInspector
@@ -503,7 +504,12 @@ class ImageMetadata(Metadata):
     def calculate_config_digest(self, group_config, streams):
         ignore_keys = ["owners", "scan_sources", "content.source.ci_alignment",
                        "content.source.git", "external_scanners", "delivery"]  # list of keys that shouldn't be involved in config digest calculation
-        image_config: Dict[str, Any] = deepcopy(self.config.primitive())
+        image_config = copy(self.config)
+        # If there is a konflux stanza in the image config, merge it with the main config
+        if image_config.konflux is not Missing:
+            image_config = Model(deep_merge(image_config.primitive(), image_config.konflux.primitive()))
+        image_config: Dict[str, Any] = image_config.primitive()
+
         group_config: Dict[str, Any] = group_config.primitive()
         streams: Dict[str, Any] = streams.primitive()
 

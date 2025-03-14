@@ -95,13 +95,8 @@ class KonfluxRebaser:
             commit_message: str,
             push: bool,
     ) -> None:
-        # If there is a konflux stanza in the image config, merge it with the main config
-        if metadata.config.konflux is not Missing:
-            metadata.config = Model(deep_merge(metadata.config.primitive(), metadata.config.konflux.primitive()))
-
         try:
             # If this image has an upstream source, resolve it
-            source = None
             if metadata.has_source():
                 self._logger.info(f"Resolving source for {metadata.qualified_key}")
                 source = cast(SourceResolution, await exectools.to_thread(self._source_resolver.resolve_source, metadata))
