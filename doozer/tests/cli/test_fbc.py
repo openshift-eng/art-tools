@@ -21,7 +21,7 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
         self.fbc_import_cli = FbcImportCli(
             runtime=self.runtime, index_image="example.com/test/test-index-image:latest",
             keep_templates=False, push=True, fbc_repo="https://example.com/test/fbc.git", message="Test commit",
-            dest_dir="/tmp/fbc")
+            dest_dir="/tmp/fbc", registry_auth="/path/to/auth/file.json")
 
     @mock.patch("doozerlib.cli.fbc.opm.verify_opm")
     @mock.patch("doozerlib.cli.fbc.KonfluxFbcImporter.import_from_index_image")

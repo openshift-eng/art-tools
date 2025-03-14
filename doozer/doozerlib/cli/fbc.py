@@ -27,11 +27,12 @@ yaml = opm.yaml
 
 class FbcImportCli:
     def __init__(self, runtime: Runtime, index_image: str | None, keep_templates: bool, push: bool,
-                 fbc_repo: str, message: str, dest_dir: str | None):
+                 registry_auth: Optional[str], fbc_repo: str, message: str, dest_dir: str | None):
         self.runtime = runtime
         self.index_image = index_image
         self.keep_templates = keep_templates
         self.push = push
+        self.registry_auth = registry_auth
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.message = message
         self.dest_dir = Path(dest_dir) if dest_dir else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES)
@@ -61,6 +62,9 @@ class FbcImportCli:
         operator_metadatas = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
         if not operator_metadatas:
             raise ValueError("No operator images loaded in group")
+        auth = None
+        if self.registry_auth:
+            auth = opm.OpmRegistryAuth(path=self.registry_auth)
         importer = KonfluxFbcImporter(
             base_dir=self.dest_dir,
             group=runtime.group,
@@ -71,6 +75,7 @@ class FbcImportCli:
             push=self.push,
             commit_message=self.message,
             fbc_repo=self.fbc_repo,
+            auth=auth,
         )
 
         LOGGER.info("Importing FBC from index image...")
@@ -93,11 +98,13 @@ class FbcImportCli:
 @click.option("--keep-templates", is_flag=True, help="Keep the generated templates. If not set, the templates will be deleted after rendering the final catalogs.")
 @click.option("--push", is_flag=True, help="Push the generated FBC to the git repository.")
 @click.option("--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO)
+@click.option("--registry-auth", metavar='AUTH', help="The registry authentication file to use for the index image.")
 @option_commit_message
 @click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
 @pass_runtime
 @click_coroutine
-async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates: bool, push: bool, fbc_repo: str, message: str, dest_dir: Optional[str]):
+async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates: bool, push: bool, fbc_repo: str,
+                     registry_auth: Optional[str], message: str, dest_dir: Optional[str]):
     """
     Create an FBC repository by importing from the provided index image
 
@@ -105,7 +112,8 @@ async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates
 
     doozer --group=openshift-4.17 beta:fbc:import registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
-    cli = FbcImportCli(runtime=runtime, index_image=from_index, keep_templates=keep_templates, push=push, fbc_repo=fbc_repo, message=message, dest_dir=dest_dir)
+    cli = FbcImportCli(runtime=runtime, index_image=from_index, keep_templates=keep_templates, push=push,
+                       fbc_repo=fbc_repo, registry_auth=registry_auth, message=message, dest_dir=dest_dir)
     await cli.run()
 
 
