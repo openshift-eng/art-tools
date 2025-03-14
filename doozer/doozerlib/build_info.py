@@ -231,7 +231,9 @@ class KonfluxImageInspector(ImageInspector):
         return self.build_record_inspector.get_image_meta()
 
     def get_pullspec(self):
-        return self._image_info['name']
+        manifest_pullspec = self._image_info['name']
+        content_digest = self._image_info['digest']
+        return f'{manifest_pullspec.split("@")[0]}@{content_digest}'
 
     def image_arch(self):
         return brew_arch_for_go_arch(self._image_info.config.architecture)
