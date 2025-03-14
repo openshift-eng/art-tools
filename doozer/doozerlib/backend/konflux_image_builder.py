@@ -246,7 +246,7 @@ class KonfluxImageBuilder:
                     "image meta or group config.")
 
         if not cachito_enabled:
-            logger.info("Not setting pre-fetch since cachito is disabled")
+            logger.info("Not setting pre-fetch since cachito not enabled")
             return []
 
         prefetch = []
