@@ -17,6 +17,7 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
                                                        KonfluxBuildRecord)
+from artcommonlib.model import Missing, ListModel
 from artcommonlib.release_util import isolate_el_version_in_release
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource
@@ -225,6 +226,66 @@ class KonfluxImageBuilder:
         name = f"ose-{name.removeprefix('openshift-')}"
         return name
 
+    def _prefetch(self, metadata: ImageMetadata) -> list:
+        """
+        To generate the param values for konflux's prefetch dependencies task which uses cachi2 (similar to cachito in
+        brew) to fetch packages and make it available to the build task (which ideally will be hermetic)
+        https://issues.redhat.com/browse/ART-11902
+        """
+        logger = self._logger.getChild(f"[{metadata.distgit_key}]")
+
+        cachito_enabled = False
+        if metadata.config.cachito.enabled:
+            cachito_enabled = True
+        elif metadata.config.cachito.enabled is Missing:
+            if metadata.runtime.group_config.cachito.enabled:
+                cachito_enabled = True
+            elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
+                logger.warning(
+                    f"pkg_managers directive for {metadata.name} has no effect since cachito is not enabled in "
+                    "image meta or group config.")
+
+        if not cachito_enabled:
+            logger.info("Not setting pre-fetch since cachito not enabled")
+            return []
+
+        prefetch = []
+        required_package_managers = metadata.config.content.source.pkg_managers
+
+        if required_package_managers in [Missing, None]:
+            raise ValueError(f"{required_package_managers} should not be empty if cachi2 is enabled")
+
+        for package_manager in ["gomod", "npm", "pip", "yarn"]:
+            if package_manager in required_package_managers:
+                paths: dict = metadata.config.cachito.packages.get(package_manager, [])
+
+                flag = False
+                data = {"type": package_manager}
+                for path in paths:
+                    data = {"type": package_manager}
+                    for entry, values in path.items():
+                        if entry == "path":
+                            data["path"] = values
+
+                        if entry in ["requirements_files", "requirements_build_files"]:
+                            if "requirements_files" not in data:
+                                data["requirements_files"] = []
+                            if entry == "requirements_files":
+                                data["requirements_files"] = data["requirements_files"] + values
+                            if entry == "requirements_build_files":
+                                data["requirements_files"] = data["requirements_files"] + values
+                        flag = True
+                    prefetch.append(data)
+
+                if not flag:
+                    data["path"] = "."
+                    prefetch.append(data)
+
+        if prefetch:
+            logger.info(f"Adding pre-fetch params: {prefetch}")
+
+        return prefetch
+
     async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
                            output_image: str, additional_tags: list[str]):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
@@ -255,6 +316,9 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
+
+        prefetch = self._prefetch(metadata)
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -270,6 +334,7 @@ class KonfluxImageBuilder:
             hermetic=hermetic,
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
+            prefetch=prefetch
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
