@@ -66,18 +66,6 @@ class ImageMetadata(Metadata):
             raise IOError(f"[{self.distgit_key}] No update-csv config found in the image's metadata")
         return str(self.config.distgit.bundle_component or self.get_component_name().replace('-container', '-metadata-container'))
 
-    def prefetch_enabled(self):
-        """
-        cachi2 is the replacement of cachito in Konflux. If the former is enabled, set the appropriate values for
-        konflux prefetch-dependencies task
-        """
-        image_config_flag = self.config.konflux.cachi2.enabled
-        if image_config_flag is not Missing:
-            assert type(image_config_flag) == bool
-            return image_config_flag
-
-        return False
-
     def get_olm_bundle_short_name(self):
         """ Returns the short name of the OLM bundle for this OLM operator.
 

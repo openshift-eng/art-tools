@@ -806,10 +806,6 @@ class KonfluxRebaser:
         # 2. "cachito-emulation" - inject cachito-like environment variables & resources into Dockerfile.
         # 3. "cachito-removal" - Comment out lines referencing REMOTE_SOURCES.
         cachito_mode = metadata.config.konflux.cachito.mode
-        if metadata.prefetch_enabled():
-            # if prefetch is enabled, cachito lines (REMOTE_SOURCES etc.) should be commented out
-            self._logger.info("Setting cachito_mode = 'removal' since pre-fetch is enabled")
-            cachito_mode = 'removal'
 
         if cachito_mode is Missing:
             build_deps_mode = 'default'

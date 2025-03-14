@@ -17,7 +17,7 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
                                                        KonfluxBuildRecord)
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, ListModel
 from artcommonlib.release_util import isolate_el_version_in_release
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource
@@ -234,6 +234,21 @@ class KonfluxImageBuilder:
         """
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
 
+        cachito_enabled = False
+        if metadata.config.cachito.enabled:
+            cachito_enabled = True
+        elif metadata.config.cachito.enabled is Missing:
+            if metadata.runtime.group_config.cachito.enabled:
+                cachito_enabled = True
+            elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
+                logger.warning(
+                    f"pkg_managers directive for {metadata.name} has no effect since cachito is not enabled in "
+                    "image meta or group config.")
+
+        if not cachito_enabled:
+            logger.info("Not setting pre-fetch since cachito is disabled")
+            return []
+
         prefetch = []
         required_package_managers = metadata.config.content.source.pkg_managers
 
@@ -303,10 +318,7 @@ class KonfluxImageBuilder:
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
 
         # Image config overrides group config
-        prefetch = None
-        if metadata.prefetch_enabled():
-            logger.info(f"pre-fetch enabled for: {component_name}")
-            prefetch = self._prefetch(metadata)
+        prefetch = self._prefetch(metadata)
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
