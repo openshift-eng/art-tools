@@ -1375,7 +1375,7 @@ class ImageDistGitRepo(DistGitRepo):
                     'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'image_pullspec': image_pullspec,
-                    'image_tag': image_pullspec.split('sha256:')[-1],
+                    'image_tag': build_info['extra']['image']['index']['tags'][0],
                     'build_id': str(build_info['id'])
                 })
 
