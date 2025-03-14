@@ -400,9 +400,9 @@ class KonfluxImageBuilder:
             installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
 
             build_record_params.update({
-                'image_pullspec': image_pullspec,
+                'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
                 'installed_packages': installed_packages,
-                'image_tag': image_digest.split('sha256:')[-1],
+                'image_tag': image_pullspec.split(':')[-1],
             })
 
         if pipelinerun.status:

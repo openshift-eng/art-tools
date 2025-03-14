@@ -270,7 +270,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'image_pullspec': image_pullspec,
-                    'image_tag': image_pullspec.split('sha256:')[-1],
+                    'image_tag': build_info['extra']['image']['index']['tags'][0],
                     'operand_nvrs': [v for _, v in olm_bundle.found_image_references.items()],
                     'build_id': str(build_info['id']),
                     'outcome': KonfluxBuildOutcome.SUCCESS,
