@@ -317,7 +317,6 @@ class KonfluxImageBuilder:
         # Start a PipelineRun
         hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
 
-        # Image config overrides group config
         prefetch = self._prefetch(metadata)
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
