@@ -63,7 +63,8 @@ def init_jenkins():
         username=os.environ['JENKINS_SERVICE_ACCOUNT'],
         password=os.environ['JENKINS_SERVICE_ACCOUNT_TOKEN'],
         requester=requester,
-        lazy=True
+        lazy=True,
+        timeout=60,
     )
     logger.info('Connected to Jenkins server %s', jenkins_client.base_server_url())
 
