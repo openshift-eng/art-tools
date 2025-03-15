@@ -12,7 +12,7 @@ from doozerlib.backend.konflux_fbc import (KonfluxFbcBuilder,
                                            KonfluxFbcImporter,
                                            KonfluxFbcRebaser)
 from doozerlib.image import ImageMetadata
-from doozerlib.opm import yaml
+from doozerlib.opm import OpmRegistryAuth, yaml
 
 
 class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
@@ -39,6 +39,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             push=self.push,
             commit_message=self.commit_message,
             fbc_repo=self.fbc_repo,
+            auth=OpmRegistryAuth(path="/path/to/auth.json"),
             logger=self.logger
         )
 
@@ -130,7 +131,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
     async def test_render_index_image(self, mock_render):
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
-        mock_render.assert_called_once_with("test-index-image-pullspec")
+        mock_render.assert_called_once_with("test-index-image-pullspec", auth=OpmRegistryAuth(path='/path/to/auth.json'))
 
     def test_filter_catalog_blobs(self):
         catalog_blobs = [

@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 
 import click
@@ -35,12 +36,6 @@ class FbcImportPipeline:
             # Import FBC objects from given operator index
             self._logger.info('Importing FBC objects from operator index')
             await self._import_from_index()
-
-            # Parse doozer record.log
-            self._logger.info('Parsing doozer record.log')
-            fbc_nvrs = await self._parse_record_log()
-
-            self._logger.info(f'Successfully built:\n{", ".join(fbc_nvrs)}')
         except Exception as e:
             self._logger.error('Encountered error: %s', e)
             await self._slack_client.say('*:heavy_exclamation_mark: Error importing FBC objects from operator index*\n')
@@ -65,25 +60,18 @@ class FbcImportPipeline:
             cmd.extend(['--from-index', self.from_operator_index])
         if self.into_fbc_repo:
             cmd.extend(['--fbc-repo', self.into_fbc_repo])
+
+        auth_file = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
+        if not auth_file:
+            self._logger.warning('KONFLUX_OPERATOR_INDEX_AUTH_FILE is not set. '
+                                 'This may cause issues with operator index authentication.')
+        else:
+            cmd.extend(['--registry-auth', auth_file])
         if not self.runtime.dry_run:
             cmd.append('--push')
         datetime_str = datetime.now(tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         cmd.extend(['--message', f'Import FBC objects for {self.version} on {datetime_str}'])
         await exectools.cmd_assert_async(cmd)
-
-    async def _parse_record_log(self):
-        fbc_nvrs = []
-        record_log_path = Path(self.runtime.doozer_working, 'record.log')
-        if record_log_path.exists():
-            with record_log_path.open() as file:
-                record_log = parse_record_log(file)
-            records = record_log.get('build_fbc_konflux', [])
-            for record in records:
-                if record['status'] != '0':
-                    raise RuntimeError('record.log includes unexpected build_fbc_konflux '
-                                       f'record with error message: {record["message"]}')
-                fbc_nvrs.append(record['fbc_nvr'])
-        return fbc_nvrs
 
 
 @cli.command('fbc-import-from-index')

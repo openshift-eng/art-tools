@@ -43,6 +43,7 @@ class KonfluxFbcImporter:
                  push: bool,
                  commit_message: Optional[str] = None,
                  fbc_repo: str = constants.ART_FBC_GIT_REPO,
+                 auth: Optional[opm.OpmRegistryAuth] = None,
                  logger: logging.Logger | None = None
                  ):
         self.base_dir = base_dir
@@ -54,6 +55,7 @@ class KonfluxFbcImporter:
         self.push = push
         self.commit_message = commit_message
         self.fbc_git_repo = fbc_repo
+        self.auth = auth
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
     async def import_from_index_image(self, metadata: ImageMetadata, index_image: str | None = None):
@@ -148,8 +150,11 @@ class KonfluxFbcImporter:
         logger.info("FBC directory updated")
 
     @alru_cache
-    async def _render_index_image(self, index_image: str):
-        blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(index_image)
+    async def _render_index_image(self, index_image: str) -> List[Dict]:
+        blobs = await retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))(opm.render)(
+            index_image,
+            auth=self.auth,
+        )
         return blobs
 
     def _filter_catalog_blobs(self, blobs: List[Dict], allowed_package_names: Set[str]):
