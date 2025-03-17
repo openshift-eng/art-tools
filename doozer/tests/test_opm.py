@@ -2,8 +2,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from doozerlib.opm import (generate_basic_template, generate_dockerfile,
-                           render, render_catalog_from_template, verify_opm)
+from doozerlib.opm import (OpmRegistryAuth, generate_basic_template,
+                           generate_dockerfile, render,
+                           render_catalog_from_template, verify_opm)
 
 
 class TestOpm(unittest.IsolatedAsyncioTestCase):
@@ -45,10 +46,11 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
     async def test_render_catalog_from_template(self, mock_gather_opm, mock_open):
         template_file = Path('/path/to/template.yaml')
         catalog_file = Path('/path/to/catalog.yaml')
-        await render_catalog_from_template(template_file, catalog_file)
+        auth = MagicMock(spec=OpmRegistryAuth)
+        await render_catalog_from_template(template_file, catalog_file, auth=auth)
         mock_gather_opm.assert_called_once_with([
             'alpha', 'render-template', 'basic', '--migrate-level', 'none', '-o', 'yaml', '--', str(template_file)
-        ], stdout=mock_open.return_value.__enter__.return_value)
+        ], stdout=mock_open.return_value.__enter__.return_value, auth=auth)
 
         with self.assertRaises(ValueError, msg="Invalid migrate level: invalid"):
             await render_catalog_from_template(template_file, catalog_file, migrate_level='invalid')
