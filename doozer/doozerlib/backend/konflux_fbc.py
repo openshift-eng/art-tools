@@ -130,7 +130,7 @@ class KonfluxFbcImporter:
         migrate_level = "none"
         if self.ocp_version >= (4, 17):
             migrate_level = "bundle-object-to-csv-metadata"
-        await opm.render_catalog_from_template(template_file, catalog_file, migrate_level=migrate_level)
+        await opm.render_catalog_from_template(template_file, catalog_file, migrate_level=migrate_level, auth=self.auth)
 
         # Clean up catalog-templates
         if not self.keep_templates:

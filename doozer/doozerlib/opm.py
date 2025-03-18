@@ -142,7 +142,9 @@ async def generate_basic_template(catalog_file: Path, template_file: Path, outpu
         await gather_opm(["alpha", "convert-template", "basic", "-o", output_format, "--", str(catalog_file)], stdout=out)
 
 
-async def render_catalog_from_template(template_file: Path, catalog_file: Path, migrate_level: str = "none", output_format: str = "yaml"):
+async def render_catalog_from_template(
+        template_file: Path, catalog_file: Path, migrate_level: str = "none", output_format: str = "yaml",
+        auth: Optional[OpmRegistryAuth] = None):
     """
     Render a catalog from a template file.
 
@@ -150,6 +152,7 @@ async def render_catalog_from_template(template_file: Path, catalog_file: Path, 
     :param catalog_file: The file to write the rendered catalog to.
     :param migrate_level: The migration level to use when rendering the catalog.
     :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
+    :param auth: The registry authentication information to use. If not provided, system-default authentication is used.
     """
     if migrate_level not in ["none", "bundle-object-to-csv-metadata"]:
         raise ValueError(f"Invalid migrate level: {migrate_level}")
@@ -157,7 +160,8 @@ async def render_catalog_from_template(template_file: Path, catalog_file: Path, 
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Rendering catalog {catalog_file} from template {template_file}")
     with open(catalog_file, 'w') as out:
-        await gather_opm(["alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o", output_format, "--", str(template_file)], stdout=out)
+        await gather_opm(["alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o",
+                          output_format, "--", str(template_file)], stdout=out, auth=auth)
 
 
 async def generate_dockerfile(dest_dir: Path, dc_dir_name: str, base_image: str, builder_image: str):
