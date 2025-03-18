@@ -671,8 +671,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.build_pipeline_url, "https://example.com/pipelinerun")
         self.assertEqual(build_record.operator_nvr, "test-operator-1.0-1")
         self.assertEqual(build_record.operand_nvrs, ["operand1-1.0-1", "operand2-1.0-1"])
-        self.assertEqual(build_record.image_pullspec, "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image")
-        self.assertEqual(build_record.image_tag, "49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807")
+        self.assertEqual(build_record.image_pullspec, "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test@sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807")
+        self.assertEqual(build_record.image_tag, "test-image")
         self.assertEqual(build_record.start_time, datetime(2023, 10, 1, 12, 0, 0, tzinfo=timezone.utc))
         self.assertEqual(build_record.end_time, datetime(2023, 10, 1, 12, 30, 0, tzinfo=timezone.utc))
 

@@ -40,15 +40,15 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         build_records = [
             Mock(
                 nvr='test-nvr-1',
-                image_pullspec='registry/image:tag1',
-                image_tag='digest1',
+                image_pullspec='registry/image@sha256:digest1',
+                image_tag='tag1',
                 rebase_repo_url='https://github.com/test/repo1',
                 rebase_commitish='foobar'
             ),
             Mock(
                 nvr='test-nvr-2',
-                image_pullspec='registry/image:tag2',
-                image_tag='digest2',
+                image_pullspec='registry/image@sha256:digest2',
+                image_tag='tag2',
                 rebase_repo_url='https://github.com/test/repo2',
                 rebase_commitish='test'
             )

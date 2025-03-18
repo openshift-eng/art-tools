@@ -105,11 +105,6 @@ class CreateSnapshotCli:
             if not (source_url or revision or digest):
                 raise ValueError(f"Could not find all required nvr details {source_url=} {revision=} {digest=}")
 
-            # pullspec is in the form of registry/image:tag
-            # we need to provide snapshot with digest which is stored in image_tag
-            image = record.image_pullspec.split(':')
-            pullspec = f"{image[0]}@sha256:{digest}"
-
             return {
                 "name": comp_name,
                 "source": {
@@ -118,7 +113,7 @@ class CreateSnapshotCli:
                         "revision": revision,
                     }
                 },
-                "containerImage": pullspec
+                "containerImage": record.image_pullspec
             }
 
         components = [await _comp(record) for record in build_records]
