@@ -19,7 +19,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
 from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
-from artcommonlib.util import deep_merge
+from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers
 from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -1213,21 +1213,8 @@ class KonfluxRebaser:
         if metadata.config.container_yaml is not Missing:
             config_overrides = copy.deepcopy(cast(Dict, metadata.config.container_yaml.primitive()))
 
-        # Cachito will be configured if `cachito.enabled` is True in image metadata
-        # or `cachito.enabled` is True in group config.
-        # https://osbs.readthedocs.io/en/latest/users.html#remote-sources
-        cachito_enabled = False
-        if metadata.config.cachito.enabled:
-            cachito_enabled = True
-        elif metadata.config.cachito.enabled is Missing:
-            if self._runtime.group_config.cachito.enabled:
-                cachito_enabled = True
-            elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
-                self._logger.warning(f"pkg_managers directive for {metadata.name} has no effect since cachito is not enabled in "
-                                     "image metadata or group config.")
-        if cachito_enabled and not metadata.has_source():
-            self._logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)
-            cachito_enabled = False
+        cachito_enabled = is_cachito_enabled(metadata=metadata, group_config=self._runtime.group_config, logger=self._logger)
+
         if cachito_enabled:
             if config_overrides.get("go", {}).get("modules"):
                 raise ValueError(f"Cachito integration is enabled for image {metadata.name}. Specifying `go.modules` in `container.yaml` is not allowed.")
@@ -1237,7 +1224,7 @@ class KonfluxRebaser:
                 pkg_managers = metadata.config.content.source.pkg_managers.primitive()
             elif metadata.config.content.source.pkg_managers in [Missing, None]:
                 # Auto-detect package managers
-                pkg_managers = self._detect_package_managers(metadata, dest_dir)
+                pkg_managers = detect_package_managers(metadata, dest_dir)
             else:
                 raise ValueError(f"Invalid content.source.pkg_managers config for image {metadata.name}: {metadata.config.content.source.pkg_managers}")
             # Configure Cachito flags
@@ -1346,24 +1333,6 @@ class KonfluxRebaser:
         # apply overrides
         config.update(config_overrides)
         return config
-
-    def _detect_package_managers(self, metadata: ImageMetadata, dest_dir: Path):
-        """ Detect and return package managers used by the source
-        :return: a list of package managers
-        """
-        if not dest_dir or not dest_dir.is_dir():
-            raise FileNotFoundError(f"Distgit directory for image {metadata.distgit_key} hasn't been cloned.")
-        pkg_manager_files = {
-            "gomod": ["go.mod"],
-            "npm": ["npm-shrinkwrap.json", "package-lock.json"],
-            "pip": ["requirements.txt", "requirements-build.txt"],
-            "yarn": ["yarn.lock"],
-        }
-        pkg_managers: List[str] = []
-        for pkg_manager, files in pkg_manager_files.items():
-            if any(dest_dir.joinpath(file).is_file() for file in files):
-                pkg_managers.append(pkg_manager)
-        return pkg_managers
 
     def _update_yum_update_commands(self, metadata: ImageMetadata, force_yum_updates: bool, df_fileobj: io.TextIOBase) -> io.StringIO:
         """ If force_yum_updates is True, inject "yum updates -y" in the final build stage; Otherwise, remove the lines we injected.
