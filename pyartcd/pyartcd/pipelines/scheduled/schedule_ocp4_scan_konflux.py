@@ -10,9 +10,6 @@ from pyartcd.runtime import Runtime
 
 
 async def run_for(version: str, runtime: Runtime, lock_manager: LockManager):
-    if version != '4.19':
-        return  # TODO to be reverted
-
     # Skip if locked on scan
     scan_lock_name = Lock.SCAN_KONFLUX.value.format(version=version)
     if await lock_manager.is_locked(scan_lock_name):
