@@ -44,8 +44,7 @@ class MetadataBase(object):
 
         self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type,
                                                self.distgit_key, self.raw_config)
-        self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config,
-                                                                           self.runtime.build_system)
+        self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config)
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
         if self.mode not in CONFIG_MODES:
             raise ValueError('Invalid mode for {}'.format(self.config_filename))
@@ -122,14 +121,13 @@ class MetadataBase(object):
         return el_targets
 
     @staticmethod
-    def extract_component_info(meta_type: str, meta_name: str, config_model: Model, build_system: str) -> Tuple[str, str]:
+    def extract_component_info(meta_type: str, meta_name: str, config_model: Model) -> Tuple[str, str]:
         """
         Determine the component information for either RPM or Image metadata
         configs.
         :param meta_type: 'rpm' or 'image'
         :param meta_name: The name of the component's distgit
         :param config_model: The configuration for the metadata.
-        :param build_system: The runtime build system in use
         :return: Return (namespace, component_name)
         """
 
@@ -156,17 +154,12 @@ class MetadataBase(object):
         if namespace == "apbs":
             component_name = "%s-apb" % component_name
 
-        default_build_system = build_system is None or build_system == Engine.BREW.value
-        # Only true in case of Brew components
         # In Konflux, we do not set `-container` suffix
         if namespace == "containers":
-            if default_build_system:
-                component_name = "%s-container" % component_name
+            component_name = "%s-container" % component_name
 
-        # Brew specific config can override component name
-        if default_build_system:
-            if config_model.distgit.component is not Missing:
-                component_name = config_model.distgit.component
+        if config_model.distgit.component is not Missing:
+            component_name = config_model.distgit.component
 
         return namespace, component_name
 
