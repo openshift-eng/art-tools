@@ -224,25 +224,31 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
         'context': konflux_context,
     }
 
-    pipeline = CreateSnapshotCli(runtime, konflux_config, image_repo_creds_config,
-                                 for_bundle, for_fbc, builds, dry_run=not apply)
+    pipeline = CreateSnapshotCli(runtime=runtime,
+                                 konflux_config=konflux_config,
+                                 image_repo_creds_config=image_repo_creds_config,
+                                 for_bundle=for_bundle,
+                                 for_fbc=for_fbc,
+                                 builds=builds,
+                                 dry_run=not apply)
     snapshot = await pipeline.run()
     yaml.dump(snapshot.to_dict(), sys.stdout)
 
 
 class GetSnapshotCli:
     def __init__(self, runtime: Runtime, konflux_config: dict, image_repo_creds_config: dict,
-                 for_bundle: bool, for_fbc: bool, snapshot: str):
+                 for_bundle: bool, for_fbc: bool, dry_run: bool, snapshot: str):
         self.runtime = runtime
         self.konflux_config = konflux_config
         self.for_bundle = for_bundle
         self.for_fbc = for_fbc
+        self.dry_run = dry_run
         self.snapshot = snapshot
         self.image_repo_creds_config = image_repo_creds_config
         self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
                                                             config_file=self.konflux_config['kubeconfig'],
                                                             context=self.konflux_config['context'],
-                                                            dry_run=False)
+                                                            dry_run=self.dry_run)
         self.konflux_client.verify_connection()
 
     async def run(self):
@@ -266,16 +272,26 @@ class GetSnapshotCli:
         snapshot_obj = await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, self.snapshot)
         nvrs = await self.extract_nvrs_from_snapshot(snapshot_obj)
 
-        LOGGER.info("Validating NVRs from DB...")
+        LOGGER.info(f"Validating {len(nvrs)} NVRs from DB...")
         where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
 
-        # we don't care about the build records
-        # but we do want to validate that the nvrs exist in the DB
-        await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
+        if not self.dry_run:
+            # we don't care about the build records
+            # but we do want to validate that the nvrs exist in the DB
+            # not existing would indicate inconsistency bw nvr construction & DB nvr field
+            # or something more atypical like nvr/image not belonging to ART
+            await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
+        else:
+            LOGGER.info("[DRY-RUN] Skipped DB validation")
 
         return nvrs
 
     async def extract_nvrs_from_snapshot(self, snapshot_obj: ResourceInstance) -> list[str]:
+        if self.dry_run:
+            major, minor = self.runtime.get_major_minor()
+            LOGGER.info("[DRY-RUN] Returning mock NVR")
+            return [f"test-component-v{major}.{minor}.0-202503121435.p0.gc0eec47.assembly.{self.runtime.assembly}.el9"]
+
         nvrs = []
         pullspecs = [c.containerImage for c in snapshot_obj.spec.components]
         image_infos = await CreateSnapshotCli.get_pullspecs(pullspecs, self.image_repo_creds_config)
@@ -298,11 +314,12 @@ class GetSnapshotCli:
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
 @click.option('--for-bundle', is_flag=True, help='To indicate that the given builds are bundle builds.')
 @click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
+@click.option('--dry-run', is_flag=True, help='Do not fetch, just print what would happen')
 @click.argument('snapshot', metavar='SNAPSHOT', nargs=1)
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-                           for_bundle, for_fbc, snapshot):
+                           for_bundle, for_fbc, dry_run, snapshot):
     """
     Get NVRs from an existing Konflux Snapshot
 
@@ -334,7 +351,12 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
         'context': konflux_context,
     }
 
-    pipeline = GetSnapshotCli(runtime, konflux_config, image_repo_creds_config,
-                              for_bundle, for_fbc, snapshot)
+    pipeline = GetSnapshotCli(runtime=runtime,
+                              konflux_config=konflux_config,
+                              image_repo_creds_config=image_repo_creds_config,
+                              for_bundle=for_bundle,
+                              for_fbc=for_fbc,
+                              dry_run=dry_run,
+                              snapshot=snapshot)
     nvrs = await pipeline.run()
     print('\n'.join(sorted(nvrs)))
