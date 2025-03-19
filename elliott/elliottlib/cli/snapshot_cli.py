@@ -330,7 +330,7 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
     Get NVRs from an existing Konflux Snapshot
 
     \b
-    $ elliott snapshot get ose-4-18-202503121723
+    $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
     """
     if bool(for_bundle) and bool(for_fbc):
         raise click.BadParameter("Use only one of --for-bundle or --for-fbc")
