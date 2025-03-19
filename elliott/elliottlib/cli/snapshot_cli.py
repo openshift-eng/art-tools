@@ -274,13 +274,19 @@ class GetSnapshotCli:
 
         LOGGER.info(f"Validating {len(nvrs)} NVRs from DB...")
         where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
-
         if not self.dry_run:
             # we don't care about the build records
             # but we do want to validate that the nvrs exist in the DB
             # not existing would indicate inconsistency bw nvr construction & DB nvr field
             # or something more atypical like nvr/image not belonging to ART
-            await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
+            try:
+                await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
+            except IOError as e:
+                LOGGER.warning("A snapshot is expected to exclusively contain ART built image builds "
+                               "OR bundle builds OR FBC builds. To indicate fbc/bundle snapshot use "
+                               "--for-fbc/--for-bundle")
+                raise e
+
         else:
             LOGGER.info("[DRY-RUN] Skipped DB validation")
 
