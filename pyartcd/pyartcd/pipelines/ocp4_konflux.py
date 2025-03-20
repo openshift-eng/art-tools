@@ -12,6 +12,7 @@ import yaml
 
 from artcommonlib import exectools, redis
 from artcommonlib.util import new_roundtrip_yaml_handler
+from doozerlib.util import extract_version_fields
 
 from pyartcd import constants, util, jenkins, locks
 from pyartcd.cli import cli, click_coroutine, pass_runtime
@@ -197,7 +198,8 @@ class KonfluxOcp4Pipeline:
             LOGGER.info('All image builds failed, nothing to sync')
             return
 
-        if self.version != '4.19':
+        _, minor = extract_version_fields(self.version)
+        if minor < 17:
             return  # TODO to be removed
 
         if self.assembly == 'test':
