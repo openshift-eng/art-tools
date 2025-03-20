@@ -376,8 +376,8 @@ class KonfluxDb:
         tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
         records = await asyncio.gather(*tasks, return_exceptions=True)
 
-        error_or_not_found = [(nvr, record) for nvr, record in zip(nvrs, records) if record is None or
-                              isinstance(record, BaseException)]
+        error_or_not_found = [(nvr, record) for nvr, record in zip(nvrs, records)
+                              if record is None or isinstance(record, BaseException)]
         if error_or_not_found:
             error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in error_or_not_found)}"
             if strict:
