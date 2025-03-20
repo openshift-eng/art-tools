@@ -17,6 +17,7 @@ from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go
 from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue, assembly_basis
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.rpm_utils import parse_nvr
 import yaml
@@ -310,6 +311,8 @@ class GenPayloadCli:
         # Allows embargoed builds to be released
         self.embargo_permit_ack = embargo_permit_ack
 
+        self.package_rpm_finder = PackageRpmFinder(runtime)
+
     @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
         """
@@ -405,21 +408,13 @@ class GenPayloadCli:
         span.add_event("Checking assembly content for inconsistencies")
         self.detect_mismatched_siblings(assembly_inspector)
 
-        # Stopping the checks here for Konflux
-        # TODO to be re-enabled
-        if self.runtime.build_system == 'konflux':
-            return self.summarize_issue_permits(assembly_inspector)
-
-        assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
-        # Build IDs can either be integers (Brew builds, e.g. 3403040)
-        # or strings (Konflux builds, e.g. 'ose-4-18-vsphere-problem-detector-j5n7r'
-        assembly_brew_build_ids = list(filter(lambda build_id: str(build_id).isdigit(), assembly_build_ids))
-        # assembly_konflux_build_ids = list(filter(lambda build_id: isinstance(build_id, str), assembly_build_ids))
-
-        with rt.shared_build_status_detector() as bsd:
-            # Use the list of builds associated with the group/assembly to warm up BSD caches
-            bsd.populate_archive_lists(assembly_brew_build_ids)
-            bsd.find_shipped_builds(assembly_brew_build_ids)
+        if self.runtime.build_system == 'brew':
+            with rt.shared_build_status_detector() as bsd:
+                # Use the list of builds associated with the group/assembly to warm up BSD caches
+                assembly_build_ids: Set[int] = self.collect_assembly_build_ids(assembly_inspector)
+                assembly_brew_build_ids = list(filter(lambda build_id: str(build_id).isdigit(), assembly_build_ids))
+                bsd.populate_archive_lists(assembly_brew_build_ids)
+                bsd.find_shipped_builds(assembly_brew_build_ids)
 
         # check that RPMs belonging to this assembly/group are consistent with the assembly definition.
         for rpm_meta in rt.rpm_metas():
@@ -428,11 +423,17 @@ class GenPayloadCli:
         # check that RPMs belonging to this assembly/group are the latest
         if rt.assembly_type is AssemblyTypes.STREAM:
             await self.detect_non_latest_rpms(assembly_inspector)
+
         # check that images for this assembly/group are consistent with the assembly definition.
         self.detect_inconsistent_images(assembly_inspector)
 
         # check that images for this assembly/group have installed rpms that are not allowed to assemble.
         self.detect_installed_rpms_issues(assembly_inspector)
+
+        # Stopping the checks here for Konflux
+        # TODO to be re-enabled
+        if self.runtime.build_system == 'konflux':
+            return self.summarize_issue_permits(assembly_inspector)
 
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
@@ -557,7 +558,12 @@ class GenPayloadCli:
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
             if build_inspector:
                 image_meta = build_inspector.get_image_meta()
-                for arch, non_latest_rpms in (await build_inspector.find_non_latest_rpms()).items():
+                if self.runtime.build_system == 'brew':
+                    non_latest_rpms = await build_inspector.find_non_latest_rpms()
+                else:  # konflux
+                    non_latest_rpms = await build_inspector.find_non_latest_rpms(self.package_rpm_finder)
+
+                for arch, non_latest_rpms in non_latest_rpms.items():
                     # This could indicate an issue with scan-sources or that an image is no longer successfully building
                     # It could also mean that images are pinning content, which may be expected, so allow permits.
                     for installed_nevra, newest_nevra, repo in non_latest_rpms:
@@ -584,7 +590,8 @@ class GenPayloadCli:
         self.logger.debug("detecting images inconsistent with the assembly definition ...")
         for _, bbii in assembly_inspector.get_group_release_images().items():
             if bbii:
-                self.assembly_issues.extend(assembly_inspector.check_group_image_consistency(bbii))
+                self.assembly_issues.extend(assembly_inspector.check_group_image_consistency(
+                    bbii, self.package_rpm_finder))
 
     @TRACER.start_as_current_span("GenPayloadCli.detect_installed_rpms_issues")
     def detect_installed_rpms_issues(self, assembly_inspector: AssemblyInspector):
@@ -594,7 +601,8 @@ class GenPayloadCli:
         self.logger.debug("Detecting issues with installed rpms...")
         for dg_key, bbii in assembly_inspector.get_group_release_images().items():
             if bbii:
-                self.assembly_issues.extend(assembly_inspector.check_installed_rpms_in_image(dg_key, bbii))
+                self.assembly_issues.extend(assembly_inspector.check_installed_rpms_in_image(
+                    dg_key, bbii, self.package_rpm_finder))
 
     def full_component_repo(self, repo_type: RepositoryType = RepositoryType.PUBLIC) -> str:
         """

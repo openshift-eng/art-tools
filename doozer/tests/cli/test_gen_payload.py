@@ -195,6 +195,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     async def test_detect_non_latest_rpms(self):
         gpcli = rgp_cli.GenPayloadCli()
+        gpcli.runtime = MagicMock(build_system='brew')
         bbii = AsyncMock(BrewBuildRecordInspector)
         bbii.get_image_meta.return_value = Mock(ImageMetadata, is_rpm_exempt=Mock(return_value=(False, None)))
         bbii.find_non_latest_rpms.return_value = {"x86_64": [("foo-0:1.2.0-1.el9.x86_64", "foo-0:1.2.1-1.el9.x86_64", "repo_name")], "s390x": []}
