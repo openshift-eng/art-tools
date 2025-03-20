@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 import asyncio
+import json
 import requests
 
 import bashlex
@@ -628,6 +629,19 @@ class KonfluxRebaser:
         ),
     )
 
+    @staticmethod
+    def split_dockerfile_into_stages(dfp):
+        df_stages = []
+        df_stage = []
+
+        for df_line in json.loads(dfp.json):
+            if "FROM" in df_line.keys():
+                df_stages.append(df_stage)
+                df_stage = [df_line]
+                continue
+            df_stage.append(df_line)
+        return df_stages
+
     def _update_dockerfile(self, metadata: ImageMetadata, source: Optional[SourceResolution],
                            df_path: Path, version: str, release: str, downstream_parents: Optional[List[str]],
                            force_yum_updates: bool, uuid_tag: str, dest_dir: Path):
@@ -934,6 +948,7 @@ class KonfluxRebaser:
 
         if network_mode != "hermetic":
             konflux_lines += [
+                "USER 0",
                 "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
                 f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
                 f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"
@@ -954,12 +969,40 @@ class KonfluxRebaser:
             all_stages=True,
         )
 
+        last_stage = self.split_dockerfile_into_stages(dfp)[-1]
+
+        # Find all the USERs in the last stage
+        user_stanzas = []
+        for line in last_stage:
+            if "USER" in line.keys():
+                user_stanzas.append(f"USER {line['USER']}")
+
+        # The Dockerfile should have only one unique non-USER 0 value
+        if "USER 0" in user_stanzas:
+            # list.remove() command removes values inline
+            user_stanzas.remove("USER 0")
+        if user_stanzas and len(user_stanzas) != 1:
+            raise ValueError(f"More than one USER lines found: {user_stanzas}")
+
+
+        final_stage_user = None
+        if user_stanzas:
+            final_stage_user = user_stanzas[0]
+
+        # But if set in image config, that supersedes the USER that doozer remembers
+        # If it's not set in the image config, default to the existing value of final_stage_user
+        user_to_set = metadata.config.get("final_stage_user", final_stage_user)
+
+        lines = ["\n# Start Konflux-specific steps",
+                 "USER 0",
+                 "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
+                 f"{user_to_set if user_to_set else ''}",
+                 "# End Konflux-specific steps\n\n"
+                 ]
+
         # Put back original yum config
-        dfp.add_lines(
-            "\n# Start Konflux-specific steps",
-            "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
-            "# End Konflux-specific steps\n\n"
-        )
+        # By default, .add_lines adds lines to the end
+        dfp.add_lines(*lines)
 
     def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """
