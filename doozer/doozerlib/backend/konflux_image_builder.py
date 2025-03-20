@@ -119,7 +119,19 @@ class KonfluxImageBuilder:
 
             # Parse Dockerfile
             uuid_tag, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
-            record["nvrs"] = f"{metadata.distgit_key}-{version}-{release}"
+            nvr = f"{metadata.distgit_key}-{version}-{release}"
+
+            # Sanity check to make sure a successful NVR build doesn't already exist in DB
+            where = {"engine": Engine.KONFLUX.value}
+            build_records = await metadata.runtime.konflux_db.get_build_records_by_nvrs([nvr],
+                                                                                        outcome=KonfluxBuildOutcome.SUCCESS,
+                                                                                        where=where,
+                                                                                        strict=False)
+            if build_records:
+                raise ValueError(f"Successful NVR build {nvr} already exists in DB! To rebuild, please "
+                                 f"do another rebase")
+
+            record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
             additional_tags = [
                 f"{metadata.image_name_short}-{version}-{release}"
