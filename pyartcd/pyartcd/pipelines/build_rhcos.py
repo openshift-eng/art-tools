@@ -18,21 +18,13 @@ OCP_REPO_RAW = "https://raw.githubusercontent.com/openshift-eng/ocp-build-data/r
 
 # lifted verbatim from
 # https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
-DEFAULT_TIMEOUT = 5  # seconds
-
-
 class TimeoutHTTPAdapter(HTTPAdapter):
-    def __init__(self, *args, **kwargs):
-        self.timeout = DEFAULT_TIMEOUT
-        if "timeout" in kwargs:
-            self.timeout = kwargs["timeout"]
-            del kwargs["timeout"]
+    def __init__(self, *args, timeout=5, **kwargs):
+        self.timeout = timeout
         super().__init__(*args, **kwargs)
 
     def send(self, request, **kwargs):
-        timeout = kwargs.get("timeout")
-        if timeout is None:
-            kwargs["timeout"] = self.timeout
+        kwargs.setdefault(timeout, self.timeout)
         return super().send(request, **kwargs)
 
 
@@ -72,10 +64,7 @@ class BuildRhcosPipeline:
         for s in oc.selector('secrets'):
             if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins" and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
                 secret_maybe = base64.b64decode(s.model.data.token).decode('utf-8')
-                r = self.request_session.get(
-                    f"{JENKINS_BASE_URL}/me/api/json",
-                    headers={"Authorization": f"Bearer {secret_maybe}"},
-                )
+                r = self.request_session.get(f"{JENKINS_BASE_URL}/me/api/json", headers={"Authorization": f"Bearer {secret_maybe}"},)
                 if r.status_code == 200:
                     secret = secret_maybe
                     break
@@ -84,7 +73,7 @@ class BuildRhcosPipeline:
         return secret
 
     def query_existing_builds(self) -> List[Dict]:
-        """Check if there are any existing builds for the given job with given version. Returns builds in progress."""
+        """Check if there are any existing builds for the given job with given version. Returns builds dicts."""
         if self.ignore_running:
             return []
         response = self.request_session.get(
@@ -95,7 +84,7 @@ class BuildRhcosPipeline:
             for build in builds_info
             if build["result"] is None
             and any(
-                param["name"] == "STREAM" and param["value"] == self._stream
+                param["name"] == "STREAM" and param["value"] == self._stream  # check build parameter with given stream
                 for action in build["actions"]
                 if "parameters" in action
                 for param in action["parameters"]
@@ -103,7 +92,7 @@ class BuildRhcosPipeline:
         ]
 
     def get_stream(self):
-        """Get rhcos stream"""
+        """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""
         group_response = self.request_session.get(f"{OCP_REPO_RAW}/openshift-{self.version}/group.yml")
         group_file = yaml.load(group_response.text, Loader=yaml.SafeLoader)
         return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}" if group_file['vars']['MINOR'] > 12 else self.version
@@ -111,10 +100,7 @@ class BuildRhcosPipeline:
     def start_build(self):
         """Start a new build for the given version"""
         job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
-        params = dict(STREAM=self._stream, EARLY_ARCH_JOBS="false")
-        if self.new_build:
-            params["FORCE"] = "true"
-        # start the build
+        params = dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)  # this is build job parameter
         build_number = self.trigger_build(job_url, params)
         build = self.request_session.get(f"{JENKINS_BASE_URL}/job/{self.job}/{build_number}/api/json").json()
         return dict(url=build['url'], result=build['result'], description=build['description'])
@@ -124,11 +110,7 @@ class BuildRhcosPipeline:
         response = self.request_session.post(job_url, data=params)
         if response.status_code not in (201, 200):
             raise Exception(f"Failed to trigger rhcos build: {response}")
-        # Get queue URL
         queue_url = response.headers.get('Location')
-        if not queue_url:
-            raise Exception(f"No queue URL in response, failed to trigger rhcos build {response}")
-        # wait for a related build to begin
         start_time = time.time()
         while time.time() - start_time < 300:
             response = self.request_session.get(f"{queue_url}/api/json").json()
