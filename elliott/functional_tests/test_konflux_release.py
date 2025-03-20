@@ -20,5 +20,6 @@ class ReleaseTestCases(unittest.TestCase):
                          msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
         self.assertRegex(result.stdout.decode(), "Release successful!")
 
+
 if __name__ == '__main__':
     unittest.main()

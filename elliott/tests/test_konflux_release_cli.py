@@ -39,23 +39,97 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
         )
 
         release = {
-            'apiVersion': 'appstudio.redhat.com/v1alpha1',
-            'kind': 'Snapshot',
+            'apiVersion': API_VERSION,
+            'kind': KIND_RELEASE,
             'metadata': {
-                'labels': {
-                    'test.appstudio.openshift.io/type': 'override'
-                },
-                'name': 'ose-4-18-timestamp',
-                'namespace': 'test-namespace'
+                'name': release,
+                'namespace': self.konflux_config['namespace']
             },
-            'spec': {
-                'application': 'openshift-4-18',
-                'components': [{'containerImage': 'registry/image@sha256:digest1',
-                                'name': 'ose-4-18-component1',
-                                'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}}}]
+            'status': {
+                'conditions': [
+                    {
+                        'type': 'Released',
+                        'status': 'True',
+                        'reason': 'Succeeded'
+                    },
+                ]
             }
         }
-        self.konflux_client._get.return_value = Model(release)
+        self.konflux_client.wait_for_release.return_value = Model(release)
 
         status = await cli.run()
-        self.konflux_client._get.assert_called_once_with(API_VERSION, KIND_RELEASE, release)
+        self.assertEqual(status, True)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_run_skipped(self, mock_runtime, mock_konflux_client_init):
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        release = "test-release-prod"
+        cli = WatchReleaseCli(
+            release=release,
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            timeout=0,
+            dry_run=self.dry_run,
+        )
+
+        release = {
+            'apiVersion': API_VERSION,
+            'kind': KIND_RELEASE,
+            'metadata': {
+                'name': release,
+                'namespace': self.konflux_config['namespace']
+            },
+            'status': {
+                'conditions': [
+                    {
+                        'type': 'Released',
+                        'status': 'True',
+                        'reason': 'Skipped'
+                    },
+                ]
+            }
+        }
+        self.konflux_client.wait_for_release.return_value = Model(release)
+
+        status = await cli.run()
+        self.assertEqual(status, False)
+
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_run_skipped(self, mock_runtime, mock_konflux_client_init):
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+
+        release = "test-release-prod"
+        cli = WatchReleaseCli(
+            release=release,
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            timeout=0,
+            dry_run=self.dry_run,
+        )
+
+        release = {
+            'apiVersion': API_VERSION,
+            'kind': KIND_RELEASE,
+            'metadata': {
+                'name': release,
+                'namespace': self.konflux_config['namespace']
+            },
+            'status': {
+                'conditions': [
+                    {
+                        'type': 'Released',
+                        'status': 'False',
+                        'reason': 'Failed'
+                    },
+                ]
+            }
+        }
+        self.konflux_client.wait_for_release.return_value = Model(release)
+
+        status = await cli.run()
+        self.assertEqual(status, False)
