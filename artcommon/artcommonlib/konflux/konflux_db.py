@@ -372,13 +372,14 @@ class KonfluxDb:
 
         async def _task(nvr):
             where.update({"nvr": nvr, "outcome": str(outcome)})
-            return await anext(self.search_builds_by_fields(where=where, limit=1, strict=True))
+            return await anext(self.search_builds_by_fields(where=where, limit=1, strict=strict), None)
         tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
         records = await asyncio.gather(*tasks, return_exceptions=True)
-        errors = [(nvr, record) for nvr, record in zip(nvrs, records) if isinstance(record, BaseException)]
-        if errors:
-            error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in errors)}"
+
+        error_or_not_found = [(nvr, record) for nvr, record in zip(nvrs, records)
+                              if record is None or isinstance(record, BaseException)]
+        if error_or_not_found:
+            error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in error_or_not_found)}"
             if strict:
                 raise IOError(error_message)
-            self.logger.warning(error_message)
         return typing.cast(typing.List[KonfluxRecord], records)
