@@ -127,9 +127,11 @@ class KonfluxImageBuilder:
                                                                                         outcome=KonfluxBuildOutcome.SUCCESS,
                                                                                         where=where,
                                                                                         strict=False)
+            build_records = [b for b in build_records if b]
             if build_records:
-                raise ValueError(f"Successful NVR build {nvr} already exists in DB! To rebuild, please "
-                                 f"do another rebase")
+                raise ValueError(f"Successful NVR build {nvr} already exists in DB! "
+                                 f"pullspec: {build_records[0].image_pullspec}. "
+                                 "To rebuild, please do another rebase")
 
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
