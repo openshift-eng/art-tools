@@ -24,7 +24,7 @@ previous_packages = [
     "ignition",
     "kernel",
     "kernel-rt",
-    "libreswan",  # can disappear after ovn dropped the pin ni dockerfile
+    "libreswan",  # can disappear after ovn dropped the pin in dockerfile
     "nmstate",
     "openshift",
     "openvswitch",
