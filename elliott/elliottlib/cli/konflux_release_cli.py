@@ -8,6 +8,9 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import KonfluxClient
+from artcommonlib import logutil
+
+LOGGER = logutil.get_logger(__name__)
 
 
 @cli.group("release", short_help="Commands for managing Konflux Releases")
@@ -39,15 +42,14 @@ class WatchReleaseCli:
         success = reason == "Succeeded" and status == "True"
 
         if success:
-            print("Release successful!")
-            sys.exit(0)
+            return True
         else:
             message = released_condition.get('message')
             if message == "Release processing failed on managed pipelineRun":
                 managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
                 message += f" {managed_plr}"
-            print(f"Release failed! Konflux message: {message}")
-            sys.exit(1)
+            LOGGER.error(message)
+            return False
 
 
 @konflux_release_cli.command("watch", short_help="Watch and report on status of a given Konflux Release")
@@ -82,4 +84,10 @@ async def watch_release_cli(runtime: Runtime, release: str, konflux_kubeconfig: 
 
     pipeline = WatchReleaseCli(runtime, release=release, konflux_config=konflux_config, timeout=timeout,
                                dry_run=dry_run)
-    await pipeline.run()
+    release_status = await pipeline.run()
+    if release_status is True:
+        print("Release successful!")
+        sys.exit(0)
+    else:
+        print("Release failed!")
+        sys.exit(1)
