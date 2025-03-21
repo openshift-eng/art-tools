@@ -639,6 +639,7 @@ class KonfluxRebaser:
                 if df_stage:
                     df_stages.append(df_stage)
                 df_stage = [df_line]
+                continue
             df_stage.append(df_line)
         df_stages.append(df_stage)
         return df_stages

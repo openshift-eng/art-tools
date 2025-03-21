@@ -25,7 +25,10 @@ class TestRebaser(TestCase):
         """
 
         actual = KonfluxRebaser.split_dockerfile_into_stages(dfp)
+        expected = [[{'FROM': 'base'}, {'LABEL': 'foo="bar baz"'}, {'USER': '1000'}], [{'FROM': 'base2'}, {'USER': '2000'}, {'RUN': 'commands'}]]
+
         self.assertEqual(len(actual), 2)
+        self.assertEqual(actual, expected)
 
     def test_split_dockerfile_into_stages_2(self):
         dfp = DockerfileParser()
@@ -36,7 +39,10 @@ class TestRebaser(TestCase):
         """
 
         actual = KonfluxRebaser.split_dockerfile_into_stages(dfp)
+        expected = [[{'FROM': 'base'}, {'LABEL': 'foo="bar baz"'}, {'USER': '1000'}]]
+
         self.assertEqual(len(actual), 1)
+        self.assertEqual(actual, expected)
 
     def test_add_build_repos_1(self):
         """
