@@ -142,7 +142,8 @@ class CreateReleaseCli:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
 
         release_config = self.get_release_config(config.shipment, self.release_env)
-        LOGGER.info("Constructed release config: %s", release_config)
+        LOGGER.info(f"Constructed release config with snapshot={release_config['snapshot']}"
+                    f" releasePlan={release_config['releasePlan']}")
 
         if not self.force:
             env_config = config.shipment.environments.release_env
@@ -155,7 +156,8 @@ class CreateReleaseCli:
         # verify snapshot
         # TODO: make it work for bundle/fbc
         get_snapshot_cli = GetSnapshotCli(self.runtime, self.konflux_config, self.image_repo_creds_config,
-                                          for_bundle=False, for_fbc=False, snapshot=release_config['snapshot'])
+                                          for_bundle=False, for_fbc=False, snapshot=release_config['snapshot'],
+                                          dry_run=False)
         actual_nvrs = set(await get_snapshot_cli.run())
         expected_nvrs = set(config.shipment.snapshot.spec.nvrs)
         if actual_nvrs != expected_nvrs:
