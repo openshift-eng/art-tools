@@ -18,6 +18,10 @@ from urllib.parse import quote
 LOGGER = logging.getLogger(__name__)
 
 
+def get_utc_timestamp():
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
+
+
 def remove_prefix(s: str, prefix: str) -> str:
     if s.startswith(prefix):
         return s[len(prefix):]

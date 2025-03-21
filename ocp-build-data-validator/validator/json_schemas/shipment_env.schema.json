@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shipment_env.schema.json",
+  "title": "Shipment Environment Config",
+  "type": "object",
+    "required": ["releasePlan"],
+    "properties": {
+      "releasePlan": {"type": "string"},
+      "releaseName": {"type": "string"},
+      "advisoryName": {"type": "string"},
+      "advisoryInternalUrl": {"type": "string"}
+    }
+}
