@@ -8,16 +8,16 @@
   "properties": {
     "shipment": {
       "type": "object",
-      "required": ["metadata", "environments", "snapshot", "data"],
       "properties": {
         "metadata": {
           "type": "object",
-          "required": [],
+          "required": ["product", "application", "group", "assembly"],
           "properties": {
             "product": {"type": "string"},
             "application": {"type": "string"},
             "group": {"type": "string"},
-            "assembly": {"type": "string"}
+            "assembly": {"type": "string"},
+            "fbc": {"type":  "boolean", "default": false}
           }
         },
         "environments": {
@@ -68,6 +68,16 @@
             }
           }
         }
+      },
+      "$comment": "If shipment is for fbc, then we do not require data to be defined",
+      "if": {
+        "not": {"properties": {"metadata": {"properties": {"fbc": {"const": true}}}}}
+      },
+      "then": {
+        "required": ["metadata", "environments", "snapshot", "data"]
+      },
+      "else": {
+        "required": ["metadata", "environments", "snapshot"]
       }
     }
   }

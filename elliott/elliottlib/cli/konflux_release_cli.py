@@ -101,7 +101,7 @@ class CreateReleaseCli:
         # verify snapshot
         # TODO: make it work for bundle/fbc
         get_snapshot_cli = GetSnapshotCli(self.runtime, self.konflux_config, self.image_repo_creds_config,
-                                          for_bundle=False, for_fbc=False, snapshot=release_config['snapshot'],
+                                          for_bundle=False, for_fbc=meta.fbc, snapshot=release_config['snapshot'],
                                           dry_run=False)
         actual_nvrs = set(await get_snapshot_cli.run())
         expected_nvrs = set(config.shipment.snapshot.spec.nvrs)
