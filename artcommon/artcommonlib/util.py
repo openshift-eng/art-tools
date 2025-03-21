@@ -13,9 +13,13 @@ from tenacity import retry, wait_fixed, stop_after_attempt
 from ruamel.yaml import YAML
 from artcommonlib.constants import RELEASE_SCHEDULES
 from artcommonlib.model import ListModel, Missing
-from urllib.parse import quote
+
 
 LOGGER = logging.getLogger(__name__)
+
+
+def get_utc_timestamp():
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
 
 
 def remove_prefix(s: str, prefix: str) -> str:
