@@ -69,8 +69,8 @@ class Runtime(GroupRuntime):
         self.releases_config: Optional[Model] = None
         self.assembly_type = AssemblyTypes.STREAM
 
-        self.konflux_release_path = None
-        self.konflux_gitdata = None
+        self.shipment_path = None
+        self.shipment_gitdata = None
 
         for key, val in kwargs.items():
             self.__dict__[key] = val
@@ -345,28 +345,28 @@ class Runtime(GroupRuntime):
             raise ElliottFatalError(ex)
 
         # clone only if explicitly set
-        if self.konflux_release_path:
-            release_path, commitish = self.konflux_release_path, "main"
-            if '@' in self.konflux_release_path:
-                release_path, commitish = self.konflux_release_path.split('@')
+        if self.shipment_path:
+            shipment_path, commitish = self.shipment_path, "main"
+            if '@' in self.shipment_path:
+                shipment_path, commitish = self.shipment_path.split('@')
 
             # TODO: find a better solution
-            if 'gitlab.cee.redhat.com' in release_path:
+            if 'gitlab.cee.redhat.com' in shipment_path:
                 gitlab_auth_token = os.environ.get('GITLAB_TOKEN')
                 if not gitlab_auth_token:
                     self._logger.info("GITLAB_TOKEN not found to be set")
                 else:
                     try:
-                        parsed_url = urlparse(release_path)
+                        parsed_url = urlparse(shipment_path)
                         scheme = parsed_url.scheme
-                        rest_of_the_url = release_path[len(scheme + "://"):]
-                        release_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
+                        rest_of_the_url = shipment_path[len(scheme + "://"):]
+                        shipment_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
                     except Exception as e:
-                        self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {release_path}: {e}")
+                        self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {shipment_path}: {e}")
 
             try:
-                self.konflux_gitdata = gitdata.GitData(data_path=release_path, clone_dir=self.working_dir,
-                                                       commitish=commitish, logger=self._logger)
+                self.shipment_gitdata = gitdata.GitData(data_path=shipment_path, clone_dir=self.working_dir,
+                                                        commitish=commitish, logger=self._logger)
             except gitdata.GitDataException as ex:
                 raise ElliottFatalError(ex)
 

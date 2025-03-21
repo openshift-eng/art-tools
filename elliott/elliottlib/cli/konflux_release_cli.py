@@ -14,7 +14,7 @@ from elliottlib.cli.snapshot_cli import GetSnapshotCli
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE
 from artcommonlib import logutil
-from artcommonlib.constants import KONFLUX_RELEASE_DATA_URL
+from artcommonlib.constants import OCP_SHIPMENT_DATA_URL
 from artcommonlib.model import Model
 
 yaml = YAML()
@@ -117,16 +117,16 @@ class CreateReleaseCli:
         self.release_env = release_env
 
     async def run(self):
-        if not self.runtime.konflux_release_path:
-            self.runtime.konflux_release_path = KONFLUX_RELEASE_DATA_URL
+        if not self.runtime.shipment_path:
+            self.runtime.shipment_path = OCP_SHIPMENT_DATA_URL
         self.runtime.initialize()
 
         if not self.filename:
             self.filename = f"{self.runtime.assembly}.yml"
         path = f"{self.runtime.group}/releases/{self.filename}"
-        config_raw = self.runtime.konflux_gitdata.load_yaml_file(path)
+        config_raw = self.runtime.shipment_gitdata.load_yaml_file(path)
         if not config_raw:
-            raise ValueError(f"Could not find/load release config at {self.runtime.konflux_gitdata.data_path}/"
+            raise ValueError(f"Could not find/load release config at {self.runtime.shipment_gitdata.data_path}/"
                              f"{path}/{self.filename}")
 
         LOGGER.info("Validating yaml config...")
@@ -248,8 +248,8 @@ async def new_release_cli(runtime: Runtime, filename, konflux_kubeconfig, konflu
     """
     Create a new Konflux Release in the given namespace based on the config provided
     \b
-    $ elliott -g openshift-4.18 --assembly 4.18.2 --konflux-release-path
-    "https://gitlab.cee.redhat.com/sidsharm/ocp-konflux-release-data@add_4.19.0_test_release"
+    $ elliott -g openshift-4.18 --assembly 4.18.2 --shipment-path
+    "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data@add_4.19.0_test_release"
     release new stage
     """
     if not konflux_kubeconfig:
