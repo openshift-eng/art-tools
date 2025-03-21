@@ -96,6 +96,12 @@ class KonfluxRebaser:
             commit_message: str,
             push: bool,
     ) -> None:
+
+        # For some images, dtk for example, we do not need all the enabled_repos in metadata.config.enabled_repos
+        # Hence override with metadata.config.konflux.enabled_repos, if it exists
+        if metadata.config.konflux.enabled_repos is not Missing:
+            metadata.config.enabled_repos = metadata.config.konflux.enabled_repos
+
         try:
             # If this image has an upstream source, resolve it
             if metadata.has_source():
