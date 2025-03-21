@@ -636,10 +636,11 @@ class KonfluxRebaser:
 
         for df_line in json.loads(dfp.json):
             if "FROM" in df_line.keys():
-                df_stages.append(df_stage)
+                if df_stage:
+                    df_stages.append(df_stage)
                 df_stage = [df_line]
-                continue
             df_stage.append(df_line)
+        df_stages.append(df_stage)
         return df_stages
 
     def _update_dockerfile(self, metadata: ImageMetadata, source: Optional[SourceResolution],
@@ -794,7 +795,8 @@ class KonfluxRebaser:
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = metadata.config.get("konflux", {}).get("network_mode", "open")
+        network_mode = metadata.config.konflux.network_mode
+        network_mode = "open" if network_mode in [None, Missing] else network_mode
         valid_network_modes = ["hermetic", "internal-only", "open"]
         if network_mode not in valid_network_modes:
             raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
@@ -969,31 +971,34 @@ class KonfluxRebaser:
             all_stages=True,
         )
 
-        last_stage = self.split_dockerfile_into_stages(dfp)[-1]
+        # Just for last stage
+        if network_mode != "hermetic":
+            last_stage = self.split_dockerfile_into_stages(dfp)[-1]
 
-        # Find all the USERs in the last stage
-        final_stage_user = None
-        for line in last_stage:
-            if "USER" in line.keys():
-                final_stage_user = f"USER {line['USER']}"
+            # Find all the USERs in the last stage
+            final_stage_user = None
+            for line in last_stage:
+                if "USER" in line.keys():
+                    final_stage_user = f"USER {line['USER']}"
 
-        if final_stage_user.split()[-1] == '0':
-            final_stage_user = None  # Avoid redundant USER 0 statement after repo removal
+            if final_stage_user.split()[-1] == '0':
+                final_stage_user = None  # Avoid redundant USER 0 statement after repo removal
 
-        # But if set in image config, that supersedes the USER that doozer remembers
-        # If it's not set in the image config, default to the existing value of final_stage_user
-        user_to_set = metadata.config.get("final_stage_user", final_stage_user)
+            # But if set in image config, that supersedes the USER that doozer remembers
+            # If it's not set in the image config, default to the existing value of final_stage_user
+            config_final_stage_user = metadata.config.final_stage_user
+            user_to_set = config_final_stage_user if config_final_stage_user not in [None, Missing] else final_stage_user
 
-        lines = ["\n# Start Konflux-specific steps",
-                 "USER 0",
-                 "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
-                 f"{user_to_set if user_to_set else ''}",
-                 "# End Konflux-specific steps\n\n"
-                 ]
+            # Put back original yum config
+            # By default, .add_lines adds lines to the end
+            lines = ["\n# Start Konflux-specific steps",
+                     "USER 0",
+                     "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
+                     f"{user_to_set if user_to_set else ''}",
+                     "# End Konflux-specific steps\n\n"
+                     ]
 
-        # Put back original yum config
-        # By default, .add_lines adds lines to the end
-        dfp.add_lines(*lines)
+            dfp.add_lines(*lines)
 
     def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """
