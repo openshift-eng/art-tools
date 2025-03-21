@@ -12,7 +12,8 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.cli.snapshot_cli import GetSnapshotCli
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE
+from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE, \
+    KIND_APPLICATION
 from artcommonlib import logutil
 from artcommonlib.constants import SHIPMENT_DATA_URL
 from artcommonlib.model import Model
@@ -133,12 +134,36 @@ class CreateReleaseCli:
 
         config = Model(config_raw)
 
+        # Validate shipment metadata with group metadata and with what's passed via args
+        meta = config.shipment.metadata
+        if meta.product != self.runtime.product:
+            raise ValueError(f"shipment.metadata.product={meta.product} is expected to be the "
+                             f"same as runtime.product={self.runtime.product}")
+        elif meta.group != self.runtime.group:
+            raise ValueError(f"shipment.metadata.group={meta.group} is expected to be the "
+                             f"same as runtime.group={self.runtime.group}")
+        elif meta.assembly != self.runtime.assembly:
+            raise ValueError(f"shipment.metadata.assembly={meta.assembly} is expected to be the "
+                             f"same as runtime.assembly={self.runtime.assembly}")
+        elif meta.application != self.application:
+            raise ValueError(f"shipment.metadata.application={meta.application} is expected to be the "
+                             f"same as given application={self.application}")
+
         # Ensure CRDs are accessible
         try:
+            await self.konflux_client._get_api(API_VERSION, KIND_APPLICATION)
+            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
             await self.konflux_client._get_api(API_VERSION, KIND_RELEASE)
             await self.konflux_client._get_api(API_VERSION, KIND_RELEASE_PLAN)
         except exceptions.ResourceNotFoundError:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
+
+        # make sure application exists
+        LOGGER.info(f"Fetching application {self.application} ...")
+        try:
+            await self.konflux_client._get(API_VERSION, KIND_APPLICATION, self.application)
+        except exceptions.NotFoundError:
+            raise RuntimeError(f"Cannot access {self.application} in the cluster. Does it exist?")
 
         release_config = self.get_release_config(config.shipment, self.release_env)
         LOGGER.info(f"Constructed release config with snapshot={release_config['snapshot']}"
