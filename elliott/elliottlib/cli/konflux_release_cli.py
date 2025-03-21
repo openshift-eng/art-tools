@@ -28,11 +28,10 @@ LOGGER = logutil.get_logger(__name__)
 
 
 class CreateReleaseCli:
-    def __init__(self, runtime: Runtime, config: str, application: str, release_env: str, konflux_config: dict,
+    def __init__(self, runtime: Runtime, config_path: str, release_env: str, konflux_config: dict,
                  image_repo_creds_config: dict, dry_run: bool, force: bool):
         self.runtime = runtime
-        self.config = config
-        self.application = application
+        self.config_path = config_path
         self.konflux_config = konflux_config
         self.image_repo_creds_config = image_repo_creds_config
         self.dry_run = dry_run
@@ -47,12 +46,10 @@ class CreateReleaseCli:
     async def run(self):
         self.runtime.initialize(with_shipment=True)
 
-        dir_path = f"shipment/{self.runtime.product}/{self.runtime.group}/{self.application}"
-        path = f"{dir_path}/{self.config}"
-        LOGGER.info(f"Loading {path}...")
-        config_raw = self.runtime.shipment_gitdata.load_yaml_file(path)
+        LOGGER.info(f"Loading {self.config_path}...")
+        config_raw = self.runtime.shipment_gitdata.load_yaml_file(self.config_path)
         if not config_raw:
-            raise ValueError(f"Error loading shipment config from {self.runtime.shipment_gitdata.data_path}/{path}")
+            raise ValueError(f"Error loading shipment config from {self.runtime.shipment_gitdata.data_path}/{self.config_path}")
 
         LOGGER.info("Validating yaml config...")
         err = shipment_schema.validate(None, data=config_raw)
@@ -72,9 +69,6 @@ class CreateReleaseCli:
         elif meta.assembly != self.runtime.assembly:
             raise ValueError(f"shipment.metadata.assembly={meta.assembly} is expected to be the "
                              f"same as runtime.assembly={self.runtime.assembly}")
-        elif meta.application != self.application:
-            raise ValueError(f"shipment.metadata.application={meta.application} is expected to be the "
-                             f"same as given application={self.application}")
 
         # Ensure CRDs are accessible
         try:
@@ -86,11 +80,11 @@ class CreateReleaseCli:
             raise RuntimeError("Cannot access release resources in the cluster. Passed the right kubeconfig?")
 
         # make sure application exists
-        LOGGER.info(f"Fetching application {self.application} ...")
+        LOGGER.info(f"Fetching application {meta.application} ...")
         try:
-            await self.konflux_client._get(API_VERSION, KIND_APPLICATION, self.application)
+            await self.konflux_client._get(API_VERSION, KIND_APPLICATION, meta.application)
         except exceptions.NotFoundError:
-            raise RuntimeError(f"Cannot access {self.application} in the cluster. Does it exist?")
+            raise RuntimeError(f"Cannot access {meta.application} in the cluster. Does it exist?")
 
         release_config = self.get_release_config(config.shipment, self.release_env)
         LOGGER.info(f"Constructed release config with snapshot={release_config['snapshot']}"
@@ -185,11 +179,9 @@ def konflux_release_cli():
 @click.option('--konflux-kubeconfig', metavar='KUBECONF_PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
-@click.option('--application', metavar='APPLICATION', required=True,
-              help='Name of the Konflux application to release')
-@click.option('--config', metavar='CONFIG_FILENAME', required=True,
-              help='Filename of the shipment config file to use for creating release. The full filepath will be '
-                   'constructed based on given shipment-data repo, product, group, application')
+@click.option('--config', metavar='CONFIG_PATH', required=True,
+              help='Path of the shipment config file to use for creating release. The path should be from the root of the  '
+                   'given shipment-data repo.')
 @click.option('--env', metavar='RELEASE_ENV', required=True, type=click.Choice(["stage", "prod"]),
               help='Release environment to create the release for')
 @click.option('--apply', is_flag=True, default=False,
@@ -199,13 +191,13 @@ def konflux_release_cli():
 @click.pass_obj
 @click_coroutine
 async def new_release_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-                          application, config, env, apply, force):
+                          config, env, apply, force):
     """
     Create a new Konflux Release in the given namespace based on the config provided
     \b
     $ elliott -g openshift-4.18 --assembly 4.18.2 --shipment-path
     "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data@add_4.18.2_test_release"
-    release new --env stage --config 4.18.2.202503151218.yml --application openshift-4-18
+    release new --env stage --config shipment/ocp/openshift-4.18/openshift-4-18/4.18.2.202503210000.yml
     """
     if not konflux_kubeconfig:
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -225,8 +217,7 @@ async def new_release_cli(runtime: Runtime, konflux_kubeconfig, konflux_context,
     }
 
     pipeline = CreateReleaseCli(runtime,
-                                application=application,
-                                config=config,
+                                config_path=config,
                                 release_env=env,
                                 konflux_config=konflux_config,
                                 image_repo_creds_config=image_repo_creds_config,
