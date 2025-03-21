@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
 import asyncio
+import json
 import requests
 
 import bashlex
@@ -628,6 +629,21 @@ class KonfluxRebaser:
         ),
     )
 
+    @staticmethod
+    def split_dockerfile_into_stages(dfp):
+        df_stages = []
+        df_stage = []
+
+        for df_line in json.loads(dfp.json):
+            if "FROM" in df_line.keys():
+                if df_stage:
+                    df_stages.append(df_stage)
+                df_stage = [df_line]
+                continue
+            df_stage.append(df_line)
+        df_stages.append(df_stage)
+        return df_stages
+
     def _update_dockerfile(self, metadata: ImageMetadata, source: Optional[SourceResolution],
                            df_path: Path, version: str, release: str, downstream_parents: Optional[List[str]],
                            force_yum_updates: bool, uuid_tag: str, dest_dir: Path):
@@ -780,7 +796,8 @@ class KonfluxRebaser:
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = metadata.config.get("konflux", {}).get("network_mode", "open")
+        network_mode = metadata.config.konflux.network_mode
+        network_mode = "open" if network_mode in [None, Missing] else network_mode
         valid_network_modes = ["hermetic", "internal-only", "open"]
         if network_mode not in valid_network_modes:
             raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
@@ -934,6 +951,7 @@ class KonfluxRebaser:
 
         if network_mode != "hermetic":
             konflux_lines += [
+                "USER 0",
                 "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
                 f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
                 f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"
@@ -954,12 +972,44 @@ class KonfluxRebaser:
             all_stages=True,
         )
 
-        # Put back original yum config
-        dfp.add_lines(
-            "\n# Start Konflux-specific steps",
-            "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
-            "# End Konflux-specific steps\n\n"
-        )
+        config_final_stage_user = metadata.config.final_stage_user if metadata.config.final_stage_user not in [None, Missing] else None
+        config_final_stage_user_set = False
+
+        # Just for last stage
+        if network_mode != "hermetic":
+            last_stage = self.split_dockerfile_into_stages(dfp)[-1]
+
+            # Find all the USERs in the last stage
+            final_stage_user = None
+            for line in last_stage:
+                if "USER" in line.keys():
+                    final_stage_user = f"USER {line['USER']}"
+
+            if final_stage_user.split()[-1] == '0':
+                final_stage_user = None  # Avoid redundant USER 0 statement after repo removal
+
+            # But if set in image config, that supersedes the USER that doozer remembers
+            # If it's not set in the image config, default to the existing value of final_stage_user
+            if config_final_stage_user:
+                user_to_set = config_final_stage_user
+                config_final_stage_user_set = True
+            else:
+                user_to_set = final_stage_user
+
+            # Put back original yum config
+            # By default, .add_lines adds lines to the end
+            lines = ["\n# Start Konflux-specific steps",
+                     "USER 0",
+                     "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
+                     f"{user_to_set if user_to_set else ''}",
+                     "# End Konflux-specific steps\n\n"
+                     ]
+
+            dfp.add_lines(*lines)
+
+        # metadata.config.final_stage_user has to be honored in all network modes
+        if config_final_stage_user and not config_final_stage_user_set:
+            dfp.add_lines(*[f"{config_final_stage_user}"])
 
     def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """

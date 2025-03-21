@@ -2,7 +2,7 @@ from unittest import TestCase
 
 from artcommonlib.model import Missing
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 
 class TestKonfluxCachi2(TestCase):
