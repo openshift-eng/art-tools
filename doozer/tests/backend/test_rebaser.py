@@ -105,7 +105,7 @@ USER 2000
         metadata = MagicMock()
         metadata.config.konflux.network_mode = Missing
         metadata.config.konflux.cachito.mode = Missing
-        metadata.config.final_stage_user = "USER 3000"
+        metadata.config.final_stage_user = "3000"
 
         dfp = DockerfileParser()
         dfp.content = """
@@ -165,7 +165,7 @@ USER 3000
         metadata = MagicMock()
         metadata.config.konflux.network_mode = "hermetic"
         metadata.config.konflux.cachito.mode = Missing
-        metadata.config.final_stage_user = "USER 3000"
+        metadata.config.final_stage_user = "3000"
 
         dfp = DockerfileParser()
         dfp.content = """
@@ -212,7 +212,7 @@ USER 3000
         metadata = MagicMock()
         metadata.config.konflux.network_mode = Missing
         metadata.config.konflux.cachito.mode = Missing
-        metadata.config.final_stage_user = "USER 3000"
+        metadata.config.final_stage_user = "3000"
 
         dfp = DockerfileParser()
         dfp.content = """

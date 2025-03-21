@@ -978,7 +978,7 @@ class KonfluxRebaser:
             all_stages=True,
         )
 
-        config_final_stage_user = metadata.config.final_stage_user if metadata.config.final_stage_user not in [None, Missing] else None
+        config_final_stage_user = f"USER {metadata.config.final_stage_user}" if metadata.config.final_stage_user not in [None, Missing] else None
         config_final_stage_user_set = False
 
         # Just for last stage
