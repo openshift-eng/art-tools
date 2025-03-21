@@ -38,8 +38,8 @@ context_settings = dict(help_option_names=['-h', '--help'])
     '--shipment-path',
     metavar='PATH', default=None,
     help="Git repo or directory containing group metadata for shipping a konflux release e.g."
-         f" {SHIPMENT_DATA_URL.format('ocp')}. Defaults to the default branch of the repo - to point to a "
-         "branch/commit use repo@commitish")
+         f" {SHIPMENT_DATA_URL.format('ocp')}. Defaults to `main` branch for a repo - to point to a "
+         "different branch/commit use repo@commitish")
 @click.option(
     '--group', '-g',
     default=None, metavar='NAME',

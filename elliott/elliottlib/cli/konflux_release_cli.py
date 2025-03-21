@@ -97,7 +97,7 @@ class CreateReleaseCli:
                     f" releasePlan={release_config['releasePlan']}")
 
         if not self.force:
-            env_config = config.shipment.environments.release_env
+            env_config = config.shipment.environments[self.release_env]
             for key in ["releaseName", "advisoryName", "advisoryInternalUrl"]:
                 val = env_config[key]
                 if val and val != 'N/A':
