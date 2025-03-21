@@ -15,7 +15,7 @@ from doozerlib.image import ImageMetadata
 class TestRebaser(TestCase):
     def test_split_dockerfile_into_stages_1(self):
         dfp = DockerfileParser()
-        dfp.content = dfp.content = """
+        dfp.content = """
             FROM base
             LABEL foo="bar baz"
             USER 1000
@@ -29,7 +29,7 @@ class TestRebaser(TestCase):
 
     def test_split_dockerfile_into_stages_2(self):
         dfp = DockerfileParser()
-        dfp.content = dfp.content = """
+        dfp.content = """
             FROM base
             LABEL foo="bar baz"
             USER 1000
@@ -48,7 +48,7 @@ class TestRebaser(TestCase):
         metadata.config.final_stage_user = Missing
 
         dfp = DockerfileParser()
-        dfp.content = dfp.content = """
+        dfp.content = """
 FROM base1
 LABEL foo="bar baz"
 USER 1000
@@ -108,7 +108,7 @@ USER 2000
         metadata.config.final_stage_user = "USER 3000"
 
         dfp = DockerfileParser()
-        dfp.content = dfp.content = """
+        dfp.content = """
 FROM base1
 LABEL foo="bar baz"
 USER 1000
@@ -168,7 +168,7 @@ USER 3000
         metadata.config.final_stage_user = "USER 3000"
 
         dfp = DockerfileParser()
-        dfp.content = dfp.content = """
+        dfp.content = """
 FROM base1
 LABEL foo="bar baz"
 USER 1000
@@ -201,7 +201,7 @@ RUN commands
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path("."))
         dfp.content.strip()
-        self.assertEqual( expected.strip(), dfp.content.strip())
+        self.assertEqual(expected.strip(), dfp.content.strip())
 
     def test_add_build_repos_4(self):
         """
@@ -213,7 +213,7 @@ RUN commands
         metadata.config.final_stage_user = "USER 3000"
 
         dfp = DockerfileParser()
-        dfp.content = dfp.content = """
+        dfp.content = """
 FROM base1
 LABEL foo="bar baz"
 FROM base2
