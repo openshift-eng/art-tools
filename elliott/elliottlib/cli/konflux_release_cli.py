@@ -1,9 +1,6 @@
-import datetime
 import click
 import os
 import sys
-import jsonschema
-from datetime import datetime, timezone
 
 from ruamel.yaml import YAML, scalarstring
 from kubernetes.dynamic import exceptions
@@ -12,12 +9,15 @@ from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.cli.snapshot_cli import GetSnapshotCli
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE, \
-    KIND_APPLICATION
+from doozerlib.backend.konflux_client import (KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE,
+                                              KIND_APPLICATION)
 from artcommonlib import logutil
-from artcommonlib.constants import SHIPMENT_DATA_URL
 from artcommonlib.model import Model
 from artcommonlib.util import get_utc_timestamp
+
+from validator.schema import shipment_schema
+from validator.exceptions import ValidationFailed
+
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -25,81 +25,6 @@ yaml.preserve_quotes = True
 yaml.indent(mapping=2, sequence=4, offset=2)
 
 LOGGER = logutil.get_logger(__name__)
-
-ENV_SCHEMA = {
-    "type": "object",
-    "required": ["releasePlan"],
-    "properties": {
-        "releasePlan": {"type": "string"},
-        "releaseName": {"type": "string"},
-        "advisoryName": {"type": "string"},
-        "advisoryInternalUrl": {"type": "string"},
-    },
-}
-SHIPMENT_SCHEMA = {
-    "type": "object",
-    "required": ["shipment"],
-    "properties": {
-        "shipment": {
-            "type": "object",
-            "required": ["metadata", "environments", "snapshot", "data"],
-            "properties": {
-                "metadata": {
-                    "type": "object",
-                    "required": [],
-                    "properties": {
-                        "product": {"type": "string"},
-                        "application": {"type": "string"},
-                        "group": {"type": "string"},
-                        "assembly": {"type": "string"},
-                    }
-                },
-                "environments": {
-                    "type": "object",
-                    "required": ["stage", "prod"],
-                    "properties": {
-                        "stage": ENV_SCHEMA,
-                        "prod": ENV_SCHEMA,
-                    },
-                },
-                "snapshot": {
-                    "type": "object",
-                    "required": ["name", "spec"],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "spec": {
-                            "type": "object",
-                            "required": ["nvrs"],
-                            "properties": {
-                                "nvrs": {"type": "array"}
-                            },
-                        },
-                    },
-                },
-                "data": {
-                    "type": "object",
-                    "required": ["releaseNotes"],
-                    "properties": {
-                        "releaseNotes": {
-                            "type": "object",
-                            "required": ["type", "synopsis", "topic", "description", "solution"],
-                            "properties": {
-                                "type": {"type": "string"},
-                                "synopsis": {"type": "string"},
-                                "topic": {"type": "string"},
-                                "description": {"type": "string"},
-                                "solution": {"type": "string"},
-                                "issues": {"type": "object"},
-                                "cves": {"type": "array"},
-                                "references": {"type": "array"},
-                            }
-                        },
-                    },
-                },
-            }
-        }
-    }
-}
 
 
 class CreateReleaseCli:
@@ -130,7 +55,9 @@ class CreateReleaseCli:
             raise ValueError(f"Error loading shipment config from {self.runtime.shipment_gitdata.data_path}/{path}")
 
         LOGGER.info("Validating yaml config...")
-        jsonschema.validate(instance=config_raw, schema=SHIPMENT_SCHEMA)
+        err = shipment_schema.validate(None, data=config_raw)
+        if err:
+            raise ValidationFailed(err)
 
         config = Model(config_raw)
 

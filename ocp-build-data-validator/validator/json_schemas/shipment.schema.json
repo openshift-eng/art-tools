@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shipment.schema.json",
+  "title": "Shipment",
+  "description": "A shipment represents unambiguous, programmatic instructions on how to construct and ship a release managed by ART.",
+  "type": "object",
+  "required": ["shipment"],
+  "properties": {
+    "shipment": {
+      "type": "object",
+      "required": ["metadata", "environments", "snapshot", "data"],
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "required": [],
+          "properties": {
+            "product": {"type": "string"},
+            "application": {"type": "string"},
+            "group": {"type": "string"},
+            "assembly": {"type": "string"}
+          }
+        },
+        "environments": {
+          "type": "object",
+          "required": ["stage", "prod"],
+          "properties": {
+            "stage": {
+              "description": "Config for releasing to stage environment",
+              "$ref": "shipment_env.schema.json"
+            },
+            "prod": {
+              "description": "Config for releasing to prod environment",
+              "$ref": "shipment_env.schema.json"
+            }
+          }
+        },
+        "snapshot": {
+          "type": "object",
+          "required": ["name", "spec"],
+          "properties": {
+            "name": {"type": "string"},
+            "spec": {
+              "type": "object",
+              "required": ["nvrs"],
+              "properties": {
+                "nvrs": {"type": "array"}
+              }
+            }
+          }
+        },
+        "data": {
+          "type": "object",
+          "required": ["releaseNotes"],
+          "properties": {
+            "releaseNotes": {
+              "type": "object",
+              "required": ["type", "synopsis", "topic", "description", "solution"],
+              "properties": {
+                "type": {"type": "string"},
+                "synopsis": {"type": "string"},
+                "topic": {"type": "string"},
+                "description": {"type": "string"},
+                "solution": {"type": "string"},
+                "issues": {"type": "object"},
+                "cves": {"type": "array"},
+                "references": {"type": "array"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
