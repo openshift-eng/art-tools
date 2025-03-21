@@ -2,7 +2,6 @@ import click
 import sys
 import os
 import asyncio
-from datetime import datetime, timezone
 
 from ruamel.yaml import YAML
 from kubernetes.dynamic import exceptions
@@ -16,6 +15,7 @@ from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT
 from artcommonlib import logutil
 from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import get_utc_timestamp
 from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
                                                        KonfluxBuildRecord,
                                                        KonfluxBundleBuildRecord,
@@ -72,10 +72,6 @@ class CreateSnapshotCli:
         return await self.konflux_client._create(snapshot_obj)
 
     @staticmethod
-    def get_timestamp():
-        return datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")
-
-    @staticmethod
     async def get_pullspecs(pullspecs, image_repo_creds_config):
         image_info_tasks = []
         for pullspec in pullspecs:
@@ -97,7 +93,7 @@ class CreateSnapshotCli:
 
     async def new_snapshot(self, build_records) -> dict:
         major, minor = self.runtime.get_major_minor()
-        snapshot_name = f"ose-{major}-{minor}-{self.get_timestamp()}"
+        snapshot_name = f"ose-{major}-{minor}-{get_utc_timestamp()}"
         application_name = KonfluxImageBuilder.get_application_name(self.runtime.group)
 
         # make sure application exists
