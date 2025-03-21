@@ -972,6 +972,9 @@ class KonfluxRebaser:
             all_stages=True,
         )
 
+        config_final_stage_user = metadata.config.final_stage_user if metadata.config.final_stage_user not in [None, Missing] else None
+        config_final_stage_user_set = False
+
         # Just for last stage
         if network_mode != "hermetic":
             last_stage = self.split_dockerfile_into_stages(dfp)[-1]
@@ -987,8 +990,11 @@ class KonfluxRebaser:
 
             # But if set in image config, that supersedes the USER that doozer remembers
             # If it's not set in the image config, default to the existing value of final_stage_user
-            config_final_stage_user = metadata.config.final_stage_user
-            user_to_set = config_final_stage_user if config_final_stage_user not in [None, Missing] else final_stage_user
+            if config_final_stage_user:
+                user_to_set = config_final_stage_user
+                config_final_stage_user_set = True
+            else:
+                user_to_set = final_stage_user
 
             # Put back original yum config
             # By default, .add_lines adds lines to the end
@@ -1000,6 +1006,10 @@ class KonfluxRebaser:
                      ]
 
             dfp.add_lines(*lines)
+
+        # metadata.config.final_stage_user has to be honored in all network modes
+        if config_final_stage_user and not config_final_stage_user_set:
+            dfp.add_lines(*[f"{config_final_stage_user}"])
 
     def _modify_cachito_commands(self, metadata: ImageMetadata, dfp: DockerfileParser):
         """

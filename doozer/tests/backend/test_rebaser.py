@@ -197,6 +197,8 @@ ENV ART_BUILD_DEPS_MODE=default
 # End Konflux-specific steps
 USER 2000
 RUN commands
+
+USER 3000
 """
         rebaser = KonfluxRebaser(MagicMock(), MagicMock(), MagicMock(), "unsigned")
         rebaser._add_build_repos(dfp=dfp, metadata=metadata, dest_dir=Path("."))
