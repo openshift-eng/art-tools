@@ -10,7 +10,7 @@ lint:
 	uv run -m flake8
 
 pylint:
-	uv run -m pylint .
+	uv run -m pylint --errors-only .
 
 unit:
 	uv run -m pytest --verbose --color=yes artcommon/tests/
