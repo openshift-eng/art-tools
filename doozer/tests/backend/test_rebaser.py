@@ -1,15 +1,9 @@
-import json
 from unittest import TestCase
-
-from dockerfile_parse import DockerfileParser
-
+from unittest.mock import MagicMock
 from pathlib import Path
-
+from dockerfile_parse import DockerfileParser
 from artcommonlib.model import Missing
 from doozerlib.backend.rebaser import KonfluxRebaser
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
-
-from doozerlib.image import ImageMetadata
 
 
 class TestRebaser(TestCase):
