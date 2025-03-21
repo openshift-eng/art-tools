@@ -30,7 +30,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.konflux_client = AsyncMock()
         self.konflux_client.verify_connection.return_value = True
 
-    @patch("elliottlib.cli.snapshot_cli.CreateSnapshotCli.get_timestamp", return_value="timestamp")
+    @patch("elliottlib.cli.snapshot_cli.get_utc_timestamp", return_value="timestamp")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
