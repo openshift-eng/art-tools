@@ -6,7 +6,7 @@ import click
 
 from artcommonlib import dotconfig
 from artcommonlib.format_util import red_prefix, green_prefix, yellow_print
-from artcommonlib.constants import OCP_SHIPMENT_DATA_URL
+from artcommonlib.constants import SHIPMENT_DATA_URL
 from elliottlib import Runtime, constants, __version__, errata
 from elliottlib.cli import cli_opts
 
@@ -35,10 +35,10 @@ context_settings = dict(help_option_names=['-h', '--help'])
     metavar='PATH', default=None,
     help='Git repo or directory containing groups metadata')
 @click.option(
-    '--konflux-release-path',
+    '--shipment-path',
     metavar='PATH', default=None,
-    help="Git repo or directory containing group metadata for konflux release e.g."
-         f" {OCP_SHIPMENT_DATA_URL}. Defaults to the default branch of the repo - to point to a "
+    help="Git repo or directory containing group metadata for shipping a konflux release e.g."
+         f" {SHIPMENT_DATA_URL.format('ocp')}. Defaults to the default branch of the repo - to point to a "
          "branch/commit use repo@commitish")
 @click.option(
     '--group', '-g',

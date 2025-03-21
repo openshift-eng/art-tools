@@ -14,8 +14,9 @@ from elliottlib.cli.snapshot_cli import GetSnapshotCli
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE
 from artcommonlib import logutil
-from artcommonlib.constants import OCP_SHIPMENT_DATA_URL
+from artcommonlib.constants import SHIPMENT_DATA_URL
 from artcommonlib.model import Model
+from artcommonlib.util import get_utc_timestamp
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -101,10 +102,11 @@ SHIPMENT_SCHEMA = {
 
 
 class CreateReleaseCli:
-    def __init__(self, runtime: Runtime, filename: str, release_env: str, konflux_config: dict,
+    def __init__(self, runtime: Runtime, config: str, application: str, release_env: str, konflux_config: dict,
                  image_repo_creds_config: dict, dry_run: bool, force: bool):
         self.runtime = runtime
-        self.filename = filename
+        self.config = config
+        self.application = application
         self.konflux_config = konflux_config
         self.image_repo_creds_config = image_repo_creds_config
         self.dry_run = dry_run
@@ -117,17 +119,14 @@ class CreateReleaseCli:
         self.release_env = release_env
 
     async def run(self):
-        if not self.runtime.shipment_path:
-            self.runtime.shipment_path = OCP_SHIPMENT_DATA_URL
-        self.runtime.initialize()
+        self.runtime.initialize(with_shipment=True)
 
-        if not self.filename:
-            self.filename = f"{self.runtime.assembly}.yml"
-        path = f"{self.runtime.group}/releases/{self.filename}"
+        dir_path = f"shipment/{self.runtime.product}/{self.runtime.group}/{self.application}"
+        path = f"{dir_path}/{self.config}"
+        LOGGER.info(f"Loading {path}...")
         config_raw = self.runtime.shipment_gitdata.load_yaml_file(path)
         if not config_raw:
-            raise ValueError(f"Could not find/load release config at {self.runtime.shipment_gitdata.data_path}/"
-                             f"{path}/{self.filename}")
+            raise ValueError(f"Error loading shipment config from {self.runtime.shipment_gitdata.data_path}/{path}")
 
         LOGGER.info("Validating yaml config...")
         jsonschema.validate(instance=config_raw, schema=SHIPMENT_SCHEMA)
@@ -183,8 +182,7 @@ class CreateReleaseCli:
 
     async def new_release(self, release_config: dict) -> dict:
         major, minor = self.runtime.get_major_minor()
-        timestamp = datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")
-        release_name = f"ose-{major}-{minor}-{self.release_env}-{timestamp}"
+        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_timestamp()}"
 
         release_plan = release_config['releasePlan']
         snapshot = release_config['snapshot']
@@ -231,26 +229,31 @@ def konflux_release_cli():
 
 
 @konflux_release_cli.command("new", short_help="Create a new Konflux Release in the given namespace for the given "
-                                               "konflux-release-data configuration")
-@click.option('--filename', metavar='FILENAME', help='Release config filename to use. Defaults to assembly name')
-@click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
+                                               "shipment-data configuration")
+@click.option('--konflux-kubeconfig', metavar='KUBECONF_PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
+@click.option('--application', metavar='APPLICATION', required=True,
+              help='Name of the Konflux application to release')
+@click.option('--config', metavar='CONFIG_FILENAME', required=True,
+              help='Filename of the shipment config file to use for creating release. The full filepath will be '
+                   'constructed based on given shipment-data repo, product, group, application')
+@click.option('--env', metavar='RELEASE_ENV', required=True, type=click.Choice(["stage", "prod"]),
+              help='Release environment to create the release for')
 @click.option('--apply', is_flag=True, default=False,
               help='Create the release in cluster (False by default)')
 @click.option('--force', is_flag=True, default=False,
               help='Proceed even if an associated release/advisory detected')
-@click.argument('env', metavar='RELEASE_ENV', nargs=1, required=True, type=click.Choice(["stage", "prod"]))
 @click.pass_obj
 @click_coroutine
-async def new_release_cli(runtime: Runtime, filename, konflux_kubeconfig, konflux_context, konflux_namespace,
-                          apply, force, env):
+async def new_release_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
+                          application, config, env, apply, force):
     """
     Create a new Konflux Release in the given namespace based on the config provided
     \b
     $ elliott -g openshift-4.18 --assembly 4.18.2 --shipment-path
-    "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data@add_4.19.0_test_release"
-    release new stage
+    "https://gitlab.cee.redhat.com/hybrid-platforms/art/ocp-shipment-data@add_4.18.2_test_release"
+    release new --env stage --config 4.18.2.202503151218.yml --application openshift-4-18
     """
     if not konflux_kubeconfig:
         konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
@@ -270,7 +273,8 @@ async def new_release_cli(runtime: Runtime, filename, konflux_kubeconfig, konflu
     }
 
     pipeline = CreateReleaseCli(runtime,
-                                filename=filename,
+                                application=application,
+                                config=config,
                                 release_env=env,
                                 konflux_config=konflux_config,
                                 image_repo_creds_config=image_repo_creds_config,
