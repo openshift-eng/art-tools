@@ -9,6 +9,7 @@ from elliottlib.runtime import Runtime
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import KonfluxClient
 from artcommonlib import logutil
+from artcommonlib import util as art_util
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -36,15 +37,18 @@ class WatchReleaseCli:
         release_obj = await self.konflux_client.wait_for_release(self.release, overall_timeout_timedelta=timedelta(hours=self.timeout))
 
         # Assume that these will be available
-        released_condition = next(c for c in release_obj['status']['conditions'] if c['type'] == "Released")
-        reason = released_condition.get('reason')
-        status = released_condition.get('status')
+        released_condition = art_util.KubeCondition.find_condition(release_obj, 'Released')
+        if not released_condition:
+            raise ValueError("Expected to find `Released` status in release_obj but couldn't")
+
+        reason = released_condition.reason
+        status = released_condition.status
         success = reason == "Succeeded" and status == "True"
 
         if success:
             return True
         else:
-            message = released_condition.get('message')
+            message = released_condition.message
             if message == "Release processing failed on managed pipelineRun":
                 managed_plr = release_obj['status'].get('managedProcessing', {}).get('pipelineRun', '')
                 message += f" {managed_plr}"
@@ -86,8 +90,8 @@ async def watch_release_cli(runtime: Runtime, release: str, konflux_kubeconfig: 
                                dry_run=dry_run)
     release_status = await pipeline.run()
     if release_status is True:
-        print("Release successful!")
+        click.echo("Release successful!")
         sys.exit(0)
     else:
-        print("Release failed!")
+        click.echo("Release failed!")
         sys.exit(1)

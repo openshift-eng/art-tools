@@ -29,6 +29,8 @@ KIND_APPLICATION = "Application"
 KIND_RELEASE = "Release"
 KIND_RELEASE_PLAN = "ReleasePlan"
 
+DEFAULT_WAIT_HOURS_RELEASE = 5
+
 
 class KonfluxClient:
     """
@@ -717,16 +719,17 @@ class KonfluxClient:
 
     async def wait_for_release(self, release_name: str, namespace: Optional[str] = None,
                                overall_timeout_timedelta: Optional[datetime.timedelta] = None) -> resource.ResourceInstance:
-        """
+        f"""
         Wait for a Release to complete.
 
         :param release_name: The name of the Release.
         :param namespace: The namespace of the Release.
-        :param overall_timeout_timedelta: Maximum time to wait for release to complete before exiting (defaults to 5 hour)
+        :param overall_timeout_timedelta: Maximum time to wait for release to complete before exiting (defaults to {DEFAULT_WAIT_HOURS_RELEASE}
+        hour)
         :return: The Release ResourceInstance
         """
         if overall_timeout_timedelta is None:
-            overall_timeout_timedelta = datetime.timedelta(hours=5)
+            overall_timeout_timedelta = datetime.timedelta(hours=DEFAULT_WAIT_HOURS_RELEASE)
 
         namespace = namespace or self.default_namespace
         api = await self._get_api(API_VERSION, KIND_RELEASE)
@@ -751,14 +754,15 @@ class KonfluxClient:
 
             while True:
                 try:
-                    for event in watcher.stream(
+                    release_obj = watcher.stream(
                         api.get,
                         resource_version=0,
                         namespace=namespace,
                         serialize=False,
                         field_selector=f"metadata.name={release_name}",
                         timeout_seconds=5 * 60
-                    ):
+                    )
+                    for event in release_obj:
                         assert isinstance(event, Dict)
                         obj = resource.ResourceInstance(api, event["object"])
                         # status takes some time to appear
