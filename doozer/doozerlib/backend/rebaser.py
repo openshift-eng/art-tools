@@ -972,22 +972,13 @@ class KonfluxRebaser:
         last_stage = self.split_dockerfile_into_stages(dfp)[-1]
 
         # Find all the USERs in the last stage
-        user_stanzas = []
+        final_stage_user = None
         for line in last_stage:
             if "USER" in line.keys():
-                user_stanzas.append(f"USER {line['USER']}")
+                final_stage_user = f"USER {line['USER']}"
 
-        # The Dockerfile should have only one unique non-USER 0 value
-        if "USER 0" in user_stanzas:
-            # list.remove() command removes values inline
-            user_stanzas.remove("USER 0")
-        if user_stanzas and len(user_stanzas) != 1:
-            raise ValueError(f"More than one USER lines found: {user_stanzas}")
-
-
-        final_stage_user = None
-        if user_stanzas:
-            final_stage_user = user_stanzas[0]
+        if final_stage_user.split()[-1] == '0':
+            final_stage_user = None  # Avoid redundant USER 0 statement after repo removal
 
         # But if set in image config, that supersedes the USER that doozer remembers
         # If it's not set in the image config, default to the existing value of final_stage_user
