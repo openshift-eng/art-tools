@@ -67,6 +67,7 @@ from elliottlib.cli.remove_builds_cli import remove_builds_cli
 from elliottlib.cli.get_golang_report_cli import get_golang_report_cli
 from elliottlib.cli.snapshot_cli import snapshot_cli
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
+from elliottlib.cli import konflux_release_watch_cli
 
 
 # 3rd party
