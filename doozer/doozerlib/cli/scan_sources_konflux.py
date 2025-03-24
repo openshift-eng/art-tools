@@ -368,7 +368,7 @@ class ConfigScanSources:
         await self.scan_builders_changes(image_meta)
 
         # Check for RPM changes
-        # await self.scan_rpm_changes(image_meta)
+        await self.scan_rpm_changes(image_meta)
 
         # Check for changes in extra packages
         await self.scan_extra_packages(image_meta)
