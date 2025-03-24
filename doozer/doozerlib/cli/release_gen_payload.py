@@ -427,13 +427,13 @@ class GenPayloadCli:
         # check that images for this assembly/group are consistent with the assembly definition.
         self.detect_inconsistent_images(assembly_inspector)
 
-        # check that images for this assembly/group have installed rpms that are not allowed to assemble.
-        self.detect_installed_rpms_issues(assembly_inspector)
-
         # Stopping the checks here for Konflux
         # TODO to be re-enabled
         if self.runtime.build_system == 'konflux':
             return self.summarize_issue_permits(assembly_inspector)
+
+        # check that images for this assembly/group have installed rpms that are not allowed to assemble.
+        self.detect_installed_rpms_issues(assembly_inspector)
 
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
