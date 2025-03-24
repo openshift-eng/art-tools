@@ -59,7 +59,7 @@ class ConfigScanSources:
             await self.check_for_image_changes(koji_api)
 
         # Checks if an image needs to be rebuilt based on the packages it is dependent on
-        await self.check_changing_rpms()
+        # await self.check_changing_rpms()
 
         # does_image_need_change() checks whether its non-member builder images have changed
         # but cannot determine whether member builder images have changed until anticipated
