@@ -24,7 +24,7 @@ class TimeoutHTTPAdapter(HTTPAdapter):
         super().__init__(*args, **kwargs)
 
     def send(self, request, **kwargs):
-        kwargs.setdefault(timeout, self.timeout)
+        kwargs.setdefault("timeout", self.timeout)
         return super().send(request, **kwargs)
 
 
