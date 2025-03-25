@@ -54,10 +54,16 @@ class InitShipmentCli:
                 if self.advisory_key not in et_data["boilerplates"]:
                     raise ValueError(f"Boilerplate {self.advisory_key} not found in erratatool.yml")
                 boilerplate = et_data["boilerplates"][self.advisory_key]
-                data.releaseNotes.synopsis = boilerplate["synopsis"],
-                data.releaseNotes.topic=boilerplate["topic"],
-                data.releaseNotes.description = boilerplate["description"],
-                data.releaseNotes.solution = boilerplate["solution"],
+
+                data = Data(
+                    releaseNotes=ReleaseNotes(
+                        type="RHBA",
+                        synopsis=boilerplate["synopsis"],
+                        topic=boilerplate["topic"],
+                        description=boilerplate["description"],
+                        solution=boilerplate["solution"],
+                    )
+                )
 
         shipment = ShipmentConfig(
             shipment=Shipment(
