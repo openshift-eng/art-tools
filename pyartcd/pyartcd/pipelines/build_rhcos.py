@@ -1,5 +1,6 @@
 from pyartcd.cli import cli, pass_runtime
 from pyartcd.runtime import Runtime
+from pyartcd.util import load_group_config
 import openshift_client as oc
 import click
 import requests
@@ -8,13 +9,12 @@ import base64
 import json
 import time
 import sys
-import yaml
+import asyncio
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from typing import List, Dict, Tuple
 
 JENKINS_BASE_URL = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
-OCP_REPO_RAW = "https://raw.githubusercontent.com/openshift-eng/ocp-build-data/refs/heads"
 
 
 # lifted verbatim from
@@ -93,9 +93,8 @@ class BuildRhcosPipeline:
 
     def get_stream(self):
         """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""
-        group_response = self.request_session.get(f"{OCP_REPO_RAW}/openshift-{self.version}/group.yml")
-        group_file = yaml.load(group_response.text, Loader=yaml.SafeLoader)
-        return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}" if group_file['vars']['MINOR'] > 12 else self.version
+        group_file = asyncio.run(load_group_config(group=f"openshift-{self.version}", assembly="stream"))
+        return f"{self.version}-{group_file['vars']['RHCOS_EL_MAJOR']}.{group_file['vars']['RHCOS_EL_MINOR']}" if group_file['vars']['MINOR'] > 12 and group_file['vars']['MAJOR'] == 4 else self.version
 
     def start_build(self):
         """Start a new build for the given version"""
@@ -127,7 +126,7 @@ class BuildRhcosPipeline:
               help="Ignore in-progress builds instead of just exiting like usual")
 @click.option("--new-build", required=False, default=False, type=bool,
               help="Force a new build even if no changes were detected from the last build")
-@click.option("--job", required=False, type=str, default="build",
+@click.option("--job", required=False, type=click.Choice(['build']), default="build",
               help="RHCOS pipeline job name")
 @pass_runtime
 def build_rhcos(runtime: Runtime, new_build: bool, ignore_running: bool, version: str, job: str):
