@@ -279,7 +279,7 @@ class BuildRecordInspector(ABC):
         return self._nvr
 
     @abstractmethod
-    def get_all_installed_package_build_dicts(self):
+    def get_all_installed_package_build_dicts(self, *_):
         pass
 
     @abstractmethod
@@ -336,6 +336,14 @@ class BuildRecordInspector(ABC):
         arch = brew_arch_for_go_arch(brew_arch)  # Make sure this is a brew arch
         found = filter(lambda ai: ai.image_arch() == arch, self.get_image_inspectors())
         return next(found, None)
+
+    @abstractmethod
+    def get_rhel_base_version(self) -> Optional[int]:
+        pass
+
+    @abstractmethod
+    def get_source_git_url(self) -> Optional[str]:
+        pass
 
 
 class BrewBuildRecordInspector(BuildRecordInspector):
@@ -533,7 +541,7 @@ class BrewBuildRecordInspector(BuildRecordInspector):
             self._cache[cn] = list(dedupe.values())
         return self._cache[cn]
 
-    def get_all_installed_package_build_dicts(self) -> Dict[str, Dict]:
+    def get_all_installed_package_build_dicts(self, *_) -> Dict[str, Dict]:
         """
         :return: Returns a Dict[package name -> brew build dict] for all
         packages installed on ANY architecture of this image build.
@@ -643,8 +651,8 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
     def get_release(self):
         return self._build_record.release
 
-    def get_all_installed_package_build_dicts(self):
-        raise NotImplementedError
+    def get_all_installed_package_build_dicts(self, package_rpm_finder: PackageRpmFinder):
+        return package_rpm_finder.get_packages_to_rpms_mapping(self._build_record)
 
     def get_rpms_in_pkg_build(self, build_id: int):
         raise NotImplementedError
@@ -679,7 +687,7 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
         logger = meta.logger or self.runtime.logger
 
         # Get the list of RPMs from package NVRs
-        installed_rpms = package_rpm_finder.get_brew_rpms_from_build_record(self._build_record, self.runtime)
+        installed_rpms = package_rpm_finder.get_brew_rpms_from_build_record(self._build_record)
         installed_rpms_for_arch = {}
 
         for rpm in installed_rpms:
@@ -719,3 +727,9 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
                 logger.info('All RPMs up-to-date in %s for arch %s', self._build_record.nvr, arch)
 
         return non_latest_rpms_for_arch
+
+    def get_rhel_base_version(self) -> Optional[int]:
+        return isolate_el_version_in_release(self._build_record.el_target)
+
+    def get_source_git_url(self) -> Optional[str]:
+        return self._build_record.source_repo

@@ -1,7 +1,9 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch, ANY, Mock
 
-from elliottlib.cli.snapshot_cli import CreateSnapshotCli
+from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
+from elliottlib.cli.snapshot_cli import CreateSnapshotCli, GetSnapshotCli
+from artcommonlib.model import Model
 
 
 class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
@@ -116,3 +118,86 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.assertEqual(records, mock_records)
         self.runtime.konflux_db.get_build_records_by_nvrs.assert_called_once_with(
             builds, where=ANY, strict=True)
+
+
+class TestGetSnapshotCli(IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.runtime = MagicMock()
+        self.major = 4
+        self.minor = 18
+        self.runtime.group = f"openshift-{self.major}.{self.minor}"
+        self.konflux_config = dict(
+            namespace="test-namespace",
+            kubeconfig="/path/to/kubeconfig",
+            context=None,
+        )
+        self.image_repo_creds_config = dict(
+            username="test_user",
+            password="test_pass"
+        )
+        self.for_bundle = False
+        self.for_fbc = False
+        self.dry_run = False
+
+        self.runtime.konflux_db.bind.return_value = None
+        self.runtime.get_major_minor.return_value = (self.major, self.minor)
+        self.runtime.konflux_db = MagicMock()
+
+        self.konflux_client = AsyncMock()
+        self.konflux_client.verify_connection.return_value = True
+
+    @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
+    @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
+    @patch("elliottlib.runtime.Runtime")
+    async def test_run_happy_path(self, mock_runtime, mock_konflux_client_init, mock_oc_image_info):
+        mock_runtime.return_value = self.runtime
+        mock_konflux_client_init.return_value = self.konflux_client
+        self.runtime.konflux_db.get_build_records_by_nvrs = AsyncMock()
+
+        snapshot = {
+            'apiVersion': 'appstudio.redhat.com/v1alpha1',
+            'kind': 'Snapshot',
+            'metadata': {
+                'labels': {
+                    'test.appstudio.openshift.io/type': 'override'
+                },
+                'name': 'ose-4-18-timestamp',
+                'namespace': 'test-namespace'
+            },
+            'spec': {
+                'application': 'openshift-4-18',
+                'components': [{'containerImage': 'registry/image@sha256:digest1',
+                                'name': 'ose-4-18-component1',
+                                'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}}}]
+            }
+        }
+        self.konflux_client._get.return_value = Model(snapshot)
+        mock_oc_image_info.return_value = {
+            "config": {
+                "config": {
+                    "Labels": {
+                        "com.redhat.component": "test-component",
+                        "version": f"v{self.major}.{self.minor}.0",
+                        "release": "assembly.test.el8"
+                    }
+                }
+            }
+        }
+        expected_nvrs = [f"test-component-v{self.major}.{self.minor}.0-assembly.test.el8"]
+        cli = GetSnapshotCli(
+            runtime=self.runtime,
+            konflux_config=self.konflux_config,
+            image_repo_creds_config=self.image_repo_creds_config,
+            for_bundle=self.for_bundle,
+            for_fbc=self.for_fbc,
+            snapshot='test-snapshot',
+            dry_run=self.dry_run
+        )
+        actual_nvrs = await cli.run()
+        self.konflux_client._get.assert_called_once_with(API_VERSION, KIND_SNAPSHOT, 'test-snapshot')
+        mock_oc_image_info.assert_called_once_with(
+            "registry/image@sha256:digest1",
+            registry_username=self.image_repo_creds_config['username'],
+            registry_password=self.image_repo_creds_config['password'],
+        )
+        self.assertEqual(expected_nvrs, actual_nvrs)
