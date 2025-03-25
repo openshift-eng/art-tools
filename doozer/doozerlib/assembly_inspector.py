@@ -65,7 +65,7 @@ class AssemblyInspector:
         # This is mainly to support weekly kernel delivery
         if self.runtime.group_config.rpm_deliveries:
             # parse and validate rpm_deliveries config
-            rpm_deliveries = RPMDeliveries.parse_obj(self.runtime.group_config.rpm_deliveries.primitive())
+            rpm_deliveries = RPMDeliveries.model_validate(self.runtime.group_config.rpm_deliveries.primitive())
             for entry in rpm_deliveries:
                 packages = entry.packages
                 for package in packages:

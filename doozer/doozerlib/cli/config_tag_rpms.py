@@ -93,7 +93,8 @@ class TagRPMsCli:
         }
         # Load and verify rpm_deliveries config
         group_config = self._runtime.group_config.primitive()
-        rpm_deliveries = RPMDeliveries.parse_obj(group_config.get("rpm_deliveries", []))  # will raise ValidationError if invalid
+        rpm_deliveries = RPMDeliveries.model_validate(group_config.get("rpm_deliveries", []))  # will raise
+        # ValidationError if invalid
         if not rpm_deliveries:
             logger.warning("rpm_deliveries is not defined for this group.")
             if self.as_json:
