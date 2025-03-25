@@ -220,7 +220,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.embargo_issues_for_payload")
-    def test_generate_payload_entries(self, pg_eissuesfp_mock, pg_findpe_mock):
+    async def test_generate_payload_entries(self, pg_eissuesfp_mock, pg_findpe_mock):
         gpcli = rgp_cli.GenPayloadCli(
             exclude_arch=["s390x"],
             runtime=MagicMock(arches=["ppc64le", "s390x"]),
@@ -229,12 +229,12 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
 
         test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="spam"), issues=[], dest_pullspec="dummy")
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), ["issues"])
-        e4a = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        e4a = await gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
         self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
-    def test_generate_payload_entries_rhcos(self, pg_findpe_mock):
+    async def test_generate_payload_entries_rhcos(self, pg_findpe_mock):
         """
         Build inspector does not exist, its RHCOS, add to public entry
         """
@@ -246,11 +246,11 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
                                                   dest_pullspec="pullspec_1")
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
-        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        payload_entries = await gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
-    def test_generate_payload_no_embargo(self, pg_findpe_mock):
+    async def test_generate_payload_no_embargo(self, pg_findpe_mock):
         gpcli = rgp_cli.GenPayloadCli(
             exclude_arch=[],
             runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
@@ -261,7 +261,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
                                                   dest_pullspec="pullspec_1", build_record_inspector=bbii)
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
-        payload_entries = gpcli.generate_payload_entries(Mock(AssemblyInspector))
+        payload_entries = await gpcli.generate_payload_entries(Mock(AssemblyInspector))
         self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
 
     async def test_detect_extend_payload_entry_issues(self):

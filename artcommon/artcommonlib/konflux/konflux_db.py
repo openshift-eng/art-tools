@@ -8,7 +8,7 @@ import typing
 from datetime import datetime, timedelta, timezone
 
 from google.cloud.bigquery import SchemaField, Row
-from sqlalchemy import Column, String, DateTime, func, Null, BinaryExpression
+from sqlalchemy import Column, String, DateTime, func, Null, BinaryExpression, Boolean
 
 from artcommonlib import bigquery
 from artcommonlib.konflux import konflux_build_record
@@ -209,6 +209,7 @@ class KonfluxDb:
             artifact_type: typing.Optional[ArtifactType] = None,
             engine: typing.Optional[Engine] = None,
             completed_before: typing.Optional[datetime] = None,
+            embargoed: bool = None,
             extra_patterns: dict = {},
             strict: bool = False,
     ) -> typing.List[typing.Optional[KonfluxRecord]]:
@@ -217,8 +218,18 @@ class KonfluxDb:
         """
 
         return await asyncio.gather(*[
-            self.get_latest_build(name, group, outcome, assembly, el_target, artifact_type, engine, completed_before,
-                                  extra_patterns, strict)
+            self.get_latest_build(
+                name=name,
+                group=group,
+                outcome=outcome,
+                assembly=assembly,
+                el_target=el_target,
+                artifact_type=artifact_type,
+                engine=engine,
+                completed_before=completed_before,
+                embargoed=embargoed,
+                extra_patterns=extra_patterns,
+                strict=strict)
             for name in names])
 
     async def get_latest_build(
@@ -231,6 +242,7 @@ class KonfluxDb:
             artifact_type: typing.Optional[ArtifactType] = None,
             engine: typing.Optional[Engine] = None,
             completed_before: typing.Optional[datetime] = None,
+            embargoed: bool = None,
             extra_patterns: dict = {},
             strict: bool = False,
     ) -> typing.Optional[KonfluxRecord]:
@@ -245,6 +257,7 @@ class KonfluxDb:
         :param artifact_type: 'rpm' | 'image'
         :param engine: 'brew' | 'konflux'
         :param completed_before: cut off timestamp for builds completion time
+        :param embargoed: set to True to fina a private build
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         :param strict: If True, raise an IOError if the build record is not found.
         :return: The latest build record; None if the build record is not found.
@@ -257,10 +270,12 @@ class KonfluxDb:
         base_clauses = [
             Column('name', String) == name,
             Column('group', String) == group,
-            Column('outcome', String) == str(outcome),
+            Column('outcome', String) == str(outcome)
         ]
         if assembly:
             base_clauses.append(Column('assembly', String) == assembly)
+        if embargoed is not None:
+            base_clauses.append(Column('embargoed', Boolean) == embargoed)
 
         order_by_clause = Column('start_time', quote=True).desc()
 

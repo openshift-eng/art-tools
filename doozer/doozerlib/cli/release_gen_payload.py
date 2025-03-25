@@ -334,7 +334,7 @@ class GenPayloadCli:
             assembly_inspector = AssemblyInspector(rt, rt.build_retrying_koji_client())
             await assembly_inspector.initialize(lookup_mode='both')
 
-        self.payload_entries_for_arch, self.private_payload_entries_for_arch = self.generate_payload_entries(assembly_inspector)
+        self.payload_entries_for_arch, self.private_payload_entries_for_arch = await self.generate_payload_entries(assembly_inspector)
         assembly_report: Dict = await self.generate_assembly_report(assembly_inspector)
 
         self.logger.info('\n%s', yaml.dump(assembly_report, default_flow_style=False, indent=2))
@@ -613,8 +613,8 @@ class GenPayloadCli:
         return f"quay.io/{org}/{repo}"
 
     @TRACER.start_as_current_span("GenPayloadCli.generate_payload_entries")
-    def generate_payload_entries(self, assembly_inspector: AssemblyInspector) -> (Dict[str, Dict[str, PayloadEntry]],
-                                                                                  Dict[str, Dict[str, PayloadEntry]]):
+    async def generate_payload_entries(self, assembly_inspector: AssemblyInspector) -> (Dict[str, Dict[str, PayloadEntry]],
+                                                                                        Dict[str, Dict[str, PayloadEntry]]):
         """
         Generate single-arch PayloadEntries for the assembly payload.
         Payload generation may uncover assembly issues, which are added to the assembly_issues list.
@@ -646,9 +646,16 @@ class GenPayloadCli:
                     continue
 
                 if v.build_record_inspector.is_under_embargo() and self.runtime.assembly_type == AssemblyTypes.STREAM:
-                    public_build = v.image_meta.get_latest_brew_build(default=None,
-                                                                      el_target=v.image_meta.branch_el_target(),
-                                                                      extra_pattern='*.p0.*')
+                    if self.runtime.build_system == 'brew':
+                        public_build = v.image_meta.get_latest_brew_build(default=None,
+                                                                          el_target=v.image_meta.branch_el_target(),
+                                                                          extra_pattern='*.p0.*')
+                    else:
+                        public_build = await v.image_meta.get_latest_konflux_build(
+                            default=None,
+                            el_target=v.image_meta.branch_el_target(),
+                            embargoed=False)
+
                     if not public_build:
                         raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
 
