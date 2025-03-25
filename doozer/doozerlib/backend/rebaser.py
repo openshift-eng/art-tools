@@ -264,6 +264,11 @@ class KonfluxRebaser:
             with open(docker_ignore_path, "a") as file:
                 file.write("\n!/.oit/**\n")
 
+            with exectools.Dir(path):
+                rc, _, err = exectools.cmd_gather(f"go mod vendor")
+                if rc != 0:
+                    raise Exception(f"go mod vendor command didn't complete successfully {err}")
+
     def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
         """ Resolve the parent images for the given image metadata."""
         image_from = metadata.config.get('from', {})
