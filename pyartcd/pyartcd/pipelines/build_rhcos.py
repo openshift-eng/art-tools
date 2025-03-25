@@ -16,6 +16,7 @@ from typing import List, Dict, Tuple
 JENKINS_BASE_URL = "https://jenkins-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com"
 OCP_REPO_RAW = "https://raw.githubusercontent.com/openshift-eng/ocp-build-data/refs/heads"
 
+
 # lifted verbatim from
 # https://findwork.dev/blog/advanced-usage-python-requests-timeouts-retries-hooks/
 class TimeoutHTTPAdapter(HTTPAdapter):
@@ -81,15 +82,14 @@ class BuildRhcosPipeline:
         )
         builds_info = response.json()["builds"]
         return [{"result": None, "description": build["description"], "url": build["url"]}
-            for build in builds_info
-            if build["result"] is None
-            and any(
-                param["name"] == "STREAM" and param["value"] == self._stream  # check build parameter with given stream
-                for action in build["actions"]
-                if "parameters" in action
-                for param in action["parameters"]
-            )
-        ]
+                for build in builds_info
+                if build["result"] is None
+                and any(
+                    param["name"] == "STREAM" and param["value"] == self._stream  # check build parameter with given stream
+                    for action in build["actions"]
+                    if "parameters" in action
+                    for param in action["parameters"]
+        )]
 
     def get_stream(self):
         """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""
