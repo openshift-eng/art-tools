@@ -48,7 +48,7 @@ class FindBugsKernelClonesCli:
         if not raw_config:
             logger.warning("kernel_bug_sweep is not defined in bug.yml")
             return
-        config = KernelBugSweepConfig.parse_obj(raw_config)
+        config = KernelBugSweepConfig.model_validate(raw_config)
         jira_tracker = self._runtime.get_bug_tracker("jira")
         jira_client: JIRA = jira_tracker._client
         koji_api = self._runtime.build_retrying_koji_client(caching=True)

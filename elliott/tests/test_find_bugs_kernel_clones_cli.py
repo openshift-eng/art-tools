@@ -14,7 +14,7 @@ from elliottlib import early_kernel
 
 class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self._config = KernelBugSweepConfig.parse_obj({
+        self._config = KernelBugSweepConfig.model_validate({
             "tracker_jira": {
                 "project": "KMAINT",
                 "labels": ["early-kernel-track"],
