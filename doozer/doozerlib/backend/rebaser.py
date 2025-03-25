@@ -1004,7 +1004,7 @@ class KonfluxRebaser:
             # By default, .add_lines adds lines to the end
             lines = ["\n# Start Konflux-specific steps",
                      "USER 0",
-                     "RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
+                     "RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
                      f"{user_to_set if user_to_set else ''}",
                      "# End Konflux-specific steps\n\n"
                      ]

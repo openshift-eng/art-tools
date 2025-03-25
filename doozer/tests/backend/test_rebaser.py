@@ -89,7 +89,7 @@ RUN commands
 
 # Start Konflux-specific steps
 USER 0
-RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true
+RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true
 USER 2000
 # End Konflux-specific steps
 """
@@ -149,7 +149,7 @@ RUN commands
 
 # Start Konflux-specific steps
 USER 0
-RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true
+RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true
 USER 3000
 # End Konflux-specific steps
 """
@@ -252,7 +252,7 @@ RUN commands
 
 # Start Konflux-specific steps
 USER 0
-RUN cp /tmp/yum_temp/* /etc/yum.repos.d/ || true
+RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true
 USER 3000
 # End Konflux-specific steps
 """
