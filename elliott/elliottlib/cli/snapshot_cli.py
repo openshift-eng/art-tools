@@ -4,7 +4,9 @@ import os
 import asyncio
 from datetime import datetime, timezone
 
+from ruamel.yaml import YAML
 from kubernetes.dynamic import exceptions
+from kubernetes.dynamic.resource import ResourceInstance
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
@@ -19,6 +21,11 @@ from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
                                                        KonfluxBundleBuildRecord,
                                                        KonfluxFbcBuildRecord,
                                                        Engine)
+
+yaml = YAML()
+yaml.default_flow_style = False
+yaml.preserve_quotes = True
+yaml.indent(mapping=2, sequence=4, offset=2)
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -59,30 +66,34 @@ class CreateSnapshotCli:
         build_records: list[KonfluxRecord] = await self.fetch_build_records()
 
         # make sure pullspec is live for each build
+        await self.get_pullspecs([b.image_pullspec for b in build_records], self.image_repo_creds_config)
+
+        snapshot_obj = await self.new_snapshot(build_records)
+        return await self.konflux_client._create(snapshot_obj)
+
+    @staticmethod
+    def get_timestamp():
+        return datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")
+
+    @staticmethod
+    async def get_pullspecs(pullspecs, image_repo_creds_config):
         image_info_tasks = []
-        for record in build_records:
+        for pullspec in pullspecs:
             image_info_tasks.append(asyncio.create_task(
                 oc_image_info_for_arch_async(
-                    record.image_pullspec,
-                    registry_username=self.image_repo_creds_config['username'],
-                    registry_password=self.image_repo_creds_config['password'],
+                    pullspec,
+                    registry_username=image_repo_creds_config['username'],
+                    registry_password=image_repo_creds_config['password'],
                 )))
         image_infos = await asyncio.gather(*image_info_tasks, return_exceptions=True)
-        errors = [(record, result) for record, result in zip(build_records, image_infos)
+        errors = [(record, result) for record, result in zip(pullspecs, image_infos)
                   if isinstance(result, BaseException)]
         if errors:
             for record, ex in errors:
                 record: KonfluxRecord
                 LOGGER.error("Failed to inspect nvr %s pullspec %s: %s", record.nvr, record.image_pullspec, ex)
             raise RuntimeError("Failed to inspect build pullspecs")
-
-        snapshot_obj = await self.new_snapshot(build_records)
-        created = await self.konflux_client._create(snapshot_obj)
-        print(created)
-
-    @staticmethod
-    def get_timestamp():
-        return datetime.strftime(datetime.now(tz=timezone.utc), "%Y%m%d%H%M")
+        return image_infos
 
     async def new_snapshot(self, build_records) -> dict:
         major, minor = self.runtime.get_major_minor()
@@ -165,7 +176,8 @@ def snapshot_cli():
     help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
 )
-@click.option('--apply', is_flag=True, help='Create the snapshot in cluster')
+@click.option('--apply', is_flag=True, default=False,
+              help='Create the snapshot in cluster (False by default)')
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
@@ -212,6 +224,145 @@ async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
         'context': konflux_context,
     }
 
-    pipeline = CreateSnapshotCli(runtime, konflux_config, image_repo_creds_config,
-                                 for_bundle, for_fbc, builds, dry_run=not apply)
-    await pipeline.run()
+    pipeline = CreateSnapshotCli(runtime=runtime,
+                                 konflux_config=konflux_config,
+                                 image_repo_creds_config=image_repo_creds_config,
+                                 for_bundle=for_bundle,
+                                 for_fbc=for_fbc,
+                                 builds=builds,
+                                 dry_run=not apply)
+    snapshot = await pipeline.run()
+    yaml.dump(snapshot.to_dict(), sys.stdout)
+
+
+class GetSnapshotCli:
+    def __init__(self, runtime: Runtime, konflux_config: dict, image_repo_creds_config: dict,
+                 for_bundle: bool, for_fbc: bool, dry_run: bool, snapshot: str):
+        self.runtime = runtime
+        self.konflux_config = konflux_config
+        self.for_bundle = for_bundle
+        self.for_fbc = for_fbc
+        self.dry_run = dry_run
+        self.snapshot = snapshot
+        self.image_repo_creds_config = image_repo_creds_config
+        self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
+                                                            config_file=self.konflux_config['kubeconfig'],
+                                                            context=self.konflux_config['context'],
+                                                            dry_run=self.dry_run)
+        self.konflux_client.verify_connection()
+
+    async def run(self):
+        self.runtime.initialize()
+        if self.runtime.konflux_db is None:
+            raise RuntimeError('Must run Elliott with Konflux DB initialized')
+        if self.for_bundle:
+            self.runtime.konflux_db.bind(KonfluxBundleBuildRecord)
+        elif self.for_fbc:
+            self.runtime.konflux_db.bind(KonfluxFbcBuildRecord)
+        else:
+            self.runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        # Ensure the Snapshot CRD is accessible
+        try:
+            await self.konflux_client._get_api(API_VERSION, KIND_SNAPSHOT)
+        except exceptions.ResourceNotFoundError:
+            raise RuntimeError(
+                f"Cannot access {API_VERSION} {KIND_SNAPSHOT} in the cluster. Passed the right kubeconfig?")
+
+        snapshot_obj = await self.konflux_client._get(API_VERSION, KIND_SNAPSHOT, self.snapshot)
+        nvrs = await self.extract_nvrs_from_snapshot(snapshot_obj)
+
+        LOGGER.info(f"Validating {len(nvrs)} NVRs from DB...")
+        where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
+        if not self.dry_run:
+            # we don't care about the build records
+            # but we do want to validate that the nvrs exist in the DB
+            # not existing would indicate inconsistency bw nvr construction & DB nvr field
+            # or something more atypical like nvr/image not belonging to ART
+            try:
+                await self.runtime.konflux_db.get_build_records_by_nvrs(nvrs, where=where, strict=True)
+            except IOError as e:
+                LOGGER.warning("A snapshot is expected to exclusively contain ART built image builds "
+                               "OR bundle builds OR FBC builds. To indicate fbc/bundle snapshot use "
+                               "--for-fbc/--for-bundle")
+                raise e
+
+        else:
+            LOGGER.info("[DRY-RUN] Skipped DB validation")
+
+        return nvrs
+
+    async def extract_nvrs_from_snapshot(self, snapshot_obj: ResourceInstance) -> list[str]:
+        if self.dry_run:
+            major, minor = self.runtime.get_major_minor()
+            LOGGER.info("[DRY-RUN] Returning mock NVR")
+            return [f"test-component-v{major}.{minor}.0-202503121435.p0.gc0eec47.assembly.{self.runtime.assembly}.el9"]
+
+        nvrs = []
+        pullspecs = [c.containerImage for c in snapshot_obj.spec.components]
+        image_infos = await CreateSnapshotCli.get_pullspecs(pullspecs, self.image_repo_creds_config)
+        for image_info in image_infos:
+            labels = image_info['config']['config']['Labels']
+            name = labels.get('com.redhat.component')
+            version = labels.get('version')
+            release = labels.get('release')
+            if name and version and release:
+                nvrs.append(f"{name}-{version}-{release}")
+            else:
+                raise RuntimeError(f"Could not find expected labels com.redhat.component={name} {version=}"
+                                   f" {release=}. is image art built?")
+        return nvrs
+
+
+@snapshot_cli.command("get", short_help="Get NVRs from a Konflux Snapshot")
+@click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
+@click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
+@click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
+@click.option('--for-bundle', is_flag=True, help='To indicate that the given builds are bundle builds.')
+@click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
+@click.option('--dry-run', is_flag=True, help='Do not fetch, just print what would happen')
+@click.argument('snapshot', metavar='SNAPSHOT', nargs=1)
+@click.pass_obj
+@click_coroutine
+async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
+                           for_bundle, for_fbc, dry_run, snapshot):
+    """
+    Get NVRs from an existing Konflux Snapshot
+
+    \b
+    $ elliott -g openshift-4.18 snapshot get ose-4-18-202503121723
+    """
+    if bool(for_bundle) and bool(for_fbc):
+        raise click.BadParameter("Use only one of --for-bundle or --for-fbc")
+
+    if not konflux_kubeconfig:
+        konflux_kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
+
+    if not konflux_kubeconfig:
+        raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
+
+    # These will be needed for image inspection
+    for secret in ['KONFLUX_ART_IMAGES_USERNAME', 'KONFLUX_ART_IMAGES_PASSWORD']:
+        if secret not in os.environ:
+            raise EnvironmentError(f"Missing required environment variable {secret}")
+
+    image_repo_creds_config = {
+        'username': os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+        'password': os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+    }
+
+    konflux_config = {
+        'kubeconfig': konflux_kubeconfig,
+        'namespace': konflux_namespace,
+        'context': konflux_context,
+    }
+
+    pipeline = GetSnapshotCli(runtime=runtime,
+                              konflux_config=konflux_config,
+                              image_repo_creds_config=image_repo_creds_config,
+                              for_bundle=for_bundle,
+                              for_fbc=for_fbc,
+                              dry_run=dry_run,
+                              snapshot=snapshot)
+    nvrs = await pipeline.run()
+    print('\n'.join(sorted(nvrs)))

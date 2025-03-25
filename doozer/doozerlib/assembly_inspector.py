@@ -3,6 +3,7 @@ from typing import Any, List, Dict, Optional, cast
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_permits, assembly_rhcos_config, \
     AssemblyIssueCode, AssemblyIssue
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.rpm_utils import parse_nvr, compare_nvr
 from doozerlib.plashet import PlashetBuilder
 
@@ -113,12 +114,15 @@ class AssemblyInspector:
                     continue
         return issues
 
-    def check_installed_rpms_in_image(self, dg_key: str, build_record_inspector: BuildRecordInspector):
-        """ Analyzes an image build to check if installed packages are allowed to assemble.
+    def check_installed_rpms_in_image(self, dg_key: str, build_record_inspector: BuildRecordInspector,
+                                      package_rpm_finder: Optional[PackageRpmFinder]):
+        """
+        Analyzes an image build to check if installed packages are allowed to assemble.
         """
         issues: List[AssemblyIssue] = []
         self.runtime.logger.info("Getting rpms in image build %s...", build_record_inspector.get_nvr())
-        installed_packages = build_record_inspector.get_all_installed_package_build_dicts()
+        installed_packages = build_record_inspector.get_all_installed_package_build_dicts(package_rpm_finder)  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
+
         # If rpm_deliveries is configured, check if the image build has rpms respecting the stop-ship/ship-ok tag
         issues.extend(self._check_installed_packages_for_rpm_delivery(dg_key, f'Image build {build_record_inspector.get_nvr()}', installed_packages))
         return issues
@@ -292,19 +296,20 @@ class AssemblyInspector:
 
         return issues
 
-    def check_group_image_consistency(self, build_record_inspector: BuildRecordInspector) -> List[AssemblyIssue]:
+    def check_group_image_consistency(self, build_record_inspector: BuildRecordInspector,
+                                      package_rpm_finder: Optional[PackageRpmFinder]) -> List[AssemblyIssue]:
         """
         Evaluate the current assembly build and an image in the group and check whether they are consistent with
         :param build_record_inspector: The brew build to check
         :return: Returns a (potentially empty) list of reasons the image should be rebuilt.
+        :param package_rpm_finder: used to retrieve a list of RPMs installed in a Konflux build
         """
         image_meta = build_record_inspector.get_image_meta()
         self.runtime.logger.info(f'Checking group image for consistency: {image_meta.distgit_key}...')
         issues: List[AssemblyIssue] = []
         required_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at image-specific level
         desired_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at group level
-
-        installed_packages = build_record_inspector.get_all_installed_package_build_dicts()  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
+        installed_packages = build_record_inspector.get_all_installed_package_build_dicts(package_rpm_finder)  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
         dgk = build_record_inspector.get_image_meta().distgit_key
 
         """

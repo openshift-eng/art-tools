@@ -62,7 +62,7 @@ class ConfigScanSources:
         self.assessment_reason = dict()  # maps metadata qualified_key => message describing change
         self.issues = list()  # tracks issues that arose during the scan, which did not interrupt the job
 
-        self.package_rpm_finder = PackageRpmFinder()
+        self.package_rpm_finder = PackageRpmFinder(runtime)
         self.latest_image_build_records_map: typing.Dict[str, KonfluxBuildRecord] = {}
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
