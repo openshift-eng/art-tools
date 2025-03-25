@@ -257,7 +257,7 @@ class KonfluxDb:
         :param artifact_type: 'rpm' | 'image'
         :param engine: 'brew' | 'konflux'
         :param completed_before: cut off timestamp for builds completion time
-        :param embargoed: set to True to fina a private build
+        :param embargoed: set to True to find a private build
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         :param strict: If True, raise an IOError if the build record is not found.
         :return: The latest build record; None if the build record is not found.
