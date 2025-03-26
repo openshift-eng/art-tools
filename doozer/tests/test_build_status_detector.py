@@ -38,7 +38,7 @@ class TestBuildStatusDetector(TestCase):
              patch("doozerlib.brew.list_image_rpms", return_value=rpm_lists), \
              patch("doozerlib.build_status_detector.BuildStatusDetector.find_shipped_builds",
                    side_effect=lambda builds: {b for b in builds if b in shipped_builds}):
-            detector = BuildStatusDetector(MagicMock(), MagicMock())
+            detector = BuildStatusDetector(MagicMock(build_system='brew'), MagicMock())
             detector.archive_lists = archive_lists
             actual = detector.find_embargoed_builds(builds, [])
             self.assertEqual(actual, expected)
@@ -71,7 +71,7 @@ class TestBuildStatusDetector(TestCase):
                    return_value=embargoed_tag_builds), \
              patch("doozerlib.build_status_detector.BuildStatusDetector.find_shipped_builds",
                    side_effect=lambda builds: {b for b in builds if b in shipped_rpm_builds}):
-            detector = BuildStatusDetector(MagicMock(), MagicMock())
+            detector = BuildStatusDetector(MagicMock(build_system='brew'), MagicMock())
             detector.archive_lists = archive_lists
             actual = detector.find_with_embargoed_rpms(set(b["id"] for b in image_builds), ["test-candidate"])
             self.assertEqual(actual, expected)
