@@ -476,7 +476,7 @@ class KonfluxImageBuilder:
             'release': release,
             'el_target': f'el{isolate_el_version_in_release(release)}',
             'arches': building_arches,
-            'embargoed': 'p1' in release.split('.'),
+            'embargoed': 'p3' in release.split('.'),
             'start_time': datetime.now(tz=timezone.utc),
             'end_time': None,
             'nvr': nvr,

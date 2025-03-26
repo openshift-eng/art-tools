@@ -83,7 +83,7 @@ def rpms_clone_sources(runtime, output_yml):
 @click.option("--release", metavar='RELEASE', default=None,
               help="Release label to populate in specfile.", required=True)
 @click.option("--embargoed", default=False, is_flag=True,
-              help="Add .p1 to the release string for all rpms, which indicates those rpms have embargoed fixes")
+              help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes")
 @click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
@@ -150,7 +150,7 @@ async def _rpms_rebase_and_build(runtime: Runtime, version: str, release: str, e
 @click.option("--release", metavar='RELEASE', default=None,
               help="Release label to populate in specfile.", required=True)
 @click.option("--embargoed", default=False, is_flag=True,
-              help="Add .p1 to the release string for all rpms, which indicates those rpms have embargoed fixes")
+              help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes")
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @click.option('--push/--no-push', default=False, is_flag=True,
               help='Push changes back to config repo. --no-push is default')
@@ -333,6 +333,11 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
 
         nvr = build["nvr"]
 
+        if runtime.build_system == 'brew':
+            embargoed = "p1" in rpm.release.split(".")
+        else:
+            embargoed = "p3" in rpm.release.split("."),
+
         build_record = KonfluxBuildRecord(
             name=rpm.rpm_name,
             group=runtime.group,
@@ -347,7 +352,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             commitish=rpm.pre_init_sha,
             rebase_repo_url=rebase_repo_url,
             rebase_commitish=rebase_commitish,
-            embargoed="p1" in rpm.release.split("."),
+            embargoed=embargoed,
             start_time=datetime.strptime(build["creation_time"], '%Y-%m-%d %H:%M:%S.%f'),
             end_time=datetime.strptime(build["completion_time"], '%Y-%m-%d %H:%M:%S.%f'),
             artifact_type=ArtifactType.RPM,
