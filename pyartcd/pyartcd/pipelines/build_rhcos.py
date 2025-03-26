@@ -99,7 +99,10 @@ class BuildRhcosPipeline:
     def start_build(self):
         """Start a new build for the given version"""
         job_url = f"{JENKINS_BASE_URL}/job/{self.job}/buildWithParameters"
-        params = dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)  # this is build job parameter
+        if self.job == 'build-node-image':
+            params = dict(RELEASE=self._stream)
+        else:  # buld job params
+            params = dict(STREAM=self._stream, EARLY_ARCH_JOBS="false", FORCE=self.new_build)
         build_number = self.trigger_build(job_url, params)
         build = self.request_session.get(f"{JENKINS_BASE_URL}/job/{self.job}/{build_number}/api/json").json()
         return dict(url=build['url'], result=build['result'], description=build['description'])
@@ -126,7 +129,7 @@ class BuildRhcosPipeline:
               help="Ignore in-progress builds instead of just exiting like usual")
 @click.option("--new-build", required=False, default=False, type=bool,
               help="Force a new build even if no changes were detected from the last build")
-@click.option("--job", required=False, type=click.Choice(['build']), default="build",
+@click.option("--job", required=False, type=click.Choice(['build', 'build-node-image']), default="build",
               help="RHCOS pipeline job name")
 @pass_runtime
 def build_rhcos(runtime: Runtime, new_build: bool, ignore_running: bool, version: str, job: str):
