@@ -193,9 +193,9 @@ class KonfluxDb:
         if total_rows == 0:
             # We can print out BinaryExpression search clause, but it gets much trickier with Function
             # that comes into play when extra_patterns is used, so exclude those cases
-            self.logger.warning('No builds found with the given criteria: %s',
-                                [f"{clause.left}={clause.right.value if not isinstance(clause.right, Null) else clause.right}"
-                                 for clause in base_clauses if isinstance(clause, BinaryExpression)])
+            self.logger.debug('No builds found with the given criteria: %s',
+                              [f"{clause.left}={clause.right.value if not isinstance(clause.right, Null) else clause.right}"
+                               for clause in base_clauses if isinstance(clause, BinaryExpression)])
             if strict:
                 raise IOError('No builds found with the given criteria')
 
