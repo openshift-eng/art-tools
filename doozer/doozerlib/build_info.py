@@ -279,7 +279,7 @@ class BuildRecordInspector(ABC):
         return self._nvr
 
     @abstractmethod
-    def get_all_installed_package_build_dicts(self, *_):
+    def get_all_installed_package_build_dicts(self, *_) -> Dict[str, Dict]:
         pass
 
     @abstractmethod
@@ -651,8 +651,8 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
     def get_release(self):
         return self._build_record.release
 
-    def get_all_installed_package_build_dicts(self, package_rpm_finder: PackageRpmFinder):
-        return package_rpm_finder.get_packages_to_rpms_mapping(self._build_record)
+    def get_all_installed_package_build_dicts(self, package_rpm_finder: PackageRpmFinder) -> Dict[str, Dict]:
+        return package_rpm_finder.get_installed_packages_build_dicts(self._build_record)
 
     def get_rpms_in_pkg_build(self, build_id: int):
         raise NotImplementedError

@@ -427,13 +427,13 @@ class GenPayloadCli:
         # check that images for this assembly/group are consistent with the assembly definition.
         self.detect_inconsistent_images(assembly_inspector)
 
+        # check that images for this assembly/group have installed rpms that are not allowed to assemble.
+        self.detect_installed_rpms_issues(assembly_inspector)
+
         # Stopping the checks here for Konflux
         # TODO to be re-enabled
         if self.runtime.build_system == 'konflux':
             return self.summarize_issue_permits(assembly_inspector)
-
-        # check that images for this assembly/group have installed rpms that are not allowed to assemble.
-        self.detect_installed_rpms_issues(assembly_inspector)
 
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
@@ -740,6 +740,7 @@ class GenPayloadCli:
                                 payload_entry.rhcos_build,
                                 assembly_inspector.get_group_release_images(),
                                 cross_payload_requirements,
+                                self.package_rpm_finder
                             )
                         )
                 else:
@@ -1637,7 +1638,8 @@ class PayloadGenerator:
             primary_rhcos_build: RHCOSBuildInspector,
             payload_bri: Dict[str, BuildRecordInspector],
             # payload tag -> [pkg_name1, ...]
-            payload_consistency_config: Dict[str, List[str]]) -> List[AssemblyIssue]:
+            payload_consistency_config: Dict[str, List[str]],
+            package_rpm_finder=None) -> List[AssemblyIssue]:
         """
         Compares designated brew packages installed in designated payload members with the RPMs
         in an RHCOS build, ensuring that both have the same version installed.
@@ -1670,8 +1672,9 @@ class PayloadGenerator:
 
             # check that each specified package in the member is consistent with the RHCOS build
             for pkg in consistent_pkgs:
-                issues.append(PayloadGenerator.validate_pkg_consistency_req(payload_tag, pkg, bbii, rhcos_rpm_vrs,
-                                                                            str(primary_rhcos_build)))
+                issues.append(PayloadGenerator.validate_pkg_consistency_req(
+                    payload_tag, pkg, bbii, rhcos_rpm_vrs,
+                    str(primary_rhcos_build), package_rpm_finder))
 
         return [issue for issue in issues if issue]
 
@@ -1680,12 +1683,13 @@ class PayloadGenerator:
             payload_tag: str, pkg: str,
             bri: BuildRecordInspector,
             rhcos_rpm_vrs: Dict[str, str],
-            rhcos_build_id: str) -> Optional[AssemblyIssue]:
+            rhcos_build_id: str,
+            package_rpm_finder=None) -> Optional[AssemblyIssue]:
         """check that the specified package in the member is consistent with the RHCOS build"""
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
         logger.debug(f"Checking consistency of {pkg} for {payload_tag_nvr} against {rhcos_build_id}")
-        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts()  # by name
+        member_nvrs: Dict[str, Dict] = bri.get_all_installed_package_build_dicts(package_rpm_finder)  # by name
         try:
             build = member_nvrs[pkg]
         except KeyError:

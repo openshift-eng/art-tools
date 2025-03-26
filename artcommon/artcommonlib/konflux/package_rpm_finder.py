@@ -16,6 +16,7 @@ class PackageRpmFinder:
     def __init__(self, runtime):
         self._logger = logging.getLogger(__name__)
         self._package_to_rpms: Dict[str, List[Dict]] = {}
+        self._packages_build_dicts: Dict[str, Dict] = {}
         self._not_found_packages = []
         self._runtime = runtime
 
@@ -49,19 +50,23 @@ class PackageRpmFinder:
                     'The following packages could not be found in Brew and will be excluded from the check: %s',
                     ', '.join(not_found_packages)
                 )
-                self._not_found_packages.extend(not_found_packages)
 
-            # Remove missing builds from packages in need for caching
-            caching_packages = [pkg for pkg, build in zip(caching_packages, builds) if build]
-            builds = [build for build in builds if build]
+                # Remove missing builds from packages in need for caching
+                self._not_found_packages.extend(not_found_packages)
+                caching_packages = [pkg for pkg, build in zip(caching_packages, builds) if build]
+                builds = [build for build in builds if build]
 
             # Get RPM list from package build IDs using koji_api.listBuildRPMs
             build_ids = [build['build_id'] for build in builds]
             results: List[List[Dict]] = brew.list_build_rpms(build_ids, session)
 
             # Cache retrieved RPM builds for package
-            for package_build, rpm_builds in zip(caching_packages, results):
-                self._package_to_rpms[package_build] = rpm_builds
+            for package_nvr, rpm_builds in zip(caching_packages, results):
+                self._package_to_rpms[package_nvr] = rpm_builds
+
+            # Cache packages build dicts
+            for package_nvr, package_build in zip(caching_packages, builds):
+                self._packages_build_dicts[package_nvr] = package_build
 
     def get_brew_rpms_from_build_record(self, build_record: KonfluxBuildRecord) -> List[Dict]:
         """
@@ -73,11 +78,12 @@ class PackageRpmFinder:
         self._cache_packages(installed_packages)
         return [rpm for package in installed_packages for rpm in self._package_to_rpms.get(package, [])]
 
-    def get_packages_to_rpms_mapping(self, build_record: KonfluxBuildRecord) -> Dict[str, dict]:
+    def get_installed_packages_build_dicts(self, build_record: KonfluxBuildRecord) -> Dict[str, Dict]:
         """
         Return a {package-name} -> {list[RPM build]} mapping associated with the packages installed in a Konflux build
         """
         installed_packages = build_record.installed_packages
         installed_packages = [pkg for pkg in installed_packages if pkg not in self._not_found_packages]
         self._cache_packages(installed_packages)
-        return {rpm['name']: rpm for package in installed_packages for rpm in self._package_to_rpms.get(package, [])if rpm['arch'] == 'x86_64'}
+        return {self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
+                for package_nvr in installed_packages}
