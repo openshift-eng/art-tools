@@ -424,18 +424,22 @@ class PromotePipeline:
                 if not self.skip_mirror_binaries:
                     message_digests = await self.extract_and_publish_clients(client_type, release_infos)
                 if not self.skip_signing:
-                    lock = Lock.SIGNING
-                    lock_identifier = jenkins.get_build_path()
-                    if not lock_identifier:
-                        self._logger.warning('Env var BUILD_URL has not been defined: '
-                                             'a random identifier will be used for the locks')
+                    if not self.runtime.dry_run:
+                        lock = Lock.SIGNING
+                        lock_identifier = jenkins.get_build_path()
+                        if not lock_identifier:
+                            self._logger.warning('Env var BUILD_URL has not been defined: '
+                                                 'a random identifier will be used for the locks')
 
-                    await locks.run_with_lock(
-                        coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
-                        lock=lock,
-                        lock_name=lock.value.format(signing_env=self.signing_env),
-                        lock_id=lock_identifier
-                    )
+                        await locks.run_with_lock(
+                            coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
+                            lock=lock,
+                            lock_name=lock.value.format(signing_env=self.signing_env),
+                            lock_id=lock_identifier
+                        )
+                    else:
+                        self._logger.warning("[DRY RUN] will sign artifacts without locking")
+                        await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
 
                 # publish rhcos on mirror via rhcos_sync job
                 # only if release is EC or a GA release (.0)
@@ -615,14 +619,17 @@ class PromotePipeline:
             await asyncio.gather(*tasks)
 
         self._logger.info("All artifacts have been successfully signed.")
-        self._logger.info("Publishing signatures...")
-        tasks = []
-        if json_digests:
-            tasks.append(self._publish_json_digest_signatures(json_digest_sig_dir))
-        if message_digests:
-            tasks.append(self._publish_message_digest_signatures(message_digest_sig_dir))
-        await asyncio.gather(*tasks)
-        self._logger.info("All signatures have been published.")
+        if not self.runtime.dry_run:
+            self._logger.info("Publishing signatures...")
+            tasks = []
+            if json_digests:
+                tasks.append(self._publish_json_digest_signatures(json_digest_sig_dir))
+            if message_digests:
+                tasks.append(self._publish_message_digest_signatures(message_digest_sig_dir))
+            await asyncio.gather(*tasks)
+            self._logger.info("All signatures have been published.")
+        else:
+            self._logger.warning("[DRY RUN] Would have published signatures.")
 
     async def _sign_json_digest(self, signatory: AsyncSignatory, release_name: str, pullspec: str, digest: str, sig_path: Path):
         """ Sign a JSON digest claim
@@ -632,9 +639,6 @@ class PromotePipeline:
         :param sig_path: Where to save the signature file
         """
         self._logger.info("Signing json digest for payload %s with digest %s...", pullspec, digest)
-        if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have signed the requested artifact.")
-            return
         sig_path.parent.mkdir(parents=True, exist_ok=True)
         with open(sig_path, "wb") as sig_file:
             await signatory.sign_json_digest(
@@ -651,9 +655,6 @@ class PromotePipeline:
         :param sig_path: Where to save the signature file
         """
         self._logger.info("Signing message digest file %s...", input_path.absolute())
-        if self.runtime.dry_run:
-            self._logger.warning("[DRY RUN] Would have signed the requested artifact.")
-            return
         sig_path.parent.mkdir(parents=True, exist_ok=True)
         with open(input_path, "rb") as in_file, open(sig_path, "wb") as sig_file:
             await signatory.sign_message_digest(
