@@ -17,11 +17,13 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p1'), 'p1')
         self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p1.el7'), 'p1')
         self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p0'), 'p0')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p2'), None)
+        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p2'), 'p2')
         self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p1.assembly.p'), 'p1')
         self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p0.assembly.test'), 'p0')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p2.assembly.stream'), None)
+        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p2.assembly.stream'), 'p2')
         self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p0.assembly.test.el7'), 'p0')
+        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p3'), 'p3')
+        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p4'), None)
 
     def test_extract_version_fields(self):
         self.assertEqual(util.extract_version_fields('1.2.3'), [1, 2, 3])

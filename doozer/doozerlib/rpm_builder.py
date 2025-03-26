@@ -64,7 +64,7 @@ class RPMBuilder:
             ["git", "rm", "--ignore-unmatch", "-rf", "."], cwd=dg.distgit_dir
         )
 
-        # set .p0/.p1 flag
+        # set .p? flag
         if self._runtime.group_config.public_upstreams:
             if not release.endswith(".p?"):
                 raise ValueError(
@@ -74,9 +74,9 @@ class RPMBuilder:
                 raise AssertionError("rpm.private_fix flag should already be set")
             if rpm.private_fix:
                 logger.warning("Source contains embargoed fixes.")
-                pval = ".p1"
+                pval = ".p1" if self._runtime.build_system == 'brew' else ".p3"
             else:
-                pval = ".p0"
+                pval = ".p0" if self._runtime.build_system == 'brew' else ".p2"
             release = release[:-3] + pval
 
         # include commit hash in release field

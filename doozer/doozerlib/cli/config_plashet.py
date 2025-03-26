@@ -1,6 +1,7 @@
 import itertools
 import logging
 import os
+import re
 import ssl
 import sys
 import time
@@ -481,7 +482,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     automatic sign on attach).
 
     If you specify --embargoed-brew-tag, plashet will treat any nvr found in this tag as if it is
-    embargoed (unless has already shipped). This is useful since the .p1 convention cannot be used
+    embargoed (unless has already shipped). This is useful since the .p1/p3 convention cannot be used
     on RPMs not built by ART.
 
 
@@ -590,7 +591,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                 # We can ignore it if it has already shipped.
                 test_nvre_obj = parse_nvr(an_nvre)
                 if released_nvre_obj is None or compare_nvr(test_nvre_obj, released_nvre_obj) > 0:  # If this nvr hasn't shipped
-                    if '.p1' in an_nvre or strip_epoch(an_nvre) in embargoed_tag_nvrs:  # It's embargoed!
+                    if re.search(r'\.p[13]', an_nvre or '') or strip_epoch(an_nvre) in embargoed_tag_nvrs:  # It's embargoed!
                         return True
                 return False
 
