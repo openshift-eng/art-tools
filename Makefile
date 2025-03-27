@@ -26,3 +26,6 @@ functional-doozer:
 	uv run -m pytest --verbose --color=yes doozer/tests_functional
 
 test: lint unit
+
+gen-shipment-schema:
+	echo 'from elliottlib.shipment_model import ShipmentConfig; import json; print(json.dumps(ShipmentConfig.model_json_schema(), indent=2))' | uv run python > ocp-build-data-validator/validator/json_schemas/shipment.schema.json
