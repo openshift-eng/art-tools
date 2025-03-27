@@ -243,10 +243,8 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         self.assertEqual(changed, True)
         self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
 
-    @patch("artcommonlib.release_util.isolate_el_version_in_release")
     @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.validate_nvrs_in_brew")
-    async def test_run_with_non_art_rpm_nvr(self, mock_validate_nvrs_brew, mock_isolate_el_version):
-        mock_isolate_el_version.return_value = 8
+    async def test_run_with_non_art_rpm_nvr(self, mock_validate_nvrs_brew):
 
         cli = AssemblyPinBuildsCli(
             runtime=self.runtime,
