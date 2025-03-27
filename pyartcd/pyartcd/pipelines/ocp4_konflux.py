@@ -226,7 +226,7 @@ class KonfluxOcp4Pipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD=True,  # TODO to be removed
+            SKIP_MULTI_ARCH_PAYLOAD=False
         )
 
     async def init_build_plan(self):
