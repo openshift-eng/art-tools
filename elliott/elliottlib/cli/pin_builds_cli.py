@@ -71,7 +71,7 @@ class AssemblyPinBuildsCli:
             raise ValueError(
                 "Did not expect more than one rhcos nvr. Provide only 1 nvr which will be pinned for all arches.")
 
-        nvrs_to_fetch = images + art_rpms + non_art_rpms
+        nvrs_to_fetch = sorted(images + art_rpms + non_art_rpms)
         if nvrs_to_fetch:
             if self.runtime.build_system == Engine.BREW.value:
                 self.validate_nvrs_in_brew(nvrs_to_fetch)
@@ -80,9 +80,9 @@ class AssemblyPinBuildsCli:
                 if not self.pr:
                     await self.validate_nvrs_in_konflux_db(nvrs_to_fetch)
 
-        images_changed = self.pin_images(art_images_by_comp, images)
-        art_rpms_changed = self.pin_rpms(art_rpms_by_comp, art_rpms)
-        non_art_rpms_changed = self.pin_non_art_rpms(non_art_rpms)
+        images_changed = self.pin_images(art_images_by_comp, images) if images else False
+        art_rpms_changed = self.pin_rpms(art_rpms_by_comp, art_rpms) if art_rpms else False
+        non_art_rpms_changed = self.pin_non_art_rpms(non_art_rpms) if non_art_rpms else False
         rhcos_changed = self.pin_rhcos(rhcos[0]) if rhcos else False
 
         assembly_changed = images_changed or art_rpms_changed or non_art_rpms_changed or rhcos_changed
