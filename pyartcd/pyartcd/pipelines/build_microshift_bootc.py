@@ -41,10 +41,12 @@ class BuildMicroShiftBootcPipeline:
                  force: bool,
                  force_plashet_sync: bool,
                  data_path: str,
+                 data_gitref: Optional[str],
                  slack_client,
                  logger: Optional[logging.Logger] = None):
         self.runtime = runtime
         self.group = group
+        self.data_gitref = data_gitref
         self.assembly = assembly
         self.force = force
         self.force_plashet_sync = force_plashet_sync
@@ -70,6 +72,9 @@ class BuildMicroShiftBootcPipeline:
         if data_path:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = data_path
             self._elliott_env_vars["ELLIOTT_DATA_PATH"] = data_path
+
+        if self.data_gitref:
+            self.group += f'@{self.data_gitref}'
 
     async def run(self):
         # Make sure our api.ci token is fresh
@@ -219,11 +224,7 @@ class BuildMicroShiftBootcPipeline:
                                      f" {url}, but could not find it. Use --force to rebuild plashet.")
 
                 microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
-                expected_microshift_nvr = next((n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9), None)
-                if not expected_microshift_nvr:
-                    message = f"Could not find el9 microshift nvr for assembly {self.assembly}. Please investigate"
-                    self._logger.info(message)
-                    raise ValueError(message)
+                expected_microshift_nvr = next(n for n in microshift_nvrs if isolate_el_version_in_release(n) == 9)
                 if actual_nvr != expected_microshift_nvr:
                     self._logger.info(f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed.")
                     return True
@@ -321,6 +322,8 @@ class BuildMicroShiftBootcPipeline:
 @cli.command("build-microshift-bootc")
 @click.option("--data-path", metavar='BUILD_DATA', default=None,
               help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
+@click.option('--data-gitref', required=False,
+              help='Doozer data path git [branch / tag / sha] to use')
 @click.option("-g", "--group", metavar='NAME', required=True,
               help="The group of components on which to operate. e.g. openshift-4.9")
 @click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
@@ -331,13 +334,13 @@ class BuildMicroShiftBootcPipeline:
               help="Force plashet sync even if it is not needed")
 @pass_runtime
 @click_coroutine
-async def build_microshift_bootc(runtime: Runtime, data_path: str, group: str, assembly: str, force: bool,
-                                 force_plashet_sync: bool):
+async def build_microshift_bootc(runtime: Runtime, data_path: str, data_gitref: Optional[str], group: str,
+                                 assembly: str, force: bool, force_plashet_sync: bool):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     try:
-        pipeline = BuildMicroShiftBootcPipeline(runtime=runtime, group=group, assembly=assembly,
+        pipeline = BuildMicroShiftBootcPipeline(runtime=runtime, group=group, data_gitref=data_gitref, assembly=assembly,
                                                 force=force, force_plashet_sync=force_plashet_sync,
                                                 data_path=data_path,
                                                 slack_client=slack_client)
