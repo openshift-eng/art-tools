@@ -24,7 +24,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         self.runtime.get_major_minor.return_value = (4, 18)
         self.runtime.get_releases_config.return_value = Model({
             "releases": {
-                "4.18.2": {
+                self.runtime.assembly: {
                     "assembly": self.assembly_config
                 }
             }
@@ -129,7 +129,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         }
         self.runtime.get_releases_config.return_value = Model({
             "releases": {
-                "4.18.2": {
+                self.runtime.assembly: {
                     "assembly": assembly_config
                 }
             }
