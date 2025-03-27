@@ -81,7 +81,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             why=self.why,
             github_token=self.github_token
         )
-        await cli.run()
+        out, changed = await cli.run()
 
         mock_validate_nvrs_brew.assert_called_once_with([self.image_nvr, self.rpm_nvr])
         expected_assembly_config = {
@@ -103,7 +103,47 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             },
             "group": {}
         }
-        self.assertEqual(self.assembly_config.primitive(), expected_assembly_config)
+        self.assertEqual(changed, True)
+        self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
+
+    @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.validate_nvrs_in_brew")
+    async def test_run_with_nvrs_no_change(self, mock_validate_nvrs_brew):
+        assembly_config = {
+            "members": {
+                "images": [{
+                    "distgit_key": "image1",
+                    "metadata": {
+                        "is": {"nvr": self.image_nvr}
+                    },
+                    "why": self.why
+                }],
+                "rpms": [{
+                    "distgit_key": "rpm1",
+                    "metadata": {
+                        "is": {"el8": self.rpm_nvr}
+                    },
+                    "why": self.why
+                }]
+            },
+            "group": {}
+        }
+        self.runtime.get_releases_config.return_value = Model({
+            "releases": {
+                "4.18.2": {
+                    "assembly": assembly_config
+                }
+            }
+        })
+        cli = AssemblyPinBuildsCli(
+            runtime=self.runtime,
+            nvrs=[self.image_nvr, self.rpm_nvr],
+            pr=None,
+            why=self.why,
+            github_token=self.github_token
+        )
+        _, changed = await cli.run()
+        mock_validate_nvrs_brew.assert_called_once_with([self.image_nvr, self.rpm_nvr])
+        self.assertEqual(changed, False)
 
     @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.get_nvrs_for_pr")
     @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.validate_nvrs_in_brew")
@@ -117,7 +157,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             why=self.why,
             github_token=self.github_token
         )
-        await cli.run()
+        out, changed = await cli.run()
 
         mock_validate_nvrs_brew.assert_called_once_with([self.image_nvr, self.rpm_nvr])
         expected_assembly_config = {
@@ -139,7 +179,8 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             },
             "group": {}
         }
-        self.assertEqual(self.assembly_config.primitive(), expected_assembly_config)
+        self.assertEqual(changed, True)
+        self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
 
     @patch("elliottlib.cli.pin_builds_cli.get_container_configs")
     @patch("elliottlib.cli.pin_builds_cli.brew_arch_for_go_arch")
@@ -172,7 +213,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             why=self.why,
             github_token=self.github_token
         )
-        await cli.run()
+        out, changed = await cli.run()
 
         mock_rhcos_build_finder.assert_any_call(
             self.runtime, "4.18", "x86_64", False
@@ -199,7 +240,8 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 }
             }
         }
-        self.assertEqual(self.assembly_config.primitive(), expected_assembly_config)
+        self.assertEqual(changed, True)
+        self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
 
     @patch("artcommonlib.release_util.isolate_el_version_in_release")
     @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.validate_nvrs_in_brew")
@@ -213,7 +255,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             why=self.why,
             github_token=self.github_token
         )
-        await cli.run()
+        out, changed = await cli.run()
 
         mock_validate_nvrs_brew.assert_called_once_with([self.non_art_rpm_nvr])
         expected_assembly_config = {
@@ -231,7 +273,8 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 }
             }
         }
-        self.assertEqual(self.assembly_config.primitive(), expected_assembly_config)
+        self.assertEqual(changed, True)
+        self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
 
     @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.get_pr_merge_commit", return_value=("commit_hash", "main"))
     async def test_get_nvrs_for_pr(self, mock_get_pr_merge_commit):
@@ -267,3 +310,40 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         sha, branch = AssemblyPinBuildsCli.get_pr_merge_commit(self.pr, self.github_token)
         self.assertEqual(sha, "abc123def456")
         self.assertEqual(branch, "release-4.18")
+
+    async def test_pin_rpms_missing_rhel_target(self):
+        # Set up RPM mock with two RHEL targets: 8 and 9
+        rpm_mock = MagicMock()
+        rpm_mock.get_component_name.return_value = "rpm1"
+        rpm_mock.config.content.source.git.web = "https://github.com/org/repo"
+        rpm_mock.distgit_key = "rpm1"
+        rpm_mock.determine_rhel_targets.return_value = [8, 9]  # RPM supports both el8 and el9
+        self.runtime.rpm_map = {"rpm1": rpm_mock}
+
+        cli = AssemblyPinBuildsCli(
+            runtime=self.runtime,
+            nvrs=[self.rpm_nvr],  # Only passing the el8 NVR
+            pr=None,
+            why=self.why,
+            github_token=self.github_token
+        )
+        cli.assembly_config = self.assembly_config
+
+        with self.assertRaises(ValueError) as context:
+            cli.pin_rpms({"rpm1": rpm_mock}, [self.rpm_nvr])
+        self.assertIn("RPM rpm1 is missing a pin for rhel9", str(context.exception))
+
+    @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.validate_nvrs_in_konflux_db")
+    async def test_run_with_nvrs_konflux_engine(self, mock_validate_nvrs_konflux):
+        self.runtime.build_system = Engine.KONFLUX.value
+
+        cli = AssemblyPinBuildsCli(
+            runtime=self.runtime,
+            nvrs=[self.image_nvr, self.rpm_nvr],
+            pr=None,
+            why=self.why,
+            github_token=self.github_token
+        )
+        await cli.run()
+
+        mock_validate_nvrs_konflux.assert_called_once_with([self.image_nvr, self.rpm_nvr])

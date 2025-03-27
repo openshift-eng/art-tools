@@ -86,17 +86,14 @@ class AssemblyPinBuildsCli:
         rhcos_changed = self.pin_rhcos(rhcos[0]) if rhcos else False
 
         assembly_changed = images_changed or art_rpms_changed or non_art_rpms_changed or rhcos_changed
-        if assembly_changed:
-            out = {
-                "releases": {
-                    self.runtime.assembly: {
-                        "assembly": self.assembly_config.primitive()
-                    }
+        out = {
+            "releases": {
+                self.runtime.assembly: {
+                    "assembly": self.assembly_config.primitive()
                 }
             }
-            print(yaml.dump(out))
-        else:
-            LOGGER.info("No change in assembly config. Pins already exist.")
+        }
+        return out, assembly_changed
 
     async def get_nvrs_for_pr(self):
         images, rpms, nvrs = [], [], []
@@ -339,4 +336,9 @@ async def assembly_pin_builds_cli(runtime: Runtime, nvrs: List[str], pr: Optiona
             raise ValueError("GITHUB_TOKEN must be set in the environment to query PR information")
 
     pipeline = AssemblyPinBuildsCli(runtime, nvrs, pr, why, github_token)
-    await pipeline.run()
+    out, changed = await pipeline.run()
+    if changed:
+        LOGGER.info("Assembly config updated. Pins added.")
+        click.echo(yaml.dump(out, default_flow_style=False))
+    else:
+        LOGGER.info("No change in assembly config. Pins already exist.")
