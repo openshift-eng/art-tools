@@ -126,6 +126,16 @@ class KonfluxRebaser:
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
             actual_version, actual_release, _ = await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
 
+            await build_repo.git_add()
+
+            gitignore_filename = ".gitignore"
+            gitignorebak_filename = ".gitignore.bak"
+            if dest_dir.joinpath(gitignorebak_filename).is_file():
+                rc, _, stderr = exectools.cmd_gather(["mv", dest_dir.joinpath(gitignorebak_filename), dest_dir.joinpath(gitignore_filename)])
+                if rc != 0:
+                    raise Exception(f"Cannot rename {gitignorebak_filename} to {gitignore_filename}: {stderr}")
+                self._logger.info(f"Renamed {gitignorebak_filename} to {gitignore_filename}")
+
             # Commit changes
             await build_repo.commit(commit_message, allow_empty=True)
 
@@ -437,10 +447,15 @@ class KonfluxRebaser:
         if containerfile.is_file():
             containerfile.unlink()
 
-        # Delete .gitignore since it may block full sync and is not needed here
-        gitignore_path = dest_dir.joinpath('.gitignore')
-        if gitignore_path.is_file():
-            gitignore_path.unlink()
+        # If there is a .gitignore rename it to .gitignore.bak instead of deleting it
+        # Konflux needs the .gitignore file, so we will temporarily hide it (by renaming the file), and not delete it.
+        gitignore_filename = ".gitignore"
+        gitignorebak_filename = ".gitignore.bak"
+        if dest_dir.joinpath(gitignore_filename).is_file():
+            rc, _, stderr = exectools.cmd_gather(["mv", dest_dir.joinpath(gitignore_filename), dest_dir.joinpath(gitignorebak_filename)])
+            if rc != 0:
+                raise Exception(f"Cannot rename {gitignore_filename} to {gitignorebak_filename}: {stderr}")
+            self._logger.info(f"Renamed {gitignore_filename} to {gitignorebak_filename}")
 
         owners = []
         if metadata.config.owners is not Missing and isinstance(metadata.config.owners, list):
