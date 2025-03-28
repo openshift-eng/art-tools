@@ -165,7 +165,7 @@ class BuildRepo:
     async def commit(self, message: str, allow_empty: bool = False, force: bool = False):
         """ Commit changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "."] + (["-f"] if force else []))
+        await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []))
         commit_opts = []
         if allow_empty:
             commit_opts.append("--allow-empty")
