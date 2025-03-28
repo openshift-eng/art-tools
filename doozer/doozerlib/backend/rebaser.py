@@ -127,7 +127,7 @@ class KonfluxRebaser:
             actual_version, actual_release, _ = await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
 
             # Commit changes
-            await build_repo.commit(commit_message, allow_empty=True)
+            await build_repo.commit(commit_message, allow_empty=True, force=True)
 
             # Tag the commit
             # 1. components should have tagging modes in metadata; tagging_mode:  `disabled | enabled | legacy` .
@@ -436,11 +436,6 @@ class KonfluxRebaser:
         containerfile = dest_dir.joinpath('Containerfile')
         if containerfile.is_file():
             containerfile.unlink()
-
-        # Delete .gitignore since it may block full sync and is not needed here
-        gitignore_path = dest_dir.joinpath('.gitignore')
-        if gitignore_path.is_file():
-            gitignore_path.unlink()
 
         owners = []
         if metadata.config.owners is not Missing and isinstance(metadata.config.owners, list):
