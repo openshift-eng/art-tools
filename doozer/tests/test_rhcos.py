@@ -145,7 +145,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         Tests the RHCOS build inspector abstraction to ensure it correctly parses and utilizes
         pre-canned data.
         """
-        # Data source: https://releases-rhcos-art.apps.ocp-virt.prod.psi.redhat.com/?stream=releases/rhcos-4.7-s390x&release=47.83.202107261211-0#47.83.202107261211-0
+        # Data source: https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/?stream=releases/rhcos-4.7-s390x&release=47.83.202107261211-0#47.83.202107261211-0
         rhcos_meta = json.loads(self.respath.joinpath('rhcos1', '47.83.202107261211-0.meta.json').read_text())
         rhcos_commitmeta = json.loads(self.respath.joinpath('rhcos1', '47.83.202107261211-0.commitmeta.json').read_text())
         # NOTE: loading and parsing these fixtures can take a few seconds, no cause for concern
@@ -186,7 +186,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         """
         Tests the RHCOS build inspector to ensure it additionally includes RPMs from extensions.
         """
-        # Data source: https://releases-rhcos-art.apps.ocp-virt.prod.psi.redhat.com/storage/prod/streams/4.13/builds/413.86.202212021619-0/x86_64/commitmeta.json
+        # Data source: https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/4.13/builds/413.86.202212021619-0/x86_64/commitmeta.json
         rhcos_meta = json.loads(self.respath.joinpath('rhcos2', '4.13-meta.json').read_text())
         rhcos_commitmeta = json.loads(self.respath.joinpath('rhcos2', '4.13-commitmeta.json').read_text())
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
