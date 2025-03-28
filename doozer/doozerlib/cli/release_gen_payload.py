@@ -152,7 +152,11 @@ read and propagate/expose this annotation in its display of the release image.
 
 
 def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
-    if runtime.build_system == 'brew':
+    return default_imagestream_base_name_generic(version, runtime.build_system)
+
+
+def default_imagestream_base_name_generic(version: str, build_system) -> str:
+    if build_system == 'brew':
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -160,10 +164,14 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 def assembly_imagestream_base_name(runtime: Runtime) -> str:
     version = runtime.get_minor_version()
-    if runtime.assembly == 'stream' and runtime.assembly_type is AssemblyTypes.STREAM:
-        return default_imagestream_base_name(version, runtime)
+    return assembly_imagestream_base_name_generic(version, runtime.assembly, runtime.assembly_type, runtime.build_system)
+
+
+def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
+    if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
+        return default_imagestream_base_name_generic(version, build_system)
     else:
-        return f"{version}-art-assembly-{runtime.assembly}"
+        return f"{version}-art-assembly-{assembly_name}"
 
 
 def default_imagestream_namespace_base_name() -> str:
