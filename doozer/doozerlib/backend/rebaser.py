@@ -1846,7 +1846,8 @@ class KonfluxRebaser:
         """
         # FIXME: This is based on Brew/OSBS. Needs to figure out how to do this with Konflux
         with self._runtime.pooled_koji_client_session() as koji_api:
-            component_name = metadata.get_component_name()
+            component_name = metadata.config.distgit.get("component")
+            component_name = metadata.get_component_name() if not component_name else component_name
             component_name = component_name + "-container" if not component_name.endswith("-container") else component_name
             package_info = koji_api.getPackage(component_name)  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
             if not package_info:
