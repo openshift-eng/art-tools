@@ -139,7 +139,7 @@ class BuildRhcosPipeline:
             return self._stream
 
         # doozer --quiet -g openshift-4.14 config:read-group urls.rhcos_release_base.multi --default ''
-        # https://releases-rhcos-art.apps.ocp-virt.prod.psi.redhat.com/storage/prod/streams/4.14-9.2/builds
+        # https://releases-rhcos--prod-pipeline.apps.int.prod-stable-spoke1-dc-iad2.itup.redhat.com/storage/prod/streams/4.14-9.2/builds
         cmd = [
             "doozer",
             "--quiet",
