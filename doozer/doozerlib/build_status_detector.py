@@ -32,8 +32,8 @@ class BuildStatusDetector:
         shipped_ids = self.find_shipped_builds({b["id"] for b in builds})
         suspects = [b for b in builds if b["id"] not in shipped_ids]
 
-        # next, consider remaining builds embargoed if the release field includes .p1
-        embargoed_ids = {b["id"] for b in suspects if util.isolate_pflag_in_release(b["release"]) == "p1"}
+        # next, consider remaining builds embargoed if the release field includes .p1/.p3
+        embargoed_ids = {b["id"] for b in suspects if util.is_private_fix(b["release"], self.runtime)}
 
         # finally, look at the remaining images in case they include embargoed rpms
         remaining_ids = {b["id"] for b in suspects if b["id"] not in embargoed_ids}
@@ -77,7 +77,7 @@ class BuildStatusDetector:
                 rpms = archive["rpms"]
                 suspected_rpms = [
                     rpm for rpm in rpms
-                    if util.isolate_pflag_in_release(rpm["release"]) == "p1"
+                    if util.is_private_fix(rpm["release"], self.runtime)
                     or rpm["build_id"] in embargoed_rpm_ids
                 ]
                 shipped = self.find_shipped_builds([rpm["build_id"] for rpm in suspected_rpms])
