@@ -342,7 +342,7 @@ class FbcBuildCli:
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=constants.KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
-@click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
+@click.option('--image-repo', default=constants.KONFLIX_DEFAILT_FBC_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
