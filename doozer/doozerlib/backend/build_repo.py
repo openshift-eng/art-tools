@@ -162,10 +162,10 @@ class BuildRepo:
             raise ChildProcessError(f"Failed to get commit hash: {err}")
         return out.strip()
 
-    async def commit(self, message: str, allow_empty: bool = False, force: bool = False):
+    async def commit(self, message: str, allow_empty: bool = False):
         """ Commit changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
-        await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []))
+        await git_helper.run_git_async(["-C", local_dir, "add", "."])
         commit_opts = []
         if allow_empty:
             commit_opts.append("--allow-empty")
