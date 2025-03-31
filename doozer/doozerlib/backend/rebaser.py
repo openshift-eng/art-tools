@@ -437,8 +437,8 @@ class KonfluxRebaser:
             # Replace the line 'go 1.22' with 'go 1.22.0' for example
             with open(gomod_path, 'w') as file:
                 for line in lines:
-                    line_content = line.strip()
-                    if line_content.startswith("go"):
+                    if line.startswith("go"):
+                        line_content = line.strip()
                         version = line_content.split(" ")[-1]
 
                         if len(version.split(".")) == 2:
