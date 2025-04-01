@@ -466,7 +466,8 @@ class Ocp4Pipeline:
             # have triggered our rebuild. If there are no changes to the RPMs, the build should exit quickly. If there
             # are changes, the hope is that by the time our images are done building, RHCOS will be ready and build-sync
             # will find consistent RPMs.
-            jenkins.start_rhcos(build_version=self.version.stream, new_build=False)
+            if self.version.major == 4 and self.version.minor <= 19:
+                jenkins.start_rhcos(build_version=self.version.stream, new_build=False)
 
     async def _rebase_images(self):
         self.runtime.logger.info('Rebasing images')
