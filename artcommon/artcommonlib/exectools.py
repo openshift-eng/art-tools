@@ -165,7 +165,7 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
     :return: (rc,stdout,stderr)
     """
 
-    global cmd_counter, cmd_counter_lock
+    global cmd_counter
 
     with cmd_counter_lock:
         my_id = cmd_counter

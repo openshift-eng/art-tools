@@ -560,7 +560,6 @@ class KonfluxClient:
         corev1_client = await self._get_corev1()
 
         def _inner():
-            nonlocal overall_timeout_timedelta
             watcher = watch.Watch()
             succeeded_status = "Not Found"
             succeeded_reason = "Not Found"
@@ -746,7 +745,6 @@ class KonfluxClient:
             return resource.ResourceInstance(self.dyn_client, release)
 
         def _inner():
-            nonlocal overall_timeout_timedelta
             watcher = watch.Watch()
             released_status = "Not Found"
             released_reason = "Not Found"
