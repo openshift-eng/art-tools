@@ -427,29 +427,6 @@ class KonfluxRebaser:
             source_dockerfile_content = source_dockerfile.read()
             distgit_dockerfile.write(source_dockerfile_content)
 
-        gomod_path = dest_dir.joinpath('go.mod')
-        if gomod_path.exists():
-            # Read the gomod contents
-            with open(gomod_path, 'r') as file:
-                lines = file.readlines()
-
-            # Append a .0 to the go mod version, if it exists
-            # Replace the line 'go 1.22' with 'go 1.22.0' for example
-            with open(gomod_path, 'w') as file:
-                for line in lines:
-                    if line.startswith("go"):
-                        line_content = line.strip()
-                        version = line_content.split(" ")[-1]
-
-                        if len(version.split(".")) == 2:
-                            self._logger.info(f"Missing golang minor version: {line_content}. Appending .0")
-                            file.write(f"go {version + '.0'}\n")
-                        else:
-                            file.write(line)
-                            continue
-                    else:
-                        file.write(line)
-
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
             if ent.name.startswith("Dockerfile."):
