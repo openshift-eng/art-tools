@@ -555,7 +555,7 @@ class KonfluxImageBuilder:
                     containers_info = []
 
                     def add_container_status(container_status: Dict, is_init_container: bool):
-                        nonlocal containers_info, max_finished_time, all_containers_finished, exit_code_sum
+                        nonlocal max_finished_time, all_containers_finished, exit_code_sum
                         container_state = 'pending'  # when there is no pod state, assume pending
                         container_started_time = None
                         container_finished_time = None
