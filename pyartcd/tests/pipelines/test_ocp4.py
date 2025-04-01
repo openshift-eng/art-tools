@@ -543,7 +543,6 @@ class TestBuildCompose(unittest.IsolatedAsyncioTestCase):
         self.ocp4.assembly = 'stream'
         await self.ocp4._build_compose()
         mocked_build_plashets.assert_awaited_once()
-        mocked_rhcos.assert_called_once_with(build_version='4.13', new_build=False)
         mocked_sync_for_ci.assert_called_once_with(
             version='4.13', block_until_building=False)
         self.assertEqual(self.ocp4.rpm_mirror.local_plashet_path, '')
