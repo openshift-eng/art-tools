@@ -118,8 +118,12 @@ class KonfluxImageBuilder:
                 await build_repo.ensure_source()
 
             # Parse Dockerfile
-            uuid_tag, version, release = self._parse_dockerfile(metadata.distgit_key, df_path)
-            nvr = f"{metadata.distgit_key}-{version}-{release}"
+            required_keys = self._get_dockerfile_required_keys(metadata.distgit_key, df_path)
+            uuid_tag = required_keys["uuid_tag"]
+            component_name = required_keys["com.redhat.component"]
+            version = required_keys["version"]
+            release = required_keys["release"]
+            nvr = f"{component_name}-{version}-{release}"
 
             # Sanity check to make sure a successful NVR build doesn't already exist in DB
             where = {"engine": Engine.KONFLUX.value}
@@ -135,9 +139,7 @@ class KonfluxImageBuilder:
 
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
-            additional_tags = [
-                f"{metadata.image_name_short}-{version}-{release}"
-            ]
+            additional_tags = [nvr]
 
             # Wait for parent members to be built
             parent_members = await self._wait_for_parent_members(metadata)
@@ -197,25 +199,30 @@ class KonfluxImageBuilder:
             metadata.build_event.set()
         return pipelinerun_name, pipelinerun
 
-    def _parse_dockerfile(self, distgit_key: str, df_path: Path):
-        """ Parse the Dockerfile and return the UUID tag, version, and release.
+    @staticmethod
+    def _get_dockerfile_required_keys(self, distgit_key: str, df_path: Path = None, df: DockerfileParser = None) -> dict:
+        """ Parse the Dockerfile and return required env vars and labels.
 
         :param distgit_key: The distgit key of the image.
         :param df_path: The path to the Dockerfile.
-        :return: A tuple containing the UUID tag, version, and release.
+        :return: A dict containing the UUID tag, component, version, and release labels.
         :raises ValueError: If the Dockerfile is missing the required environment variables or labels.
         """
-        df = DockerfileParser(str(df_path))
+        result = {"uuid_tag": None, "com.redhat.component": None, "version": None, "release": None}
+        if df is None:
+            df = DockerfileParser(str(df_path))
+        elif df_path is not None:
+            raise ValueError("df_path and df cannot both be specified")
+
         uuid_tag = df.envs.get("__doozer_uuid_tag")
         if not uuid_tag:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
-        version = df.labels.get("version")
-        if not version:
-            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'version' label.")
-        release = df.labels.get("release")
-        if not release:
-            raise ValueError(f"[{distgit_key}] Dockerfile must have a 'release' label.")
-        return uuid_tag, version, release
+
+        for label in ["com.redhat.component", "version", "release"]:
+            result[label] = df.labels.get(label)
+            if not result[label]:
+                raise ValueError(f"[{distgit_key}] Dockerfile must have a '{label}' label; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
+        return result
 
     async def _wait_for_parent_members(self, metadata: ImageMetadata):
         # If this image is FROM another group member, we need to wait on that group member to be built
@@ -453,9 +460,11 @@ class KonfluxImageBuilder:
         source_repo = df.labels['io.openshift.build.source-location']
         commitish = df.labels['io.openshift.build.commit.id']
 
-        version = df.labels['version']
-        release = df.labels['release']
-        nvr = "-".join([metadata.distgit_key, version, release])
+        required_keys = self._get_dockerfile_required_keys(metadata.distgit_key, df=df)
+        component_name = required_keys["com.redhat.component"]
+        version = required_keys["version"]
+        release = required_keys["release"]
+        nvr = "-".join([component_name, version, release])
 
         pipelinerun_name = pipelinerun['metadata']['name']
         # Pipelinerun names will eventually repeat over time, so also gather the pipelinerun uid
@@ -463,7 +472,7 @@ class KonfluxImageBuilder:
         build_pipeline_url = self._konflux_client.build_pipeline_url(pipelinerun)
 
         build_record_params = {
-            'name': metadata.distgit_key,
+            'name': component_name,
             'version': version,
             'release': release,
             'el_target': f'el{isolate_el_version_in_release(release)}',

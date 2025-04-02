@@ -249,7 +249,7 @@ class KonfluxDb:
         """
         Search for the latest Konflux build information in BigQuery.
 
-        :param name: component name, e.g. 'ironic'
+        :param name: component name, e.g. 'ironic-container'
         :param group: e.g. 'openshift-4.18'
         :param outcome: 'success' | 'failure'
         :param assembly: assembly name, if omitted any assembly is matched

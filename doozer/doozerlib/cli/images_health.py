@@ -131,7 +131,7 @@ class ImagesHealthPipeline:
         results = [build async for build in self.runtime.konflux_db.search_builds_by_fields(
             start_search=self.start_search,
             where={
-                'name': image_meta.distgit_key,
+                'name': image_meta.get_component_name(),
                 'group': self.runtime.group_config.name,
                 'engine': engine,
                 'assembly': 'stream'

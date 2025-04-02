@@ -431,7 +431,7 @@ class MetadataBase(object):
 
         # If it's not pinned, fetch the build from the Konflux DB
         base_search_params = {
-            'name': self.distgit_key if self.meta_type == 'image' else self.config.name,
+            'name': self.get_component_name() if self.meta_type == 'image' else self.config.name,
             'group': self.runtime.group,
             'outcome': outcome,
             'completed_before': completed_before,
