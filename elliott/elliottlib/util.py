@@ -2,6 +2,7 @@ import asyncio
 import json
 import datetime
 import re
+import os
 import click
 from collections import deque
 from itertools import chain
@@ -519,9 +520,11 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
 
     all_payload_nvrs = {}
     log("Fetching release info...")
+    if not os.environ.get("KUBECONFIG"):
+        raise RuntimeError("CI KUBECONFIG didn't find in ENV")
     if is_pullspec:
         rc, stdout, stderr = await exectools.cmd_gather_async(
-            f'oc adm release info -o json -n ocp {pullspec_or_imagestream}')
+            f'oc adm release info --kubeconfig {os.environ["KUBECONFIG"]} -o json -n ocp {pullspec_or_imagestream}')
         tags = json.loads(stdout)['references']['spec']['tags']
     else:  # it is an imagestream
         # get image_stream and name_space out of pullspec_or_imagestream
@@ -529,13 +532,12 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
         name_space = pullspec_or_imagestream.split("/")[0]  # Get the part before /
 
         rc, stdout, stderr = await exectools.cmd_gather_async(
-            f'oc -o json -n {name_space} get is/{image_stream}')
+            f'oc -o json -n --kubeconfig {os.environ["KUBECONFIG"]} {name_space} get is/{image_stream}')
         tags = json.loads(stdout)['spec']['tags']
 
     log("Looping over payload images...")
     log(f"{len(tags)} images to check")
-    cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
-            tags]
+    cmds = [['oc', 'image', 'info', '--kubeconfig', {os.environ["KUBECONFIG"]}, '-o', 'json', tag['from']['name']] for tag in tags]
 
     log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])
