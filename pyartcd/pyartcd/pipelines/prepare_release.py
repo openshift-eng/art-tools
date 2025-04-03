@@ -776,7 +776,7 @@ class PrepareReleasePipeline:
         # elliott verify-payload always writes results to $cwd/"summary_results.json".
         # move it to a different location to avoid overwritting the result.
         results_path = self.working_dir / "summary_results.json"
-        new_path = self.working_dir / f"verify-payload-results-{pullspec_or_imagestream.split(':')[-1]}.json"
+        new_path = self.working_dir / f"verify-payload-results-{pullspec_or_imagestream.split(':')[-1].replace('/', '_')}.json"
         shutil.move(results_path, new_path)
         with open(new_path, "r") as f:
             results = json.load(f)
