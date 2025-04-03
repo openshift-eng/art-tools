@@ -350,7 +350,7 @@ class KonfluxClient:
                                                git_url: str, commit_sha: str, target_branch: str, output_image: str,
                                                build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
-                                               hermetic: Optional[bool] = None,
+                                               hermetic: Optional[bool] = None, sast: Optional[bool] = None,
                                                dockerfile: Optional[str] = None,
                                                pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
@@ -447,6 +447,12 @@ class KonfluxClient:
                 }]
             }]
 
+        if not sast:
+            params = self._delete_param(params, "sast-unicode-check")
+            params = self._delete_param(params, "sast-shell-check")
+
+        obj["spec"]["params"] = params
+
         return obj
 
     async def start_pipeline_run_for_image_build(
@@ -462,6 +468,7 @@ class KonfluxClient:
         vm_override: dict,
         building_arches: Sequence[str],
         prefetch: Optional[list] = None,
+        sast: Optional[bool] = None,
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
@@ -489,6 +496,7 @@ class KonfluxClient:
         :param image_metadata: Image metadata
         :param pipelinerun_template_url: The URL to the PipelineRun template.
         :param prefetch: The param values for Konflux prefetch dependencies task
+        :param sast: To enable the SAST task in PLR
         :return: The PipelineRun resource.
         """
         unsupported_arches = set(building_arches) - set(self.SUPPORTED_ARCHES)
@@ -514,7 +522,8 @@ class KonfluxClient:
             additional_tags=additional_tags,
             dockerfile=dockerfile,
             pipelinerun_template_url=pipelinerun_template_url,
-            prefetch=prefetch
+            prefetch=prefetch,
+            sast=sast
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)

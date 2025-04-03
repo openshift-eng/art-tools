@@ -359,6 +359,13 @@ class KonfluxImageBuilder:
 
         prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir)
 
+        # Check if SAST tasks needs to be enabled
+        # Image config value overrides group config value
+        group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", False)
+        image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
+
+        sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
+
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
@@ -375,6 +382,7 @@ class KonfluxImageBuilder:
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
+            sast=sast
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
