@@ -433,8 +433,7 @@ class KonfluxClient:
             }]
 
         if not sast:
-            sast_param_names = ("sast-unicode-check", "sast-shell-check")
-            params = [p for p in params if p.get("name") not in sast_param_names]
+            params = [p for p in params if p.get("name") not in ("sast-unicode-check", "sast-shell-check")]
 
         obj["spec"]["params"] = params
 
