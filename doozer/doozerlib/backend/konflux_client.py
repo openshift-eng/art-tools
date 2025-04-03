@@ -521,7 +521,7 @@ class KonfluxClient:
         pipelinerun_name = pipelinerun['metadata']['name']
         application = pipelinerun['metadata']['labels']['appstudio.openshift.io/application']
         return (f"{constants.KONFLUX_UI_HOST}/ns/"
-                f"{constants.KONFLUX_UI_DEFAULT_WORKSPACE}/"
+                f"{constants.KONFLUX_DEFAULT_NAMESPACE}/"
                 f"applications/{application}/"
                 f"pipelineruns/{pipelinerun_name}")
 
