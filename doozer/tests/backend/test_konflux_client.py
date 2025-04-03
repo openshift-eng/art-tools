@@ -5,7 +5,7 @@ from doozerlib.backend.konflux_client import KonfluxClient
 
 class TestPLRUrl(TestCase):
     @patch("doozerlib.constants.KONFLUX_UI_HOST", "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com")
-    @patch("doozerlib.constants.KONFLUX_UI_DEFAULT_WORKSPACE", "ocp-art-tenant")
+    @patch("doozerlib.constants.KONFLUX_DEFAULT_NAMESPACE", "ocp-art-tenant")
     def test_pipelinerun_url(self):
         pipeline_run = {
             "metadata": {
