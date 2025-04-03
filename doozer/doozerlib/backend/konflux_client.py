@@ -331,26 +331,11 @@ class KonfluxClient:
                 template = jinja2.Template(template_text, autoescape=True)
                 return template
 
-    @staticmethod
-    def _delete_param(params: List, name: str, ):
-        """ Deletes a parameter in the params list.
-
-        :param params: The list of parameters.
-        :param name: The name of the parameter to delete.
-        """
-        filtered_params = []
-
-        for param in params:
-            if param["name"] == name:
-                continue
-            filtered_params.append(param)
-        return filtered_params
-
     async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                                git_url: str, commit_sha: str, target_branch: str, output_image: str,
                                                build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
-                                               hermetic: Optional[bool] = None, sast: Optional[bool] = None,
+                                               hermetic: Optional[bool] = None, sast: Optional[bool] = False,
                                                dockerfile: Optional[str] = None,
                                                pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
         if additional_tags is None:
@@ -448,8 +433,8 @@ class KonfluxClient:
             }]
 
         if not sast:
-            params = self._delete_param(params, "sast-unicode-check")
-            params = self._delete_param(params, "sast-shell-check")
+            sast_param_names = ("sast-unicode-check", "sast-shell-check")
+            params = [p for p in params if p.get("name") not in sast_param_names]
 
         obj["spec"]["params"] = params
 
@@ -468,7 +453,7 @@ class KonfluxClient:
         vm_override: dict,
         building_arches: Sequence[str],
         prefetch: Optional[list] = None,
-        sast: Optional[bool] = None,
+        sast: Optional[bool] = False,
         git_auth_secret: str = "pipelines-as-code-secret",
         additional_tags: Sequence[str] = [],
         skip_checks: bool = False,
