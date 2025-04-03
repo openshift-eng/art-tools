@@ -20,3 +20,26 @@ class TestPLRUrl(TestCase):
         expected = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-19/pipelineruns/ose-4-19-ose-ovn-kubernetes-6wv6l"
 
         self.assertEqual(actual, expected)
+
+    def test_delete_param(self):
+        params = [
+            {
+                "name": "param1",
+                "value": "value1"
+            },
+            {
+                "name": "param2",
+                "value": "value2"
+            }
+        ]
+
+        expected = [
+            {
+                "name": "param1",
+                "value": "value1"
+            },
+        ]
+
+        actual = KonfluxClient._delete_param(params, "param2")
+
+        self.assertEqual(actual, expected)
