@@ -52,8 +52,8 @@ class ReleaseNotes(BaseModel):
     topic: str
     description: str
     solution: str
-    issues: Optional[Issues] = None
-    cves: Optional[List[CveAssociation]] = None
+    issues: Optional[Issues] = []
+    cves: Optional[List[CveAssociation]] = []
     references: Optional[List[str]] = None
 
     # serialize special text fields, if they contain a new-line char
