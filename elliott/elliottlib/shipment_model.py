@@ -52,7 +52,7 @@ class ReleaseNotes(BaseModel):
     topic: str
     description: str
     solution: str
-    issues: Optional[Issues] = []
+    issues: Optional[Issues] = {}
     cves: Optional[List[CveAssociation]] = []
     references: Optional[List[str]] = None
 
