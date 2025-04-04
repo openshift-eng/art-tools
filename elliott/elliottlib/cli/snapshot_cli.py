@@ -274,6 +274,11 @@ class GetSnapshotCli:
 
         LOGGER.info(f"Validating {len(nvrs)} NVRs from DB...")
         where = {"group": self.runtime.group, "engine": Engine.KONFLUX.value}
+
+        # right now container builds in konflux do not have -container suffix
+        # so remove it
+        nvrs = [n.replace("-container", "") for n in nvrs]
+
         if not self.dry_run:
             # we don't care about the build records
             # but we do want to validate that the nvrs exist in the DB
