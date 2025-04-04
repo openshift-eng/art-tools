@@ -1,4 +1,4 @@
-from . import image_schema, rpm_schema, streams_schema, releases_schema
+from . import image_schema, rpm_schema, streams_schema, releases_schema, shipment_schema
 from .. import support
 
 
@@ -13,7 +13,8 @@ def validate(file, data):
         'image': image_schema.validate,
         'rpm': rpm_schema.validate,
         'ignore': ignore_validate,
-        'releases': releases_schema.validate
+        'releases': releases_schema.validate,
+        'shipment': shipment_schema.validate
     }.get(support.get_artifact_type(file), err)(file, data)
 
 
