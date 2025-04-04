@@ -110,9 +110,9 @@ class QuayDoomsdaySync:
 @click_coroutine
 async def quay_doomsday_backup(runtime: Runtime, arches: str, version: str):
 
-    # In 4.12 we sync only x86_64 and s390x
-    if version.startswith("4.12"):
-        arches = "x86_64,s390x"
+    # In 4.12 and 4.13 we sync only x86_64
+    if version.startswith("4.12") or version.startswith("4.13"):
+        arches = "x86_64"
 
     doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
                                          arches=arches,
