@@ -5,7 +5,7 @@ from flexmock import flexmock
 
 from elliottlib import errata as erratalib
 from elliottlib.brew import Build
-from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds
+from elliottlib.cli.find_builds_cli import _filter_out_attached_builds, _find_shipped_builds_with_pv_unaware
 
 
 class TestFindBuildsCli(unittest.TestCase):
@@ -45,7 +45,7 @@ class TestFindBuildsCli(unittest.TestCase):
         ]
         get_builds_tags.return_value = build_tags
         expected = {13, 14}
-        actual = _find_shipped_builds(build_ids, mock.MagicMock())
+        actual = _find_shipped_builds_with_pv_unaware(build_ids, mock.MagicMock())
         self.assertEqual(expected, actual)
         get_builds_tags.assert_called_once_with(build_ids, mock.ANY)
 
