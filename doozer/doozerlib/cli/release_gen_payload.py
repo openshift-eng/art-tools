@@ -440,11 +440,6 @@ class GenPayloadCli:
         # update issues found for payload images and check RPM consistency
         await self.detect_extend_payload_entry_issues(assembly_inspector)
 
-        # Stopping the checks here for Konflux
-        # TODO to be re-enabled
-        if self.runtime.build_system == 'konflux':
-            return self.summarize_issue_permits(assembly_inspector)
-
         # If the assembly claims to have reference nightlies, assert that our payload matches them exactly.
         self.assembly_issues.extend(await self.payload_generator.check_nightlies_consistency(assembly_inspector))
 
