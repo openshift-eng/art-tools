@@ -90,6 +90,12 @@ class Ocp4ScanPipeline:
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
+                build_system="brew"
+            )
+            jenkins.start_build_sync(
+                build_version=self.version,
+                assembly="stream",
+                build_system="konflux"
             )
 
         else:
