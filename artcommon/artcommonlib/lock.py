@@ -20,7 +20,6 @@ def get_named_semaphore(lock_name: str, is_dir=False, count=1):
         p = '_dir::' + str(Path(str(lock_name)).absolute())  # normalize (e.g. strip trailing /)
     else:
         p = lock_name
-    global _NAMED_SEMAPHORES
     with _NAMED_SEMAPHORES['']:
         if p in _NAMED_SEMAPHORES:
             return _NAMED_SEMAPHORES[p]

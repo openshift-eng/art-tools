@@ -296,10 +296,10 @@ class AssemblyPinBuildsCli:
                 )
                 rhcos_info[container_conf.name]["images"][arch] = pullspec
 
-        self.assembly_config["group"].setdefault("rhcos", Model({}))
-        current_rhcos = self.assembly_config["group"]["rhcos"].primitive()
+        self.assembly_config.setdefault("rhcos", Model({}))
+        current_rhcos = self.assembly_config["rhcos"].primitive()
         if current_rhcos != rhcos_info:
-            self.assembly_config["group"]["rhcos"] = Model(rhcos_info)
+            self.assembly_config["rhcos"] = Model(rhcos_info)
             changed = True
 
         return changed

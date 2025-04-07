@@ -283,7 +283,7 @@ class BuildRecordInspector(ABC):
         pass
 
     @abstractmethod
-    def get_rpms_in_pkg_build(self, build_id: int):
+    def get_rpms_in_pkg_build(self, *_):
         pass
 
     @abstractmethod
@@ -654,8 +654,8 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
     def get_all_installed_package_build_dicts(self, package_rpm_finder: PackageRpmFinder) -> Dict[str, Dict]:
         return package_rpm_finder.get_installed_packages_build_dicts(self._build_record)
 
-    def get_rpms_in_pkg_build(self, build_id: int):
-        raise NotImplementedError
+    def get_rpms_in_pkg_build(self, nvr: str, package_rpm_finder: PackageRpmFinder):
+        return package_rpm_finder.get_rpms_in_pkg_build(nvr)
 
     def get_image_meta(self):
         return self.runtime.image_map[self.get_build_obj().name]
