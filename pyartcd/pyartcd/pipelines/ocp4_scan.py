@@ -77,7 +77,9 @@ class Ocp4ScanPipeline:
             # Inconsistency probably means partial failure and we would like to retry.
             # but don't kick off more if already in progress.
             self.logger.info('Triggering a %s RHCOS build for consistency', self.version)
-            jenkins.start_rhcos(build_version=self.version, new_build=True)
+            jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build")
+            if int(self.version.split(".")[1]) == 19:
+                jenkins.start_rhcos(build_version=self.version, new_build=True, job_name="build-node-image")
 
         elif self.rhcos_changed:
             self.logger.info('Detected at least one updated RHCOS')

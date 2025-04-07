@@ -29,6 +29,7 @@ class TestScanSourcesCli(TestCase):
         mock_latest.return_value = "id-2"
         runtime = MagicMock(group_config=Model())
         runtime.get_minor_version.return_value = "4.2"
+        runtime.get_major_minor_fields.return_value = 4, 2
         runtime.arches = ['s390x']
 
         cli = ConfigScanSources(runtime, "dummy", False)

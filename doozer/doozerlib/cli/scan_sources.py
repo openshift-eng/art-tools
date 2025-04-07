@@ -622,18 +622,18 @@ class ConfigScanSources:
         try:
             istagdata = json.loads(stdout)
             # shasum format is sha256:66d827b7f70729ca9dc6f7a2358df8fb37c82380cf36ca9653efff8605cf3a82
-            shasum = istagdata['metadata']['name']
+            shasum = istagdata['image']['metadata']['name']
         except KeyError:
             self.runtime.logger.error('Could not find .metadata.name in RHCOS imagestream:\n%s', stdout)
             raise
 
         return shasum
 
-    def _latest_rhcos_node_shasum(self, container_name, version, arch, private) -> Optional[str]:
+    def _latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
         stdout, _ = exectools.cmd_assert(
-            f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{version}-{self.group_config.vars['RHCOS_EL_MAJOR']}.{self.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json",
+            f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json",
             retries=3,
             pollrate=5,
             strip=True,

@@ -322,10 +322,10 @@ def start_ocp4_scan_konflux(version: str, **kwargs) -> Optional[str]:
     )
 
 
-def start_rhcos(build_version: str, new_build: bool, **kwargs) -> Optional[str]:
+def start_rhcos(build_version: str, new_build: bool, job_name: str = 'build', **kwargs) -> Optional[str]:
     return start_build(
         job=Jobs.RHCOS,
-        params={'BUILD_VERSION': build_version, 'NEW_BUILD': new_build},
+        params={'BUILD_VERSION': build_version, 'NEW_BUILD': new_build, 'JOB_NAME': job_name},
         **kwargs
     )
 
