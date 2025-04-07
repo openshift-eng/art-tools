@@ -11,6 +11,7 @@ from artcommonlib import exectools, release_util
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
+from artcommonlib.arch_util import go_arch_for_brew_arch
 from doozerlib import brew, rhcos
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.cli import release_gen_payload as rgp
@@ -556,27 +557,29 @@ class ConfigScanSources:
         statuses = []
 
         version = self.runtime.get_minor_version()
+        major, minor = self.runtime.get_major_minor_fields()
+        primary_container = get_primary_container_name(self.runtime)
         for arch in self.runtime.arches:
             for private in (False, True):
-                name = f"{version}-{arch}{'-priv' if private else ''}"
-                tagged_rhcos_id = self._tagged_rhcos_id(get_primary_container_name(self.runtime),
-                                                        version, arch, private)
-                latest_rhcos_id = self._latest_rhcos_build_id(version, arch, private)
-                status = dict(name=name)
-                if not latest_rhcos_id:
+                status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
+                if major == 4 and minor < 19:
+                    tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
+                    latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
+                else:
+                    tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
+                    latest_rhcos_value = self._latest_rhcos_node_shasum(version, arch, private)
+
+                if not latest_rhcos_value:
                     status['changed'] = False
                     status['reason'] = "could not find an RHCOS build to sync"
-                elif tagged_rhcos_id == latest_rhcos_id:
+                elif tagged_rhcos_value == latest_rhcos_value:
                     status['changed'] = False
-                    status['reason'] = f"latest RHCOS build is still {latest_rhcos_id} -- no change from istag"
+                    status['reason'] = f"latest RHCOS build is still {latest_rhcos_value} -- no change from istag"
                 else:
                     status['changed'] = True
-                    status['reason'] = f"latest RHCOS build is {latest_rhcos_id} " \
-                                       f"which differs from istag {tagged_rhcos_id}"
-
+                    status['reason'] = f"latest RHCOS build is {latest_rhcos_value} which differs from istag {tagged_rhcos_value}"
                 if status['changed']:
                     statuses.append(status)
-
         return statuses
 
     def _tagged_rhcos_id(self, container_name, version, arch, private) -> Optional[str]:
@@ -603,6 +606,39 @@ class ConfigScanSources:
             build_id = labels.get('version', None)
 
         return build_id
+
+    def _tagged_rhcos_node_digest(self, container_name, version, arch, private) -> Optional[str]:
+        """get latest coreos image diget from tagged RHCOS in given imagestream"""
+        base_namespace = rgp.default_imagestream_namespace_base_name()
+        base_name = rgp.default_imagestream_base_name(version, self.runtime)
+        namespace, name = rgp.payload_imagestream_namespace_and_name(base_namespace, base_name, arch, private)
+        stdout, _ = exectools.cmd_assert(
+            f"oc --kubeconfig '{self.ci_kubeconfig}' --namespace '{namespace}' get istag '{name}:{container_name}' -o json",
+            retries=3,
+            pollrate=5,
+            strip=True,
+        )
+
+        try:
+            istagdata = json.loads(stdout)
+            # shasum format is sha256:66d827b7f70729ca9dc6f7a2358df8fb37c82380cf36ca9653efff8605cf3a82
+            shasum = istagdata['metadata']['name']
+        except KeyError:
+            self.runtime.logger.error('Could not find .metadata.name in RHCOS imagestream:\n%s', stdout)
+            raise
+
+        return shasum
+
+    def _latest_rhcos_node_shasum(self, container_name, version, arch, private) -> Optional[str]:
+        """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
+        go_arch = go_arch_for_brew_arch(arch)
+        stdout, _ = exectools.cmd_assert(
+            f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{version}-{self.group_config.vars['RHCOS_EL_MAJOR']}.{self.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json",
+            retries=3,
+            pollrate=5,
+            strip=True,
+        )
+        return json.loads(stdout)['digest']
 
 
 @cli.command("config:scan-sources", short_help="Determine if any rpms / images need to be rebuilt.")

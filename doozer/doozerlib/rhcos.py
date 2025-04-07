@@ -4,11 +4,11 @@ import json
 from typing import Dict, List, Optional, Tuple
 from urllib import request
 from urllib.error import URLError
-
+import subprocess
 import koji
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib.arch_util import brew_suffix_for_arch
+from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
@@ -42,6 +42,8 @@ class RHCOSBuildFinder:
         self.brew_arch = brew_arch
         self.private = private
         self.custom = custom
+        self.go_arch = go_arch_for_brew_arch(brew_arch)
+        self.major, self.minor = self.runtime.get_major_minor_fields()
         self._primary_container = None
 
     def get_primary_container_conf(self):
@@ -129,7 +131,7 @@ class RHCOSBuildFinder:
         return True
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-    def rhcos_build_meta(self, build_id: str, arch: str = None, meta_type: str = "meta") -> Dict:
+    def rhcos_build_meta(self, build_id: str, pullspec: str = None, arch: str = None, meta_type: str = "meta") -> Dict:
         """
         Queries the RHCOS release browser to return metadata about the specified RHCOS build.
         :param build_id: The RHCOS build_id to check (e.g. 410.81.20200520.0)
@@ -149,8 +151,16 @@ class RHCOSBuildFinder:
              ...
          }
         """
-        # this is hard to test with retries, so wrap testable method
-        return self._rhcos_build_meta(build_id, arch, meta_type)
+        if self.major == 4 and self.minor >= 19 and pullspec:
+            if meta_type = 'commitmeta':
+                output = subprocess.getoutput(f"oc image extract {pullspec}[-1] --file /usr/share/openshift/base/meta.json && cat meta.json && rm meta.json")
+                return {"rpmostree.rpmdb.pkglist": json.loads(output)["rpmdb.pkglist"]}
+            elif meta_type = "meta":
+                output = subprocess.getoutput(f"oc image extract {pullspec}[-1] --file /usr/share/rpm-ostree/extensions.json && cat extensions.json && rm extensions.json")
+                return {"extensions": {"manifest": json.loads(output)}}
+        else:
+            # this is hard to test with retries, so wrap testable method
+            return self._rhcos_build_meta(build_id, arch, meta_type)
 
     def _rhcos_build_meta(self, build_id: str, arch: str = None, meta_type: str = "meta") -> Dict:
         """
@@ -167,13 +177,24 @@ class RHCOSBuildFinder:
         :param container_conf: a payload tag conf Model from group.yml (with build_metadata_key)
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
-        build_id = self.latest_rhcos_build_id()
-        if build_id is None:
-            return None, None
-        return build_id, rhcos.get_container_pullspec(
-            self.rhcos_build_meta(build_id),
-            container_conf or self.get_primary_container_conf()
-        )
+        if self.major == 4 and self.minor >= 19:
+            stdout, _ = exectools.cmd_assert(f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json")
+            rhcosdata = json.loads(stdout)
+            build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]
+            if not container_conf or container_conf == self.get_primary_container_conf(): #rhcos-coreos
+                pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcosdata['digest']}"
+            else: # extentions
+                stdout, _ = exectools.cmd_assert(f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image-extensions --filter-by-os {go_arch} -o json")
+                pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{json.loads(stdout)['digest']}"
+            return build_id, pullspec
+        else:
+            build_id = self.latest_rhcos_build_id()
+            if build_id is None:
+                return None, None
+            return build_id, rhcos.get_container_pullspec(
+                self.rhcos_build_meta(build_id),
+                container_conf or self.get_primary_container_conf()
+            )
 
 
 class RHCOSBuildInspector:
@@ -203,8 +224,8 @@ class RHCOSBuildInspector:
 
         try:
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
-            self._build_meta = finder.rhcos_build_meta(self.build_id, meta_type='meta')
-            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, meta_type='commitmeta')
+            self._build_meta = finder.rhcos_build_meta(self.build_id, pullspec_for_tag["rhel-coreos-extensions"], meta_type='meta')
+            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, pullspec_for_tag["rhel-coreos"], meta_type='commitmeta')
         except Exception:
             # Fall back to trying to find a custom build
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, custom=True)
