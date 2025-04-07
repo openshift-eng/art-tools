@@ -69,6 +69,8 @@ from elliottlib.cli.snapshot_cli import snapshot_cli
 from elliottlib.cli.konflux_release_cli import konflux_release_cli
 from elliottlib.cli import konflux_release_watch_cli
 from elliottlib.cli.pin_builds_cli import assembly_pin_builds_cli
+from elliottlib.cli.shipment_cli import shipment_cli
+
 
 # 3rd party
 import click
@@ -440,6 +442,7 @@ cli.add_command(get_golang_report_cli)
 cli.add_command(snapshot_cli)
 cli.add_command(konflux_release_cli)
 cli.add_command(assembly_pin_builds_cli)
+cli.add_command(shipment_cli)
 
 # -----------------------------------------------------------------------------
 # CLI Entry point
