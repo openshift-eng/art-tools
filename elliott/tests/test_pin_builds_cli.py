@@ -229,13 +229,12 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 "images": [],
                 "rpms": []
             },
-            "group": {
-                "rhcos": {
-                    "machine-os-content": {
-                        "images": {
-                            "x86_64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123",
-                            "aarch64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123"
-                        }
+            "group": {},
+            "rhcos": {
+                "machine-os-content": {
+                    "images": {
+                        "x86_64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123",
+                        "aarch64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123"
                     }
                 }
             }

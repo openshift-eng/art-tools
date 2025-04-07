@@ -152,7 +152,11 @@ read and propagate/expose this annotation in its display of the release image.
 
 
 def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
-    if runtime.build_system == 'brew':
+    return default_imagestream_base_name_generic(version, runtime.build_system)
+
+
+def default_imagestream_base_name_generic(version: str, build_system) -> str:
+    if build_system == 'brew':
         return f"{version}-art-latest"
     else:  # konflux
         return f"{version}-konflux-art-latest"
@@ -160,10 +164,14 @@ def default_imagestream_base_name(version: str, runtime: Runtime) -> str:
 
 def assembly_imagestream_base_name(runtime: Runtime) -> str:
     version = runtime.get_minor_version()
-    if runtime.assembly == 'stream' and runtime.assembly_type is AssemblyTypes.STREAM:
-        return default_imagestream_base_name(version, runtime)
+    return assembly_imagestream_base_name_generic(version, runtime.assembly, runtime.assembly_type, runtime.build_system)
+
+
+def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
+    if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
+        return default_imagestream_base_name_generic(version, build_system)
     else:
-        return f"{version}-art-assembly-{runtime.assembly}"
+        return f"{version}-art-assembly-{assembly_name}"
 
 
 def default_imagestream_namespace_base_name() -> str:
@@ -279,7 +287,8 @@ class GenPayloadCli:
                  moist_run: bool = False, embargo_permit_ack: bool = False):
 
         self.runtime = runtime
-        self.payload_generator = PayloadGenerator(runtime)
+        self.package_rpm_finder = PackageRpmFinder(runtime)
+        self.payload_generator = PayloadGenerator(runtime, self.package_rpm_finder)
         self.logger = runtime.logger if runtime else MagicMock()  # in tests, blackhole logs by default
         # release-controller IS to update (modified per arch, privacy)
         self.base_imagestream = (is_namespace, is_name)
@@ -310,8 +319,6 @@ class GenPayloadCli:
         self.payload_permitted = False
         # Allows embargoed builds to be released
         self.embargo_permit_ack = embargo_permit_ack
-
-        self.package_rpm_finder = PackageRpmFinder(runtime)
 
     @start_as_current_span_async(TRACER, "releases:gen-payload")
     async def run(self):
@@ -430,13 +437,13 @@ class GenPayloadCli:
         # check that images for this assembly/group have installed rpms that are not allowed to assemble.
         self.detect_installed_rpms_issues(assembly_inspector)
 
+        # update issues found for payload images and check RPM consistency
+        await self.detect_extend_payload_entry_issues(assembly_inspector)
+
         # Stopping the checks here for Konflux
         # TODO to be re-enabled
         if self.runtime.build_system == 'konflux':
             return self.summarize_issue_permits(assembly_inspector)
-
-        # update issues found for payload images and check RPM consistency
-        await self.detect_extend_payload_entry_issues(assembly_inspector)
 
         # If the assembly claims to have reference nightlies, assert that our payload matches them exactly.
         self.assembly_issues.extend(await self.payload_generator.check_nightlies_consistency(assembly_inspector))
@@ -1510,8 +1517,9 @@ class GenPayloadCli:
 
 
 class PayloadGenerator:
-    def __init__(self, runtime: Runtime = None):
+    def __init__(self, runtime: Runtime = None, package_rpm_finder=None):
         self.runtime = runtime
+        self.package_rpm_finder = package_rpm_finder
 
     @staticmethod
     def find_mismatched_siblings(build_record_inspectors: Iterable[Optional[BuildRecordInspector]]) -> \
@@ -1633,13 +1641,11 @@ class PayloadGenerator:
                 })
         return inconsistencies
 
-    @staticmethod
-    def find_rhcos_payload_rpm_inconsistencies(
-            primary_rhcos_build: RHCOSBuildInspector,
-            payload_bri: Dict[str, BuildRecordInspector],
-            # payload tag -> [pkg_name1, ...]
-            payload_consistency_config: Dict[str, List[str]],
-            package_rpm_finder=None) -> List[AssemblyIssue]:
+    def find_rhcos_payload_rpm_inconsistencies(self, primary_rhcos_build: RHCOSBuildInspector,
+                                               payload_bri: Dict[str, BuildRecordInspector],
+                                               # payload tag -> [pkg_name1, ...]
+                                               payload_consistency_config: Dict[str, List[str]],
+                                               package_rpm_finder=None) -> List[AssemblyIssue]:
         """
         Compares designated brew packages installed in designated payload members with the RPMs
         in an RHCOS build, ensuring that both have the same version installed.
@@ -1672,19 +1678,15 @@ class PayloadGenerator:
 
             # check that each specified package in the member is consistent with the RHCOS build
             for pkg in consistent_pkgs:
-                issues.append(PayloadGenerator.validate_pkg_consistency_req(
+                issues.append(self.validate_pkg_consistency_req(
                     payload_tag, pkg, bbii, rhcos_rpm_vrs,
                     str(primary_rhcos_build), package_rpm_finder))
 
         return [issue for issue in issues if issue]
 
-    @staticmethod
-    def validate_pkg_consistency_req(
-            payload_tag: str, pkg: str,
-            bri: BuildRecordInspector,
-            rhcos_rpm_vrs: Dict[str, str],
-            rhcos_build_id: str,
-            package_rpm_finder=None) -> Optional[AssemblyIssue]:
+    def validate_pkg_consistency_req(self, payload_tag: str, pkg: str, bri: BuildRecordInspector,
+                                     rhcos_rpm_vrs: Dict[str, str], rhcos_build_id: str,
+                                     package_rpm_finder=None) -> Optional[AssemblyIssue]:
         """check that the specified package in the member is consistent with the RHCOS build"""
         logger = bri.runtime.logger
         payload_tag_nvr: str = bri.get_nvr()
@@ -1700,7 +1702,11 @@ class PayloadGenerator:
 
         # get names of all the actual RPMs included in this package build, because that's what we
         # have for comparison in the RHCOS metadata (not the package name).
-        rpm_names = set(rpm["name"] for rpm in bri.get_rpms_in_pkg_build(build["build_id"]))
+        # For Konflux we're tracking package build NVRs as they come from the SBOM
+        if self.runtime.build_system == 'brew':
+            rpm_names = set(rpm["name"] for rpm in bri.get_rpms_in_pkg_build(build["build_id"]))
+        else:
+            rpm_names = set(rpm["name"] for rpm in bri.get_rpms_in_pkg_build(build["nvr"], self.package_rpm_finder))
 
         # find package RPM names in the RHCOS build and check that they have the same version
         required_vr = "-".join([build["version"], build["release"]])

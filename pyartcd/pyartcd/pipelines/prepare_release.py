@@ -22,6 +22,7 @@ from artcommonlib.assembly import AssemblyTypes, assembly_group_config
 from artcommonlib import git_helper
 from artcommonlib.model import Model
 from artcommonlib.util import get_assembly_release_date_async, new_roundtrip_yaml_handler, convert_remote_git_to_ssh
+from doozerlib.cli.release_gen_payload import assembly_imagestream_base_name_generic, default_imagestream_namespace_base_name, payload_imagestream_namespace_and_name
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories, push_cdn_stage, is_advisory_editable
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.errata import set_blocking_advisory, get_blocking_advisories
@@ -369,9 +370,20 @@ class PrepareReleasePipeline:
         if self.release_version[0] < 4:
             _LOGGER.info("Don't verify payloads for OCP3 releases")
         else:
-            _LOGGER.info("Verify the swept builds match the nightlies...")
-            for _, payload in self.candidate_nightlies.items():
-                self.verify_payload(payload, advisories["image"])
+            _LOGGER.info("Verify the swept builds match the imagestreams that were updated during build-sync...")
+            image_stream_version = f'{self.release_version[0]}.{self.release_version[1]}'
+
+            # the prepare-release job is only meant to run for brew
+            assembly_is_base_name = assembly_imagestream_base_name_generic(image_stream_version, self.assembly, assembly_type, build_system='brew')
+            arches = group_config.get("arches", [])
+            imagestreams_per_arch = [
+                payload_imagestream_namespace_and_name(default_imagestream_namespace_base_name(),
+                                                       assembly_is_base_name, arch, private=False)
+                for arch in arches
+            ]
+            for is_namespace_and_name in imagestreams_per_arch:
+                is_str = f"{is_namespace_and_name[0]}/{is_namespace_and_name[1]}"
+                self.verify_payload(is_str, advisories["image"])
 
         # Verify greenwave tests
         for impetus, advisory in advisories.items():
@@ -750,10 +762,10 @@ class PrepareReleasePipeline:
         await exectools.cmd_assert_async(cmd, cwd=self.working_dir)
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(10))
-    def verify_payload(self, pullspec: str, advisory: int):
+    def verify_payload(self, pullspec_or_imagestream: str, advisory: int):
         cmd = self._elliott_base_command + [
             "verify-payload",
-            f"{pullspec}",
+            f"{pullspec_or_imagestream}",
             f"{advisory}",
         ]
         if self.dry_run:
@@ -764,12 +776,12 @@ class PrepareReleasePipeline:
         # elliott verify-payload always writes results to $cwd/"summary_results.json".
         # move it to a different location to avoid overwritting the result.
         results_path = self.working_dir / "summary_results.json"
-        new_path = self.working_dir / f"verify-payload-results-{pullspec.split(':')[-1]}.json"
+        new_path = self.working_dir / f"verify-payload-results-{pullspec_or_imagestream.split(':')[-1].replace('/', '_')}.json"
         shutil.move(results_path, new_path)
         with open(new_path, "r") as f:
             results = json.load(f)
             if results.get("missing_in_advisory") or results.get("payload_advisory_mismatch"):
-                raise ValueError(f"""Failed to verify payload for nightly {pullspec}.
+                raise ValueError(f"""Failed to verify payload for nightly {pullspec_or_imagestream}.
 Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
 update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
 
