@@ -1,0 +1,274 @@
+{
+  "$defs": {
+    "Data": {
+      "properties": {
+        "releaseNotes": {
+          "$ref": "#/$defs/ReleaseNotes"
+        }
+      },
+      "required": [
+        "releaseNotes"
+      ],
+      "title": "Data",
+      "type": "object"
+    },
+    "Environments": {
+      "properties": {
+        "stage": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/ShipmentEnv"
+            }
+          ],
+          "description": "Config for releasing to stage environment"
+        },
+        "prod": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/ShipmentEnv"
+            }
+          ],
+          "description": "Config for releasing to prod environment"
+        }
+      },
+      "required": [
+        "stage",
+        "prod"
+      ],
+      "title": "Environments",
+      "type": "object"
+    },
+    "Metadata": {
+      "properties": {
+        "product": {
+          "title": "Product",
+          "type": "string"
+        },
+        "application": {
+          "title": "Application",
+          "type": "string"
+        },
+        "group": {
+          "title": "Group",
+          "type": "string"
+        },
+        "assembly": {
+          "title": "Assembly",
+          "type": "string"
+        },
+        "fbc": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false,
+          "title": "Fbc"
+        }
+      },
+      "required": [
+        "product",
+        "application",
+        "group",
+        "assembly"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "ReleaseNotes": {
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "synopsis": {
+          "title": "Synopsis",
+          "type": "string"
+        },
+        "topic": {
+          "title": "Topic",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "solution": {
+          "title": "Solution",
+          "type": "string"
+        },
+        "issues": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issues"
+        },
+        "cves": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cves"
+        },
+        "references": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "References"
+        }
+      },
+      "required": [
+        "type",
+        "synopsis",
+        "topic",
+        "description",
+        "solution"
+      ],
+      "title": "ReleaseNotes",
+      "type": "object"
+    },
+    "Shipment": {
+      "properties": {
+        "metadata": {
+          "$ref": "#/$defs/Metadata"
+        },
+        "environments": {
+          "$ref": "#/$defs/Environments"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Data"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "metadata",
+        "environments",
+        "snapshot"
+      ],
+      "title": "Shipment",
+      "type": "object"
+    },
+    "ShipmentEnv": {
+      "properties": {
+        "releasePlan": {
+          "title": "Releaseplan",
+          "type": "string"
+        },
+        "releaseName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Releasename"
+        },
+        "advisoryName": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Advisoryname"
+        },
+        "advisoryInternalUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Advisoryinternalurl"
+        }
+      },
+      "required": [
+        "releasePlan"
+      ],
+      "title": "ShipmentEnv",
+      "type": "object"
+    },
+    "Snapshot": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/$defs/Spec"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "Spec": {
+      "properties": {
+        "nvrs": {
+          "items": {},
+          "title": "Nvrs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "nvrs"
+      ],
+      "title": "Spec",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "shipment": {
+      "$ref": "#/$defs/Shipment"
+    }
+  },
+  "required": [
+    "shipment"
+  ],
+  "title": "ShipmentConfig",
+  "type": "object"
+}
