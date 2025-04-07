@@ -16,7 +16,7 @@ from doozerlib import brew
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
 from artcommonlib import rhcos, logutil, exectools
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, ART_PROD_IMAGE_REPO
 
 logger = logutil.get_logger(__name__)
 
@@ -178,13 +178,13 @@ class RHCOSBuildFinder:
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
         if self.major == 4 and self.minor >= 19:
-            stdout, _ = exectools.cmd_assert(f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json")
+            stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json")
             rhcosdata = json.loads(stdout)
             build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]
             if not container_conf or container_conf == self.get_primary_container_conf(): #rhcos-coreos
                 pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcosdata['digest']}"
             else: # extentions
-                stdout, _ = exectools.cmd_assert(f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image-extensions --filter-by-os {go_arch} -o json")
+                stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image-extensions --filter-by-os {go_arch} -o json")
                 pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{json.loads(stdout)['digest']}"
             return build_id, pullspec
         else:
