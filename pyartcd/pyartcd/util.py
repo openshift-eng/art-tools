@@ -184,12 +184,13 @@ async def kinit():
         logger.warning('DISTGIT_KEYTAB_FILE is not set. Using any existing kerberos credential.')
 
 
-async def branch_arches(group: str, assembly: str, ga_only: bool = False) -> list:
+async def branch_arches(group: str, assembly: str, ga_only: bool = False, build_system: str = 'brew') -> list:
     """
     Find the supported arches for a specific release
     :param str group: The name of the branch to get configs for. For example: 'openshift-4.12
     :param str assembly: The name of the assembly. For example: 'stream'
     :param bool ga_only: If you only want group arches and do not care about arches_override.
+    :param str build_system: 'brew' | 'konflux'
     :return: A list of the arches built for this branch
     """
 
@@ -203,7 +204,12 @@ async def branch_arches(group: str, assembly: str, ga_only: bool = False) -> lis
         return arches_override
 
     # Otherwise, read supported arches from group config
-    return group_config['arches']
+    if build_system == 'brew':
+        return group_config['arches']
+    elif build_system == 'konflux':
+        return group_config['konflux']['arches']
+    else:
+        raise ValueError(f'Invalid build system: {build_system}')
 
 
 def get_changes(yaml_data: dict) -> dict:
