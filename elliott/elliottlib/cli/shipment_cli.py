@@ -1,12 +1,13 @@
 import click
 import sys
-from ruamel.yaml import YAML, scalarstring
+from ruamel.yaml import YAML
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from artcommonlib import logutil
 from elliottlib.shipment_model import (Shipment, Metadata, Environments, ShipmentEnv, Snapshot, Spec, ShipmentConfig,
                                        Data, ReleaseNotes)
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -40,10 +41,10 @@ class InitShipmentCli:
             data = Data(
                 releaseNotes=ReleaseNotes(
                     type="RHBA",
-                    synopsis="synopsis",
-                    topic="topic",
-                    description="description",
-                    solution="solution",
+                    synopsis="Red Hat Openshift Test Release",
+                    topic="Topic for a test release for Red Hat Openshift.",
+                    description="Description for a test release for Red Hat Openshift.",
+                    solution="Solution for a test release for Red Hat Openshift.",
                 )
             )
 
@@ -65,11 +66,12 @@ class InitShipmentCli:
                     )
                 )
 
+        default_application = KonfluxImageBuilder.get_application_name(self.runtime.group)
         shipment = ShipmentConfig(
             shipment=Shipment(
                 metadata=Metadata(
                     product=self.runtime.product,
-                    application=self.application or "test-application",
+                    application=self.application or default_application,
                     group=self.runtime.group,
                     assembly=self.runtime.assembly,
                     fbc=self.for_fbc,
@@ -83,8 +85,7 @@ class InitShipmentCli:
             )
         )
 
-        shipment_dump = shipment.model_dump(exclude_unset=True, exclude_none=True)
-        yaml.dump(shipment_dump, sys.stdout)
+        return shipment.model_dump(exclude_unset=True, exclude_none=True)
 
 
 @shipment_cli.command("init", short_help="Init a new shipment config for a Konflux release")
@@ -120,4 +121,5 @@ async def init_shipment_cli(runtime: Runtime, application: str, snapshot: str, s
                                for_fbc=for_fbc,
                                advisory_key=advisory_key)
 
-    await pipeline.run()
+    shipment_yaml = await pipeline.run()
+    yaml.dump(shipment_yaml, sys.stdout)
