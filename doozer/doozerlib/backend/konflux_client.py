@@ -433,9 +433,15 @@ class KonfluxClient:
             }]
 
         if not sast:
-            params = [p for p in params if p.get("name") not in ("sast-unicode-check", "sast-shell-check")]
+            tasks = []
+            for task in obj["spec"]["pipelineSpec"]["tasks"]:
+                task_name = task.get("name")
+                if task_name in ("sast-unicode-check", "sast-shell-check"):
+                    self._logger.info(f"Removing {task_name} tasks since SAST is disabled")
+                    continue
+                tasks.append(task)
 
-        obj["spec"]["params"] = params
+            obj["spec"]["pipelineSpec"]["tasks"] = tasks
 
         return obj
 
