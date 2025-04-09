@@ -673,7 +673,6 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
             call(job=Jobs.BUILD_SYNC, params={
                 'BUILD_VERSION': '4.13',
                 'ASSEMBLY': 'stream',
-                'BUILD_SYSTEM': 'brew',
                 'DOOZER_DATA_PATH': 'https://github.com/openshift-eng/ocp-build-data'
             }),
             call(job=Jobs.OLM_BUNDLE, params={

@@ -9,7 +9,7 @@ from opentelemetry import trace
 from ghapi.all import GhApi
 
 from artcommonlib import rhcos, redis
-from artcommonlib.arch_util import go_suffix_for_arch
+from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from artcommonlib.util import split_git_url
@@ -55,6 +55,7 @@ class BuildSyncPipeline:
         self.doozer_data_gitref = doozer_data_gitref
         self.images = images
         self.exclude_arches = [] if not exclude_arches else exclude_arches.replace(',', ' ').split()
+        self.supported_arches = []
         self.skip_multiarch_payload = skip_multiarch_payload
         self.embargo_permit_ack = embargo_permit_ack
         self.build_system = build_system
@@ -130,6 +131,13 @@ class BuildSyncPipeline:
             self.logger.warning(f"Failed commenting to PR: {e}")
 
     async def run(self):
+        self.supported_arches = await branch_arches(
+            group=f'openshift-{self.version}',
+            assembly=self.assembly,
+            build_system=self.build_system
+        )
+        self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
+
         if self.build_system == 'konflux':
             jenkins.update_title(' [KONFLUX]')
 
@@ -242,8 +250,10 @@ class BuildSyncPipeline:
 
             self.logger.info('Backup completed for namespace %s', ns)
 
-        namespaces = ['ocp', 'ocp-priv', 'ocp-s390x', 'ocp-s390x-priv', 'ocp-ppc64le',
-                      'ocp-ppc64le-priv', 'ocp-arm64', 'ocp-arm64-priv']
+        namespaces = []
+        for arch in self.supported_arches:
+            namespaces.append(f'ocp{go_suffix_for_arch(go_arch_for_brew_arch(arch))}')
+            namespaces.append(f'ocp{go_suffix_for_arch(go_arch_for_brew_arch(arch))}-priv')
 
         tasks = []
         for namespace in namespaces:
@@ -313,14 +323,10 @@ class BuildSyncPipeline:
             return
 
         try:
-            supported_arches = await branch_arches(
-                group=f'openshift-{self.version}',
-                assembly=self.assembly
-            )
             tags_to_transfer: list = rhcos.get_container_names(self.group_runtime)
 
             tasks = []
-            for arch in supported_arches:
+            for arch in self.supported_arches:
                 arch_suffix = go_suffix_for_arch(arch)
                 for tag in tags_to_transfer:
                     tasks.append(self._tag_into_ci_imagestream(arch_suffix, tag))

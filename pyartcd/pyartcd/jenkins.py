@@ -24,6 +24,7 @@ jenkins_client: Optional[Jenkins] = None
 
 class Jobs(Enum):
     BUILD_SYNC = 'aos-cd-builds/build%2Fbuild-sync'
+    BUILD_SYNC_KONFLUX = 'aos-cd-builds/build%2Fbuild-sync-konflux'
     BUILD_MICROSHIFT = 'aos-cd-builds/build%2Fbuild-microshift'
     BUILD_MICROSHIFT_BOOTC = 'aos-cd-builds/build%2Fbuild-microshift-bootc'
     OCP4 = 'aos-cd-builds/build%2Focp4'
@@ -336,7 +337,6 @@ def start_build_sync(build_version: str, assembly: str, doozer_data_path: Option
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly,
-        'BUILD_SYSTEM': build_system,
     }
     if doozer_data_path:
         params['DOOZER_DATA_PATH'] = doozer_data_path
@@ -345,10 +345,16 @@ def start_build_sync(build_version: str, assembly: str, doozer_data_path: Option
     if exclude_arches:
         params['EXCLUDE_ARCHES'] = ','.join(exclude_arches)
 
-    return start_build(
-        job=Jobs.BUILD_SYNC,
-        params=params | kwargs,
-    )
+    if build_system == 'brew':
+        return start_build(
+            job=Jobs.BUILD_SYNC,
+            params=params | kwargs,
+        )
+    elif build_system == 'konflux':
+        return start_build(
+            job=Jobs.BUILD_SYNC_KONFLUX,
+            params=params | kwargs,
+        )
 
 
 def start_cincinnati_prs(from_releases: list, release_name: str, advisory_id: int,
