@@ -4,7 +4,7 @@ from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_e
     assembly_streams_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.pushd import Dir
-from artcommonlib.util import isolate_el_version_in_brew_tag
+from artcommonlib.util import isolate_el_version_in_brew_tag, deep_merge
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolver
 
@@ -251,6 +251,8 @@ class Runtime(GroupRuntime):
             group_yml = yaml.safe_dump(tmp_config.primitive(), default_flow_style=False)
             raw_group_config = yaml.full_load(group_yml.format(**replace_vars))
             tmp_config = Model(dict(raw_group_config))
+            if self.build_system == 'konflux' and tmp_config.konflux is not Missing:
+                tmp_config = Model(deep_merge(tmp_config.primitive(), tmp_config.konflux.primitive()))
         except KeyError as e:
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
 

@@ -243,7 +243,7 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
     if allow_rejected:
         allowed_phases.add("Rejected")
 
-    tag_base: str = f"{runtime.group_config.vars.MAJOR}.{runtime.group_config.vars.MINOR}.0-0.nightly"
+    tag_base: str = f"{runtime.group_config.vars.MAJOR}.{runtime.group_config.vars.MINOR}.0-0.{'konflux-' if runtime.build_system == 'konflux' else ''}nightly"
     await asyncio.gather(*(_find_nightlies(arch) for arch in arches))
 
     # make sure we found every match we expected
