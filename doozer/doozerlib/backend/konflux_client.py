@@ -401,6 +401,7 @@ class KonfluxClient:
 
         # Task specific parameters to override in the template
         has_build_images_task = False
+        has_sast_task = False
         for task in obj["spec"]["pipelineSpec"]["tasks"]:
             match task["name"]:
                 case "build-images":
@@ -413,11 +414,14 @@ class KonfluxClient:
                     _modify_param(task["params"], "ADDITIONAL_TAGS", list(additional_tags))
                 case "clone-repository":
                     _modify_param(task["params"], "refspec", f"{commit_sha}:refs/remotes/origin/{target_branch} refs/tags/*:refs/tags/*")
+                case "sast-snyk-check":
+                    has_sast_task = True
 
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
+        task_run_specs = []
         if has_build_images_task:
-            obj["spec"]["taskRunSpecs"] = [{
+            task_run_specs += [{
                 "pipelineTaskName": "build-images",
                 "stepSpecs": [{
                     "name": "sbom-syft-generate",
@@ -431,6 +435,20 @@ class KonfluxClient:
                     }
                 }]
             }]
+        if has_sast_task:
+            task_run_specs += [{
+                "pipelineTaskName": "sast-shell-check",
+                "computeResources": {
+                    "requests": {
+                        "memory": "10Gi"
+                    },
+                    "limits": {
+                        "memory": "10Gi"
+                    }
+                }
+            }]
+
+        obj["spec"]["taskRunSpecs"] = task_run_specs
 
         if not sast:
             params = [p for p in params if p.get("name") not in ("sast-unicode-check", "sast-shell-check")]
