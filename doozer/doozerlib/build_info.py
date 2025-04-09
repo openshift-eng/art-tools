@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import (Awaitable, Dict, List, Optional, Tuple, Union,
                     cast)
 
@@ -733,3 +734,6 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
     def get_source_git_url(self) -> Optional[str]:
         return self._build_record.source_repo
+
+    def get_build_end_time(self) -> datetime:
+        return self._build_record.end_time
