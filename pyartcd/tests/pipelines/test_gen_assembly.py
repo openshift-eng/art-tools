@@ -11,7 +11,8 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True, return_value=(0, "a b c", ""))
     def test_get_nightlies(self, cmd_gather_async: AsyncMock):
         runtime = MagicMock()
-        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
+        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "brew",
+                                       "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
@@ -19,7 +20,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
-            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', 'get-nightlies'], stderr=None, env=ANY)
+            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', '--build-system', 'brew', 'get-nightlies'], stderr=None, env=ANY)
 
         cmd_gather_async.reset_mock()
         pipeline.allow_pending = True
@@ -28,7 +29,7 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
-            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', 'get-nightlies', '--allow-pending',
+            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', '--build-system', 'brew', 'get-nightlies', '--allow-pending',
              '--allow-rejected', '--allow-inconsistency'], stderr=None, env=ANY)
 
         cmd_gather_async.reset_mock()
@@ -38,14 +39,15 @@ class TestGenAssemblyPipeline(IsolatedAsyncioTestCase):
         actual = asyncio.run(pipeline._get_nightlies())
         self.assertEqual(actual, ["a", "b", "c"])
         cmd_gather_async.assert_awaited_once_with(
-            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', '--arches', 'x86_64,aarch64',
+            ['doozer', '--group', 'openshift-4.12', '--assembly', 'stream', '--build-system', 'brew', '--arches', 'x86_64,aarch64',
              'get-nightlies', '--allow-pending', '--allow-rejected', '--allow-inconsistency', '--matching=n1',
              '--matching=n2'], stderr=None, env=ANY)
 
     @patch("artcommonlib.exectools.cmd_gather_async", autospec=True)
     def test_gen_assembly_from_releases(self, cmd_gather_async: AsyncMock):
         runtime = MagicMock()
-        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
+        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "brew",
+                                       "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
@@ -95,7 +97,8 @@ releases:
         runtime = MagicMock(dry_run=False, config={"build_config": {
             "ocp_build_data_repo_push_url": "git@github.com:someone/ocp-build-data.git",
         }})
-        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
+        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "brew",
+                                       "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
@@ -145,7 +148,8 @@ releases:
         runtime.new_slack_client.return_value.say.return_value = {'message': {'ts': ''}}
         runtime.new_slack_client.return_value.bind_channel = MagicMock()
 
-        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "https://example.com/ocp-build-data.git",
+        pipeline = GenAssemblyPipeline(runtime, "openshift-4.12", "4.12.99", "brew",
+                                       "https://example.com/ocp-build-data.git",
                                        nightlies=(), allow_pending=False, allow_rejected=False,
                                        allow_inconsistency=False, custom=False, arches=(), in_flight="4.11.88",
                                        previous_list=(), auto_previous=True, auto_trigger_build_sync=False,
