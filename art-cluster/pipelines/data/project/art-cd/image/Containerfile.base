@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/ubi:latest
+FROM registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.23-openshift-4.19
 
 # Set metadata
 LABEL name="openshift-art/artcd-base" \
@@ -9,11 +9,11 @@ RUN curl -fLo /etc/pki/ca-trust/source/anchors/2022-IT-Root-CA.pem https://certs
  && update-ca-trust extract
 
 # Copy repository configurations for software installations
-COPY art-cluster/pipelines/data/project/art-cd/image/files/etc/yum.repos.d /etc/yum.repos.d/
+COPY art-cluster/pipelines/data/project/art-cd/image/files/etc/yum.repos.d /etc/yum.repos.art/localdev
 
 # Install necessary packages and Python libraries
 RUN dnf -y install python3.11 python3.11-pip python3.11-wheel python3.11-devel gcc krb5-devel wget tar gzip git krb5-workstation \
-    brewkoji rhpkg go podman python3-rpm \
+    brewkoji rhpkg podman python3-rpm \
     && python3.11 -m pip install --upgrade setuptools pip \
     && dnf clean all
 
