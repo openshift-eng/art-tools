@@ -334,6 +334,8 @@ class UpdateGolangPipeline:
             for alias in aliases:
                 if alias in streams_content:
                     raise ValueError(f"Alias name {alias} already exists in streams.yml")
+                if alias in stream_alias_map:
+                    raise ValueError(f"Duplicate alias detected: {alias} is already mapped to {stream_alias_map[alias]}")
                 stream_alias_map[alias] = stream_name
 
         # first check if an exact stream is defined, if not check aliases
