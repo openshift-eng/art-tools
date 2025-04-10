@@ -306,10 +306,17 @@ class UpdateGolangPipeline:
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
         upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
-        streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
+
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
-        go_latest = group_content['vars']['GO_LATEST']
-        go_previous = group_content['vars'].get('GO_PREVIOUS', None)
+        group_vars = group_content['vars']
+        go_latest = group_vars['GO_LATEST']
+        go_previous = group_vars.get('GO_PREVIOUS', None)
+
+        # streams.yml contains references to group vars
+        # so replace them first
+        streams_raw_content = upstream_repo.get_contents("streams.yml", ref=branch).decoded_content
+        streams_content = yaml.load(streams_raw_content.format(group_vars))
+
         update_streams = update_group = False
 
         # register aliases
@@ -330,7 +337,7 @@ class UpdateGolangPipeline:
         if go_latest in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang')['image']
+                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest}')['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -350,7 +357,7 @@ class UpdateGolangPipeline:
         elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang')['image']
+                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest}')['image']
                 previous_go = get_stream(f'rhel-{el_v}-golang-{go_previous}')['image'] if go_previous else None
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
