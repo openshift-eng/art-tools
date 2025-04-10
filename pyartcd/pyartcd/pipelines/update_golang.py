@@ -311,11 +311,26 @@ class UpdateGolangPipeline:
         go_latest = group_content['vars']['GO_LATEST']
         go_previous = group_content['vars'].get('GO_PREVIOUS', None)
         update_streams = update_group = False
+
+        # register aliases
+        stream_alias_map = {}
+        for stream_name, info in streams_content.items():
+            aliases = info.get('aliases', [])
+            for alias in aliases:
+                if alias in streams_content:
+                    raise ValueError(f"Alias name {alias} already exists in streams.yml")
+                stream_alias_map[alias] = stream_name
+
+        # first check if an exact stream is available, if not
+        def get_stream(stream_name):
+            stream_key = stream_alias_map.get(stream_name, None) or stream_name
+            return streams_content.get(stream_key, None)
+
         # This is to bump minor golang for GO_LATEST
         if go_latest in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
+                latest_go = get_stream(f'rhel-{el_v}-golang')['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -325,7 +340,7 @@ class UpdateGolangPipeline:
         elif go_previous in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image']
+                latest_go = get_stream(f'rhel-{el_v}-golang-{go_previous}')['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -335,10 +350,10 @@ class UpdateGolangPipeline:
         elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
-                previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
+                latest_go = get_stream(f'rhel-{el_v}-golang')['image']
+                previous_go = get_stream(f'rhel-{el_v}-golang-{go_previous}')['image'] if go_previous else None
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
-                for stream, info in streams_content.items():
+                for _, info in streams_content.items():
                     if info['image'] == latest_go:
                         info['image'] = new_latest_go
                     if info['image'] == previous_go:
