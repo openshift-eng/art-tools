@@ -336,7 +336,7 @@ class UpdateGolangPipeline:
                     raise ValueError(f"Alias name {alias} already exists in streams.yml")
                 stream_alias_map[alias] = stream_name
 
-        # first check if an exact stream is available, if not
+        # first check if an exact stream is defined, if not check aliases
         def get_stream(stream_name):
             stream_key = stream_alias_map.get(stream_name, None) or stream_name
             return streams_content.get(stream_key, None)
