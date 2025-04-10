@@ -314,8 +314,8 @@ class UpdateGolangPipeline:
 
         # streams.yml contains references to group vars
         # so replace them first
-        streams_raw_content = upstream_repo.get_contents("streams.yml", ref=branch).decoded_content
-        streams_content = yaml.load(streams_raw_content.format(group_vars))
+        streams_raw_content = upstream_repo.get_contents("streams.yml", ref=branch).decoded_content.decode('utf-8')
+        streams_content = yaml.load(streams_raw_content.format(**group_vars))
 
         update_streams = update_group = False
 
