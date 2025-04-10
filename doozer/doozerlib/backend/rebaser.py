@@ -24,6 +24,7 @@ from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_man
 from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.build_visibility import is_release_embargoed, get_visibility_suffix, BuildVisibility
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
@@ -512,7 +513,7 @@ class KonfluxRebaser:
         prev_release = dfp.labels.get("release")
         private_fix = None
         if prev_release:
-            private_fix = util.is_private_fix(prev_release, self._runtime)
+            private_fix = is_release_embargoed(prev_release, 'konflux')
         version = dfp.labels.get("version")
         return version, prev_release, private_fix
 
@@ -589,8 +590,10 @@ class KonfluxRebaser:
         sb = io.StringIO()
         if input_release.endswith(".p?"):
             sb.write(input_release[:-3])  # strip .p?
-            pval = ".p3" if private_fix else ".p2"
-            sb.write(pval)
+            visibility = BuildVisibility.PRIVATE if private_fix else BuildVisibility.PUBLIC
+            pval = get_visibility_suffix('konflux', visibility)
+            sb.write(f'.{pval}')
+
         elif self._runtime.group_config.public_upstreams:
             raise ValueError(f"'release' must end with '.p?' for an image with a public upstream but its actual value is {input_release}")
 

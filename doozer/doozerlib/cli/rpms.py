@@ -14,6 +14,7 @@ from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_https
 from doozerlib.brew import get_build_objects
+from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.cli import cli, click_coroutine, pass_runtime, validate_rpm_version
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rpm_builder import RPMBuilder
@@ -333,11 +334,6 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
 
         nvr = build["nvr"]
 
-        if runtime.build_system == 'brew':
-            embargoed = "p1" in rpm.release.split(".")
-        else:
-            embargoed = "p3" in rpm.release.split("."),
-
         build_record = KonfluxBuildRecord(
             name=rpm.rpm_name,
             group=runtime.group,
@@ -352,7 +348,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             commitish=rpm.pre_init_sha,
             rebase_repo_url=rebase_repo_url,
             rebase_commitish=rebase_commitish,
-            embargoed=embargoed,
+            embargoed=is_release_embargoed(rpm.release, runtime.build_system),
             start_time=datetime.strptime(build["creation_time"], '%Y-%m-%d %H:%M:%S.%f'),
             end_time=datetime.strptime(build["completion_time"], '%Y-%m-%d %H:%M:%S.%f'),
             artifact_type=ArtifactType.RPM,

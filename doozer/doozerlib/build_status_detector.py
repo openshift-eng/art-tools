@@ -3,6 +3,7 @@ from multiprocessing import Lock
 from typing import Dict, List, Optional, Set, Iterable
 
 from doozerlib import brew, util
+from doozerlib.build_visibility import is_release_embargoed
 
 
 class BuildStatusDetector:
@@ -33,7 +34,8 @@ class BuildStatusDetector:
         suspects = [b for b in builds if b["id"] not in shipped_ids]
 
         # next, consider remaining builds embargoed if the release field includes .p1/.p3
-        embargoed_ids = {b["id"] for b in suspects if util.is_private_fix(b["release"], self.runtime)}
+        embargoed_ids = {b["id"] for b in suspects
+                         if is_release_embargoed(b["release"], self.runtime.build_system)}
 
         # finally, look at the remaining images in case they include embargoed rpms
         remaining_ids = {b["id"] for b in suspects if b["id"] not in embargoed_ids}
@@ -77,7 +79,7 @@ class BuildStatusDetector:
                 rpms = archive["rpms"]
                 suspected_rpms = [
                     rpm for rpm in rpms
-                    if util.is_private_fix(rpm["release"], self.runtime)
+                    if is_release_embargoed(rpm["release"], self.runtime.build_system)
                     or rpm["build_id"] in embargoed_rpm_ids
                 ]
                 shipped = self.find_shipped_builds([rpm["build_id"] for rpm in suspected_rpms])
