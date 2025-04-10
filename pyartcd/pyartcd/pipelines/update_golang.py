@@ -306,16 +306,16 @@ class UpdateGolangPipeline:
         github_client = Github(os.environ.get("GITHUB_TOKEN"))
         branch = f"openshift-{self.ocp_version}"
         upstream_repo = github_client.get_repo("openshift-eng/ocp-build-data")
-
+        streams_content = yaml.load(upstream_repo.get_contents("streams.yml", ref=branch).decoded_content)
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
-        group_vars = group_content['vars']
-        go_latest = group_vars['GO_LATEST']
-        go_previous = group_vars.get('GO_PREVIOUS', None)
 
-        # streams.yml contains references to group vars
-        # so replace them first
-        streams_raw_content = upstream_repo.get_contents("streams.yml", ref=branch).decoded_content.decode('utf-8')
-        streams_content = yaml.load(streams_raw_content.format(**group_vars))
+        go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
+        # these group var templates are used in streams.yml
+        # but we do not need to replace/update them
+        # we will just look for the literal value
+        go_latest_var_template, go_previous_var_template = f"{{go_latest_var}}", f"{{go_previous_var}}"
+        go_latest = group_content['vars'][go_latest_var]
+        go_previous = group_content['vars'].get(go_previous_var, None)
 
         update_streams = update_group = False
 
@@ -337,7 +337,7 @@ class UpdateGolangPipeline:
         if go_latest in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest}')['image']
+                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest_var_template}')['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -347,7 +347,7 @@ class UpdateGolangPipeline:
         elif go_previous in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang-{go_previous}')['image']
+                latest_go = get_stream(f'rhel-{el_v}-golang-{go_previous_var_template}')['image']
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -357,8 +357,8 @@ class UpdateGolangPipeline:
         elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest}')['image']
-                previous_go = get_stream(f'rhel-{el_v}-golang-{go_previous}')['image'] if go_previous else None
+                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest_var_template}')['image']
+                previous_go = get_stream(f'rhel-{el_v}-golang-{go_previous_var_template}')['image'] if go_previous else None
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
