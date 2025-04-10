@@ -615,8 +615,16 @@ class ImageDistGitRepo(DistGitRepo):
                 remote_source['packages'] = self.config.cachito.packages.primitive()
             elif self.config.content.source.path:  # source is in subdirectory
                 remote_source['packages'] = {pkg_manager: [{"path": self.config.content.source.path}] for pkg_manager in pkg_managers}
+            if self.config.cachito.version is not Missing:
+                remote_sources_version = self.config.cachito.version
+            elif self.runtime.group_config.cachito.version is not Missing:
+                remote_sources_version = self.runtime.group_config.cachito.version
+            else:
+                # https://spaces.redhat.com/pages/viewpage.action?pageId=591269742
+                remote_sources_version = 1
+
             config_overrides.update({
-                'remote_sources_version': 1,  # https://spaces.redhat.com/pages/viewpage.action?pageId=591269742
+                'remote_sources_version': remote_sources_version,
                 'remote_sources': [
                     {
                         'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
