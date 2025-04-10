@@ -239,34 +239,6 @@ def isolate_git_commit_in_release(release: str) -> Optional[str]:
     return None
 
 
-def isolate_pflag_in_release(release: str) -> Optional[str]:
-    """
-    Given a release field, determines whether is contains .p? information.
-    If it does, it returns the value 'p0', 'p1', 'p2' or 'p3'. If it is not found, None is returned.
-    """
-    match = re.match(r'.*\.(p[?0123])(?:\.+|$)', release)
-
-    if match:
-        return match.group(1)
-
-    return None
-
-
-def is_private_fix(release: str, runtime) -> bool:
-    """
-    Given a release field, determine if it relates to a private fix.
-    For Brew .p0 is associatedd with public builds, .p1 with private ones.
-    For Konflux .p2 is associatedd with public builds, .p3 with private ones.
-    """
-
-    pflag = isolate_pflag_in_release(release)
-    if runtime.build_system == 'brew':
-        return pflag == 'p1'
-    if runtime.build_system == 'konflux':
-        return pflag == 'p3'
-    return False
-
-
 def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     """
     Given a release name (e.g. 4.8.0-0.nightly-s390x-2021-07-02-143555, 4.1.0-0.nightly-priv-2019-11-08-213727),
