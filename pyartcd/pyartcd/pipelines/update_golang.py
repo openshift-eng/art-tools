@@ -310,12 +310,15 @@ class UpdateGolangPipeline:
         group_content = yaml.load(upstream_repo.get_contents("group.yml", ref=branch).decoded_content)
 
         go_latest_var, go_previous_var = "GO_LATEST", "GO_PREVIOUS"
+        go_latest = group_content['vars'][go_latest_var]
+        go_previous = group_content['vars'].get(go_previous_var, None)
+
         # these group var templates are used in streams.yml
         # but we do not need to replace/update them
         # we will just look for the literal value
         go_latest_var_template, go_previous_var_template = f"{{go_latest_var}}", f"{{go_previous_var}}"
-        go_latest = group_content['vars'][go_latest_var]
-        go_previous = group_content['vars'].get(go_previous_var, None)
+        latest_go_stream_name = f'rhel-{el_v}-golang-{go_latest_var_template}'
+        previous_go_stream_name = f'rhel-{el_v}-golang-{go_previous_var_template}'
 
         update_streams = update_group = False
 
@@ -337,7 +340,10 @@ class UpdateGolangPipeline:
         if go_latest in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest_var_template}')['image']
+
+                _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name)
+                latest_go = get_stream(latest_go_stream_name)['image']
+
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -347,18 +353,26 @@ class UpdateGolangPipeline:
         elif go_previous in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang-{go_previous_var_template}')['image']
-                new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
+
+                _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name)
+                previous_go = get_stream(previous_go_stream_name)['image']
+
+                new_previous_go = f'{previous_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
-                    if info['image'] == latest_go:
-                        info['image'] = new_latest_go
+                    if info['image'] == previous_go:
+                        info['image'] = new_previous_go
                         update_streams = True
         # This is to bump major golang for GO_LATEST and update GO_PREVIOUS to current GO_LATEST
         elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = get_stream(f'rhel-{el_v}-golang-{go_latest_var_template}')['image']
-                previous_go = get_stream(f'rhel-{el_v}-golang-{go_previous_var_template}')['image'] if go_previous else None
+
+                _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name)
+                latest_go = get_stream(latest_go_stream_name)['image']
+
+                _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name)
+                previous_go = get_stream(previous_go_stream_name)['image'] if go_previous else None
+
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
