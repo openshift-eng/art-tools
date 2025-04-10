@@ -417,6 +417,18 @@ class KonfluxClient:
                 case "sast-snyk-check":
                     has_sast_task = True
 
+        if not sast:
+            tasks = []
+            has_sast_task = False
+            for task in obj["spec"]["pipelineSpec"]["tasks"]:
+                task_name = task.get("name")
+                if task_name in ("sast-unicode-check", "sast-shell-check"):
+                    self._logger.info(f"Removing {task_name} tasks since SAST is disabled")
+                    continue
+                tasks.append(task)
+
+            obj["spec"]["pipelineSpec"]["tasks"] = tasks
+
         # https://konflux.pages.redhat.com/docs/users/how-tos/configuring/overriding-compute-resources.html
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
         task_run_specs = []
@@ -449,17 +461,6 @@ class KonfluxClient:
             }]
 
         obj["spec"]["taskRunSpecs"] = task_run_specs
-
-        if not sast:
-            tasks = []
-            for task in obj["spec"]["pipelineSpec"]["tasks"]:
-                task_name = task.get("name")
-                if task_name in ("sast-unicode-check", "sast-shell-check"):
-                    self._logger.info(f"Removing {task_name} tasks since SAST is disabled")
-                    continue
-                tasks.append(task)
-
-            obj["spec"]["pipelineSpec"]["tasks"] = tasks
 
         return obj
 
