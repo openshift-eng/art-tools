@@ -316,9 +316,14 @@ class UpdateGolangPipeline:
         # these group var templates are used in streams.yml
         # but we do not need to replace/update them
         # we will just look for the literal value
-        go_latest_var_template, go_previous_var_template = f"{{go_latest_var}}", f"{{go_previous_var}}"
-        latest_go_stream_name = f'rhel-{{el_v}}-golang-{go_latest_var_template}'
-        previous_go_stream_name = f'rhel-{{el_v}}-golang-{go_previous_var_template}'
+        go_latest_var_template = "{" + go_latest_var + "}"
+        go_previous_var_template = "{" + go_previous_var + "}"
+
+        def latest_go_stream_name(el_v):
+            return f'rhel-{el_v}-golang-{go_latest_var_template}'
+
+        def previous_go_stream_name(el_v):
+            return f'rhel-{el_v}-golang-{go_previous_var_template}'
 
         update_streams = update_group = False
 
@@ -341,8 +346,8 @@ class UpdateGolangPipeline:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
-                _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name.format(el_v))
-                latest_go = get_stream(latest_go_stream_name.format(el_v))['image']
+                _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
+                latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
@@ -354,8 +359,8 @@ class UpdateGolangPipeline:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
-                _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name.format(el_v))
-                previous_go = get_stream(previous_go_stream_name.format(el_v))['image']
+                _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
+                previous_go = get_stream(previous_go_stream_name(el_v))['image']
 
                 new_previous_go = f'{previous_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
@@ -367,11 +372,11 @@ class UpdateGolangPipeline:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
 
-                _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name.format(el_v))
-                latest_go = get_stream(latest_go_stream_name.format(el_v))['image']
+                _LOGGER.info("Looking for golang stream %s in streams.yml", latest_go_stream_name(el_v))
+                latest_go = get_stream(latest_go_stream_name(el_v))['image']
 
-                _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name.format(el_v))
-                previous_go = get_stream(previous_go_stream_name.format(el_v))['image'] if go_previous else None
+                _LOGGER.info("Looking for golang stream %s in streams.yml", previous_go_stream_name(el_v))
+                previous_go = get_stream(previous_go_stream_name(el_v))['image'] if go_previous else None
 
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
