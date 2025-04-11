@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import aiofiles
 import click
+import nest_asyncio
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
@@ -197,6 +198,11 @@ and in more detail in state.yaml. The release-controller, per ART-2195, will
 read and propagate/expose this annotation in its display of the release image.
     """
 
+    # This will let us make asyncio event loops reentrant; it is useful whenever we need to call asynchronous code
+    # from a synchronous function, and there's a chance that another even loop is already running.
+    # This has to be done once, so do it right after entering the CLI command
+    nest_asyncio.apply()
+
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
 
@@ -245,8 +251,10 @@ def assembly_imagestream_base_name(runtime: Runtime) -> str:
 def assembly_imagestream_base_name_generic(version, assembly_name, assembly_type, build_system):
     if assembly_name == 'stream' and assembly_type is AssemblyTypes.STREAM:
         return default_imagestream_base_name_generic(version, build_system)
-    else:
+    elif build_system == 'brew':
         return f"{version}-art-assembly-{assembly_name}"
+    else:  # konflux
+        return f"{version}-konflux-art-assembly-{assembly_name}"
 
 
 def default_imagestream_namespace_base_name() -> str:
@@ -2276,12 +2284,13 @@ class PayloadGenerator:
         if major_minor != runtime.get_minor_version():
             return terminal_issue(f"Specified nightly {nightly} does not match group major.minor")
 
+        release_suffix = f"{'konflux-' if runtime.build_system == 'konflux' else ''}release"
         rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
 
         retries: int = 3
         release_json_str = ""
         rc = -1
-        pullspec = f"registry.ci.openshift.org/ocp{rc_suffix}/release{rc_suffix}:{nightly}"
+        pullspec = f"registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}{rc_suffix}:{nightly}"
         while retries > 0:
             rc, release_json_str, err = await exectools.cmd_gather_async(
                 f"oc adm release info {pullspec} -o=json", check=False
@@ -2325,7 +2334,6 @@ class PayloadGenerator:
                     issues.append(
                         AssemblyIssue(
                             f"{nightly} contains {payload_tag_name} sha {pullspec_sha} but assembly computed archive: "
-                            f"{entry.image_inspector.get_archive_id()} and "
                             f"{entry.image_inspector.get_pullspec()}",
                             component="reference-releases",
                         )

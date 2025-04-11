@@ -129,7 +129,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.check_nightlies_consistency")
     async def test_generate_assembly_issues_report(self, cnc_mock):
         gpcli = flexmock(
-            rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream")),
+            rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream", build_system="brew")),
             collect_assembly_build_ids=MagicMock(return_value={1, 2, 3}),
             detect_mismatched_siblings=None,
             detect_non_latest_rpms=None,

@@ -31,7 +31,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         return meta
 
     def test_construct_build_source_url(self):
-        runtime = MagicMock()
+        runtime = MagicMock(build_system="brew")
         osbs2 = OSBS2Builder(runtime)
         meta = self._make_image_meta(runtime)
         dg = ImageDistGitRepo(meta, autoclone=False)
@@ -45,7 +45,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual, f"{constants.DISTGIT_GIT_URL}/containers/foo#deadbeef")
 
     async def test_start_build(self):
-        runtime = MagicMock()
+        runtime = MagicMock(build_system="brew")
         osbs2 = OSBS2Builder(runtime)
         meta = self._make_image_meta(runtime)
         dg = ImageDistGitRepo(meta, autoclone=False)
@@ -87,7 +87,7 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         koji_api = MagicMock(logged_in=False)
         koji_api.getTaskResult = MagicMock(return_value={"koji_builds": [42]})
         koji_api.getBuild = MagicMock(return_value={"id": 42, "nvr": "foo-v4.12.0-12345.p0.assembly.test"})
-        runtime = MagicMock()
+        runtime = MagicMock(build_system="brew")
         runtime.build_retrying_koji_client = MagicMock(return_value=koji_api)
         osbs2 = OSBS2Builder(runtime)
         meta = self._make_image_meta(runtime)

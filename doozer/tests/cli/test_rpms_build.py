@@ -22,6 +22,7 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         stream = io.StringIO()
         logging.basicConfig(level=logging.INFO, stream=stream)
         runtime.logger = logging.getLogger()
+        runtime.build_system = "brew"
         return runtime
 
     @patch("doozerlib.cli.rpms.RPMBuilder")

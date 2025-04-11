@@ -25,7 +25,7 @@ class KonfluxDb:
         self.bq_client = bigquery.BigQueryClient()
         self.record_cls = None
 
-    def bind(self, record_cls: KonfluxRecord):
+    def bind(self, record_cls: typing.Type[KonfluxRecord]):
         """
         Binds the DB client to a specific table, via the KonfluxRecord class definition that represents it.
         When bound, all insert/select statements will target that table, until the DB is bound to a different one.
@@ -301,12 +301,7 @@ class KonfluxDb:
         if completed_before:
             completed_before = completed_before.astimezone(timezone.utc)
             self.logger.info('Searching for %s builds completed before %s', name, completed_before)
-            base_clauses.extend(
-                [
-                    Column('end_time').isnot(None),
-                    Column('end_time', DateTime) < completed_before,
-                ]
-            )
+            base_clauses.extend([Column('end_time').isnot(None), Column('end_time', DateTime) <= completed_before])
 
         if el_target:
             base_clauses.append(Column('el_target', String) == el_target)

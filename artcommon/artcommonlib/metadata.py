@@ -9,7 +9,7 @@ from artcommonlib.brew import BuildStates
 from artcommonlib import logutil
 from artcommonlib.model import Missing, Model
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine, KonfluxRecord
 
 CONFIG_MODES = [
     'enabled',  # business as usual
@@ -520,7 +520,29 @@ class MetadataBase(object):
             return await self.get_latest_brew_build_async(**kwargs)
 
         elif self.runtime.build_system == 'konflux':
+            basis_event = self.runtime.assembly_basis_event
+            if basis_event:
+                kwargs['completed_before'] = basis_event
             return await self.get_latest_konflux_build(**kwargs)
+
+        else:
+            raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')
+
+    def get_latest_build_sync(self, **kwargs):
+        if self.runtime.build_system == 'brew':
+            return self.get_latest_brew_build(**kwargs)
+
+        elif self.runtime.build_system == 'konflux':
+            basis_event = self.runtime.assembly_basis_event
+            if basis_event:
+                kwargs['completed_before'] = basis_event
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(self.get_latest_konflux_build(**kwargs))
+            else:
+                return loop.run_until_complete(self.get_latest_konflux_build(**kwargs))
 
         else:
             raise ValueError(f'Invalid value for --build-system: {self.runtime.build_system}')

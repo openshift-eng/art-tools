@@ -137,12 +137,12 @@ class Metadata(MetadataBase):
                 pass
             else:
                 # Ooof.. it is not defined in the assembly, so we need to find it dynamically.
-                build_obj = self.get_latest_brew_build(default=None, el_target=self.determine_rhel_targets()[0])
+                build_obj = self.get_latest_build_sync(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
                     self.logger.info(
                         'Pinning upstream source to commit of assembly selected build '
-                        f'({build_obj["id"]}) -> commit {self.commitish}'
+                        f'({build_obj["build_id"]}) -> commit {self.commitish}'
                     )
                 else:
                     # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.

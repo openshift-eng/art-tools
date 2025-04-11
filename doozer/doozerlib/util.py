@@ -539,6 +539,30 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
+def get_registry_basic_auth(pullspec: str, registry_password: str, registry_username: str = None) -> str:
+    # A password is always needed for basic auth
+    if not registry_username:
+        raise ValueError('registry_password must be provided if auth is needed.')
+
+    # Build the basic auth string
+    if registry_username:
+        auth = base64.b64encode(f'{registry_username}:{registry_password}'.encode()).decode()
+    else:
+        auth = registry_password
+
+    # Build the registry config file content
+    registry = '/'.join(pullspec.split('/')[:-1])
+    return json.dumps(
+        {
+            'auths': {
+                registry: {
+                    'auth': auth,
+                }
+            }
+        }
+    )
+
+
 def oc_image_info(
     pullspec: str,
     *options,
@@ -570,28 +594,9 @@ def oc_image_info(
     if not registry_username and not registry_password:
         return run_oc(auth_file=registry_config)
 
-    # Otherwise, a password is always needed for basic auth
-    assert registry_password, 'registry_password must be provided if auth is needed.'
-
-    # Build the basic auth string
-    if registry_username:
-        auth = base64.b64encode(f'{registry_username}:{registry_password}'.encode()).decode()
-    else:
-        auth = registry_password
-
     # Store the basic auth info in a temporary temp file to be used with --registry-config
     with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
-        registry_config_file.write(
-            json.dumps(
-                {
-                    'auths': {
-                        pullspec.split('/')[0]: {
-                            'auth': auth,
-                        },
-                    },
-                }
-            )
-        )
+        registry_config_file.write(get_registry_basic_auth(pullspec, registry_password, registry_username))
         registry_config_file.flush()
         return run_oc(auth_file=registry_config_file.name)
 
@@ -685,28 +690,9 @@ async def oc_image_info_async(
     if not registry_username and not registry_password:
         return await run_oc(auth_file=registry_config)
 
-    # Otherwise, a password is always needed for basic auth
-    assert registry_password, 'registry_password must be provided if auth is needed.'
-
-    # Build the basic auth string
-    if registry_username:
-        auth = base64.b64encode(f'{registry_username}:{registry_password}'.encode()).decode()
-    else:
-        auth = registry_password
-
     # Store the basic auth info in a temporary temp file to be used with --registry-config
     with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
-        registry_config_file.write(
-            json.dumps(
-                {
-                    'auths': {
-                        pullspec.split('/')[0]: {
-                            'auth': auth,
-                        },
-                    },
-                }
-            )
-        )
+        registry_config_file.write(get_registry_basic_auth(pullspec, registry_password, registry_username))
         registry_config_file.flush()
         return await run_oc(auth_file=registry_config_file.name)
 

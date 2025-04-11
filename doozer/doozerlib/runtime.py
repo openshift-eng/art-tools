@@ -7,9 +7,11 @@ from artcommonlib.assembly import (
     assembly_group_config,
     assembly_streams_config,
 )
+from artcommonlib.konflux.konflux_build_record import KonfluxRecord
 from artcommonlib.model import Model, Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.util import isolate_el_version_in_brew_tag, deep_merge
+from doozerlib.brew import brew_event_from_datetime
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolver
 
@@ -22,7 +24,6 @@ import atexit
 import datetime
 import yaml
 import click
-import traceback
 import urllib.parse
 import signal
 import io
@@ -463,7 +464,17 @@ class Runtime(GroupRuntime):
                     f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
                 )
             # If the assembly has a basis event, we constrain all brew calls to that event.
-            self.brew_event = self.assembly_basis_event
+            if self.build_system == 'brew':
+                # The assembly basis event is a Brew event
+                self.brew_event = self.assembly_basis_event
+
+            else:
+                # The assembly basis event for Konflux is a timestamp, e.g. 2025-04-15 13:28:09
+                # Use koji.getLatestEvent() to get the latest Brew event that came before the assembly Konflux event
+                self._logger.info('Computed assembly basis event: %s', self.assembly_basis_event)
+                with self.shared_koji_client_session() as koji_api:
+                    self.brew_event = brew_event_from_datetime(self.assembly_basis_event, koji_api)
+
             self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
 
         # This flag indicates builds should be tagged with associated hotfix tag for the artifacts branch

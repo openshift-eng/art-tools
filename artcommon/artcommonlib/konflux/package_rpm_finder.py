@@ -88,6 +88,7 @@ class PackageRpmFinder:
         return {
             self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
             for package_nvr in installed_packages
+            if package_nvr not in self._not_found_packages
         }
 
     def get_rpms_in_pkg_build(self, nvr: str) -> list:
