@@ -733,3 +733,6 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
 
     def get_source_git_url(self) -> Optional[str]:
         return self._build_record.source_repo
+
+    def get_build_end_time_microseconds(self) -> int:
+        return int(self._build_record.end_time.timestamp() * 1_000_000)
