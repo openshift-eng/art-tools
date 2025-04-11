@@ -315,7 +315,13 @@ class UpdateGolangPipeline:
         if go_latest in go_version:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
+                golang_key = f'rhel-{el_v}-golang'
+                if golang_key in streams_content:
+                    latest_go = streams_content[golang_key]['image']
+                elif 'golang' in streams_content:
+                    latest_go = streams_content['golang']['image']
+                else:
+                    raise KeyError(f"Neither '{golang_key}' nor 'golang' key found in stream.yaml")
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for _, info in streams_content.items():
                     if info['image'] == latest_go:
@@ -335,7 +341,13 @@ class UpdateGolangPipeline:
         elif go_version.split('.')[0] >= go_latest.split('.')[0] and go_version.split('.')[1] > go_latest.split('.')[1]:
             for el_v, builder_nvr in builder_nvrs.items():
                 parsed_nvr = parse_nvr(builder_nvr)
-                latest_go = streams_content[f'rhel-{el_v}-golang']['image']
+                golang_key = f'rhel-{el_v}-golang'
+                if golang_key in streams_content:
+                    latest_go = streams_content[golang_key]['image']
+                elif 'golang' in streams_content:
+                    latest_go = streams_content['golang']['image']
+                else:
+                    raise KeyError(f"Neither '{golang_key}' nor 'golang' key found in stream.yaml")
                 previous_go = streams_content[f'rhel-{el_v}-golang-{go_previous}']['image'] if go_previous else None
                 new_latest_go = f'{latest_go.split(":")[0]}:{parsed_nvr["version"]}-{parsed_nvr["release"]}'
                 for stream, info in streams_content.items():
