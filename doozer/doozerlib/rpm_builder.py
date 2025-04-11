@@ -15,6 +15,7 @@ from artcommonlib import exectools
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import brew
+from doozerlib.build_visibility import get_visibility_suffix, BuildVisibility
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.rpmcfg import RPMMetadata
@@ -64,7 +65,7 @@ class RPMBuilder:
             ["git", "rm", "--ignore-unmatch", "-rf", "."], cwd=dg.distgit_dir
         )
 
-        # set .p0/.p1 flag
+        # set .p? flag
         if self._runtime.group_config.public_upstreams:
             if not release.endswith(".p?"):
                 raise ValueError(
@@ -72,11 +73,13 @@ class RPMBuilder:
                 )
             if rpm.private_fix is None:
                 raise AssertionError("rpm.private_fix flag should already be set")
-            if rpm.private_fix:
+            elif rpm.private_fix:
                 logger.warning("Source contains embargoed fixes.")
-                pval = ".p1"
+                visibility = BuildVisibility.PRIVATE
             else:
-                pval = ".p0"
+                visibility = BuildVisibility.PUBLIC
+
+            pval = f'.{get_visibility_suffix(self._runtime.build_system, visibility)}'
             release = release[:-3] + pval
 
         # include commit hash in release field

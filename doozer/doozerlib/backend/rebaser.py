@@ -24,6 +24,7 @@ from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_man
 from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
+from doozerlib.build_visibility import is_release_embargoed, get_visibility_suffix, BuildVisibility
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
@@ -245,7 +246,7 @@ class KonfluxRebaser:
             self._run_modifications(metadata=metadata, dest_dir=dest_dir, metadata_scripts_path=metadata_scripts_path)
 
         # Given an input release string, make an actual release string
-        # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p0.assembly.stream.gdeadbee.el9
+        # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p2.assembly.stream.gdeadbee.el9
         release = self._make_actual_release_string(metadata, input_release, private_fix, source)
         self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
                                image_repo, uuid_tag)
@@ -313,7 +314,7 @@ class KonfluxRebaser:
         else:
             if parent_metadata.private_fix is None:
                 raise IOError(
-                    f"Parent image {member} doesn't have .p0/.p1 flag determined. "
+                    f"Parent image {member} doesn't have .p? flag determined. "
                     "This indicates a bug in Doozer. Please report this issue."
                 )
             private_fix = parent_metadata.private_fix
@@ -512,10 +513,7 @@ class KonfluxRebaser:
         prev_release = dfp.labels.get("release")
         private_fix = None
         if prev_release:
-            if util.isolate_pflag_in_release(prev_release) == 'p1':
-                private_fix = True
-            elif util.isolate_pflag_in_release(prev_release) == 'p0':
-                private_fix = False
+            private_fix = is_release_embargoed(prev_release, 'konflux')
         version = dfp.labels.get("version")
         return version, prev_release, private_fix
 
@@ -592,8 +590,10 @@ class KonfluxRebaser:
         sb = io.StringIO()
         if input_release.endswith(".p?"):
             sb.write(input_release[:-3])  # strip .p?
-            pval = ".p1" if private_fix else ".p0"
-            sb.write(pval)
+            visibility = BuildVisibility.PRIVATE if private_fix else BuildVisibility.PUBLIC
+            pval = get_visibility_suffix('konflux', visibility)
+            sb.write(f'.{pval}')
+
         elif self._runtime.group_config.public_upstreams:
             raise ValueError(f"'release' must end with '.p?' for an image with a public upstream but its actual value is {input_release}")
 

@@ -35,6 +35,8 @@ from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_ve
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib import state, util
 from artcommonlib.brew import BuildStates
+from doozerlib.build_visibility import is_release_embargoed, get_all_visibility_suffixes, get_visibility_suffix, \
+    BuildVisibility, isolate_pflag_in_release
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.build_info import BrewBuildRecordInspector
@@ -1351,7 +1353,7 @@ class ImageDistGitRepo(DistGitRepo):
                 'version': version,
                 'release': release,
                 'el_target': f'el{isolate_el_version_in_release(release)}',
-                'embargoed': 'p1' in release.split('.'),
+                'embargoed': is_release_embargoed(release, self.runtime.build_system),
                 'arches': self.metadata.get_arches(),
                 'source_repo': source_repo,
                 'commitish': commitish,
@@ -1630,7 +1632,7 @@ class ImageDistGitRepo(DistGitRepo):
                     '[{}] parent image {} not included. Looking up FROM tag.'.format(self.config.name, base))
                 base_meta = self.runtime.late_resolve_image(base)
                 _, v, r = base_meta.get_latest_build_info()
-                if util.isolate_pflag_in_release(r) == 'p1':  # latest parent is embargoed
+                if is_release_embargoed(r, self.runtime.build_system):  # latest parent is embargoed
                     self.metadata.private_fix = True  # this image should also be embargoed
                 return "{}:{}-{}".format(base_meta.config.name, v, r)
             # Otherwise, the user is not expecting the FROM field to be updated in this Dockerfile.
@@ -1642,7 +1644,7 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 if from_image_metadata.private_fix is None:  # This shouldn't happen.
                     raise ValueError(
-                        f"Parent image {base} doesn't have .p0/.p1 flag determined. "
+                        f"Parent image {base} doesn't have .p? flag determined. "
                         f"This indicates a bug in Doozer."
                     )
                 # If the parent we are going to build is embargoed, this image should also be embargoed
@@ -1979,7 +1981,7 @@ class ImageDistGitRepo(DistGitRepo):
                 # increment the release that was in the Dockerfile
                 if prev_release:
                     self.logger.info("Bumping release field in Dockerfile")
-                    if self.runtime.group_config.public_upstreams and util.isolate_pflag_in_release(prev_release) in ('p0', 'p1'):
+                    if self.runtime.group_config.public_upstreams and isolate_pflag_in_release(prev_release) in get_all_visibility_suffixes():
                         # We can assume .pX is a suffix because assemblies are asserted disabled earlier.
                         prev_release = prev_release[:-3]  # strip .p0/1
                     # If release has multiple fields (e.g. 0.173.0.0), increment final field
@@ -2006,14 +2008,15 @@ class ImageDistGitRepo(DistGitRepo):
             # generally ideal for refresh-images where the only goal is to not collide with
             # a pre-existing image version-release.
             if release is not None:
-                pval = '.p0'
+                pval = f'.{get_visibility_suffix(self.runtime.build_system, BuildVisibility.PUBLIC)}'
                 if self.runtime.group_config.public_upstreams:
                     if not release.endswith(".p?"):
                         raise ValueError(
                             f"'release' must end with '.p?' for an image with a public upstream but its actual value is {release}")
                     if self.metadata.private_fix is None:
                         raise ValueError("metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream")
-                    pval = ".p1" if self.metadata.private_fix else ".p0"
+                    if self.metadata.private_fix:
+                        pval = f'.{get_visibility_suffix(self.runtime.build_system, BuildVisibility.PRIVATE)}'
 
                 if release.endswith(".p?"):
                     release = release[:-3]  # strip .p?
@@ -2778,10 +2781,7 @@ class ImageDistGitRepo(DistGitRepo):
             # extract previous release to enable incrementing it
             prev_release = dfp.labels.get("release")
             if prev_release:
-                if util.isolate_pflag_in_release(prev_release) == 'p1':
-                    private_fix = True
-                elif util.isolate_pflag_in_release(prev_release) == 'p0':
-                    private_fix = False
+                private_fix = is_release_embargoed(prev_release, self.runtime.build_system)
             version = dfp.labels.get("version")
             return version, prev_release, private_fix
         return None, None, None
