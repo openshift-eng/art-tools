@@ -705,7 +705,7 @@ class KonfluxFbcBuilder:
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
 
             build_record_params = {
-                'name': metadata.get_olm_bundle_short_name(),
+                'name': name,
                 'version': version,
                 'release': release,
                 'start_time': datetime.now(tz=timezone.utc),
@@ -746,10 +746,10 @@ class KonfluxFbcBuilder:
                     end_time = pipelinerun.status.completionTime
 
                     build_record_params.update({
-                        'image_pullspec': image_pullspec,
+                        'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
                         'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                         'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'image_tag': image_digest.removeprefix('sha256:'),
+                        'image_tag': image_pullspec.split(':')[-1],
                     })
                 case KonfluxBuildOutcome.FAILURE:
                     start_time = pipelinerun.status.startTime
