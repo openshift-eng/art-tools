@@ -94,7 +94,7 @@ class KonfluxRebaseCli:
 @click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
               help="Version string to populate in Dockerfiles.")
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
-@click.option("--embargoed", is_flag=True, help="Add .p1 to the release string for all images, which indicates those images have embargoed fixes")
+@click.option("--embargoed", is_flag=True, help="Add .p3 to the release string for all images, which indicates those images have embargoed fixes")
 @click.option("--force-yum-updates", is_flag=True, default=False,
               help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.")
 @click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
