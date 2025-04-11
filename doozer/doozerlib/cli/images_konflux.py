@@ -273,7 +273,7 @@ class KonfluxBundleCli:
         :param operator_build: Operator build record.
         :return: Bundle build record.
         """
-        bundle_name = f"{operator_build.name}-bundle"
+        bundle_name = f"{operator_build.name}-bundle-container"
         LOGGER.info("Fetching bundle build for %s from Konflux DB...", operator_build.nvr)
         where = {
             "name": bundle_name,
