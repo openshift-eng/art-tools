@@ -17,7 +17,6 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
 
     def _make_runtime(self, assembly=None):
         runtime = mock.MagicMock()
-        runtime.build_system = 'brew'
         runtime.group_config.public_upstreams = [{"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}]
         runtime.brew_logs_dir = "/path/to/brew-logs"
         runtime.assembly = assembly

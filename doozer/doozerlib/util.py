@@ -239,6 +239,20 @@ def isolate_git_commit_in_release(release: str) -> Optional[str]:
     return None
 
 
+def isolate_pflag_in_release(release: str) -> Optional[str]:
+    """
+    Given a release field, determines whether is contains
+    .p0/.p1 information. If it does, it returns the value
+    'p0' or 'p1'. If it is not found, None is returned.
+    """
+    match = re.match(r'.*\.(p[?01])(?:\.+|$)', release)
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
 def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     """
     Given a release name (e.g. 4.8.0-0.nightly-s390x-2021-07-02-143555, 4.1.0-0.nightly-priv-2019-11-08-213727),
