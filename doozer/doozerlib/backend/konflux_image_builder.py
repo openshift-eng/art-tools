@@ -26,7 +26,6 @@ from packageurl import PackageURL
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
@@ -477,7 +476,7 @@ class KonfluxImageBuilder:
             'release': release,
             'el_target': f'el{isolate_el_version_in_release(release)}',
             'arches': building_arches,
-            'embargoed': is_release_embargoed(release, 'konflux'),
+            'embargoed': 'p1' in release.split('.'),
             'start_time': datetime.now(tz=timezone.utc),
             'end_time': None,
             'nvr': nvr,
