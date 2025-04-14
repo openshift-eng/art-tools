@@ -18,7 +18,7 @@ from artcommonlib.model import ListModel, Missing
 LOGGER = logging.getLogger(__name__)
 
 
-def get_utc_timestamp():
+def get_utc_now_formatted_str():
     return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
 
 

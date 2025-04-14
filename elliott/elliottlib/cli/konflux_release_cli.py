@@ -13,7 +13,7 @@ from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import (KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE,
                                               KIND_APPLICATION)
 from artcommonlib import logutil
-from artcommonlib.util import get_utc_timestamp
+from artcommonlib.util import get_utc_now_formatted_str
 
 from elliottlib.shipment_model import ShipmentConfig, Shipment, ShipmentEnv
 
@@ -129,7 +129,7 @@ class CreateReleaseCli:
 
     async def new_release(self, release_config: ReleaseConfig) -> dict:
         major, minor = self.runtime.get_major_minor()
-        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_timestamp()}"
+        release_name = f"ose-{major}-{minor}-{self.release_env}-{get_utc_now_formatted_str()}"
 
         release_plan = release_config.release_plan
         snapshot = release_config.snapshot

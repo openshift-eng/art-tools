@@ -15,7 +15,7 @@ from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT
 from artcommonlib import logutil
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import get_utc_timestamp
+from artcommonlib.util import get_utc_now_formatted_str
 from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
                                                        KonfluxBuildRecord,
                                                        KonfluxBundleBuildRecord,
@@ -91,7 +91,7 @@ class CreateSnapshotCli:
 
     async def new_snapshot(self, build_records) -> dict:
         major, minor = self.runtime.get_major_minor()
-        snapshot_name = f"ose-{major}-{minor}-{get_utc_timestamp()}"
+        snapshot_name = f"ose-{major}-{minor}-{get_utc_now_formatted_str()}"
         application_name = KonfluxImageBuilder.get_application_name(self.runtime.group)
 
         # make sure application exists
