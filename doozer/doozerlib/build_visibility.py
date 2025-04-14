@@ -34,7 +34,7 @@ def get_build_system(visibility_suffix: str) -> str:
     raise ValueError(f"Unknown visibility suffix: {visibility_suffix}")
 
 
-def is_release_embargoed(release: str, build_system: str) -> bool:
+def is_release_embargoed(release: str, build_system: str, default=True) -> bool:
     """
     Get the embargo status from the visibility suffix.
     E.g. 'p0' -> False, 'p3' -> True
@@ -46,7 +46,7 @@ def is_release_embargoed(release: str, build_system: str) -> bool:
         return False
 
     # If in doubt (e.g. the p? information is missing) mark the build as embargoed
-    return True
+    return default
 
 
 def get_visibility_suffix(build_system: str, visibility: BuildVisibility) -> str:

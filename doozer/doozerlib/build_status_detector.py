@@ -79,7 +79,7 @@ class BuildStatusDetector:
                 rpms = archive["rpms"]
                 suspected_rpms = [
                     rpm for rpm in rpms
-                    if is_release_embargoed(rpm["release"], self.runtime.build_system)
+                    if is_release_embargoed(rpm["release"], self.runtime.build_system, default=False)
                     or rpm["build_id"] in embargoed_rpm_ids
                 ]
                 shipped = self.find_shipped_builds([rpm["build_id"] for rpm in suspected_rpms])
