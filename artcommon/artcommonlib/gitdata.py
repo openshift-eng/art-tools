@@ -188,7 +188,7 @@ class GitData(object):
             raise GitDataPathException('{} is not a valid sub-directory in the data'.format(self.sub_dir))
 
     def load_yaml_file(self, file_path):
-        full_path = os.path.join(self.data_dir, file_path.replace('\\', '/'))
+        full_path = os.path.join(self.data_dir, file_path)
         if not os.path.isfile(full_path):
             raise ValueError(f"Could not find file at {full_path}")
 
