@@ -17,7 +17,7 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
-from artcommonlib.constants import SHIPMENT_DATA_URL
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from elliottlib import brew, constants
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
@@ -352,7 +352,7 @@ class Runtime(GroupRuntime):
 
     def resolve_shipment_metadata(self, strict=True):
         if strict and not self.shipment_path:
-            self.shipment_path = SHIPMENT_DATA_URL.format(self.product)
+            self.shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
 
         if self.shipment_path:
             shipment_path, commitish = self.shipment_path, "main"
