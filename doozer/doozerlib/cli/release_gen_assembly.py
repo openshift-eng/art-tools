@@ -394,15 +394,8 @@ class GenAssemblyCli:
 
             else:
                 package_name = dgk
-                build_record = await anext(self.runtime.konflux_db.search_builds_by_fields(
-                    end_search=datetime.fromtimestamp(self.basis_event / 1_000_000, tz=timezone.utc),
-                    where={
-                        'name': dgk,
-                        'group': self.runtime.group,
-                        'engine': Engine.KONFLUX.value,
-                        'outcome': KonfluxBuildOutcome.SUCCESS.value
-                    },
-                    limit=1), None)
+                build_record = await image_meta.get_latest_konflux_build(
+                    completed_before=datetime.fromtimestamp(self.basis_event / 1_000_000, tz=timezone.utc))
                 basis_event_build_nvr = build_record.nvr
                 basis_event_build_dict: KonfluxBuildRecordInspector = KonfluxBuildRecordInspector(
                     self.runtime, build_record)
