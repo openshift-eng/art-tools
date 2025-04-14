@@ -1,21 +1,23 @@
-import click
 import os
 import sys
 from dataclasses import dataclass
 
-from ruamel.yaml import YAML
+import click
 from kubernetes.dynamic import exceptions
 
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
 from elliottlib.cli.snapshot_cli import GetSnapshotCli
+from elliottlib.shipment_model import ShipmentConfig, Shipment, ShipmentEnv
 from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from doozerlib.backend.konflux_client import (KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE,
+from doozerlib.backend.konflux_client import (KonfluxClient,
+                                              API_VERSION,
+                                              KIND_RELEASE_PLAN,
+                                              KIND_SNAPSHOT,
+                                              KIND_RELEASE,
                                               KIND_APPLICATION)
 from artcommonlib import logutil
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
-
-from elliottlib.shipment_model import ShipmentConfig, Shipment, ShipmentEnv
 
 
 yaml = new_roundtrip_yaml_handler()
@@ -121,7 +123,10 @@ class CreateReleaseCli:
             release_plan=getattr(shipment.environments, env).releasePlan,
         )
         if shipment.data:
-            rc.data = shipment.data.model_dump()
+            # Do not set exclude_unset=True when dumping, since Konflux
+            # expects certain keys to always be set, even if empty.
+            # Those are appropriately set as default values in pydantic shipment model
+            rc.data = shipment.data.model_dump(exclude_none=True)
         return rc
 
     async def new_release(self, release_config: ReleaseConfig) -> dict:
