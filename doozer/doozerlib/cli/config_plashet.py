@@ -1,6 +1,7 @@
 import itertools
 import logging
 import os
+import re
 import ssl
 import sys
 import time
@@ -21,6 +22,7 @@ from artcommonlib import exectools
 from artcommonlib.rpm_utils import parse_nvr, compare_nvr
 from requests_kerberos import HTTPKerberosAuth
 
+from doozerlib.build_visibility import get_visibility_suffix, BuildVisibility
 from doozerlib.cli import cli
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.plashet import PlashetBuilder
@@ -481,7 +483,7 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     automatic sign on attach).
 
     If you specify --embargoed-brew-tag, plashet will treat any nvr found in this tag as if it is
-    embargoed (unless has already shipped). This is useful since the .p1 convention cannot be used
+    embargoed (unless has already shipped). This is useful since the .p1/p3 convention cannot be used
     on RPMs not built by ART.
 
 
@@ -586,11 +588,12 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                 released_nvre_obj = released_package_nvre_obj[package_name]
 
             def is_embargoed(an_nvre):
-                # .p1 or inclusion in the embargoed_tag_nvrs indicates this rpm is embargoed OR *was* embargoed.
+                # .p1/.p3 or inclusion in the embargoed_tag_nvrs indicates this rpm is embargoed OR *was* embargoed.
                 # We can ignore it if it has already shipped.
                 test_nvre_obj = parse_nvr(an_nvre)
                 if released_nvre_obj is None or compare_nvr(test_nvre_obj, released_nvre_obj) > 0:  # If this nvr hasn't shipped
-                    if '.p1' in an_nvre or strip_epoch(an_nvre) in embargoed_tag_nvrs:  # It's embargoed!
+                    pflag = get_visibility_suffix(runtime.build_system, BuildVisibility.PRIVATE)
+                    if f'.{pflag}' in (an_nvre or '') or strip_epoch(an_nvre) in embargoed_tag_nvrs:  # It's embargoed!
                         return True
                 return False
 

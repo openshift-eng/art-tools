@@ -13,16 +13,6 @@ class TestUtil(unittest.TestCase):
         self.assertEqual(util.isolate_nightly_name_components('4.1.0-0.nightly-s390x-2019-11-08-213727'), ('4.1', 's390x', False))
         self.assertEqual(util.isolate_nightly_name_components('4.9.0-0.nightly-arm64-priv-2021-06-08-213727'), ('4.9', 'aarch64', True))
 
-    def test_isolate_pflag(self):
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p1'), 'p1')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p1.el7'), 'p1')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p0'), 'p0')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p2'), None)
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p1.assembly.p'), 'p1')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p0.assembly.test'), 'p0')
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p2.assembly.stream'), None)
-        self.assertEqual(util.isolate_pflag_in_release('1.2.3-y.p.p0.assembly.test.el7'), 'p0')
-
     def test_extract_version_fields(self):
         self.assertEqual(util.extract_version_fields('1.2.3'), [1, 2, 3])
         self.assertEqual(util.extract_version_fields('1.2'), [1, 2])
