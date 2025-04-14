@@ -82,12 +82,11 @@ class CreateSnapshotCli:
                     registry_password=image_repo_creds_config['password'],
                 )))
         image_infos = await asyncio.gather(*image_info_tasks, return_exceptions=True)
-        errors = [(record, result) for record, result in zip(pullspecs, image_infos)
+        errors = [(pullspec, result) for pullspec, result in zip(pullspecs, image_infos)
                   if isinstance(result, BaseException)]
         if errors:
-            for record, ex in errors:
-                record: KonfluxRecord
-                LOGGER.error("Failed to inspect nvr %s pullspec %s: %s", record.nvr, record.image_pullspec, ex)
+            for pullspec, ex in errors:
+                LOGGER.error("Failed to inspect pullspec %s: %s", pullspec, ex)
             raise RuntimeError("Failed to inspect build pullspecs")
         return image_infos
 
@@ -325,7 +324,7 @@ class GetSnapshotCli:
 @click.argument('snapshot', metavar='SNAPSHOT', nargs=1)
 @click.pass_obj
 @click_coroutine
-async def new_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
+async def get_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
                            for_bundle, for_fbc, dry_run, snapshot):
     """
     Get NVRs from an existing Konflux Snapshot
