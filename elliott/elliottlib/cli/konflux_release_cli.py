@@ -13,15 +13,12 @@ from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
 from doozerlib.backend.konflux_client import (KonfluxClient, API_VERSION, KIND_RELEASE_PLAN, KIND_SNAPSHOT, KIND_RELEASE,
                                               KIND_APPLICATION)
 from artcommonlib import logutil
-from artcommonlib.util import get_utc_now_formatted_str
+from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 
 from elliottlib.shipment_model import ShipmentConfig, Shipment, ShipmentEnv
 
 
-yaml = YAML()
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.indent(mapping=2, sequence=4, offset=2)
+yaml = new_roundtrip_yaml_handler()
 
 LOGGER = logutil.get_logger(__name__)
 

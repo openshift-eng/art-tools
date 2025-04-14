@@ -3,7 +3,6 @@ import sys
 import os
 import asyncio
 
-from ruamel.yaml import YAML
 from kubernetes.dynamic import exceptions
 from kubernetes.dynamic.resource import ResourceInstance
 
@@ -15,17 +14,14 @@ from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT
 from artcommonlib import logutil
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import get_utc_now_formatted_str
+from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 from artcommonlib.konflux.konflux_build_record import (KonfluxRecord,
                                                        KonfluxBuildRecord,
                                                        KonfluxBundleBuildRecord,
                                                        KonfluxFbcBuildRecord,
                                                        Engine)
 
-yaml = YAML()
-yaml.default_flow_style = False
-yaml.preserve_quotes = True
-yaml.indent(mapping=2, sequence=4, offset=2)
+yaml = new_roundtrip_yaml_handler()
 
 LOGGER = logutil.get_logger(__name__)
 
