@@ -19,7 +19,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def get_utc_now_formatted_str():
-    return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M")
+    return datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
 
 
 def remove_prefix(s: str, prefix: str) -> str:
