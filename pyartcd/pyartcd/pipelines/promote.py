@@ -386,75 +386,75 @@ class PromotePipeline:
                 message = f"Release `{release_name}` has been accepted by the release controllers."
                 await self._slack_client.say_in_thread(message)
 
-                # Send image list
-                if not image_advisory:
-                    self._logger.warning("No need to send an advisory image list because this release doesn't have an image advisory.")
-                elif assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
-                    self._logger.warning("No need to send an advisory image list for a candidate release.")
-                elif self.skip_image_list:
-                    self._logger.warning("Skip sending advisory image list")
-                else:
-                    self._logger.info("Gathering and sending advisory image list...")
-                    mail_dir = self._working_dir / "email"
-                    await self.send_image_list_email(release_name, image_advisory, mail_dir)
-                    self._logger.info("Advisory image list sent.")
+            # Send image list
+            if not image_advisory:
+                self._logger.warning("No need to send an advisory image list because this release doesn't have an image advisory.")
+            elif assembly_type in (AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW):
+                self._logger.warning("No need to send an advisory image list for a candidate release.")
+            elif self.skip_image_list or assembly_type == AssemblyTypes.CUSTOM:
+                self._logger.warning("Skip sending advisory image list")
+            else:
+                self._logger.info("Gathering and sending advisory image list...")
+                mail_dir = self._working_dir / "email"
+                await self.send_image_list_email(release_name, image_advisory, mail_dir)
+                self._logger.info("Advisory image list sent.")
 
-                # update jira promote task status
+            # update jira promote task status
+            if release_jira and not self.runtime.dry_run:
                 self._logger.info("Updating promote release subtask")
-                if release_jira and not self.runtime.dry_run:
-                    parent_jira = self._jira_client.get_issue(release_jira)
-                    title = "Promote the tested nightly"
-                    subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
-                    if not subtask:
-                        raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
+                parent_jira = self._jira_client.get_issue(release_jira)
+                title = "Promote the tested nightly"
+                subtask = next((s for s in parent_jira.fields.subtasks if title in s.fields.summary), None)
+                if not subtask:
+                    raise ValueError("Promote release subtask not found in release_jira: %s", release_jira)
 
-                    if subtask.fields.status.name != "Closed":
-                        self._jira_client.add_comment(
-                            subtask,
-                            "promote release job : {}".format(os.environ.get("BUILD_URL"))
-                        )
-                        self._jira_client.assign_to_me(subtask)
-                        self._jira_client.close_task(subtask)
+                if subtask.fields.status.name != "Closed":
+                    self._jira_client.add_comment(
+                        subtask,
+                        "promote release job : {}".format(os.environ.get("BUILD_URL"))
+                    )
+                    self._jira_client.assign_to_me(subtask)
+                    self._jira_client.close_task(subtask)
 
-                # extract client binaries
-                client_type = "ocp"
-                if (assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')) or assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
-                    client_type = "ocp-dev-preview"
-                message_digests = []
-                if not self.skip_mirror_binaries:
-                    message_digests = await self.extract_and_publish_clients(client_type, release_infos)
-                if not self.skip_signing:
-                    if not self.runtime.dry_run:
-                        lock = Lock.SIGNING
-                        lock_identifier = jenkins.get_build_path()
-                        if not lock_identifier:
-                            self._logger.warning('Env var BUILD_URL has not been defined: '
-                                                 'a random identifier will be used for the locks')
+            # extract client binaries
+            client_type = "ocp"
+            if (assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')) or assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
+                client_type = "ocp-dev-preview"
+            message_digests = []
+            if not self.skip_mirror_binaries:
+                message_digests = await self.extract_and_publish_clients(client_type, release_infos)
+            if not self.skip_signing:
+                if not self.runtime.dry_run:
+                    lock = Lock.SIGNING
+                    lock_identifier = jenkins.get_build_path()
+                    if not lock_identifier:
+                        self._logger.warning('Env var BUILD_URL has not been defined: '
+                                             'a random identifier will be used for the locks')
 
-                        await locks.run_with_lock(
-                            coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
-                            lock=lock,
-                            lock_name=lock.value.format(signing_env=self.signing_env),
-                            lock_id=lock_identifier
-                        )
-                    else:
-                        self._logger.warning("[DRY RUN] will sign artifacts without locking")
-                        await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
+                    await locks.run_with_lock(
+                        coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
+                        lock=lock,
+                        lock_name=lock.value.format(signing_env=self.signing_env),
+                        lock_id=lock_identifier
+                    )
+                else:
+                    self._logger.warning("[DRY RUN] will sign artifacts without locking")
+                    await self.sign_artifacts(release_name, client_type, release_infos, message_digests)
 
-                # publish rhcos on mirror via rhcos_sync job
-                # only if release is EC or a GA release (.0)
-                # job will not mirror & overwrite if destination already exists (sync already happened)
-                # if that is desired, run rhcos_sync with FORCE=true
-                is_ga = assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0")
-                if assembly_type == AssemblyTypes.PREVIEW or is_ga:
-                    for arch, pullspec in pullspecs.items():
-                        if arch == "multi":
-                            continue
+            # publish rhcos on mirror via rhcos_sync job
+            # only if release is EC or a GA release (.0)
+            # job will not mirror & overwrite if destination already exists (sync already happened)
+            # if that is desired, run rhcos_sync with FORCE=true
+            is_ga = assembly_type == AssemblyTypes.STANDARD and self.assembly.endswith(".0")
+            if assembly_type == AssemblyTypes.PREVIEW or is_ga:
+                for arch, pullspec in pullspecs.items():
+                    if arch == "multi":
+                        continue
 
-                        # '4.19.0-ec.0-aarch64' from 'quay.io/openshift-release-dev/ocp-release:4.19.0-ec.0-aarch64'
-                        # Since rhocs_sync does not take the quay URL as prefix
-                        short_name = pullspec.split(":")[-1]
-                        jenkins.start_rhcos_sync(short_name, dry_run=self.runtime.dry_run)
+                    # '4.19.0-ec.0-aarch64' from 'quay.io/openshift-release-dev/ocp-release:4.19.0-ec.0-aarch64'
+                    # Since rhocs_sync does not take the quay URL as prefix
+                    short_name = pullspec.split(":")[-1]
+                    jenkins.start_rhcos_sync(short_name, dry_run=self.runtime.dry_run)
 
         except Exception as err:
             self._logger.exception(err)
