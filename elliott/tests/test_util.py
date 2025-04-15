@@ -38,23 +38,32 @@ class TestUtil(unittest.TestCase):
     def test_get_target_release(self):
         test_cases = [
             {
-                'bugs': flexmock(id=1, target_release='4.8.0'),
+                'bugs': [flexmock(id=1, target_release='4.8.0')],
                 'expected': ('', True)
             },
             {
-                'bugs': flexmock(id=2, target_release=[]),
+                'bugs': [flexmock(id=2, target_release=[])],
                 'expected': ('', True)
             },
             {
-                'bugs': flexmock(id=3, target_release=['4.8']),
-                'expected': ('', True)
+                'bugs': [flexmock(id=3, target_release=['4.8'])],
+                'expected': ('4.8', False)
             },
             {
-                'bugs': flexmock(id=4, target_release=['4.8.0']),
+                'bugs': [flexmock(id=4, target_release=['4.8.0'])],
                 'expected': ('4.8.0', False)
             },
             {
-                'bugs': flexmock(id=5, target_release=['4.8.0', '4.7.z']),
+                'bugs': [flexmock(id=5, target_release=['4.8.0', '4.7.z'])],
+                'expected': ('4.8.0', False)
+            },
+            # bugs belonging to different versions should raise error
+            {
+                'bugs': [flexmock(id=4, target_release=['4.8.0']), flexmock(id=5, target_release=['4.7.z'])],
+                'expected': ('', True)
+            },
+            {
+                'bugs': [flexmock(id=4, target_release=['4.8.0']), flexmock(id=5, target_release=['4.8.z'])],
                 'expected': ('4.8.0', False)
             },
         ]
@@ -62,7 +71,8 @@ class TestUtil(unittest.TestCase):
         for t in test_cases:
             expected_value, expected_err = t['expected']
             if expected_err:
-                self.assertRaises(ValueError)
+                with self.assertRaises(ValueError):
+                    Bug.get_target_release(t['bugs'])
             else:
                 actual = Bug.get_target_release(t['bugs'])
                 self.assertEqual(expected_value, actual)
