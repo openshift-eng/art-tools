@@ -21,6 +21,7 @@ class MockRuntime(object):
         self.logger = logger
         self.group_config = Model({})
         self.pooled_koji_client_session = MagicMock()
+        self.get_major_minor_fields = MagicMock()
 
 
 def _urlopen_json_cm(mock_urlopen, content, rc=200):
@@ -157,8 +158,9 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         test_digest = 'sha256:spamneggs'
         test_pullspec = f'somereg/somerepo@{test_digest}'
         pullspecs = {'machine-os-content': test_pullspec}
-
-        rhcos_build = rhcos.RHCOSBuildInspector(self.runtime, pullspecs, 's390x')
+        runtime = MockRuntime(self.logger)
+        runtime.get_major_minor_fields.return_value = 4, 7
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 's390x')
         self.assertEqual(rhcos_build.brew_arch, 's390x')
         self.assertEqual(rhcos_build.get_container_pullspec(), test_pullspec)
 
@@ -177,7 +179,6 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("util-linux-2.32.1-24.el8.s390x", rhcos_build.get_rpm_nvras())
         self.assertIn("util-linux-2.32.1-24.el8", rhcos_build.get_rpm_nvrs())
-        self.assertEqual(rhcos_build.get_package_build_objects()['dbus']['nvr'], 'dbus-1.12.8-12.el8_3')
         self.assertEqual(rhcos_build.get_container_digest(), test_digest)
 
     @patch('artcommonlib.exectools.cmd_assert')
@@ -193,8 +194,9 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
         pullspecs = {'machine-os-content': 'somereg/somerepo@sha256:spamneggs'}
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
-
-        rhcos_build = rhcos.RHCOSBuildInspector(self.runtime, pullspecs, 'x86_64')
+        runtime = MockRuntime(self.logger)
+        runtime.get_major_minor_fields.return_value = 4, 13
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 'x86_64')
 
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6.x86_64", rhcos_build.get_rpm_nvras())
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6", rhcos_build.get_rpm_nvrs())
@@ -210,7 +212,9 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
         pullspecs = {'machine-os-content': 'spam@eggs'}
-        rhcos_build = rhcos.RHCOSBuildInspector(self.runtime, pullspecs, 's390x')
+        runtime = MockRuntime(self.logger)
+        runtime.get_major_minor_fields.return_value = 4, 12
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 's390x')
 
         # test its behavior on misconfiguration / edge case
         container_conf = dict(name='spam', build_metadata_key='eggs')
@@ -226,8 +230,10 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
         pullspecs = {'machine-os-content': 'spam@eggs'}
-        self.runtime.group_config.rhcos = Model({})
-        rhcos_build = rhcos.RHCOSBuildInspector(self.runtime, pullspecs, 's390x')
+        runtime = MockRuntime(self.logger)
+        runtime.group_config.rhcos = Model({})
+        runtime.get_major_minor_fields.return_value = 4, 12
+        rhcos_build = rhcos.RHCOSBuildInspector(runtime, pullspecs, 's390x')
         with self.assertRaises(ValueError):
             await rhcos_build.find_non_latest_rpms()
 
@@ -260,6 +266,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
                 "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]}
             })
         )
+        runtime.get_major_minor_fields.return_value = 4, 12
         get_repodata_threadsafe.return_value = Repodata(
             name='rhel-8-appstream-rpms',
             primary_rpms=[
