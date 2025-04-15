@@ -292,16 +292,27 @@ class GetSnapshotCli:
         nvrs = []
         pullspecs = [c.containerImage for c in snapshot_obj.spec.components]
         image_infos = await CreateSnapshotCli.get_pullspecs(pullspecs, self.image_repo_pull_secret)
+
+        # FBC images are special and have a different label to capture NVR
+        if self.for_fbc:
+            expected_labels = ["com.redhat.art.nvr"]
+        else:
+            expected_labels = ["com.redhat.component", "version", "release"]
+
         for image_info in image_infos:
             labels = image_info['config']['config']['Labels']
-            name = labels.get('com.redhat.component')
-            version = labels.get('version')
-            release = labels.get('release')
-            if name and version and release:
-                nvrs.append(f"{name}-{version}-{release}")
+            if self.for_fbc:
+                nvr = labels.get('com.redhat.art.nvr')
             else:
-                raise RuntimeError(f"Could not find expected labels com.redhat.component={name} {version=}"
-                                   f" {release=}. is image art built?")
+                name = labels.get('com.redhat.component')
+                version = labels.get('version')
+                release = labels.get('release')
+                nvr = f"{name}-{version}-{release}"
+
+            if nvr:
+                nvrs.append(nvr)
+            else:
+                raise RuntimeError(f"Could not find expected labels in image: {expected_labels}")
         return nvrs
 
 
@@ -332,11 +343,6 @@ async def get_snapshot_cli(runtime: Runtime, konflux_kubeconfig, konflux_context
 
     if not konflux_kubeconfig:
         raise ValueError("Must pass kubeconfig using --konflux-kubeconfig or KONFLUX_SA_KUBECONFIG env var")
-
-    # These will be needed for image inspection
-    for secret in ['KONFLUX_ART_IMAGES_USERNAME', 'KONFLUX_ART_IMAGES_PASSWORD']:
-        if secret not in os.environ:
-            raise EnvironmentError(f"Missing required environment variable {secret}")
 
     konflux_config = {
         'kubeconfig': konflux_kubeconfig,
