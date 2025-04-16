@@ -307,6 +307,14 @@ class JIRABug(Bug):
     def summary(self):
         return self.bug.fields.summary
 
+    def update_summary(self, new_summary, noop=False):
+        if noop:
+            logger.info(f"Would have added summary: {new_summary}")
+            return
+        else:
+            # Update summary field
+            self.bug.update(fields={"summary": new_summary})
+
     @property
     def blocks(self):
         return self._get_blocks()

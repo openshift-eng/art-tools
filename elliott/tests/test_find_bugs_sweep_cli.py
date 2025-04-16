@@ -279,6 +279,8 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
 
 class TestCategorizeBugsByType(unittest.TestCase):
     def test_categorize_bugs_by_type(self):
+        major_version = 4
+        minor_version = 11
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         bugs = [
             flexmock(
@@ -287,6 +289,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 is_invalid_tracker_bug=lambda: False,
                 whiteboard_component='foo',
                 component='',
+                summary='',
             ),
             flexmock(
                 id='OCPBUGS-1',
@@ -294,6 +297,7 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 is_invalid_tracker_bug=lambda: False,
                 whiteboard_component='bar',
                 component='',
+                summary='',
             ),
             flexmock(
                 id='OCPBUGS-2',
@@ -301,13 +305,21 @@ class TestCategorizeBugsByType(unittest.TestCase):
                 is_invalid_tracker_bug=lambda: False,
                 whiteboard_component='buzz',
                 component='',
+                summary='',
             ),
-            flexmock(id='OCPBUGS-3', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component=''),
+            flexmock(
+                id='OCPBUGS-3',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='',
+                summary='',
+            ),
             flexmock(
                 id='OCPBUGS-4',
                 is_tracker_bug=lambda: False,
                 is_invalid_tracker_bug=lambda: False,
                 component='MicroShift',
+                summary='',
             ),
         ]
         builds_map = {
@@ -316,6 +328,9 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'extras': {bugs[0].whiteboard_component: None},
             'microshift': dict(),
         }
+        noop = False
+        for b in bugs:
+            b.should_receive("update_summary")
 
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
         for kind in advisory_id_map.keys():
@@ -330,7 +345,15 @@ class TestCategorizeBugsByType(unittest.TestCase):
             'microshift': {bugs[4].id},
         }
 
-        queried, issues = categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+        queried, issues = categorize_bugs_by_type(
+            bugs=bugs,
+            advisory_id_map=advisory_id_map,
+            permitted_bug_ids=4,
+            noop=noop,
+            major_version=major_version,
+            minor_version=minor_version,
+            operator_bundle_advisory="metadata",
+        )
         self.assertEqual(issues, [])
         for adv in queried:
             actual = set()
@@ -343,9 +366,20 @@ class TestCategorizeBugsByType(unittest.TestCase):
             flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: True, component='')
         ]
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
+        major_version = 4
+        minor_version = 11
+        noop = False
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
-            categorize_bugs_by_type(bugs, advisory_id_map, 4, operator_bundle_advisory="metadata")
+            categorize_bugs_by_type(
+                bugs=bugs,
+                advisory_id_map=advisory_id_map,
+                permitted_bug_ids=4,
+                noop=noop,
+                major_version=major_version,
+                minor_version=minor_version,
+                operator_bundle_advisory="metadata",
+            )
 
 
 class TestGenAssemblyBugIDs(unittest.TestCase):
