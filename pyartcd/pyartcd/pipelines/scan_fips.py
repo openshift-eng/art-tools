@@ -46,17 +46,19 @@ class ScanFips:
         return match.group(1) if match else None
 
     @staticmethod
-    def construct_failing_packages_report(failing_packages: dict[str, set[str]], ticket_mapping: dict[str, tuple[str, set[str]]]) -> str:
+    def construct_failing_packages_report(
+        failing_packages: dict[str, set[str]], package_ticket_details: dict[str, tuple[str, set[str]]]
+    ) -> str:
         """
         Construct Slack message describing packages failing the FIPS scan and their versions
         """
         report_msg_parts = [FAILING_BUILDS_MSG_HEADER]
 
         for package, versions in failing_packages.items():
-            if package not in ticket_mapping:
+            if package not in package_ticket_details:
                 report_msg_parts.append(f"`{package}` (No ticket raised)")
             else:
-                ticket_url, _ = ticket_mapping[package]
+                ticket_url, _ = package_ticket_details[package]
                 report_msg_parts.append(f"`{package}` (<{ticket_url}|Ticket> already raised)")
             report_msg_parts.append(f"• {', '.join(versions)}")
             report_msg_parts.append("\n")
@@ -64,7 +66,9 @@ class ScanFips:
         return "\n".join(report_msg_parts)
 
     @staticmethod
-    def construct_packages_without_ticket_report(failing_packages: dict[str, set[str]], ticket_mapping: dict[str, tuple[str, set[str]]]) -> str:
+    def construct_packages_without_ticket_report(
+        failing_packages: dict[str, set[str]], package_ticket_details: dict[str, tuple[str, set[str]]]
+    ) -> str:
         """
         Construct Slack message showing which of the failing builds do not have
         an active JIRA ticket
@@ -72,23 +76,26 @@ class ScanFips:
         report_msg_parts = [PACKAGES_WITHOUT_TICKET_MSG_HEADER]
 
         for package in failing_packages:
-            if package not in ticket_mapping:
+            if package not in package_ticket_details:
                 report_msg_parts.append(f"• `{package}` does not have a corresponding active ticket")
             else:
-                ticket_url, ticket_versions = ticket_mapping[package]
+                ticket_url, ticket_versions = package_ticket_details[package]
                 versions_not_in_ticket = failing_packages[package].difference(ticket_versions)
                 if not versions_not_in_ticket:
                     continue
                 use_plural = len(versions_not_in_ticket) > 1
-                report_msg_parts.append(f"• {'Versions' if use_plural else 'Version'} {', '.join(versions_not_in_ticket)} of `{package}` {'are' if use_plural else 'is'} not included in the <{ticket_url}|ticket>")
+                report_msg_parts.append(
+                    f"• {'Versions' if use_plural else 'Version'} {', '.join(versions_not_in_ticket)} of `{package}` {'are' if use_plural else 'is'} not included in the <{ticket_url}|ticket>"
+                )
 
         return "\n".join(report_msg_parts) if len(report_msg_parts) > 1 else ""
 
-    def get_ticket_mapping(self, failing_packages: dict[str, set[str]]) -> dict[str, tuple[str, set[str]]]:
+    def get_package_ticket_details(self, failing_packages: dict[str, set[str]]) -> dict[str, tuple[str, set[str]]]:
         """
         Returns a dict of (failing) packages with the URL and affected versions of their
         corresponding active tickets
         """
+
         def get_active_fips_tickets(self):
             query = f'project = "{JIRA_PROJECT}" AND labels = "art:fips" \
             AND status in ("New", "Modified", "ASSIGNED", "POST")'
@@ -96,16 +103,22 @@ class ScanFips:
             return active_tickets
 
         active_fips_tickets = get_active_fips_tickets(self)
-        ticket_mapping = {}
 
+        package_to_ticket = {}
         for ticket in active_fips_tickets:
-            for package in failing_packages:
-                if f"art:package:{package}" in ticket.fields.labels:
-                    ticket_versions = set(map(lambda version: version.name[:-2], ticket.fields.versions))
-                    ticket_mapping[package] = (f"{JIRA_DOMAIN}/browse/{ticket.key}", ticket_versions)
-                    break  # Assumes there's only one ticket per package
+            for label in ticket.fields.labels:
+                if label.startswith("art:package:"):
+                    package_name = label[len("art:package:") :]
+                    package_to_ticket[package_name] = ticket
 
-        return ticket_mapping
+        package_ticket_details = {}
+        for package in failing_packages:
+            if package in package_to_ticket:
+                ticket = package_to_ticket[package]
+                ticket_versions = set(map(lambda version: version.name[:-2], ticket.fields.versions))
+                package_ticket_details[package] = (f"{JIRA_DOMAIN}/browse/{ticket.key}", ticket_versions)
+
+        return package_ticket_details
 
     async def message_on_slack(self, failing_packages: dict[str, set[str]]):
         """
@@ -113,10 +126,12 @@ class ScanFips:
         that are currently failing the FIPS scan, and a report of packages which don't have
         a jira ticket raised (or their ticket doesn't list all the versions currently failing)
         """
-        ticket_mapping = self.get_ticket_mapping(failing_packages)
+        package_ticket_details = self.get_package_ticket_details(failing_packages)
 
-        failing_packages_report_msg = self.construct_failing_packages_report(failing_packages, ticket_mapping)
-        packages_without_ticket_report_msg = self.construct_packages_without_ticket_report(failing_packages, ticket_mapping)
+        failing_packages_report_msg = self.construct_failing_packages_report(failing_packages, package_ticket_details)
+        packages_without_ticket_report_msg = self.construct_packages_without_ticket_report(
+            failing_packages, package_ticket_details
+        )
 
         await self.slack_client.say_in_thread(message=INITIAL_SLACK_MSG)
         await self.slack_client.say_in_thread(message=failing_packages_report_msg)
