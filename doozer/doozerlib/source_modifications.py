@@ -241,3 +241,29 @@ class RemoveModifier(object):
 
 
 SourceModifierFactory.MODIFICATIONS["remove"] = RemoveModifier
+
+class DownloadModifier(object):
+    """
+    A source modifier that supports downloading files to a location in the destination dir
+    """
+    def __init__(self, *args, **kwargs):
+        self.from_param = kwargs["from"]
+        self.to_param = kwargs["to"]
+
+    def act(self, *args, **kwargs):
+        context = kwargs["context"]
+        dest_dir = context["dest_dir"]
+        file_name = self.from_param.split("/")[-1]
+        path = f"{dest_dir}/{self.to_param}"
+        os.makedirs(path, exist_ok=True)
+
+        LOGGER.info(f"Downloading {self.from_param} to {path}")
+        response = requests.get(self.from_param)
+        if response.status_code == 200:
+            with open(f"{path}/{file_name}", "wb") as file:
+                file.write(response.content)
+            LOGGER.info("File downloaded successfully")
+        else:
+            raise Exception(f"Failed to download file from {self.from_param}: {response.status_code}")
+
+SourceModifierFactory.MODIFICATIONS["download"] = DownloadModifier
