@@ -428,25 +428,27 @@ class KonfluxRebaser:
             source_dockerfile_content = source_dockerfile.read()
             distgit_dockerfile.write(source_dockerfile_content)
 
-        gomod_path = dest_dir.joinpath('go.mod')
-        if gomod_path.exists():
-            # Read the gomod contents
-            new_lines = []
-            with open(gomod_path, "r") as file:
-                lines = file.readlines()
-                for line in lines:
-                    stripped_line = line.strip()
-                    match = re.match(r"(^go \d\.\d+$)", stripped_line)
-                    if match:
-                        # Append a .0 to the go mod version, if it exists
-                        # Replace the line 'go 1.22' with 'go 1.22.0' for example
-                        self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
-                        stripped_line = stripped_line.replace(match.group(1), f"{match.group(1)}.0")
-                        new_lines.append(f"{stripped_line}\n")
-                    else:
-                        new_lines.append(line)
-            with open(gomod_path, "w") as file:
-                file.writelines(new_lines)
+        append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
+        if append_gomod_patch and append_gomod_patch is not Missing:
+            gomod_path = dest_dir.joinpath('go.mod')
+            if gomod_path.exists():
+                # Read the gomod contents
+                new_lines = []
+                with open(gomod_path, "r") as file:
+                    lines = file.readlines()
+                    for line in lines:
+                        stripped_line = line.strip()
+                        match = re.match(r"(^go \d\.\d+$)", stripped_line)
+                        if match:
+                            # Append a .0 to the go mod version, if it exists
+                            # Replace the line 'go 1.22' with 'go 1.22.0' for example
+                            self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
+                            stripped_line = stripped_line.replace(match.group(1), f"{match.group(1)}.0")
+                            new_lines.append(f"{stripped_line}\n")
+                        else:
+                            new_lines.append(line)
+                with open(gomod_path, "w") as file:
+                    file.writelines(new_lines)
 
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
