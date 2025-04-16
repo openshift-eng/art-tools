@@ -20,7 +20,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
 from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
-from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers
+from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers, get_konflux_network_mode
 from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -823,11 +823,7 @@ class KonfluxRebaser:
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = metadata.config.konflux.network_mode
-        network_mode = "open" if network_mode in [None, Missing] else network_mode
-        valid_network_modes = ["hermetic", "internal-only", "open"]
-        if network_mode not in valid_network_modes:
-            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
+        network_mode = get_konflux_network_mode(metadata=metadata)
 
         konflux_lines = ["\n# Start Konflux-specific steps"]
 

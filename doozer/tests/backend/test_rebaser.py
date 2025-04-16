@@ -1,5 +1,5 @@
 from unittest import TestCase
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 from dockerfile_parse import DockerfileParser
 from artcommonlib.model import Missing
@@ -38,12 +38,12 @@ class TestRebaser(TestCase):
         self.assertEqual(len(actual), 1)
         self.assertEqual(actual, expected)
 
-    def test_add_build_repos_1(self):
+    @patch("doozerlib.backend.rebaser.get_konflux_network_mode", return_value="open")
+    def test_add_build_repos_1(self, mock_network_mode):
         """
         Test with defalut values, and has non-USER 0 lines
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = Missing
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = Missing
 
@@ -98,12 +98,12 @@ USER 2000
 
         self.assertEqual(dfp.content, expected)
 
-    def test_add_build_repos_2(self):
+    @patch("doozerlib.backend.rebaser.get_konflux_network_mode", return_value="open")
+    def test_add_build_repos_2(self, mock_network_mode):
         """
         Test with default values, but with final_stage_user set
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = Missing
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
@@ -158,12 +158,12 @@ USER 3000
 
         self.assertEqual(dfp.content, expected)
 
-    def test_add_build_repos_3(self):
+    @patch("doozerlib.backend.rebaser.get_konflux_network_mode", return_value="hermetic")
+    def test_add_build_repos_3(self, mock_network_mode):
         """
         Test with network_mode hermetic
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = "hermetic"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
@@ -205,12 +205,12 @@ USER 3000
         dfp.content.strip()
         self.assertEqual(expected.strip(), dfp.content.strip())
 
-    def test_add_build_repos_4(self):
+    @patch("doozerlib.backend.rebaser.get_konflux_network_mode", return_value="open")
+    def test_add_build_repos_4(self, mock_network_mode):
         """
         Test with non-hermetic, but with final_stage_user
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = Missing
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
