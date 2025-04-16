@@ -562,7 +562,7 @@ class ConfigScanSources:
         for arch in self.runtime.arches:
             for private in (False, True):
                 status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
-                if major == 4 and minor < 19:
+                if not self.runtime.group_config.vars['LAYERED_RHCOS']:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
                 else:
