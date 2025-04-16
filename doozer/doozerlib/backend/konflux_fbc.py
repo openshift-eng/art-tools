@@ -417,6 +417,9 @@ class KonfluxFbcRebaser:
         dfp.labels['io.openshift.build.source-location'] = bundle_build.source_repo
         dfp.labels['io.openshift.build.commit.id'] = bundle_build.commitish
 
+        # The following label is used internally by ART's shipment pipeline
+        dfp.labels['com.redhat.art.nvr'] = f'{metadata.distgit_key}-fbc-{version}-{release}'
+
     async def _fetch_olm_bundle_image_info(self, bundle_build: KonfluxBundleBuildRecord):
         return await util.oc_image_info_for_arch_async__caching(
             bundle_build.image_pullspec,
