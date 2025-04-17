@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import sys
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 import click
 import koji
@@ -341,7 +341,7 @@ def _fetch_nvrps_by_nvr_or_id(ids_or_nvrs, tag_pv_map, include_shipped=False, ig
         LOGGER.info("Do not filter out shipped builds, all builds will be attached")
     else:
         LOGGER.info("Filtering out shipped builds")
-        shipped = _find_shipped_builds([b["id"] for b in builds], brew_session)
+        shipped = _find_shipped_builds([b["id"] for b in builds], brew_session, tag_pv_map)
     unshipped = [b for b in builds if b["id"] not in shipped]
     LOGGER.info(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.')
 
@@ -381,10 +381,14 @@ def _json_dump(as_json, unshipped_builds, kind, tag_pv_map):
                 json.dump(json_data, json_file, indent=4, sort_keys=True)
 
 
-def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
-    """ Finds shipped builds
+def _find_shipped_builds_with_pv_unaware(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
+    """ Finds shipped builds as described in ART-3277.
+    Note that this function implemented the old approach to find shipped builds,
+    which is not recommended to use for newer OCP versions to find shipped rpms because it doesn't take product version into account.
+
     :param builds: list of Brew build IDs or NVRs
     :param brew_session: Brew session
+    :param tag_pv_map: mapping of Brew tags to Errata product versions
     :return: a set of shipped Brew build IDs or NVRs
     """
     shipped_ids = set()
@@ -394,6 +398,25 @@ def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.Cl
         # a shipped build with OCP Errata should have a Brew tag ending with `-released`, like `RHBA-2020:2713-released`
         shipped = any(map(lambda tag: released_tag_pattern.match(tag["name"]), tags))
         if shipped:
+            shipped_ids.add(build_id)
+    return shipped_ids
+
+
+def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession, tag_pv_map: Dict[str, str]) -> Set[Union[str, int]]:
+    """ Finds shipped builds based on the provided tag_pv_map.
+    :param builds: list of Brew build IDs or NVRs
+    :param brew_session: Brew session
+    :param tag_pv_map: mapping of Brew tags to Errata product versions
+    :return: a set of shipped Brew build IDs or NVRs
+    """
+    shipped_ids = set()
+    tag_lists = brew.get_builds_tags(build_ids, brew_session)
+    # For each -candidate tag defined in erratatool.yml, there should be a corresponding tag without the -candidate suffix.
+    # The latter tag is the one that indicates the build has been shipped.
+    shipped_tags = {tag.removesuffix("-candidate") for tag in tag_pv_map if tag.endswith("-candidate")}
+    for build_id, tags in zip(build_ids, tag_lists):
+        tag_names = {tag["name"] for tag in tags}
+        if tag_names & shipped_tags:
             shipped_ids.add(build_id)
     return shipped_ids
 
@@ -420,7 +443,7 @@ async def _fetch_builds_by_kind_image(runtime: Runtime, tag_pv_map: Dict[str, st
         click.echo("Do not filter out shipped builds, all builds will be attached")
     else:
         click.echo("Filtering out shipped builds...")
-        shipped = _find_shipped_builds([b["id"] for b in brew_latest_builds], brew_session)
+        shipped = _find_shipped_builds([b["id"] for b in brew_latest_builds], brew_session, tag_pv_map)
     unshipped = [b for b in brew_latest_builds if b["id"] not in shipped]
     click.echo(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
@@ -530,7 +553,11 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
         LOGGER.info("Including all builds that may have been shipped previously")
     else:
         LOGGER.info("Filtering out shipped builds - except the ones that have been pinned in the assembly")
-        shipped = _find_shipped_builds([b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs], brew_session)
+        build_ids = [b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs]
+        if runtime.group_config.feature_gates.product_version_aware_rpm_sweep:
+            shipped = _find_shipped_builds(build_ids, brew_session, tag_pv_map)
+        else:
+            shipped = _find_shipped_builds_with_pv_unaware(build_ids, brew_session)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
     LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are qualified.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
