@@ -562,12 +562,12 @@ class ConfigScanSources:
         for arch in self.runtime.arches:
             for private in (False, True):
                 status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
-                if not self.runtime.group_config.vars['LAYERED_RHCOS']:
-                    tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
-                    latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
-                else:
+                if self.runtime.group_config.rhcos.layered_rhcos:
                     tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_node_shasum(version, arch, private)
+                else:
+                    tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
+                    latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
 
                 if not latest_rhcos_value:
                     status['changed'] = False
@@ -632,8 +632,9 @@ class ConfigScanSources:
     def _latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
+        rhcos_index = next((tag.rhcos_index_tag for tag in self.runtime.group_config.rhcos.payload_tags if tag.primary), "")
         stdout, _ = exectools.cmd_assert(
-            f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json",
+            f"oc image info {rhcos_index} --filter-by-os {go_arch} -o json",
             retries=3,
             pollrate=5,
             strip=True,
