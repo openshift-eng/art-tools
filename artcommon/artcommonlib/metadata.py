@@ -402,6 +402,7 @@ class MetadataBase(object):
                                        el_target: Optional[Union[int, str]] = None,
                                        honor_is: bool = True,
                                        completed_before: Optional[datetime.datetime] = None,
+                                       engine: Engine = None,
                                        extra_patterns: dict = {},
                                        **kwargs) -> Optional[KonfluxBuildRecord]:
         """
@@ -416,6 +417,9 @@ class MetadataBase(object):
                           associated with the metadata.
         :param honor_is: If True, and an assembly component specifies 'is', that nvr will be returned.
         :param completed_before: cut off timestamp for builds completion time
+        :param engine: Even if we're looking at KonfluxDB, we might be interested in fetching records that belong
+                       to Brew builds (e.g. RPMs that were built in Brew but tracked in BigQuery). This optional param
+                       should normally default to 'konflux', but can be overridden if needed
         :param extra_patterns: e.g. {'release': 'b45ea65'} will result in adding "AND release LIKE '%b45ea65%'" to the query
         """
 
@@ -435,7 +439,7 @@ class MetadataBase(object):
             'group': self.runtime.group,
             'outcome': outcome,
             'completed_before': completed_before,
-            'engine': self.runtime.build_system,
+            'engine': engine if engine else self.runtime.build_system,
             'extra_patterns': extra_patterns,
             **kwargs
         }

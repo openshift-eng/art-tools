@@ -167,6 +167,12 @@ class KonfluxBuildRecord(KonfluxRecord):
     In order for this to work, this class should contain no fields other than those we want to appear as table columns.
     """
 
+    def __getitem__(self, key):
+        if hasattr(self, key):
+            return getattr(self, key)
+        else:
+            raise KeyError(f"'{key}' not found")
+
     def __init__(self, name: str = '', group: str = '', version: str = '', release: str = '', assembly: str = '',
                  el_target: str = '', arches: list = [], installed_packages: list = [], parent_images: list = [],
                  source_repo: str = '', commitish: str = '', rebase_repo_url: str = '', rebase_commitish: str = '',
