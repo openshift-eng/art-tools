@@ -568,6 +568,7 @@ class KonfluxRebaser:
                     "component_name": metadata.distgit_key,
                     "kind": "Dockerfile",
                     "content": new_dockerfile_data,
+                    "build_system": self._runtime.build_system,
                     "set_env": {
                         "PATH": path,
                         # "BREW_EVENT": f'{self._runtime.brew_event}',
