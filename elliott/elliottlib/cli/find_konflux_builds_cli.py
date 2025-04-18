@@ -33,7 +33,8 @@ async def find_k_builds_cli(runtime: Runtime, kind, engine, outcome, output):
     outcome = KonfluxBuildOutcome(outcome) if outcome else KonfluxBuildOutcome.SUCCESS
     LOGGER.info(f'searching for {engine_fmt}builds of kind={kind} in group={runtime.group} with outcome={outcome.value}')
     metas = runtime.image_metas() if kind == 'image' else runtime.rpm_metas()
-    names = [meta.distgit_key for meta in metas]
+    # TODO: this will break for rpms
+    names = [meta.get_component_name() for meta in metas]
 
     args = {
         'names': names,

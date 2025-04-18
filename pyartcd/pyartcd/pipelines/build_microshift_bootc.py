@@ -170,7 +170,7 @@ class BuildMicroShiftBootcPipeline:
             await _run_for(local_dir, latest_path)
 
     async def get_latest_bootc_build(self):
-        bootc_image_name = "microshift-bootc"
+        bootc_image_name = "microshift-bootc-container"
 
         if not self.konflux_db:
             self.konflux_db = KonfluxDb()

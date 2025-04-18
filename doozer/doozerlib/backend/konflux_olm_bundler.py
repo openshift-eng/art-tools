@@ -127,7 +127,9 @@ class KonfluxOlmBundleRebaser:
         operator_release = operator_df.labels.get('release')
         if not operator_version or not operator_release:
             raise ValueError(f"[{metadata.distgit_key}] Label 'version' or 'release' is not set in the operator's Dockerfile")
-        operator_nvr = f"{metadata.distgit_key}-{operator_version}-{operator_release}"
+
+        component_name = metadata.get_component_name()
+        operator_nvr = f"{component_name}-{operator_version}-{operator_release}"
 
         # Get operator package name and channel from its package YAML
         # This info will be used to generate bundle's Dockerfile labels and metadata/annotations.yaml
@@ -268,11 +270,10 @@ class KonfluxOlmBundleRebaser:
         csv_namespace = self._group_config.get('csv_namespace', 'openshift')
         for pullspec, image_info in zip(references, image_infos):
             image_labels = image_info['config']['config']['Labels']
+            image_name = image_labels['com.redhat.component']
             image_version = image_labels['version']
             image_release = image_labels['release']
-            image_envs = image_info['config']['config']['Env']
-            image_dgk = next((env.split('=')[1] for env in image_envs if env.startswith('__doozer_key=')))
-            image_nvr = f"{image_dgk}-{image_version}-{image_release}"
+            image_nvr = f"{image_name}-{image_version}-{image_release}"
             namespace, image_short_name, image_tag = references[pullspec]
             image_sha = image_info['listDigest'] if self._group_config.operator_image_ref_mode == 'manifest-list' else image_info['contentDigest']
             new_namespace = 'openshift4' if namespace == csv_namespace else namespace
@@ -459,7 +460,10 @@ class KonfluxOlmBundleBuilder:
             release = bundle_df.labels.get('release')
             if not release:
                 raise IOError(f"{metadata.distgit_key}: Label 'release' is not set. Did you run rebase?")
-            nvr = f"{metadata.get_olm_bundle_short_name()}-{version}-{release}"
+            component_name = bundle_df.labels.get('com.redhat.component')
+            if not component_name:
+                raise IOError(f"{metadata.distgit_key}: Label 'com.redhat.component' is not set. Did you run rebase?")
+            nvr = f"{component_name}-{version}-{release}"
             record['bundle_nvr'] = nvr
             output_image = f"{self.image_repo}:{nvr}"
 
@@ -589,15 +593,16 @@ class KonfluxOlmBundleBuilder:
             source_repo = df.labels['io.openshift.build.source-location']
             commitish = df.labels['io.openshift.build.commit.id']
 
+            component_name = df.labels['com.redhat.component']
             version = df.labels['version']
             release = df.labels['release']
-            nvr = "-".join([metadata.get_olm_bundle_short_name(), version, release])
+            nvr = "-".join([component_name, version, release])
 
             pipelinerun_name = pipelinerun.metadata.name
             build_pipeline_url = KonfluxClient.build_pipeline_url(pipelinerun)
 
             build_record_params = {
-                'name': metadata.get_olm_bundle_short_name(),
+                'name': component_name,
                 'version': version,
                 'release': release,
                 'start_time': datetime.now(tz=timezone.utc),
