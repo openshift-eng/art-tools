@@ -443,10 +443,15 @@ class KonfluxRebaser:
                             # Append a .0 to the go mod version, if it exists
                             # Replace the line 'go 1.22' with 'go 1.22.0' for example
                             self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
-                            stripped_line = stripped_line.replace(match.group(1), f"{match.group(1)}.0")
-                            new_lines.append(f"{stripped_line}\n")
-                        else:
-                            new_lines.append(line)
+                            go_version_string = match.group(1)  # eg. 'go 1.23'
+                            go_version_number = float(go_version_string.split(" ")[-1])  # eg. 1.23
+                            if go_version_number >= 1.22:
+                                stripped_line = stripped_line.replace(go_version_string, f"{go_version_string}.0")
+                                new_lines.append(f"{stripped_line}\n")
+                                continue
+
+                        # If there is no match or if the go version is not >= 1.22, use the same go version
+                        new_lines.append(line)
                 with open(gomod_path, "w") as file:
                     file.writelines(new_lines)
 
