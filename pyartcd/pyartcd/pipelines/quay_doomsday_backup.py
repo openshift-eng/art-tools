@@ -65,6 +65,7 @@ class QuayDoomsdaySync:
                 await asyncio.sleep(5)
 
                 await self.slack_client.say_in_thread(f":white_check_mark: Successfully synced {self.version}-{arch}")
+            return True
 
         except ChildProcessError as e:
             self.runtime.logger.error("[%s] Failed to sync: %s", arch, e)
@@ -74,11 +75,10 @@ class QuayDoomsdaySync:
                 await self.slack_client.say_in_thread(f":warning: Failed to sync {self.version}-{arch}: {e}")
             return False
 
-        if os.path.exists(f"{self.workdir}/{path}"):
-            self.runtime.logger.info("[%s] Cleaning dir: %s", arch, f"{self.workdir}/{path}")
-            shutil.rmtree(f"{self.workdir}/{path}")
-
-        return True
+        finally:
+            if os.path.exists(f"{self.workdir}/{path}"):
+                self.runtime.logger.info("[%s] Cleaning dir: %s", arch, f"{self.workdir}/{path}")
+                shutil.rmtree(f"{self.workdir}/{path}")
 
     async def run(self) -> None:
         mkdirs(self.workdir)
