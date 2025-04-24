@@ -9,6 +9,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional, cast, List
 
+from dockerfile_parse import DockerfileParser
+from kubernetes.dynamic import resource
+from packageurl import PackageURL
+from tenacity import retry, stop_after_attempt, wait_fixed
+
 from artcommonlib import util as artlib_util
 from artcommonlib import constants as artlib_constants
 from artcommonlib import exectools, bigquery
@@ -19,9 +24,6 @@ from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildRecord)
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
-from dockerfile_parse import DockerfileParser
-from kubernetes.dynamic import resource
-from packageurl import PackageURL
 
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
@@ -401,6 +403,24 @@ class KonfluxImageBuilder:
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
+
+        @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+        async def _get_sbom_with_retry(cmd):
+            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
+            if rc != 0:
+                logger.warning("cosign command failed to download SBOM: %s", stdout)
+                raise ChildProcessError("cosign command failed to download SBOM")
+
+            content = json.loads(stdout)
+
+            # Check if the SBOM is valid
+            # The SBOM should be a JSON object with a "components" key that is a non-empty list
+            if not ("components" in content and isinstance(content["components"], list) and len(content["components"]) > 0):
+                logger.warning("cosign command returned invalid SBOM: %s", content)
+                raise ChildProcessError("cosign command returned invalid SBOM")
+
+            return content
+
         async def _get_for_arch(arch):
             go_arch = go_arch_for_brew_arch(arch)
 
@@ -418,12 +438,7 @@ class KonfluxImageBuilder:
                     "--registry-password", image_repo_creds.get("password"),
                 ]
 
-            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
-
-            if rc != 0:
-                raise ChildProcessError("cosign command failed to download SBOM")
-
-            sbom_contents = json.loads(stdout)
+            sbom_contents = await _get_sbom_with_retry(cmd)
             rpms = set()
             for x in sbom_contents["components"]:
                 # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
@@ -445,6 +460,8 @@ class KonfluxImageBuilder:
                     except Exception as e:
                         logger.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
+            if not rpms:
+                logger.warning("No rpms found in sbom for arch %s. Please investigate", arch)
             return rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
