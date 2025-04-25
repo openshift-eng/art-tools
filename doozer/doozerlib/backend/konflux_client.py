@@ -18,7 +18,6 @@ from ruamel.yaml import YAML
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from doozerlib import constants
-from artcommonlib.util import get_konflux_network_mode
 from doozerlib.image import ImageMetadata
 
 yaml = YAML(typ="safe")
@@ -366,7 +365,7 @@ class KonfluxClient:
         # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["annotations"]["art-jenkins-job-url"] = os.getenv("BUILD_URL", "n/a")
-        obj["metadata"]["annotations"]["art-network-mode"] = get_konflux_network_mode(metadata=metadata)
+        obj["metadata"]["annotations"]["art-network-mode"] = metadata.get_konflux_network_mode()
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 

@@ -30,7 +30,6 @@ from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
-from artcommonlib.util import get_konflux_network_mode
 
 LOGGER = logging.getLogger(__name__)
 
@@ -358,7 +357,7 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         # Check if hermetic builds need to be enabled
-        hermetic = (get_konflux_network_mode(metadata=metadata) == "hermetic")
+        hermetic = (metadata.get_konflux_network_mode() == "hermetic")
 
         prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir)
 

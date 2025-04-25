@@ -430,16 +430,3 @@ def detect_package_managers(metadata, dest_dir: Path):
         if any(dest_dir.joinpath(file).is_file() for file in files):
             pkg_managers.append(pkg_manager)
     return pkg_managers
-
-
-def get_konflux_network_mode(metadata):
-    group_config_network_mode = metadata.runtime.group_config.konflux.get("network_mode")
-    image_config_network_mode = metadata.config.konflux.get("network_mode")
-
-    # Image config supersedes group config, but set to "open" by default, if missing.
-    network_mode = image_config_network_mode or group_config_network_mode or "open"
-
-    valid_network_modes = ["hermetic", "internal-only", "open"]
-    if network_mode not in valid_network_modes:
-        raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
-    return network_mode

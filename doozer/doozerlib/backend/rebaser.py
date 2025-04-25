@@ -20,7 +20,7 @@ from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
 from artcommonlib.model import ListModel, Missing, Model
 from dockerfile_parse import DockerfileParser
 
-from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers, get_konflux_network_mode
+from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers
 from artcommonlib.brew import BuildStates
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
@@ -823,7 +823,7 @@ class KonfluxRebaser:
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = get_konflux_network_mode(metadata=metadata)
+        network_mode = metadata.get_konflux_network_mode()
 
         konflux_lines = ["\n# Start Konflux-specific steps"]
 
