@@ -587,15 +587,3 @@ class ImageMetadata(Metadata):
                 self.logger.warning(f"Parent member {member_name} not loaded for {self.distgit_key}")
             parent_members[member_name] = member
         return parent_members
-
-    def get_konflux_network_mode(self):
-        group_config_network_mode = self.runtime.group_config.konflux.get("network_mode")
-        image_config_network_mode = self.config.konflux.get("network_mode")
-
-        # Image config supersedes group config, but set to "open" by default, if missing.
-        network_mode = image_config_network_mode or group_config_network_mode or "open"
-
-        valid_network_modes = ["hermetic", "internal-only", "open"]
-        if network_mode not in valid_network_modes:
-            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
-        return network_mode

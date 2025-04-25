@@ -530,3 +530,75 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='123457'),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
+
+    def test_konflux_network_mode_group_missing(self):
+
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        meta = Metadata("image", runtime, data_obj)
+
+        runtime.group_config = Model(dict_to_model={
+            "konflux": {}
+        })
+
+        meta.config = Model(dict_to_model={
+            "konflux": {
+                "network_mode": "hermetic"
+            }
+        })
+
+        self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
+
+    def test_konflux_network_mode_image_missing(self):
+
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        meta = Metadata("image", runtime, data_obj)
+
+        meta.config = Model(dict_to_model={
+            "konflux": {}
+        })
+
+        runtime.group_config = Model(dict_to_model={
+            "konflux": {
+                "network_mode": "hermetic"
+            }
+        })
+
+        self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
+
+    def test_konflux_network_mode_both_missing(self):
+
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        meta = Metadata("image", runtime, data_obj)
+
+        meta.config = Model(dict_to_model={
+            "konflux": {}
+        })
+
+        runtime.group_config = Model(dict_to_model={
+            "konflux": {}
+        })
+
+        self.assertEqual(meta.get_konflux_network_mode(), "open")
+
+    def test_konflux_network_mode_both_set(self):
+
+        data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
+        runtime = MagicMock()
+        meta = Metadata("image", runtime, data_obj)
+
+        meta.config = Model(dict_to_model={
+            "konflux": {
+                "network_mode": "internal-only"
+            }
+        })
+
+        runtime.group_config = Model(dict_to_model={
+            "konflux": {
+                "network_mode": "hermetic"
+            }
+        })
+
+        self.assertEqual(meta.get_konflux_network_mode(), "internal-only")
