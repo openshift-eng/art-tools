@@ -232,12 +232,6 @@ def assembly_permits(releases_config: Model, assembly: typing.Optional[str]) -> 
     permits are defined ListModel([]) is returned.
     """
     defined_permits = assembly_config_struct(releases_config, assembly, 'permits', [])
-
-    # Do some basic validation here to fail fast
-    if assembly_type(releases_config, assembly) == AssemblyTypes.STANDARD:
-        if any(permit.code != AssemblyIssueCode.EMBARGOED_CONTENT.name for permit in defined_permits):
-            raise ValueError(f'STANDARD assemblies like {assembly} only allow {AssemblyIssueCode.EMBARGOED_CONTENT.name} in "permits"')
-
     for permit in defined_permits:
         if permit.code == AssemblyIssueCode.IMPERMISSIBLE.name:
             raise ValueError(f'IMPERMISSIBLE cannot be permitted in any assembly (assembly: {assembly})')
