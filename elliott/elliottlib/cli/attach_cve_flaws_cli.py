@@ -121,7 +121,7 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     LOGGER.info(f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
                 f' {sorted(flaw_tracker_map.keys())}')
 
-    # current_target_release is digit.digit.[z|0]
+    # current_target_release can be digit.digit.([z|0])?
     # if current_target_release is GA then run first-fix bug filtering
     # for GA not every flaw bug is considered first-fix
     # for z-stream every flaw bug is considered first-fix

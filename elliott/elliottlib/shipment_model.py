@@ -41,19 +41,27 @@ class Issue(BaseModel):
 
 
 class Issues(BaseModel):
-    fixed: List[Issue]
+    fixed: Optional[List[Issue]] = None
 
 
 class ReleaseNotes(BaseModel):
     """ Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release """
+
+    # setting attributes after object init can result in weird behavior
+    # when dealing with yaml scalar strings
+    model_config = ConfigDict(frozen=True)
 
     type: Literal['RHEA', 'RHBA', 'RHSA']  # Advisory type
     synopsis: str
     topic: str
     description: str
     solution: str
+
+    # Konflux pipeline expects certain keys like issues, cves to always be set, even if empty
+    # therefore allow these to have default empty values
     issues: Optional[Issues] = {}
     cves: Optional[List[CveAssociation]] = []
+
     references: Optional[List[str]] = None
 
     # serialize special text fields, if they contain a new-line char

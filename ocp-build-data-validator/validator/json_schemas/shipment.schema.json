@@ -1,5 +1,5 @@
 {
-  "$comment": "Schema generated on 2025-04-07 18:29 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-04-14 22:27 UTC from elliottlib.shipment_model",
   "$defs": {
     "CveAssociation": {
       "properties": {
@@ -87,16 +87,21 @@
     "Issues": {
       "properties": {
         "fixed": {
-          "items": {
-            "$ref": "#/$defs/Issue"
-          },
-          "title": "Fixed",
-          "type": "array"
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Issue"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fixed"
         }
       },
-      "required": [
-        "fixed"
-      ],
       "title": "Issues",
       "type": "object"
     },

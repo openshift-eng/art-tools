@@ -40,8 +40,8 @@ class KonfluxClient:
     # The arch to Konflux VM name mapping. The specs for each of the VMs can be seen in the doc link shared above.
     SUPPORTED_ARCHES = {
         "x86_64": ["linux/x86_64"],
-        "s390x": ["linux-large/s390x"],
-        "ppc64le": ["linux-large/ppc64le", "linux/ppc64le"],
+        "s390x": ["linux/s390x"],
+        "ppc64le": ["linux/ppc64le"],
         "aarch64": ["linux/arm64"],
     }
 

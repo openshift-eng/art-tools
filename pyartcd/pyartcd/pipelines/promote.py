@@ -350,6 +350,11 @@ class PromotePipeline:
                 await self._slack_client.say_in_thread(f"Release {release_name} is ready. It will not appear on the "
                                                        "release controllers. Please tell the user to manually pull "
                                                        f"the release images: {pullspecs_repr}")
+                message_digests = []
+                if not self.skip_mirror_binaries:
+                    message_digests = await self.extract_and_publish_clients("ocp-dev-preview", release_infos)
+                if not self.skip_signing:
+                    await self.sign_artifacts(release_name, "ocp-dev-preview", release_infos, message_digests)
             else:
                 # check if release is already accepted (in case we timeout and run the job again)
                 tasks = []
@@ -428,8 +433,7 @@ class PromotePipeline:
                         lock = Lock.SIGNING
                         lock_identifier = jenkins.get_build_path()
                         if not lock_identifier:
-                            self._logger.warning('Env var BUILD_URL has not been defined: '
-                                                 'a random identifier will be used for the locks')
+                            self._logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
 
                         await locks.run_with_lock(
                             coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),

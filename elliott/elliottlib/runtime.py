@@ -7,6 +7,7 @@ import tempfile
 from multiprocessing import Lock, RLock
 import time
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import click
 import yaml
@@ -16,6 +17,7 @@ from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
 from artcommonlib.model import Model, Missing
 from artcommonlib.runtime import GroupRuntime
+from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
 from elliottlib import brew, constants
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
@@ -68,6 +70,10 @@ class Runtime(GroupRuntime):
         self.releases_config: Optional[Model] = None
         self.assembly_type = AssemblyTypes.STREAM
 
+        self.shipment_path = None
+        self.shipment_gitdata = None
+        self.product = None
+
         for key, val in kwargs.items():
             self.__dict__[key] = val
 
@@ -116,7 +122,8 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none', no_group=False, disabled=None, build_system: str = None):
+    def initialize(self, mode='none', no_group=False, disabled=None, build_system: str = None,
+                   with_shipment: bool = False):
         if self.initialized:
             return
 
@@ -162,6 +169,9 @@ class Runtime(GroupRuntime):
             raise IOError(
                 "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)")
 
+        self.product = self.group_config.product or "ocp"
+        self.resolve_shipment_metadata(strict=with_shipment)
+
         if self.group_config.assemblies.enabled or self.enable_assemblies:
             if re.fullmatch(r'[\w.]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
                 raise ValueError('Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).')
@@ -178,7 +188,7 @@ class Runtime(GroupRuntime):
         else:
             self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
 
-        # Flattens a list like like [ 'x', 'y,z' ] into [ 'x.yml', 'y.yml', 'z.yml' ]
+        # Flattens a list like [ 'x', 'y,z' ] into [ 'x.yml', 'y.yml', 'z.yml' ]
         # for later checking we need to remove from the lists, but they are tuples. Clone to list
         def flatten_list(names):
             if not names:
@@ -339,6 +349,35 @@ class Runtime(GroupRuntime):
 
         except gitdata.GitDataException as ex:
             raise ElliottFatalError(ex)
+
+    def resolve_shipment_metadata(self, strict=True):
+        if strict and not self.shipment_path:
+            self.shipment_path = SHIPMENT_DATA_URL_TEMPLATE.format(self.product)
+
+        if self.shipment_path:
+            shipment_path, commitish = self.shipment_path, "main"
+            if '@' in self.shipment_path:
+                shipment_path, commitish = self.shipment_path.split('@')
+
+            # TODO: find a better solution
+            if 'gitlab.cee.redhat.com' in shipment_path:
+                gitlab_auth_token = os.environ.get('GITLAB_TOKEN')
+                if not gitlab_auth_token:
+                    self._logger.info("GITLAB_TOKEN not found to be set")
+                else:
+                    try:
+                        parsed_url = urlparse(shipment_path)
+                        scheme = parsed_url.scheme
+                        rest_of_the_url = shipment_path[len(scheme + "://"):]
+                        shipment_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
+                    except Exception as e:
+                        self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {shipment_path}: {e}")
+
+            try:
+                self.shipment_gitdata = gitdata.GitData(data_path=shipment_path, clone_dir=self.working_dir,
+                                                        commitish=commitish, logger=self._logger)
+            except gitdata.GitDataException as ex:
+                raise ElliottFatalError(ex)
 
     def get_releases_config(self):
         if self.releases_config is not None:

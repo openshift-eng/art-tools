@@ -17,7 +17,7 @@ from artcommonlib import exectools
 from artcommonlib.arch_util import go_suffix_for_arch
 from artcommonlib.release_util import isolate_assembly_in_release
 from artcommonlib.assembly import assembly_type
-from artcommonlib.model import Model
+from artcommonlib.model import Model, Missing
 from artcommonlib.release_util import SoftwareLifecyclePhase
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
@@ -195,7 +195,7 @@ async def branch_arches(group: str, assembly: str, ga_only: bool = False, build_
     """
 
     logger.info('Fetching group config for %s', group)
-    group_config = await load_group_config(group=group, assembly=assembly)
+    group_config = Model(await load_group_config(group=group, assembly=assembly))
 
     # Check if arches_override has been specified. This is used in group.yaml
     # when we temporarily want to build for CPU architectures that are not yet GA.
@@ -205,9 +205,11 @@ async def branch_arches(group: str, assembly: str, ga_only: bool = False, build_
 
     # Otherwise, read supported arches from group config
     if build_system == 'brew':
-        return group_config['arches']
+        return group_config.arches
     elif build_system == 'konflux':
-        return group_config['konflux']['arches']
+        if group_config.konflux.arches is not Missing:
+            return group_config.konflux.arches
+        return group_config.arches
     else:
         raise ValueError(f'Invalid build system: {build_system}')
 
