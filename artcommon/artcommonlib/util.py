@@ -437,8 +437,7 @@ def get_konflux_network_mode(metadata):
     image_config_network_mode = metadata.config.konflux.get("network_mode")
 
     # Image config supersedes group config, but set to "open" by default, if missing.
-    network_mode = image_config_network_mode if image_config_network_mode else group_config_network_mode
-    network_mode = network_mode if network_mode else "open"
+    network_mode = image_config_network_mode or group_config_network_mode or "open"
 
     valid_network_modes = ["hermetic", "internal-only", "open"]
     if network_mode not in valid_network_modes:
