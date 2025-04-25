@@ -399,6 +399,8 @@ class KonfluxClient:
         # See https://konflux-ci.dev/docs/how-tos/configuring/customizing-the-build/#configuring-timeouts
         obj["spec"]["timeouts"] = {"pipeline": "12h"}
 
+        obj["spec"]["taskRunTemplate"]["serviceAccountName"] = "appstudio-pipeline"
+
         # Task specific parameters to override in the template
         has_build_images_task = False
         has_sast_task = False
