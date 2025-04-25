@@ -564,7 +564,7 @@ class Ocp4Pipeline:
     async def _build_images(self):
         # Even if the computed build plan included images, some may have been removed because they failed to rebase.
         # Check once again if the current build plan includes any image, return otherwise
-        if not self.build_plan.build_images:
+        if not self.build_plan.build_images and self.build_images.lower() != 'all':
             self.runtime.logger.warning('No images to build according to current build plan')
             return
 
