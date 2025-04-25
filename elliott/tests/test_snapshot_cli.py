@@ -15,10 +15,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
             kubeconfig="/path/to/kubeconfig",
             context=None,
         )
-        self.image_repo_creds_config = dict(
-            username="test_user",
-            password="test_pass"
-        )
+        self.image_repo_pull_secret = "/path/to/pull-secret"
         self.for_bundle = False
         self.for_fbc = False
         self.dry_run = False
@@ -30,7 +27,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         self.konflux_client = AsyncMock()
         self.konflux_client.verify_connection.return_value = True
 
-    @patch("elliottlib.cli.snapshot_cli.CreateSnapshotCli.get_timestamp", return_value="timestamp")
+    @patch("elliottlib.cli.snapshot_cli.get_utc_now_formatted_str", return_value="timestamp")
     @patch("elliottlib.cli.snapshot_cli.oc_image_info_for_arch_async")
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -64,7 +61,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
             cli = CreateSnapshotCli(
                 runtime=self.runtime,
                 konflux_config=self.konflux_config,
-                image_repo_creds_config=self.image_repo_creds_config,
+                image_repo_pull_secret=self.image_repo_pull_secret,
                 for_bundle=self.for_bundle,
                 for_fbc=self.for_fbc,
                 builds=['test-nvr-1', 'test-nvr-2'],
@@ -107,7 +104,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         cli = CreateSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
-            image_repo_creds_config=self.image_repo_creds_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
             for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             builds=builds,
@@ -131,10 +128,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             kubeconfig="/path/to/kubeconfig",
             context=None,
         )
-        self.image_repo_creds_config = dict(
-            username="test_user",
-            password="test_pass"
-        )
+        self.image_repo_pull_secret = "/path/to/pull-secret"
         self.for_bundle = False
         self.for_fbc = False
         self.dry_run = False
@@ -187,7 +181,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         cli = GetSnapshotCli(
             runtime=self.runtime,
             konflux_config=self.konflux_config,
-            image_repo_creds_config=self.image_repo_creds_config,
+            image_repo_pull_secret=self.image_repo_pull_secret,
             for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             snapshot='test-snapshot',
@@ -197,7 +191,6 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
         self.konflux_client._get.assert_called_once_with(API_VERSION, KIND_SNAPSHOT, 'test-snapshot')
         mock_oc_image_info.assert_called_once_with(
             "registry/image@sha256:digest1",
-            registry_username=self.image_repo_creds_config['username'],
-            registry_password=self.image_repo_creds_config['password'],
+            registry_config=self.image_repo_pull_secret,
         )
         self.assertEqual(expected_nvrs, actual_nvrs)

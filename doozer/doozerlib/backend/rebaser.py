@@ -32,6 +32,7 @@ from doozerlib.runtime import Runtime
 from doozerlib.source_modifications import SourceModifierFactory
 from doozerlib.source_resolver import SourceResolution, SourceResolver
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 
 LOGGER = logging.getLogger(__name__)
 
@@ -429,6 +430,33 @@ class KonfluxRebaser:
             source_dockerfile_content = source_dockerfile.read()
             distgit_dockerfile.write(source_dockerfile_content)
 
+        append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
+        if append_gomod_patch and append_gomod_patch is not Missing:
+            gomod_path = dest_dir.joinpath('go.mod')
+            if gomod_path.exists():
+                # Read the gomod contents
+                new_lines = []
+                with open(gomod_path, "r") as file:
+                    lines = file.readlines()
+                    for line in lines:
+                        stripped_line = line.strip()
+                        match = re.match(r"(^go \d\.\d+$)", stripped_line)
+                        if match:
+                            # Append a .0 to the go mod version, if it exists
+                            # Replace the line 'go 1.22' with 'go 1.22.0' for example
+                            self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
+                            go_version_string = match.group(1)  # eg. 'go 1.23'
+                            go_version_number = float(go_version_string.split(" ")[-1])  # eg. 1.23
+                            if go_version_number >= 1.22:
+                                stripped_line = stripped_line.replace(go_version_string, f"{go_version_string}.0")
+                                new_lines.append(f"{stripped_line}\n")
+                                continue
+
+                        # If there is no match or if the go version is not >= 1.22, use the same go version
+                        new_lines.append(line)
+                with open(gomod_path, "w") as file:
+                    file.writelines(new_lines)
+
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
             if ent.name.startswith("Dockerfile."):
@@ -547,6 +575,7 @@ class KonfluxRebaser:
                     "component_name": metadata.distgit_key,
                     "kind": "Dockerfile",
                     "content": new_dockerfile_data,
+                    "build_system": self._runtime.build_system,
                     "set_env": {
                         "PATH": path,
                         # "BREW_EVENT": f'{self._runtime.brew_event}',
@@ -1239,16 +1268,44 @@ class KonfluxRebaser:
         cachi2_enabled = KonfluxImageBuilder._is_cachi2_enabled(metadata=metadata, logger=self._logger)
         enabled_repos = metadata.config.get('enabled_repos')
         if cachi2_enabled and enabled_repos and len(enabled_repos) > 0:
-            self._logger.info('Generating INPUT_FILE file for rpms.in.yaml')
-
-            # list of packages to install/upgrade, get them from metadata config as static list
-            # TODO: fetch from database if possible
+            # If Cachi2 is enabled and there are enabled repositories, proceed to generate the INPUT_FILE for RPMs.
+            # The list of packages to install or upgrade is either provided statically in the metadata config
+            # or retrieved from the latest successful build if not defined.
             rpms_install = metadata.config.konflux.cachi2.packages.get('install', [])
-            if rpms_install and len(rpms_install) > 0:
-                input_file['packages'] = rpms_install
+            if len(rpms_install) == 0:
+                build = asyncio.run(metadata.get_latest_build(
+                    el_target=f'el{metadata.branch_el_target()}',
+                    engine=Engine.KONFLUX
+                ))
+                if not build:
+                    raise ValueError(f'Could not find latest build for {metadata.distgit_key}')
+
+                package_rpm_finder = PackageRpmFinder(self._runtime)
+                installed_packages = package_rpm_finder.get_installed_packages_build_dicts(build)
+                if len(installed_packages) > 0:
+                    # Identify the parent installed RPMs and calculate the difference (XOR) between the lists:
+                    parents = metadata.get_parent_members()
+                    if len(parents) > 0:
+                        parent = next(iter(parents.items()))
+                        args = {
+                            'name': parent[0],
+                            'group': build.group,
+                        }
+                        parent_build = asyncio.run(self._runtime.konflux_db.get_latest_build(**args))
+                        if not parent_build:
+                            raise ValueError(f'Could not find latest build for {parent[0]}')
+
+                        parent_installed_packages = package_rpm_finder.get_installed_packages_build_dicts(parent_build)
+                        rpms_install = sorted(set(list(installed_packages.keys())) - set(list(parent_installed_packages.keys())))
+                    else:
+                        rpms_install = list(installed_packages.keys())
+                else:
+                    raise ValueError(f'Could not build the installed rpms list for {metadata.image_name}')
+
+            input_file['packages'] = rpms_install
 
             rpms_upgrade = metadata.config.konflux.cachi2.packages.get('upgrade', [])
-            if rpms_upgrade and len(rpms_upgrade) > 0:
+            if len(rpms_upgrade) > 0:
                 input_file['upgradePackages'] = rpms_upgrade
 
             if 'packages' not in input_file and 'upgradePackages' not in input_file:
@@ -1259,13 +1316,11 @@ class KonfluxRebaser:
 
                 # content origin
                 # TODO: pass file as param if possible
-                input_file['contentOrigin'] = {'repofiles': ['.oit/unsigned.repo']}  
+                input_file['contentOrigin'] = {'repofiles': ['.oit/unsigned.repo']}
 
                 # list of platform (architecture) names to build this image for
                 arches = metadata.get_arches()
                 input_file['arches'] = arches
-
-            self._logger.info(input_file)
 
         return input_file
 
@@ -1273,12 +1328,11 @@ class KonfluxRebaser:
         # In order for cachi2 to fetch rpm dependencies, it requires the use of a pair of rpms.in.yaml and rpms.lock.yaml
         # files to be committed to the repository.
         # https://konflux-ci.dev/docs/building/prefetching-dependencies/#enabling-prefetch-builds-for-rpm
-        
         rpms_in_yaml = self._generate_rpms_in_file(metadata)
         if not rpms_in_yaml:
             self._logger.info('No content for rpms.in.yaml file, skipping creation')
         else:
-            self._logger.info('Generating rpms.in.yaml and rpms.lock.yaml file')
+            self._logger.info(f'Attempting to generate rpms.in.yaml and rpms.lock.yaml file with from content {rpms_in_yaml}')
 
             # generate yaml data with header
             content_yml = yaml.safe_dump(rpms_in_yaml, default_flow_style=False)

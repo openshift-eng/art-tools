@@ -288,11 +288,12 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         build_repo.push.assert_called_once()
 
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
+    @patch("pathlib.Path.mkdir")
     @patch("pathlib.Path.is_file", return_value=True)
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
-    async def test_rebase_dir(self, mock_fetch_olm_bundle_blob, mock_fetch_olm_bundle_image_info, mock_open, mock_is_file, MockDockerfileParser):
+    async def test_rebase_dir(self, mock_fetch_olm_bundle_blob, mock_fetch_olm_bundle_image_info, mock_open, mock_is_file, mock_mkdir, MockDockerfileParser):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         build_repo = MagicMock()
@@ -335,8 +336,8 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                     }
                 }],
                 "relatedImages": [
-                    {"name": "", "image": "example.com/test-bundle:1.2.3"},
-                    {"name": "test-operator", "image": "example.com/test-operator:1.2.3"}
+                    {"name": "", "image": "example.com/test-bundle@1"},
+                    {"name": "test-operator", "image": "example.com/test-operator@2"}
                 ]
             })
         mock_dfp = MockDockerfileParser.return_value
@@ -351,15 +352,16 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0", "skips": ["test-bundle-name.0.0.9", "test-bundle-name.1.0.0", "test-bundle-name.1.0.1"]}
             ]},
             {"schema": "olm.bundle", "name": "test-bundle-name.1.0.0", "package": "test-package", "properties": [], "relatedImages": [
-                {"name": "", "image": "example.com/openshift/test-bundle:1.0.0"},
-                {"name": "test-operator", "image": "example.com/test-operator:1.0.0"}
+                {"name": "", "image": "example.com/openshift/test-bundle@1"},
+                {"name": "test-operator", "image": "example.com/test-operator@2"}
             ]}
         ]
         org_catalog_file = StringIO()
         yaml.dump_all(org_catalog_blobs, org_catalog_file)
         org_catalog_file.seek(0)
         result_catalog_file = StringIO()
-        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file]
+        images_mirror_set_file = StringIO()
+        mock_open.return_value.__enter__.side_effect = [org_catalog_file, result_catalog_file, images_mirror_set_file]
 
         await self.rebaser._rebase_dir(metadata, build_repo, bundle_build, version, release, logger)
 
@@ -388,6 +390,37 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             {"name": "test-bundle-name.1.2.3", "skipRange": ">=4.8.0 <4.17.0", "skips": ["test-bundle-name.0.0.9", "test-bundle-name.1.0.0", "test-bundle-name.1.0.1", "test-bundle-name.1.1.0"]}
         ])
         self.assertEqual(result_catalog_blobs["test-package"]["olm.bundle"].keys(), {"test-bundle-name.1.0.0", "test-bundle-name.1.2.3"})
+
+        images_mirror_set_file.seek(0)
+        images_mirror_set = yaml.load(images_mirror_set_file)
+        self.assertEqual(len(images_mirror_set["spec"]["imageDigestMirrors"]), 3)
+
+    def test_generate_image_digest_mirror_set(self):
+        olm_bundle_blobs = [
+            {
+                "relatedImages": [
+                    {
+                        "name": "pf-status-relay-rhel9-operator",
+                        "image": "registry.redhat.io/openshift4/pf-status-relay-rhel9-operator@sha256:9930cd2f6519e619da1811f04e4d3a73c29f519142064a1562e0759e251bf319",
+                    },
+                    {
+                        "name": "pf-status-relay-rhel9",
+                        "image": "registry.redhat.io/openshift4/pf-status-relay-rhel9@sha256:bd8dddf22ed4d977127d8c1e89b868ecb4a34645ac09d376cedbcaa03176a846",
+                    },
+                    {
+                        "name": "ose-kube-rbac-proxy-rhel9",
+                        "image": "registry.redhat.io/openshift4/ose-kube-rbac-proxy-rhel9@sha256:683e74056df40f38004b2145b8a037dd43b56376061915f37ccb50b5ed19b404",
+                    },
+                    {
+                        "name": "",
+                        "image": "registry.redhat.io/openshift4/pf-status-relay-operator-bundle@sha256:d62745a5780f4224d49fad22be910e426cf3bfc3150b0e4cdc00fa69a6983a9b",
+                    }
+
+                ]
+            }
+        ]
+        result = self.rebaser._generate_image_digest_mirror_set(olm_bundle_blobs)
+        self.assertEqual(len(result["spec"]["imageDigestMirrors"]), 4)
 
     @patch("doozerlib.util.oc_image_info_for_arch_async__caching", new_callable=AsyncMock)
     async def test_fetch_olm_bundle_image_info(self, mock_oc_image_info):

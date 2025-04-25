@@ -110,40 +110,54 @@ class Bug:
     def get_target_release(bugs: List) -> str:
         """
         Pass in a list of bugs and get their target release version back.
-        Raises exception if they have different target release versions set.
+        Raises exception if different MAJOR.MINOR target releases are found.
 
         :param bugs: List[Bug] instance
         """
         invalid_bugs = []
+
+        # capture target_release -> bug ids
         target_releases = dict()
+
+        # There can be multiple target_release values for a MAJOR.MINOR
+        # so capture unique MAJOR.MINOR versions found
+        target_release_versions = set()
 
         if not bugs:
             raise ValueError("bugs should be a non empty list")
 
         for bug in bugs:
             # make sure it's a list with a valid str value
-            valid_target_rel = isinstance(bug.target_release, list) and len(bug.target_release) > 0 and \
-                re.match(r'(\d+.\d+.[0|z])', bug.target_release[0])
-            if not valid_target_rel:
+            field_exists = isinstance(bug.target_release, list) and len(bug.target_release) > 0
+            if not field_exists:
                 invalid_bugs.append(bug)
-            else:
-                tr = bug.target_release[0]
-                if tr not in target_releases:
-                    target_releases[tr] = set()
-                target_releases[tr].add(bug.id)
+                continue
+
+            target_rel = re.match(r'(\d+\.\d+)(?:\.[0|z])?', bug.target_release[0])
+            if not target_rel:
+                invalid_bugs.append(bug)
+                continue
+
+            # capture the MAJOR.MINOR version
+            target_release_versions.add(target_rel.group(1))
+
+            tr = bug.target_release[0]
+            if tr not in target_releases:
+                target_releases[tr] = set()
+            target_releases[tr].add(bug.id)
 
         if invalid_bugs:
-            err = 'target_release should be a list with a string matching regex (digit+.digit+.[0|z])'
+            err = 'target_release should be a list with a string matching regex (digit+.digit+(.[0|z])?)'
             for b in invalid_bugs:
                 err += f'\n bug: {b.id}, target_release: {b.target_release} '
             raise ValueError(err)
 
-        if len(target_releases) != 1:
-            err = f'Found different target_release values for bugs: {target_releases}. ' \
-                'There should be only 1 target release for all bugs. Fix the offending bug(s) and try again.'
+        if len(target_release_versions) != 1:
+            err = f'Found target_releases for different MAJOR.MINOR versions: {target_releases}. ' \
+                'There should be only 1 MAJOR.MINOR version for all bugs. Fix the offending bug(s) and try again.'
             raise ValueError(err)
 
-        return list(target_releases.keys())[0]
+        return sorted(target_releases.keys())[0]
 
 
 class BugzillaBug(Bug):
