@@ -9,11 +9,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional, cast, List
 
-from dockerfile_parse import DockerfileParser
-from kubernetes.dynamic import resource
-from packageurl import PackageURL
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from artcommonlib import util as artlib_util
 from artcommonlib import constants as artlib_constants
 from artcommonlib import exectools, bigquery
@@ -22,8 +17,11 @@ from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
                                                        KonfluxBuildOutcome,
                                                        KonfluxBuildRecord)
-from artcommonlib.model import Missing
+from artcommonlib.model import Missing, ListModel
 from artcommonlib.release_util import isolate_el_version_in_release
+from dockerfile_parse import DockerfileParser
+from kubernetes.dynamic import resource
+from packageurl import PackageURL
 
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
@@ -53,7 +51,6 @@ class KonfluxImageBuilderConfig:
     kubeconfig: Optional[str] = None
     context: Optional[str] = None
     image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO
-    image_repo_creds: Optional[Dict[str, str]] = None
     skip_checks: bool = False
     dry_run: bool = False
 
@@ -82,11 +79,6 @@ class KonfluxImageBuilder:
             for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
                 if secret not in os.environ:
                     raise EnvironmentError(f"Missing required environment variable {secret}")
-
-            self._config.image_repo_creds = {
-                "username": os.environ["KONFLUX_ART_IMAGES_USERNAME"],
-                "password": os.environ["KONFLUX_ART_IMAGES_PASSWORD"],
-            }
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
@@ -398,31 +390,12 @@ class KonfluxImageBuilder:
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
         return pipelinerun
 
-    @staticmethod
-    async def get_installed_packages(image_pullspec: str, arches: list[str], image_repo_creds: dict, logger) -> list:
+    async def get_installed_packages(self, image_pullspec, arches, logger) -> list:
         """
         Example sbom: https://gist.github.com/thegreyd/6718f4e4dae9253310c03b5d492fab68
         :return: Returns list of installed rpms for an image pullspec, assumes that the sbom exists in registry
         """
-
-        @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
-        async def _get_sbom_with_retry(cmd):
-            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
-            if rc != 0:
-                logger.warning("cosign command failed to download SBOM: %s", stdout)
-                raise ChildProcessError("cosign command failed to download SBOM")
-
-            content = json.loads(stdout)
-
-            # Check if the SBOM is valid
-            # The SBOM should be a JSON object with a "components" key that is a non-empty list
-            if not ("components" in content and isinstance(content["components"], list) and len(content["components"]) > 0):
-                logger.warning("cosign command returned invalid SBOM: %s", content)
-                raise ChildProcessError("cosign command returned invalid SBOM")
-
-            return content
-
-        async def _get_for_arch(arch):
+        async def _get_for_arch(arch, logger):
             go_arch = go_arch_for_brew_arch(arch)
 
             cmd = [
@@ -433,14 +406,19 @@ class KonfluxImageBuilder:
                 "--platform", f"linux/{go_arch}",
             ]
 
-            if image_repo_creds:
+            if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
                 cmd += [
-                    "--registry-username", image_repo_creds.get("username"),
-                    "--registry-password", image_repo_creds.get("password"),
+                    "--registry-username", f"{os.environ['KONFLUX_ART_IMAGES_USERNAME']}",
+                    "--registry-password", f"{os.environ['KONFLUX_ART_IMAGES_PASSWORD']}",
                 ]
 
-            sbom_contents = await _get_sbom_with_retry(cmd)
-            rpms = set()
+            rc, stdout, _ = await exectools.cmd_gather_async(cmd)
+
+            if rc != 0:
+                raise ChildProcessError("cosign command failed to download SBOM")
+
+            sbom_contents = json.loads(stdout)
+            source_rpms = set()
             for x in sbom_contents["components"]:
                 # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
                 # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
@@ -452,20 +430,16 @@ class KonfluxImageBuilder:
                         purl = PackageURL.from_string(x["purl"])
                         # right now, we only care about rpms
                         if purl.type == "rpm":
-                            # construct rpm name from the purl
-                            if not (purl.name and purl.version):
-                                logger.warning("Missing name or version in rpm purl: %s", purl)
-                                continue
-                            rpm = f"{purl.name}-{purl.version}"
-                            rpms.add(rpm)
+                            # get the source rpm
+                            source_rpm = purl.qualifiers.get("upstream", None)
+                            if source_rpm:
+                                source_rpms.add(source_rpm.rstrip(".src.rpm"))
                     except Exception as e:
                         logger.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
-            if not rpms:
-                logger.warning("No rpms found in sbom for arch %s. Please investigate", arch)
-            return rpms
+            return source_rpms
 
-        results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
+        results = await asyncio.gather(*(_get_for_arch(arch, logger) for arch in arches))
         for arch, result in zip(arches, results):
             if not result:
                 raise ChildProcessError(f"Could not get rpms from SBOM for arch {arch}")
@@ -538,9 +512,7 @@ class KonfluxImageBuilder:
                 raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
                                  f"pipelinerun {pipelinerun_name}")
 
-            installed_packages = await self.get_installed_packages(image_pullspec, building_arches,
-                                                                   self._config.image_repo_creds,
-                                                                   logger=logger)
+            installed_packages = await self.get_installed_packages(image_pullspec, building_arches, logger)
 
             build_record_params.update({
                 'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
