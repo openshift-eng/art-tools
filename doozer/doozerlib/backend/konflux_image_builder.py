@@ -364,7 +364,8 @@ class KonfluxImageBuilder:
         )
 
         # Start a PipelineRun
-        hermetic = metadata.config.get("konflux", {}).get("network_mode") == "hermetic"
+        # Check if hermetic builds need to be enabled
+        hermetic = (metadata.get_konflux_network_mode() == "hermetic")
 
         prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir)
 
@@ -372,10 +373,10 @@ class KonfluxImageBuilder:
         # Image config value overrides group config value
         group_config_sast_task = metadata.runtime.group_config.get("konflux", {}).get("sast", {}).get("enabled", False)
         image_config_sast_task = metadata.config.get("konflux", {}).get("sast", {}).get("enabled", Missing)
-
         sast = image_config_sast_task if image_config_sast_task is not Missing else group_config_sast_task
 
         pipelinerun = await self._konflux_client.start_pipeline_run_for_image_build(
+            metadata=metadata,
             generate_name=f"{component_name}-",
             namespace=self._config.namespace,
             application_name=app_name,

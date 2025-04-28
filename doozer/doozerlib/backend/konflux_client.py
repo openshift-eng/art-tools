@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 from artcommonlib import exectools
 from artcommonlib import util as art_util
 from doozerlib import constants
+from doozerlib.image import ImageMetadata
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -331,7 +332,7 @@ class KonfluxClient:
                 template = jinja2.Template(template_text, autoescape=True)
                 return template
 
-    async def _new_pipelinerun_for_image_build(self, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
+    async def _new_pipelinerun_for_image_build(self, metadata: ImageMetadata, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
                                                git_url: str, commit_sha: str, target_branch: str, output_image: str,
                                                build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
                                                additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
@@ -364,6 +365,7 @@ class KonfluxClient:
         # Set the application and component names
         obj["metadata"]["annotations"]["build.appstudio.openshift.io/repo"] = f"{https_url}?rev={commit_sha}"
         obj["metadata"]["annotations"]["art-jenkins-job-url"] = os.getenv("BUILD_URL", "n/a")
+        obj["metadata"]["annotations"]["art-network-mode"] = metadata.get_konflux_network_mode()
         obj["metadata"]["labels"]["appstudio.openshift.io/application"] = application_name
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
@@ -468,6 +470,7 @@ class KonfluxClient:
 
     async def start_pipeline_run_for_image_build(
         self,
+        metadata: ImageMetadata,
         generate_name: str,
         namespace: Optional[str],
         application_name: str,
@@ -490,6 +493,7 @@ class KonfluxClient:
         """
         Start a PipelineRun for building an image.
 
+        :param metadata: Image Metadata
         :param generate_name: The generateName for the PipelineRun.
         :param namespace: The namespace for the PipelineRun.
         :param application_name: The application name.
@@ -518,6 +522,7 @@ class KonfluxClient:
         build_platforms = [vm_override[arch] if vm_override and arch in vm_override else random.choice(self.SUPPORTED_ARCHES[arch]) for arch in building_arches]
 
         pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
+            metadata=metadata,
             generate_name=generate_name,
             namespace=namespace,
             application_name=application_name,

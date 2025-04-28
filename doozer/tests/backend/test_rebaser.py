@@ -43,7 +43,7 @@ class TestRebaser(TestCase):
         Test with defalut values, and has non-USER 0 lines
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = Missing
+        metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = Missing
 
@@ -103,7 +103,7 @@ USER 2000
         Test with default values, but with final_stage_user set
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = Missing
+        metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
@@ -163,7 +163,7 @@ USER 3000
         Test with network_mode hermetic
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = "hermetic"
+        metadata.get_konflux_network_mode.return_value = "hermetic"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
@@ -210,7 +210,7 @@ USER 3000
         Test with non-hermetic, but with final_stage_user
         """
         metadata = MagicMock()
-        metadata.config.konflux.network_mode = Missing
+        metadata.get_konflux_network_mode.return_value = "open"
         metadata.config.konflux.cachito.mode = Missing
         metadata.config.final_stage_user = "3000"
 
