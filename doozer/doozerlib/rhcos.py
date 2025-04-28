@@ -1,20 +1,22 @@
 
 import asyncio
 import json
+import tempfile
+import os
 from typing import Dict, List, Optional, Tuple
 from urllib import request
 from urllib.error import URLError
-
 import koji
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib.arch_util import brew_suffix_for_arch
+from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
 from doozerlib import brew
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
+from doozerlib.constants import ART_PROD_IMAGE_REPO
 from artcommonlib import rhcos, logutil, exectools
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 
@@ -42,6 +44,7 @@ class RHCOSBuildFinder:
         self.brew_arch = brew_arch
         self.private = private
         self.custom = custom
+        self.go_arch = go_arch_for_brew_arch(brew_arch)
         self._primary_container = None
 
     def get_primary_container_conf(self):
@@ -129,7 +132,7 @@ class RHCOSBuildFinder:
         return True
 
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
-    def rhcos_build_meta(self, build_id: str, arch: str = None, meta_type: str = "meta") -> Dict:
+    def rhcos_build_meta(self, build_id: str, pullspec: str = None, arch: str = None, meta_type: str = "meta") -> Dict:
         """
         Queries the RHCOS release browser to return metadata about the specified RHCOS build.
         :param build_id: The RHCOS build_id to check (e.g. 410.81.20200520.0)
@@ -149,8 +152,22 @@ class RHCOSBuildFinder:
              ...
          }
         """
-        # this is hard to test with retries, so wrap testable method
-        return self._rhcos_build_meta(build_id, arch, meta_type)
+        if int(self.version.split('.')[0]) == 4 and int(self.version.split('.')[1]) >= 19 and pullspec:
+            if meta_type == "commitmeta":
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm")
+                    with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
+                        meta_data = json.load(f)
+                return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
+            elif meta_type == "meta":
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm")
+                    with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
+                        extensions_data = json.load(f)
+                return {"extensions": {"manifest": extensions_data}}
+        else:
+            # this is hard to test with retries, so wrap testable method
+            return self._rhcos_build_meta(build_id, arch, meta_type)
 
     def _rhcos_build_meta(self, build_id: str, arch: str = None, meta_type: str = "meta") -> Dict:
         """
@@ -167,13 +184,24 @@ class RHCOSBuildFinder:
         :param container_conf: a payload tag conf Model from group.yml (with build_metadata_key)
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
-        build_id = self.latest_rhcos_build_id()
-        if build_id is None:
-            return None, None
-        return build_id, rhcos.get_container_pullspec(
-            self.rhcos_build_meta(build_id),
-            container_conf or self.get_primary_container_conf()
-        )
+        if int(self.version.split('.')[0]) == 4 and int(self.version.split('.')[1]) >= 19:
+            stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {self.go_arch} -o json")
+            rhcosdata = json.loads(stdout)
+            build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]
+            if not container_conf or container_conf == self.get_primary_container_conf():  # rhcos-coreos
+                pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcosdata['digest']}"
+            else:  # extentions
+                stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image-extensions --filter-by-os {self.go_arch} -o json")
+                pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{json.loads(stdout)['digest']}"
+            return build_id, pullspec
+        else:
+            build_id = self.latest_rhcos_build_id()
+            if build_id is None:
+                return None, None
+            return build_id, rhcos.get_container_pullspec(
+                self.rhcos_build_meta(build_id),
+                container_conf or self.get_primary_container_conf()
+            )
 
 
 class RHCOSBuildInspector:
@@ -188,23 +216,27 @@ class RHCOSBuildInspector:
         # Because of an incident where we needed to repush RHCOS and get a new SHA for 4.10 GA,
         # trust the exact pullspec in releases.yml instead of what we find in the RHCOS release
         # browser.
-        for tag, pullspec in pullspec_for_tag.items():
-            image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
-            if self.build_id and self.build_id != image_build_id:
-                raise Exception(f'Found divergent RHCOS build_id for {pullspec_for_tag}. {image_build_id} versus'
-                                f' {self.build_id}')
-            self.build_id = image_build_id
+        major, minor = self.runtime.get_major_minor_fields()
+        if major == 4 and minor < 19:  # in 4.19, the extension don't have rhcos-id
+            for tag, pullspec in pullspec_for_tag.items():
+                image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
+                if self.build_id and self.build_id != image_build_id:
+                    raise Exception(f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus'
+                                    f' {self.build_id}')
+                self.build_id = image_build_id
 
-        # The first digits of the RHCOS build are the major.minor of the rhcos stream name.
-        # Which, near branch cut, might not match the actual release stream.
-        # Sadly we don't have any other labels or anything to look at to determine the stream.
-        version = self.build_id.split('.')[0]
-        self.stream_version = version[0] + '.' + version[1:]  # e.g. 43.82.202102081639.0 -> "4.3"
+            # The first digits of the RHCOS build are the major.minor of the rhcos stream name.
+            # Which, near branch cut, might not match the actual release stream.
+            # Sadly we don't have any other labels or anything to look at to determine the stream.
+            version = self.build_id.split('.')[0]
+            self.stream_version = version[0] + '.' + version[1:]  # e.g. 43.82.202102081639.0 -> "4.3"
+        else:
+            self.stream_version = f"{major}.{minor}"
 
         try:
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
-            self._build_meta = finder.rhcos_build_meta(self.build_id, meta_type='meta')
-            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, meta_type='commitmeta')
+            self._build_meta = finder.rhcos_build_meta(self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta')
+            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta')
         except Exception:
             # Fall back to trying to find a custom build
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, custom=True)
