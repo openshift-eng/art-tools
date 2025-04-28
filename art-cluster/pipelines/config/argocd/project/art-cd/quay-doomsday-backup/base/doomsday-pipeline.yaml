@@ -17,6 +17,8 @@ spec:
           value: $(params.major)
         - name: version
           value: $(params.version)
+        - name: pipelinerun_url
+          value: 'https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/$(context.pipelineRun.namespace)/tekton.dev~v1beta1~PipelineRun/$(context.pipelineRun.name)'
       taskRef:
         kind: Task
         name: doomsday-script-task

@@ -10,6 +10,9 @@ spec:
     - description: 'Full version, eg: 4.15.5'
       name: version
       type: string
+    - description: 'URL of the PipelineRun'
+      name: pipelinerun_url
+      type: string
   steps:
     - env:
         - name: DOCKER_CONFIG
@@ -19,6 +22,8 @@ spec:
             secretKeyRef:
               key: api-token
               name: slack-bot-creds
+        - name: PIPELINERUN_URL
+          value: $(params.pipelinerun_url)
       image: default-route-openshift-image-registry.apps.artc2023.pc3z.p1.openshiftapps.com/art-cd/art-cd:latest
       name: run-script
       resources: {}
