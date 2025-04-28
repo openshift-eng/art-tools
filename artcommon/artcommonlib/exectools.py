@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+import concurrent.futures
 import errno
 import functools
 import os
@@ -297,6 +298,20 @@ def timer(out_method, msg):
         out_method(entry)
 
 
+# When asyncio's loop.run_in_executor is used without an executor specified,
+# it will be limited to 32 threads in recent versions of python. We have Konflux
+# code where 100 or more asyncio tasks create pipelineruns to monitor and then we use
+# run_in_executor to create non-asyncio processes to monitor the results.
+# Unless the executor we use can create more processes than the number of asyncio
+# tasks, 100 asyncio tasks might be waiting for one of the 32 process slots
+# to free. By the time the watch code gets a process to run logic in konflux_client.wait_for_pipelinerun,
+# the pods to watch could already be finished and garbage collected.
+# Prevent this for now by ensuring we have more executor processes available
+# that asyncio tasks.
+# TODO: if will be safer to create the pipelinerun in the same to_thread process in which it is monitored.
+to_thread_executor = concurrent.futures.ThreadPoolExecutor(max_workers=500)
+
+
 async def to_thread(func, *args, **kwargs):
     """Asynchronously run function *func* in a separate thread.
 
@@ -313,7 +328,7 @@ async def to_thread(func, *args, **kwargs):
     loop = asyncio.get_event_loop()
     ctx = contextvars.copy_context()
     func_call = functools.partial(ctx.run, func, *args, **kwargs)
-    return await loop.run_in_executor(None, func_call)
+    return await loop.run_in_executor(to_thread_executor, func_call)
 
 
 def limit_concurrency(limit=5):
