@@ -185,7 +185,10 @@ class RHCOSBuildFinder:
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
         if int(self.version.split('.')[0]) == 4 and int(self.version.split('.')[1]) >= 19:
-            stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {self.go_arch} -o json")
+            version = self.version
+            if version == "4.20":
+                version = "4.19"
+            stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {self.go_arch} -o json")
             rhcosdata = json.loads(stdout)
             build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]
             if not container_conf or container_conf == self.get_primary_container_conf():  # rhcos-coreos
