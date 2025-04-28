@@ -96,7 +96,7 @@ class AddModifier(object):
         """
         LOGGER.debug("Running 'add' modification action...")
         ceiling_dir = kwargs.get("ceiling_dir")
-        build_system = kwargs["context"]["build_system"]
+        build_system = kwargs["context"].get("build_system", "brew")
         dest_path = str(kwargs["context"]['distgit_path'].joinpath(self.path)) if build_system == "brew" else f"{ceiling_dir}/{self.path}"
         if self.doozer_source and self.source:
             raise ValueError("Can't support source and doozersource at the same time")
