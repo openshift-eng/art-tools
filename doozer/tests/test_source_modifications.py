@@ -46,7 +46,7 @@ class AddModifierTestCase(unittest.TestCase):
             session = MockSession()
             response = session.get.return_value
             response.content = expected_content
-            context = {"distgit_path": pathlib.Path(self.temp_dir), "build_system": "brew"}
+            context = {"distgit_path": pathlib.Path(self.temp_dir)}
             modifier.act(ceiling_dir=self.temp_dir, session=session, context=context)
         with open(params["path"], "rb") as f:
             actual = f.read()
@@ -67,7 +67,7 @@ class AddModifierTestCase(unittest.TestCase):
             response = session.get.return_value
             response.content = expected_content
             with self.assertRaises(IOError) as cm:
-                context = {"distgit_path": pathlib.Path(self.temp_dir), "build_system": "brew"}
+                context = {"distgit_path": pathlib.Path(self.temp_dir)}
                 modifier.act(ceiling_dir=self.temp_dir, session=session, context=context)
             self.assertIn("overwrite", repr(cm.exception))
 
@@ -87,7 +87,7 @@ class AddModifierTestCase(unittest.TestCase):
             response = session.get.return_value
             response.content = expected_content
             with self.assertRaises(yaml.scanner.ScannerError):
-                context = {"distgit_path": pathlib.Path(self.temp_dir), "build_system": "brew"}
+                context = {"distgit_path": pathlib.Path(self.temp_dir)}
                 modifier.act(ceiling_dir=self.temp_dir, session=session, context=context)
 
 

@@ -96,8 +96,7 @@ class AddModifier(object):
         """
         LOGGER.debug("Running 'add' modification action...")
         ceiling_dir = kwargs.get("ceiling_dir")
-        build_system = kwargs["context"]["build_system"]
-        dest_path = str(kwargs["context"]['distgit_path'].joinpath(self.path)) if build_system == "brew" else f"{ceiling_dir}/{self.path}"
+        dest_path = str(kwargs["context"]['distgit_path'].joinpath(self.path))
         if self.doozer_source and self.source:
             raise ValueError("Can't support source and doozersource at the same time")
         # Note: `overwriting` is checked before writing.
@@ -105,7 +104,7 @@ class AddModifier(object):
         if not self.overwriting and os.path.exists(dest_path):
             raise IOError(
                 "Destination path {} exists. Use 'overwriting: true' to overwrite.".format(self.path))
-        if build_system == "brew" and ceiling_dir and not is_in_directory(dest_path, ceiling_dir):
+        if ceiling_dir and not is_in_directory(dest_path, ceiling_dir):
             raise ValueError("Writing to a file out of {} is not allowed.".format(ceiling_dir))
         if self.source:
             source = urlparse(self.source)
