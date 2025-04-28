@@ -471,7 +471,7 @@ class GenAssemblyCli:
                     if self.runtime.group_config.rhcos.layered_rhcos:
                         if not self.rhcos_node_id:
                             self._exit_with_error(f"Did not find RHCOS {self.primary_rhcos_tag} node image id for architecture: {arch}")
-                        stdout, _ = exectools.cmd_assert(f"oc image info {rhcos_index_tag.replace('node-image',f'{self.rhcos_node_id}-node-image')} --filter-by-os {go_arch_for_brew_arch(arch)} -o json")
+                        stdout, _ = exectools.cmd_assert(f"oc image info {tag.rhcos_index_tag.replace('node-image',f'{self.rhcos_node_id}-node-image')} --filter-by-os {go_arch_for_brew_arch(arch)} -o json")
                         self.rhcos_by_tag[tag.name][arch] = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{json.loads(stdout)['digest']}"
                     else:
                         if rhcos_el_major > 8:
