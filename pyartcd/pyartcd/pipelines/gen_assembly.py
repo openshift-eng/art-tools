@@ -26,7 +26,7 @@ yaml = new_roundtrip_yaml_handler()
 class GenAssemblyPipeline:
     """ Rebase and build MicroShift for an assembly """
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, data_path: str,
+    def __init__(self, runtime: Runtime, group: str, assembly: str, build_system: str, data_path: str,
                  nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
                  custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
                  auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
@@ -34,6 +34,7 @@ class GenAssemblyPipeline:
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
+        self.build_system = build_system
         self.data_path = data_path
         self.nightlies = nightlies
         self.ignore_non_x86_nightlies = ignore_non_x86_nightlies
@@ -47,7 +48,7 @@ class GenAssemblyPipeline:
         self.gen_microshift = gen_microshift
         if in_flight:
             self.in_flight = in_flight
-        elif not custom and not pre_ga_mode:
+        elif not custom and not pre_ga_mode and build_system == 'brew':
             self.in_flight = get_inflight(assembly, group)
         else:
             self.in_flight = None
@@ -109,6 +110,10 @@ class GenAssemblyPipeline:
             yaml.dump(assembly_definition, out)
             self._logger.info("Generated assembly definition:\n%s", out.getvalue())
 
+            # For Konflux, stop here at the moment
+            if self.build_system == 'konflux':
+                return
+
             # Create a PR
             pr = await self._create_or_update_pull_request(assembly_definition)
 
@@ -153,6 +158,7 @@ class GenAssemblyPipeline:
             "doozer",
             "--group", self.group,
             "--assembly", "stream",
+            "--build-system", self.build_system
         ]
         if self.arches:
             cmd.append("--arches")
@@ -179,6 +185,7 @@ class GenAssemblyPipeline:
             "doozer",
             "--group", self.group,
             "--assembly", "stream",
+            "--build-system", self.build_system
         ]
         if self.arches:
             cmd.append("--arches")
@@ -285,6 +292,8 @@ class GenAssemblyPipeline:
               help="The group of components on which to operate. e.g. openshift-4.9")
 @click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
               help="The name of an assembly to generate for. e.g. 4.9.1")
+@click.option("--build-system", metavar="BUILD_SYSTEM", required=False, default='brew',
+              help="What build system we're operating on ('brew'|'konflux')")
 @click.option("--nightly", "nightlies", metavar="TAG", multiple=True,
               help="(Optional) [MULTIPLE] List of nightlies to match with `doozer get-nightlies` (if empty, find latest)")
 @click.option("--allow-pending", is_flag=True,
@@ -309,12 +318,12 @@ class GenAssemblyPipeline:
 @click.option("--gen-microshift", 'gen_microshift', default=False, is_flag=True, help="Create microshift entry for assembly release.")
 @pass_runtime
 @click_coroutine
-async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, nightlies: Tuple[str, ...],
+async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, build_system: str, nightlies: Tuple[str, ...],
                        allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
                        auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
                        previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool, ignore_non_x86_nightlies: bool,
                        gen_microshift: bool):
-    pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, data_path=data_path,
+    pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, build_system=build_system, data_path=data_path,
                                    nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
                                    allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
                                    auto_trigger_build_sync=auto_trigger_build_sync,

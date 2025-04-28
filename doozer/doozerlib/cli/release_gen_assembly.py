@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime, timezone
+
 import requests
 import click
 import json
@@ -10,15 +12,18 @@ import yaml
 
 from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
+from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
 from doozerlib import util
+from doozerlib.brew import brew_event_from_datetime
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib import brew
 from artcommonlib import rhcos, exectools
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.build_info import BrewBuildRecordInspector
+from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector, BuildRecordInspector
 from doozerlib.runtime import Runtime
 
 
@@ -143,11 +148,12 @@ class GenAssemblyCli:
         # Maps RHCOS container name(s) to brew arch name to pullspec(s) from nightly
         self.rhcos_by_tag: Dict[str, Dict[str, str]] = dict()
         # Maps component package_name to brew build dict found for nightly
-        self.component_image_builds: Dict[str, BrewBuildRecordInspector] = dict()
+        self.component_image_builds: Dict[str, BuildRecordInspector] = dict()
         # Dict[ package_name ] -> Dict[ el? ] -> brew build dict
         self.component_rpm_builds: Dict[str, Dict[int, Dict]] = dict()
         self.basis_event: int = 0
         self.basis_event_ts: float = 0.0
+        self.assembly_basis_time: datetime = None  # used by Konflux
         # A set of package_names whose NVRs are not correctly sourced by the estimated basis_event
         self.force_is: Set[str] = set()
         self.primary_rhcos_tag: str = ''
@@ -168,12 +174,17 @@ class GenAssemblyCli:
         if self.assembly_type == AssemblyTypes.PREVIEW:
             self.pre_ga_mode = 'prerelease'
 
+        # Bind Konflux DB to the "builds" table
+        self.runtime.konflux_db.bind(KonfluxBuildRecord)
+
+        self.package_rpm_finder = PackageRpmFinder(runtime)
+
     async def run(self):
         self._validate_params()
         self._get_release_pullspecs()
         await self._select_images()
         self._get_rhcos_container()
-        self._select_rpms()
+        await self._select_rpms()
         self._calculate_previous_list()
         return self._generate_assembly_definition()
 
@@ -211,7 +222,8 @@ class GenAssemblyCli:
                 self._exit_with_error(f'Specified nightly {nightly_name} does not match group major.minor')
             self.reference_releases_by_arch[brew_cpu_arch] = nightly_name
             rc_suffix = go_suffix_for_arch(brew_cpu_arch, priv)
-            nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/release{rc_suffix}:{nightly_name}'
+            release_suffix = f'{"konflux-" if self.runtime.build_system == "konflux" else ""}release{rc_suffix}'
+            nightly_pullspec = f'registry.ci.openshift.org/ocp{rc_suffix}/{release_suffix}:{nightly_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
                     f'Cannot process {nightly_name} since {self.release_pullspecs[brew_cpu_arch]} is already included')
@@ -231,7 +243,7 @@ class GenAssemblyCli:
 
     async def _select_images(self):
         await self._determine_basis_brew_event()
-        self._collect_outliers()
+        await self._collect_outliers()
 
     @exectools.limit_concurrency(500)
     async def _process_release(self, brew_cpu_arch, pullspec, rhcos_tag_names):
@@ -261,9 +273,20 @@ class GenAssemblyCli:
             # The brew_build_inspector will take this archive image and find the actual
             # brew build which created it.
             image_labels = image_info['config']['config']['Labels']
-            package_name = image_labels['com.redhat.component']
-            build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
-            brew_build_inspector = BrewBuildRecordInspector(self.runtime, payload_tag_pullspec)
+            if self.runtime.build_system == 'brew':
+                package_name = image_labels['com.redhat.component']
+                build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
+                build_inspector = BrewBuildRecordInspector(self.runtime, payload_tag_pullspec)
+            else:
+                image_envs = image_info['config']['config']['Env']
+                package_name = next((env.split('=')[1] for env in image_envs if env.startswith('__doozer_key=')))
+                build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
+                build_record = await self.runtime.konflux_db.get_build_record_by_nvr(
+                    nvr=build_nvr,
+                    outcome=KonfluxBuildOutcome.SUCCESS
+                )
+                build_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
+
             if package_name in self.component_image_builds:
                 # If we have already encountered this package once in the list of releases we are
                 # processing, then make sure that the original NVR we found matches the new NVR.
@@ -271,7 +294,7 @@ class GenAssemblyCli:
                 existing_nvr = self.component_image_builds[package_name].get_nvr()
                 if build_nvr != existing_nvr:
                     # Ignore possible outdated payload tag if one is explicitly defined
-                    image_meta = brew_build_inspector.get_image_meta()
+                    image_meta = build_inspector.get_image_meta()
                     payload_name, explicit = image_meta.get_payload_tag_info()
                     if explicit:
                         if payload_name != payload_tag_name:
@@ -284,14 +307,14 @@ class GenAssemblyCli:
                             self.logger.warning(
                                 f'Selecting payload tag {payload_tag_name} since payload_name={payload_name} is '
                                 'explicitly defined in image config')
-                            self.component_image_builds[package_name] = brew_build_inspector
+                            self.component_image_builds[package_name] = build_inspector
                     else:
                         self._exit_with_error('Found disparate nvrs between releases; '
                                               f'{existing_nvr} in processed and {build_nvr} in {pullspec}')
             else:
                 # Otherwise, record the build as the first time we've seen an NVR for this
                 # package.
-                self.component_image_builds[package_name] = brew_build_inspector
+                self.component_image_builds[package_name] = build_inspector
 
             # We now try to determine a basis brew event that will
             # find this image during get_latest_build-like operations
@@ -307,10 +330,16 @@ class GenAssemblyCli:
             # short enough to ensure that no other build of this image could have
             # completed before the basis event.
 
-            completion_ts: float = brew_build_inspector.get_build_obj()['completion_ts']
-            # If the basis event for this image is > the basis_event capable of
-            # sweeping images we've already analyzed, increase the basis_event_ts.
-            self.basis_event_ts = max(self.basis_event_ts, completion_ts + (60.0 * 5))
+            if self.runtime.build_system == 'brew':
+                completion_ts: float = build_inspector.get_build_obj()['completion_ts']
+                # If the basis event for this image is > the basis_event capable of
+                # sweeping images we've already analyzed, increase the basis_event_ts.
+                self.basis_event_ts = max(self.basis_event_ts, completion_ts + (60.0 * 5))
+            else:
+                if not self.assembly_basis_time:
+                    self.assembly_basis_time = build_inspector.get_build_end_time()
+                else:
+                    self.assembly_basis_time = max(self.assembly_basis_time, build_inspector.get_build_end_time())
 
     async def _determine_basis_brew_event(self):
         rhcos_tag_names = rhcos.get_container_names(self.runtime)
@@ -319,19 +348,25 @@ class GenAssemblyCli:
             for brew_cpu_arch, pullspec in self.release_pullspecs.items()
         ])
 
-        # basis_event_ts should now be greater than the build completion / target tagging operation
-        # for any (non RHCOS) image in the nightlies. Because images are built after RPMs,
+        # basis_event_ts (for Brew) or assembly_basis_time (for Konflux) should now be greater than the build completion
+        # / target tagging operation for any (non RHCOS) image in the nightlies. Because images are built after RPMs,
         # it must also hold that the basis_event_ts is also greater than build completion & tagging
         # of any member RPM.
 
-        # Let's now turn the approximate basis_event_ts into a brew event number
-        with self.runtime.shared_koji_client_session() as koji_api:
-            self.basis_event = koji_api.getLastEvent(before=self.basis_event_ts)['id']
-        self.logger.info(f'Estimated basis brew event: {self.basis_event}')
-        self.logger.info('The following image package_names were detected in the specified releases: %s',
-                         self.component_image_builds.keys())
+        if self.runtime.build_system == 'brew':
+            # Let's turn the approximate basis_event_ts into a brew event number
+            with self.runtime.shared_koji_client_session() as koji_api:
+                self.basis_event = koji_api.getLastEvent(before=self.basis_event_ts)['id']
+            self.logger.info('The following image package_names were detected in the specified releases: %s',
+                             self.component_image_builds.keys())
+        else:
+            # For konflux, compute the latest Brew event that came before the assembly time
+            with self.runtime.shared_koji_client_session() as koji_api:
+                self.basis_event = brew_event_from_datetime(self.assembly_basis_time, koji_api)
 
-    def _collect_outliers(self):
+        self.logger.info(f'Estimated basis event: {self.basis_event}')
+
+    async def _collect_outliers(self):
         """
         Things happen. Let's say image component X was built in build X1 and X2.
         Image component Y was build in Y1. Let's say that the ordering was X1, X2, Y1 and, for
@@ -353,15 +388,24 @@ class GenAssemblyCli:
                 continue
 
             dgk = image_meta.distgit_key
+
             package_name = image_meta.get_component_name()
-            basis_event_dict = image_meta.get_latest_brew_build(default=None, complete_before_event=self.basis_event)
+            if self.runtime.build_system == 'brew':
+                basis_event_dict = image_meta.get_latest_brew_build(default=None, complete_before_event=self.basis_event)
+            else:
+                basis_event_dict = await image_meta.get_latest_konflux_build(default=None, completed_before=self.assembly_basis_time)
+
             if not basis_event_dict:
                 self._exit_with_error(f'No image was found for assembly {self.runtime.assembly} for component {dgk} '
                                       f'at estimated brew event {self.basis_event}. No normal reason for this to '
                                       f'happen so exiting out of caution.')
 
-            basis_event_build_dict: BrewBuildRecordInspector = BrewBuildRecordInspector(
-                self.runtime, basis_event_dict['id'])
+            if self.runtime.build_system == 'brew':
+                basis_event_build_dict: BuildRecordInspector = BrewBuildRecordInspector(
+                    self.runtime, basis_event_dict['id'])
+            else:
+                basis_event_build_dict: KonfluxBuildRecordInspector = KonfluxBuildRecordInspector(
+                    self.runtime, basis_event_dict)
             basis_event_build_nvr = basis_event_build_dict.get_nvr()
 
             if not image_meta.is_payload:
@@ -441,7 +485,7 @@ class GenAssemblyCli:
                         self.rhcos_by_tag[tag.name][arch] = f"{rhcos_image['image']}@{rhcos_image['digest']}"
                     self.logger.info(f'Find RHCOS image {tag.name} for {arch}: {self.rhcos_by_tag[tag.name][arch]}')
 
-    def _select_rpms(self):
+    async def _select_rpms(self):
         """
         We now have a list of image builds that should be selected by the assembly basis event
         and those that will need to be forced with 'is'. We now need to perform a similar step
@@ -451,13 +495,18 @@ class GenAssemblyCli:
         """
 
         with self.runtime.shared_koji_client_session() as koji_api:
-
-            archive_lists = brew.list_archives_by_builds(
-                build_ids=[b.get_build_id() for b in self.component_image_builds.values()],
-                build_type="image",
-                session=koji_api
-            )
-            rpm_build_ids = {rpm["build_id"] for archives in archive_lists for ar in archives for rpm in ar["rpms"]}
+            if self.runtime.build_system == 'brew':
+                archive_lists = brew.list_archives_by_builds(
+                    build_ids=[b.get_build_id() for b in self.component_image_builds.values()],
+                    build_type="image",
+                    session=koji_api
+                )
+                rpm_build_ids = {rpm["build_id"] for archives in archive_lists for ar in archives for rpm in ar["rpms"]}
+            else:
+                rpm_build_dicts = []
+                for bri in self.component_image_builds.values():
+                    rpm_build_dicts.extend(self.package_rpm_finder.get_brew_rpms_from_build_record(bri.get_build_obj()))
+                rpm_build_ids = {rpm["build_id"] for rpm in rpm_build_dicts}
 
             self.logger.info("Querying Brew build information for %s RPM builds...", len(rpm_build_ids))
             # We now have a list of all RPM builds which have been installed into the various images which
@@ -622,13 +671,16 @@ class GenAssemblyCli:
         if self.final_previous_list:
             group_info['upgrades'] = ','.join(map(str, self.final_previous_list))
 
+        basis_event_key = 'brew_event' if self.runtime.build_system == 'brew' else 'time'
+        basis_event_value = self.basis_event if self.runtime.build_system == 'brew' else self.assembly_basis_time
+
         return {
             'releases': {
                 self.gen_assembly_name: {
                     "assembly": {
                         'type': self.assembly_type.value,
                         'basis': {
-                            'brew_event': self.basis_event,
+                            basis_event_key: basis_event_value,
                             'reference_releases': self.reference_releases_by_arch,
                         },
                         'group': group_info,

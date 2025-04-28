@@ -428,25 +428,32 @@ class KonfluxRebaser:
             source_dockerfile_content = source_dockerfile.read()
             distgit_dockerfile.write(source_dockerfile_content)
 
-        gomod_path = dest_dir.joinpath('go.mod')
-        if gomod_path.exists():
-            # Read the gomod contents
-            new_lines = []
-            with open(gomod_path, "r") as file:
-                lines = file.readlines()
-                for line in lines:
-                    stripped_line = line.strip()
-                    match = re.match(r"(^go \d\.\d+$)", stripped_line)
-                    if match:
-                        # Append a .0 to the go mod version, if it exists
-                        # Replace the line 'go 1.22' with 'go 1.22.0' for example
-                        self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
-                        stripped_line = stripped_line.replace(match.group(1), f"{match.group(1)}.0")
-                        new_lines.append(f"{stripped_line}\n")
-                    else:
+        append_gomod_patch = self._runtime.group_config.konflux.cachi2.gomod_version_patch
+        if append_gomod_patch and append_gomod_patch is not Missing:
+            gomod_path = dest_dir.joinpath('go.mod')
+            if gomod_path.exists():
+                # Read the gomod contents
+                new_lines = []
+                with open(gomod_path, "r") as file:
+                    lines = file.readlines()
+                    for line in lines:
+                        stripped_line = line.strip()
+                        match = re.match(r"(^go \d\.\d+$)", stripped_line)
+                        if match:
+                            # Append a .0 to the go mod version, if it exists
+                            # Replace the line 'go 1.22' with 'go 1.22.0' for example
+                            self._logger.info(f"Missing patch in golang version: {stripped_line}. Appending .0")
+                            go_version_string = match.group(1)  # eg. 'go 1.23'
+                            go_version_number = float(go_version_string.split(" ")[-1])  # eg. 1.23
+                            if go_version_number >= 1.22:
+                                stripped_line = stripped_line.replace(go_version_string, f"{go_version_string}.0")
+                                new_lines.append(f"{stripped_line}\n")
+                                continue
+
+                        # If there is no match or if the go version is not >= 1.22, use the same go version
                         new_lines.append(line)
-            with open(gomod_path, "w") as file:
-                file.writelines(new_lines)
+                with open(gomod_path, "w") as file:
+                    file.writelines(new_lines)
 
         # Clean up any extraneous Dockerfile.* that might be distractions (e.g. Dockerfile.centos)
         for ent in dest_dir.iterdir():
@@ -566,6 +573,7 @@ class KonfluxRebaser:
                     "component_name": metadata.distgit_key,
                     "kind": "Dockerfile",
                     "content": new_dockerfile_data,
+                    "build_system": self._runtime.build_system,
                     "set_env": {
                         "PATH": path,
                         # "BREW_EVENT": f'{self._runtime.brew_event}',
@@ -815,11 +823,7 @@ class KonfluxRebaser:
 
     def _add_build_repos(self, dfp: DockerfileParser, metadata: ImageMetadata, dest_dir: Path):
         # Populating the repo file needs to happen after every FROM before the original Dockerfile can invoke yum/dnf.
-        network_mode = metadata.config.konflux.network_mode
-        network_mode = "open" if network_mode in [None, Missing] else network_mode
-        valid_network_modes = ["hermetic", "internal-only", "open"]
-        if network_mode not in valid_network_modes:
-            raise ValueError(f"Invalid network mode; {network_mode}. Valid modes: {valid_network_modes}")
+        network_mode = metadata.get_konflux_network_mode()
 
         konflux_lines = ["\n# Start Konflux-specific steps"]
 

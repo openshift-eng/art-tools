@@ -85,6 +85,12 @@ class ListModel(list):
         super().__delitem__(key)
 
     def __getitem__(self, index):
+        if isinstance(index, slice):
+            # Handle slicing: apply slice, then return a new ListModel
+            sliced = super().__getitem__(index)
+            return ListModel(sliced)
+
+        # Normal single-item access
         if super().__len__() > index:
             v = super().__getitem__(index)
             if isinstance(v, Model):

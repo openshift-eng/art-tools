@@ -6,7 +6,7 @@ import shutil
 from datetime import datetime, timezone
 from os import PathLike
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
@@ -384,6 +384,7 @@ class KonfluxFbcRebaser:
         # Add the new bundle blob to the catalog
         if olm_bundle_name not in categorized_catalog_blobs[olm_package]["olm.bundle"]:
             logger.info("Adding bundle %s to package %s", olm_bundle_name, olm_package)
+            categorized_catalog_blobs[olm_package]["olm.bundle"][olm_bundle_name] = olm_bundle_blob
             catalog_blobs.append(olm_bundle_blob)
         else:  # Update the existing bundle blob
             logger.warning("Bundle %s already exists in package %s. Replacing...", olm_bundle_name, olm_package)
@@ -395,6 +396,19 @@ class KonfluxFbcRebaser:
         logger.info("Writing updated catalog to %s", catalog_file_path)
         with catalog_file_path.open("w") as f:
             yaml.dump_all(catalog_blobs, f)
+
+        # Add ImageDigestMirrorSet .tekton/images-mirror-set.yaml to the build repo to make Enterprise Contract happy
+        image_digest_mirror_set = self._generate_image_digest_mirror_set(categorized_catalog_blobs[olm_package]["olm.bundle"].values())
+        dot_tekton_dir = build_repo.local_dir.joinpath(".tekton")
+        images_mirror_set_file_path = dot_tekton_dir.joinpath("images-mirror-set.yaml")
+        if not image_digest_mirror_set:
+            logger.info("No related images found, deleting existing images-mirror-set.yaml")
+            images_mirror_set_file_path.unlink(missing_ok=True)
+        else:
+            logger.info("Adding ImageDigestMirrorSet to build repo")
+            dot_tekton_dir.mkdir(exist_ok=True)
+            with images_mirror_set_file_path.open('w') as f:
+                yaml.dump(image_digest_mirror_set, f)
 
         # Update Dockerfile
         dockerfile_path = build_repo.local_dir.joinpath("catalog.Dockerfile")
@@ -416,6 +430,38 @@ class KonfluxFbcRebaser:
 
         dfp.labels['io.openshift.build.source-location'] = bundle_build.source_repo
         dfp.labels['io.openshift.build.commit.id'] = bundle_build.commitish
+
+        # The following label is used internally by ART's shipment pipeline
+        dfp.labels['com.redhat.art.nvr'] = f'{metadata.distgit_key}-fbc-{version}-{release}'
+
+    def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict]):
+        source_repos = {
+            related_image["image"].split('@', 1)[0]
+            for bundle_blob in olm_bundle_blobs
+            for related_image in bundle_blob.get("relatedImages", [])
+        }
+        if not source_repos:
+            return None
+        image_digest_mirror_set = {
+            "apiVersion": "config.openshift.io/v1",
+            "kind": "ImageDigestMirrorSet",
+            "metadata": {
+                "name": "art-images-mirror-set",
+                "namespace": "openshift-marketplace",
+            },
+            "spec": {
+                "imageDigestMirrors": [
+                    {
+                        "source": source,
+                        "mirrors": [
+                            constants.KONFLUX_DEFAULT_IMAGE_REPO,
+                        ]
+                    }
+                    for source in source_repos
+                ]
+            }
+        }
+        return image_digest_mirror_set
 
     async def _fetch_olm_bundle_image_info(self, bundle_build: KonfluxBundleBuildRecord):
         return await util.oc_image_info_for_arch_async__caching(

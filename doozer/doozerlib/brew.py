@@ -798,3 +798,14 @@ class KojiWrapper(koji.ClientSession):
             return True
         self._gss_logged_in = super().gssapi_login(principal=principal, keytab=keytab, ccache=ccache, proxyuser=proxyuser)
         return self._gss_logged_in
+
+
+def brew_event_from_datetime(datetime_obj: datetime, koji_api) -> int:
+    """
+    Return the latest Brew event that happened before a given time.
+    For example: datetime.datetime(2025, 4, 4, 11, 38, 42) -> 63259598
+    """
+    return koji_api.getLastEvent(
+        KojiWrapperOpts(brew_event_aware=False),
+        before=datetime_obj.timestamp()
+    )['id']
