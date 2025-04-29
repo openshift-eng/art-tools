@@ -12,7 +12,7 @@ from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.arch_util import go_arch_for_brew_arch
-from doozerlib import brew, rhcos, util
+from doozerlib import brew, rhcos
 from doozerlib.cli import cli, pass_runtime, click_coroutine
 from doozerlib.cli import release_gen_payload as rgp
 from doozerlib.image import ImageMetadata
@@ -562,12 +562,12 @@ class ConfigScanSources:
         for arch in self.runtime.arches:
             for private in (False, True):
                 status = dict(name=f"{version}-{arch}{'-priv' if private else ''}")
-                if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-                    tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
-                    latest_rhcos_value = self._latest_rhcos_node_shasum(version, arch, private)
-                else:
+                if major == 4 and minor < 19:
                     tagged_rhcos_value = self._tagged_rhcos_id(primary_container, version, arch, private)
                     latest_rhcos_value = self._latest_rhcos_build_id(version, arch, private)
+                else:
+                    tagged_rhcos_value = self._tagged_rhcos_node_digest(primary_container, version, arch, private)
+                    latest_rhcos_value = self._latest_rhcos_node_shasum(version, arch, private)
 
                 if not latest_rhcos_value:
                     status['changed'] = False
@@ -632,9 +632,13 @@ class ConfigScanSources:
     def _latest_rhcos_node_shasum(self, version, arch, private) -> Optional[str]:
         """get latest node image from quay.io/openshift-release-dev/ocp-v4.0-art-dev:4.x-9.x-node-image"""
         go_arch = go_arch_for_brew_arch(arch)
-        rhcos_index = next((tag.rhcos_index_tag for tag in self.runtime.group_config.rhcos.payload_tags if tag.primary), "")
-        rhcos_info = util.oc_image_info_for_arch(rhcos_index, go_arch)
-        return rhcos_info['digest']
+        stdout, _ = exectools.cmd_assert(
+            f"oc image info quay.io/openshift-release-dev/ocp-v4.0-art-dev:{version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {go_arch} -o json",
+            retries=3,
+            pollrate=5,
+            strip=True,
+        )
+        return json.loads(stdout)['digest']
 
 
 @cli.command("config:scan-sources", short_help="Determine if any rpms / images need to be rebuilt.")
