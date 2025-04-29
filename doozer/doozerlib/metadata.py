@@ -59,6 +59,7 @@ class RebuildHintCode(Enum):
     PACKAGE_CHANGE = (True, 13)
     ARCHES_CHANGE = (True, 14)
     DEPENDENCY_NEWER = (True, 15)
+    HERMETIC_MODE_CHANGED = (True, 16)
 
 
 class RebuildHint(NamedTuple):

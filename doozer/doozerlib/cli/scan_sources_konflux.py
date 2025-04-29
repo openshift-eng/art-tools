@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import logging
 import os
 import tempfile
@@ -8,6 +9,7 @@ from functools import wraps
 
 import click
 import dateutil.parser
+import json
 import yaml
 from typing import cast
 
@@ -373,6 +375,9 @@ class ConfigScanSources:
         # Check for changes in extra packages
         await self.scan_extra_packages(image_meta)
 
+        # Check for changes in the network mode
+        await self.scan_network_mode_changes(image_meta)
+
     def find_upstream_commit_hash(self, meta: Metadata):
         """
         Get the upstream latest commit hash using git ls-remote
@@ -399,6 +404,39 @@ class ConfigScanSources:
                     RebuildHintCode.ARCHES_CHANGE,
                     f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
             )
+
+    @skip_check_if_changing
+    async def scan_network_mode_changes(self, image_meta: ImageMetadata):
+        """
+        Check if image conforms to the network mode derived from config
+
+        Note that Konflux only cares about hermetic. We have an additional network mode 'internal-only' which
+        will be deprecated in the future once we completely more to hermetic.
+        """
+        network_mode = image_meta.get_konflux_network_mode()
+        self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
+        build_record = self.latest_image_build_records_map[image_meta.distgit_key]
+
+        # Inspect the SLSA provenance: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
+        # To see if the latest build is actually hermetic
+        cmd = f"cosign download attestation {build_record.image_pullspec} --registry-username {os.environ['KONFLUX_ART_IMAGES_USERNAME']} --registry-password {os.environ['KONFLUX_ART_IMAGES_PASSWORD']}"
+        rc, attestation, error = exectools.cmd_gather(cmd, strip=True)
+        if rc != 0:
+            raise IOError(
+                f"Failed to get SLSA attestation for {build_record.image_pullspec}: {error}"
+            )
+
+        # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
+        payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+        is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+
+        self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
+        # Rebuild if there is a mismatch
+        if str(network_mode == "hermetic").lower() != is_hermetic.lower():
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(code=RebuildHintCode.HERMETIC_MODE_CHANGED,
+                            reason=f"Latest build {build_record.image_pullspec} network mode was {is_hermetic} but we need {network_mode}"))
 
     @skip_check_if_changing
     async def scan_for_upstream_changes(self, image_meta: ImageMetadata):
