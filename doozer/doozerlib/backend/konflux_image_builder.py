@@ -440,7 +440,7 @@ class KonfluxImageBuilder:
                 ]
 
             sbom_contents = await _get_sbom_with_retry(cmd)
-            rpms = set()
+            source_rpms = set()
             for x in sbom_contents["components"]:
                 # konflux generates sbom in cyclonedx schema: https://cyclonedx.org
                 # sbom uses purl or package-url convention https://github.com/package-url/purl-spec
@@ -452,18 +452,16 @@ class KonfluxImageBuilder:
                         purl = PackageURL.from_string(x["purl"])
                         # right now, we only care about rpms
                         if purl.type == "rpm":
-                            # construct rpm name from the purl
-                            if not (purl.name and purl.version):
-                                logger.warning("Missing name or version in rpm purl: %s", purl)
-                                continue
-                            rpm = f"{purl.name}-{purl.version}"
-                            rpms.add(rpm)
+                            # get the source rpm
+                            source_rpm = purl.qualifiers.get("upstream", None)
+                            if source_rpm:
+                                source_rpms.add(source_rpm.rstrip(".src.rpm"))
                     except Exception as e:
                         logger.warning(f"Failed to parse purl: {x['purl']} {e}")
                         continue
-            if not rpms:
+            if not source_rpms:
                 logger.warning("No rpms found in sbom for arch %s. Please investigate", arch)
-            return rpms
+            return source_rpms
 
         results = await asyncio.gather(*(_get_for_arch(arch) for arch in arches))
         for arch, result in zip(arches, results):
