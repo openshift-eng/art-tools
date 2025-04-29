@@ -9,6 +9,8 @@ from semver import VersionInfo
 import sys
 from typing import Dict, List, Optional, Set, Tuple
 import yaml
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.assembly import AssemblyTypes
@@ -158,6 +160,7 @@ class GenAssemblyCli:
         self.force_is: Set[str] = set()
         self.primary_rhcos_tag: str = ''
         self.rhcos_version = ''
+        self.rhcos_node_id = ''
         self.final_previous_list: List[VersionInfo] = []
 
         # Infer assembly type
@@ -262,12 +265,14 @@ class GenAssemblyCli:
         for component_tag in release_info.references.spec.tags:
             payload_tag_name = component_tag.name  # e.g. "aws-ebs-csi-driver"
             payload_tag_pullspec = component_tag['from'].name  # quay pullspec
-            image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec)
+            image_info = await util.oc_image_info_for_arch_async(payload_tag_pullspec, go_arch_for_brew_arch(brew_cpu_arch))
             if payload_tag_name in rhcos_tag_names:
+                self.runtime.logger.info(f'Record rhcos tag name {payload_tag_name}')
                 self.rhcos_by_tag.setdefault(payload_tag_name, {})[brew_cpu_arch] = payload_tag_pullspec
                 if "coreos.build.manifest-list-tag" in image_info['config']['config']['Labels']:
                     # 4.19-9.6-202504230114-node-image => 202504230114
-                    self.rhcos_node_tag = image_info['config']['config']['Labels']['coreos.build.manifest-list-tag'].split("-")[2]
+                    self.rhcos_node_id = image_info['config']['config']['Labels']['coreos.build.manifest-list-tag'].split("-")[2]
+                    self.runtime.logger.info(f'Find rhcos node image id {self.rhcos_node_id}')
                 continue
 
             # The brew_build_inspector will take this archive image and find the actual
@@ -468,17 +473,17 @@ class GenAssemblyCli:
                     self._exit_with_error(f"Did not find RHCOS {self.primary_rhcos_tag} image for active group architecture: {arch}")
                 # get rhcos pullspecs for this arch from rhcos version value if not full arch nightly provided
                 for tag in rhcos.get_container_configs(self.runtime):
-                    if self.runtime.group_config.rhcos.layered_rhcos:
+                    if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                         if not self.rhcos_node_id:
                             self._exit_with_error(f"Did not find RHCOS {self.primary_rhcos_tag} node image id for architecture: {arch}")
-                        stdout, _ = exectools.cmd_assert(f"oc image info {tag.rhcos_index_tag.replace('node-image',f'{self.rhcos_node_id}-node-image')} --filter-by-os {go_arch_for_brew_arch(arch)} -o json")
-                        self.rhcos_by_tag[tag.name][arch] = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{json.loads(stdout)['digest']}"
+                        rhcos_info = util.oc_image_info_for_arch(tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'), go_arch_for_brew_arch(arch))
+                        self.rhcos_by_tag[tag.name][arch] = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
                     else:
-                        if rhcos_el_major > 8:
-                            rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}-{rhcos_el_major}.{rhcos_el_minor}/builds/{self.rhcos_version}/{arch}/meta.json"
-                        else:
-                            rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{major_minor}/builds/{self.rhcos_version}/{arch}/meta.json"
-                        rhcos_meta_json = requests.get(rhcos_build_url).json()
+                        url_key = f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
+                        rhcos_build_url = f"{RHCOS_RELEASES_STREAM_URL}/{url_key}/builds/{self.rhcos_version}/{arch}/meta.json"
+                        session = requests.Session()
+                        session.mount('https://', HTTPAdapter(max_retries=Retry(total=3)))
+                        rhcos_meta_json = session.get(rhcos_build_url).json()
                         if tag.build_metadata_key not in rhcos_meta_json:
                             self._exit_with_error(f'Did not find RHCOS "{tag.name}" image for active group architecture: {arch}')
                         rhcos_image = rhcos_meta_json[tag.build_metadata_key]
