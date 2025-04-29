@@ -13,7 +13,7 @@ from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
-from doozerlib import brew, util
+from doozerlib import brew
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
 from doozerlib.constants import ART_PROD_IMAGE_REPO
@@ -152,7 +152,7 @@ class RHCOSBuildFinder:
              ...
          }
         """
-        if self.runtime.group_config.rhcos.get("layered_rhcos", False) and pullspec:
+        if int(self.version.split('.')[0]) == 4 and int(self.version.split('.')[1]) >= 19 and pullspec:
             if meta_type == "commitmeta":
                 with tempfile.TemporaryDirectory() as temp_dir:
                     stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm")
@@ -184,10 +184,15 @@ class RHCOSBuildFinder:
         :param container_conf: a payload tag conf Model from group.yml (with build_metadata_key)
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
-        if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-            rhcosdata = util.oc_image_info_for_arch(container_conf.rhcos_index_tag, self.go_arch)
+        if int(self.version.split('.')[0]) == 4 and int(self.version.split('.')[1]) >= 19:
+            stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image --filter-by-os {self.go_arch} -o json")
+            rhcosdata = json.loads(stdout)
             build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]
-            pullspec = f"{ART_PROD_IMAGE_REPO}@{rhcosdata['digest']}"
+            if not container_conf or container_conf == self.get_primary_container_conf():  # rhcos-coreos
+                pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcosdata['digest']}"
+            else:  # extentions
+                stdout, _ = exectools.cmd_assert(f"oc image info {ART_PROD_IMAGE_REPO}:{self.version}-{self.runtime.group_config.vars['RHCOS_EL_MAJOR']}.{self.runtime.group_config.vars['RHCOS_EL_MINOR']}-node-image-extensions --filter-by-os {self.go_arch} -o json")
+                pullspec = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{json.loads(stdout)['digest']}"
             return build_id, pullspec
         else:
             build_id = self.latest_rhcos_build_id()
@@ -212,7 +217,7 @@ class RHCOSBuildInspector:
         # trust the exact pullspec in releases.yml instead of what we find in the RHCOS release
         # browser.
         major, minor = self.runtime.get_major_minor_fields()
-        if not self.runtime.group_config.rhcos.get("layered_rhcos", False):  # in 4.19, the extension don't have rhcos-id
+        if major == 4 and minor < 19:  # in 4.19, the extension don't have rhcos-id
             for tag, pullspec in pullspec_for_tag.items():
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
