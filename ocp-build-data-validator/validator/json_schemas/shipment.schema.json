@@ -1,7 +1,8 @@
 {
-  "$comment": "Schema generated on 2025-04-14 22:27 UTC from elliottlib.shipment_model",
+  "$comment": "Schema generated on 2025-04-28 23:11 UTC from elliottlib.shipment_model",
   "$defs": {
     "CveAssociation": {
+      "additionalProperties": false,
       "properties": {
         "key": {
           "title": "Key",
@@ -20,6 +21,7 @@
       "type": "object"
     },
     "Data": {
+      "additionalProperties": false,
       "description": " Represents spec.data field when constructing a Konflux release ",
       "properties": {
         "releaseNotes": {
@@ -33,6 +35,7 @@
       "type": "object"
     },
     "Environments": {
+      "additionalProperties": false,
       "description": " Environments to release the shipment to ",
       "properties": {
         "stage": {
@@ -60,6 +63,7 @@
       "type": "object"
     },
     "Issue": {
+      "additionalProperties": false,
       "properties": {
         "id": {
           "anyOf": [
@@ -85,6 +89,7 @@
       "type": "object"
     },
     "Issues": {
+      "additionalProperties": false,
       "properties": {
         "fixed": {
           "anyOf": [
@@ -106,6 +111,7 @@
       "type": "object"
     },
     "Metadata": {
+      "additionalProperties": false,
       "description": " Defines shipment metadata for a product release ",
       "properties": {
         "product": {
@@ -147,6 +153,7 @@
       "type": "object"
     },
     "ReleaseNotes": {
+      "additionalProperties": false,
       "description": " Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release ",
       "properties": {
         "type": {
@@ -227,6 +234,7 @@
       "type": "object"
     },
     "Shipment": {
+      "additionalProperties": false,
       "description": " Config to ship a Konflux release for a product ",
       "properties": {
         "metadata": {
@@ -259,11 +267,17 @@
       "type": "object"
     },
     "ShipmentEnv": {
+      "additionalProperties": false,
       "description": " Environment specific configuration for a release ",
       "properties": {
         "releasePlan": {
           "title": "Releaseplan",
           "type": "string"
+        },
+        "liveID": {
+          "default": null,
+          "title": "Liveid",
+          "type": "integer"
         },
         "releaseName": {
           "anyOf": [
@@ -309,6 +323,7 @@
       "type": "object"
     },
     "Snapshot": {
+      "additionalProperties": false,
       "description": " Konflux Snapshot definition for release i.e. builds to release ",
       "properties": {
         "name": {
@@ -327,10 +342,13 @@
       "type": "object"
     },
     "Spec": {
+      "additionalProperties": false,
       "description": " Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot ",
       "properties": {
         "nvrs": {
-          "items": {},
+          "items": {
+            "type": "string"
+          },
           "title": "Nvrs",
           "type": "array"
         }
@@ -342,6 +360,7 @@
       "type": "object"
     }
   },
+  "additionalProperties": false,
   "description": " Represents a Shipment Metadata Config file in a product's shipment-data repo ",
   "properties": {
     "shipment": {
