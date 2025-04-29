@@ -7,7 +7,12 @@ from ruamel.yaml import scalarstring
 from pydantic import BaseModel, Field, field_serializer, ConfigDict, model_validator
 
 
-class Metadata(BaseModel):
+class StrictBaseModel(BaseModel):
+    # do not allow extra fields
+    model_config = ConfigDict(extra='forbid')
+
+
+class Metadata(StrictBaseModel):
     """ Defines shipment metadata for a product release """
 
     product: str  # product associated with shipment - see group.yml `product` field
@@ -17,34 +22,34 @@ class Metadata(BaseModel):
     fbc: Optional[bool] = False  # indicates if shipment is for an FBC release
 
 
-class Spec(BaseModel):
+class Spec(StrictBaseModel):
     """ Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot """
 
-    nvrs: List
+    nvrs: List[str]
 
 
-class Snapshot(BaseModel):
+class Snapshot(StrictBaseModel):
     """ Konflux Snapshot definition for release i.e. builds to release """
 
     name: str  # Name of the snapshot to release - required until we create automatically by spec
     spec: Spec
 
 
-class CveAssociation(BaseModel):
+class CveAssociation(StrictBaseModel):
     key: str
     component: str
 
 
-class Issue(BaseModel):
+class Issue(StrictBaseModel):
     id: Union[str, int]
     source: str
 
 
-class Issues(BaseModel):
+class Issues(StrictBaseModel):
     fixed: Optional[List[Issue]] = None
 
 
-class ReleaseNotes(BaseModel):
+class ReleaseNotes(StrictBaseModel):
     """ Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release """
 
     # setting attributes after object init can result in weird behavior
@@ -73,16 +78,17 @@ class ReleaseNotes(BaseModel):
         return field
 
 
-class Data(BaseModel):
+class Data(StrictBaseModel):
     """ Represents spec.data field when constructing a Konflux release """
 
     releaseNotes: ReleaseNotes
 
 
-class ShipmentEnv(BaseModel):
+class ShipmentEnv(StrictBaseModel):
     """ Environment specific configuration for a release """
 
     releasePlan: str
+    liveID: int = None
     releaseName: Optional[str] = None
     advisoryName: Optional[str] = None
     advisoryInternalUrl: Optional[str] = None
@@ -92,7 +98,7 @@ class ShipmentEnv(BaseModel):
             return True
 
 
-class Environments(BaseModel):
+class Environments(StrictBaseModel):
     """ Environments to release the shipment to """
 
     stage: ShipmentEnv = Field(
@@ -103,7 +109,7 @@ class Environments(BaseModel):
     )
 
 
-class Shipment(BaseModel):
+class Shipment(StrictBaseModel):
     """ Config to ship a Konflux release for a product """
 
     metadata: Metadata
@@ -127,7 +133,7 @@ def add_schema_comment(schema: dict):
     schema['$comment'] = comment
 
 
-class ShipmentConfig(BaseModel):
+class ShipmentConfig(StrictBaseModel):
     """ Represents a Shipment Metadata Config file in a product's shipment-data repo """
 
     model_config = ConfigDict(json_schema_extra=add_schema_comment)
