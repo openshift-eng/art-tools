@@ -20,22 +20,11 @@ class Runtime:
         self.working_dir = working_dir
         self.doozer_working = os.path.abspath(f'{self.working_dir / "doozer_working"}')
         self.dry_run = dry_run
-        self.logger = self.init_logger()
+        self.logger = logging.getLogger('pyartcd')
 
         # checks working_dir
         if not self.working_dir.is_dir():
             raise IOError(f"Working directory {self.working_dir.absolute()} doesn't exist.")
-
-    @staticmethod
-    def init_logger():
-        logging.getLogger().removeHandler(logging.getLogger().handlers[0])
-        logger = logging.getLogger('pyartcd')
-        formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
-        handler = logging.StreamHandler()
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        logger.propagate = False
-        return logger
 
     @classmethod
     def from_config_file(cls, config_filename: Path, working_dir: Path, dry_run: bool):
