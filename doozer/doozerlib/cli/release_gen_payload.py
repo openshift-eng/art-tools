@@ -918,7 +918,7 @@ class GenPayloadCli:
                     payload_entry.build_record_inspector.get_build_pullspec()
 
         @exectools.limit_concurrency(500)
-        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+        @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
         async def _mirror(file_path: Path, dest_src_pullspecs: List[Tuple[str, str]]):
             # Save the default SRC=DEST input to a file for syncing by 'oc image mirror'
             async with aiofiles.open(file_path, mode="w+", encoding="utf-8") as out_file:
