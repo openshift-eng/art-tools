@@ -468,7 +468,7 @@ class Ocp4Pipeline:
             # will find consistent RPMs.
             if self.version.major == 4 and self.version.minor <= 19:
                 jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name="build")
-            if self.version.minor == 19:
+            else:
                 jenkins.start_rhcos(build_version=self.version.stream, new_build=False, job_name="build-node-image")
 
     async def _rebase_images(self):
