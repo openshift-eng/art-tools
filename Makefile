@@ -7,6 +7,7 @@ venv:
 	cd elliott && uv pip install '.[tests]'
 
 format:
+	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma
 	uv run -m black --target-version py311 --skip-string-normalization . --line-length 150
 	uv run -m isort --profile black --line-length 150 .
 
