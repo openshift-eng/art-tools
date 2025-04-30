@@ -74,6 +74,8 @@ class GroupRuntime(ABC):
         Your module should generally use `logging.getLogger(__name__)` instead of using this one.
         """
 
-        warnings.warn("Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`",
-                      DeprecationWarning)
+        warnings.warn(
+            "Use `logging.getLogger(__name__)` for your module instead of reusing `runtime.logger`",
+            DeprecationWarning,
+        )
         return self._logger

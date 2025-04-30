@@ -28,7 +28,7 @@ class RPMBuilder:
     """
 
     def __init__(
-        self, runtime: Runtime, *, push: bool = True, scratch: bool = False, dry_run: bool = False
+        self, runtime: Runtime, *, push: bool = True, scratch: bool = False, dry_run: bool = False,
     ) -> None:
         """ Create a RPMBuilder instance.
         :param runtime: Doozer runtime
@@ -59,17 +59,17 @@ class RPMBuilder:
         # cleanup distgit dir
         logger.info("Cleaning up distgit repo...")
         await exectools.cmd_assert_async(
-            ["git", "reset", "--hard", "origin/" + dg.branch], cwd=dg.distgit_dir
+            ["git", "reset", "--hard", "origin/" + dg.branch], cwd=dg.distgit_dir,
         )
         await exectools.cmd_assert_async(
-            ["git", "rm", "--ignore-unmatch", "-rf", "."], cwd=dg.distgit_dir
+            ["git", "rm", "--ignore-unmatch", "-rf", "."], cwd=dg.distgit_dir,
         )
 
         # set .p? flag
         if self._runtime.group_config.public_upstreams:
             if not release.endswith(".p?"):
                 raise ValueError(
-                    f"'release' must end with '.p?' for an rpm with a public upstream but its actual value is {release}"
+                    f"'release' must end with '.p?' for an rpm with a public upstream but its actual value is {release}",
                 )
             if rpm.private_fix is None:
                 raise AssertionError("rpm.private_fix flag should already be set")
@@ -94,7 +94,7 @@ class RPMBuilder:
         if rpm.config.content.source.modifications is not Missing:
             logger.info("Running custom modifications...")
             await exectools.to_thread(
-                rpm._run_modifications, rpm.specfile, rpm.source_path
+                rpm._run_modifications, rpm.specfile, rpm.source_path,
             )
 
         # generate new specfile
@@ -127,13 +127,13 @@ class RPMBuilder:
             cwd=rpm.source_path,
         )
         logger.info(
-            "Done creating tarball source. Uploading to distgit lookaside cache..."
+            "Done creating tarball source. Uploading to distgit lookaside cache...",
         )
 
         if self._push:
             if not self._dry_run:
                 await exectools.cmd_assert_async(
-                    ["rhpkg", "new-sources", tarball_name], cwd=dg.dg_path
+                    ["rhpkg", "new-sources", tarball_name], cwd=dg.dg_path,
                 )
             else:
                 async with aiofiles.open(dg.dg_path / "sources", "w") as f:
@@ -144,7 +144,7 @@ class RPMBuilder:
         # copy Source1, Source2,... and Patch0, Patch1,...
         logger.info("Determining additional sources and patches...")
         _, out, _ = await exectools.cmd_gather_async(
-            ["spectool", "--", str(dg_specfile_path)], cwd=dg.dg_path
+            ["spectool", "--", str(dg_specfile_path)], cwd=dg.dg_path,
         )
         for line in out.splitlines():
             line_split = line.split(": ")
@@ -156,15 +156,15 @@ class RPMBuilder:
             if not is_in_directory(src, rpm.source_path):
                 raise ValueError(
                     "STOP! Source file {} referenced in Specfile {} lives outside of the source directory {}".format(
-                        filename, dg_specfile_path, rpm.source_path
-                    )
+                        filename, dg_specfile_path, rpm.source_path,
+                    ),
                 )
             dest = dg.dg_path / filename
             if not is_in_directory(dest, dg.dg_path):
                 raise ValueError(
                     "STOP! Source file {} referenced in Specfile {} would be copied to a directory outside of distgit directory {}".format(
-                        filename, dg_specfile_path, dg.dg_path
-                    )
+                        filename, dg_specfile_path, dg.dg_path,
+                    ),
                 )
             dest.parent.mkdir(parents=True, exist_ok=True)
             logger.debug("Copying %s", filename)
@@ -174,15 +174,16 @@ class RPMBuilder:
         # commit changes
         logger.info("Committing distgit changes...")
         await aiofiles.os.remove(tarball_path)
-        commit_hash = await exectools.to_thread(dg.commit,
-                                                f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
-                                                commit_attributes={
-                                                    'version': rpm.version,
-                                                    'release': rpm.release,
-                                                    'io.openshift.build.commit.id': rpm.pre_init_sha,
-                                                    'io.openshift.build.source-location': rpm.public_upstream_url,
-                                                }
-                                                )
+        commit_hash = await exectools.to_thread(
+            dg.commit,
+            f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
+            commit_attributes={
+                'version': rpm.version,
+                'release': rpm.release,
+                'io.openshift.build.commit.id': rpm.pre_init_sha,
+                'io.openshift.build.source-location': rpm.public_upstream_url,
+            },
+        )
 
         if self._push:
             # push
@@ -215,7 +216,7 @@ class RPMBuilder:
             if await self._golang_required(rpm.specfile):
                 # assert buildroots contain the correct versions of golang
                 logger.info(
-                    "This is a golang package. Checking whether buildroots contain consistent versions of golang compilers..."
+                    "This is a golang package. Checking whether buildroots contain consistent versions of golang compilers...",
                 )
                 await exectools.to_thread(rpm.assert_golang_versions)
 
@@ -228,7 +229,7 @@ class RPMBuilder:
             nvrs = []
             logger.info("Creating Brew tasks...")
             for task_id, task_url in await asyncio.gather(
-                *[self._build_target_async(rpm, target) for target in rpm.targets]
+                *[self._build_target_async(rpm, target) for target in rpm.targets],
             ):
                 task_ids.append(task_id)
                 task_urls.append(task_url)
@@ -247,7 +248,7 @@ class RPMBuilder:
                     if logs_rc != exectools.SUCCESS:
                         logger.warning(
                             "Error downloading build logs from brew for task %s: %s"
-                            % (task_id, logs_err)
+                            % (task_id, logs_err),
                         )
                 else:
                     logger.warning("DRY RUN - Would have downloaded Brew logs with %s", cmd)
@@ -295,13 +296,13 @@ class RPMBuilder:
     async def _golang_required(self, specfile: PathLike):
         """Returns True if this RPM requires a golang compiler"""
         _, out, _ = await exectools.cmd_gather_async(
-            ["rpmspec", "-q", "--buildrequires", "--", str(specfile)]
+            ["rpmspec", "-q", "--buildrequires", "--", str(specfile)],
         )
         return any(dep.strip().startswith("golang") for dep in out.splitlines())
 
     @staticmethod
     async def _populate_specfile_async(
-        rpm: RPMMetadata, source_filename: str, source_commit_url: str, go_compliance_shim=False
+        rpm: RPMMetadata, source_filename: str, source_commit_url: str, go_compliance_shim=False,
     ) -> List[str]:
         """Populates spec file
         :param source_filename: Path to the template spec file
@@ -354,7 +355,7 @@ class RPMBuilder:
                 lines[i] += "\n"
             elif "%global commit" in line:
                 lines[i] = re.sub(
-                    r"commit\s+\w+", "commit {}".format(commit_sha), lines[i]
+                    r"commit\s+\w+", "commit {}".format(commit_sha), lines[i],
                 )
             elif line.startswith("%setup"):
                 lines[i] = f"%setup -q -n {rpm.config.name}-{rpm.version}\n"
@@ -430,7 +431,7 @@ fi
                 (line.split(":")[1]).strip()
                 for line in out_lines
                 if line.startswith("Created task:")
-            )
+            ),
         )
         # Look for a line like: "Task info: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=13948942"
         task_url = next(
@@ -442,7 +443,7 @@ fi
         return task_id, task_url
 
     async def _watch_tasks_async(
-        self, task_ids: List[int], logger: logging.Logger
+        self, task_ids: List[int], logger: logging.Logger,
     ) -> Dict[int, Optional[str]]:
         """ Asynchronously watches Brew Tasks for completion
         :param task_ids: List of Brew task IDs

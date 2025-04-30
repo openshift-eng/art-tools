@@ -26,7 +26,7 @@ class TestSanity(DoozerRunnerTestCase):
         group_name, _ = self.run_doozer(
             '--group', f'openshift-4.7@{target_ocp_build_data_commitish}',
             'config:read-group',
-            'name'
+            'name',
         )
         self.assertEqual(group_name, 'openshift-4.7')
 

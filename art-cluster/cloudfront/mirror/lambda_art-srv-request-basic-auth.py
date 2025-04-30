@@ -35,9 +35,9 @@ def unauthorized():
         'headers': {
             'www-authenticate': [{
                 'key': 'WWW-Authenticate',
-                'value': 'Basic'
+                'value': 'Basic',
             }],
-        }
+        },
     }
 
 
@@ -48,9 +48,9 @@ def redirect(uri: str, code: int = 302, description="Found"):
         'headers': {
             "location": [{
                 'key': 'Location',
-                "value": str(uri)
+                "value": str(uri),
             }],
-        }
+        },
     }
 
 
@@ -79,8 +79,11 @@ def find_region(ip) -> Optional[str]:
         # Each AWS_EC2_REGION_IP_RANGES value is sorted by the first ip address in each range.
         # Use bisect to quickly identify the range in which the incoming IP would fall
         # if it were an EC2 instance.
-        position = bisect(KeyifyList(
-            ip_ranges, lambda range: range[0]), ip_as_int)
+        position = bisect(
+            KeyifyList(
+            ip_ranges, lambda range: range[0],
+            ), ip_as_int,
+        )
         # ip_ranges[position][0] > ip_as_int, ip_ranges[position - 1][0] <= ip_as_int
         if position > 0 and ip_as_int <= ip_ranges[position - 1][1]:
             found_region = region
@@ -93,11 +96,11 @@ def get_secrets_manager_secret_dict(secret_name):
     # We need to read in the secret from AWS SecretManager
     secrets_client = boto3.client(
         service_name='secretsmanager',
-        region_name='us-east-1'
+        region_name='us-east-1',
     )
     try:
         get_secret_value_response = secrets_client.get_secret_value(
-            SecretId=secret_name
+            SecretId=secret_name,
         )
     except:
         raise
@@ -143,7 +146,8 @@ def lambda_handler(event: Dict, context: Dict):
                 return redirect("/pub/")
             return unauthorized()
         auth_split = authorization[0]["value"].split(
-            maxsplit=1)  # Basic <base64> => ['Basic', '<base64>']
+            maxsplit=1,
+        )  # Basic <base64> => ['Basic', '<base64>']
         if len(auth_split) != 2:
             return unauthorized()
         auth_schema, b64_auth_val = auth_split
@@ -163,7 +167,8 @@ def lambda_handler(event: Dict, context: Dict):
         if uri.startswith('/enterprise/') or uri.startswith('/libra/'):
             if not ENTERPRISE_SERVICE_ACCOUNTS:
                 ENTERPRISE_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS')
+                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS',
+                )
 
             if username in ENTERPRISE_SERVICE_ACCOUNTS:
                 # like `==`, but in a timing-safe way
@@ -179,7 +184,8 @@ def lambda_handler(event: Dict, context: Dict):
             if username.index('+') > 0:
                 if not POCKET_SERVICE_ACCOUNTS:
                     POCKET_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS')
+                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS',
+                    )
                 pocket_name = username.split('+')[0]
                 if uri.startswith(f'/pockets/{pocket_name}/'):
                     if username in POCKET_SERVICE_ACCOUNTS:

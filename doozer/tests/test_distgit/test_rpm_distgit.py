@@ -28,8 +28,11 @@ class TestRPMDistGit(TestDistgit):
         mocked_open.assert_called_once_with(Path("/path/to/distgit/foo.spec"), "r")
         mocked_glob.assert_called_once_with(self.rpm_dg.distgit_dir + "/*.spec")
         mocked_cmd_assert_async.assert_called_once_with(
-            ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}",
-                "--srpm", "--undefine", "dist", "--", "/path/to/distgit/foo.spec"])
+            [
+                "rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}",
+                "--srpm", "--undefine", "dist", "--", "/path/to/distgit/foo.spec",
+            ],
+        )
 
 
 if __name__ == "__main__":

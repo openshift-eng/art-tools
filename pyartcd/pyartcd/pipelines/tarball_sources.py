@@ -104,12 +104,18 @@ Attaching source tarballs to be published on ftp.redhat.com as in https://projec
 
 
 @cli.command("tarball-sources")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly. e.g. 4.9.1")
-@click.option("--advisory", "-a", "advisories", metavar="ADVISORY", type=int, multiple=True,
-              help="Advisory number. If unspecified, use the advisory number from ocp-build-data.")
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly. e.g. 4.9.1",
+)
+@click.option(
+    "--advisory", "-a", "advisories", metavar="ADVISORY", type=int, multiple=True,
+    help="Advisory number. If unspecified, use the advisory number from ocp-build-data.",
+)
 @pass_runtime
 @click_coroutine
 async def tarball_sources(runtime: Runtime, group: str, assembly: str, advisories: Tuple[int, ...]):

@@ -20,11 +20,13 @@ COVSCAN_WAIVED_FILENAME = 'waived.flag'
 
 class CoverityContext(object):
 
-    def __init__(self, image, dg_commit_hash: str, result_archive: str, repo_type: str = 'unsigned',
-                 local_repo_rhel_7: List[str] = [], local_repo_rhel_8: List[str] = [],
-                 local_repo_rhel_9: List[str] = [], force_analysis: bool = False,
-                 ignore_waived: bool = False, https_proxy: str = '', podman_sudo: bool = False,
-                 podman_tmpdir: Optional[str] = None):
+    def __init__(
+        self, image, dg_commit_hash: str, result_archive: str, repo_type: str = 'unsigned',
+        local_repo_rhel_7: List[str] = [], local_repo_rhel_8: List[str] = [],
+        local_repo_rhel_9: List[str] = [], force_analysis: bool = False,
+        ignore_waived: bool = False, https_proxy: str = '', podman_sudo: bool = False,
+        podman_tmpdir: Optional[str] = None,
+    ):
         self.image = image  # ImageMetadata
         self.dg_commit_hash = dg_commit_hash
         self.result_archive_path = pathlib.Path(result_archive)
@@ -51,7 +53,7 @@ class CoverityContext(object):
             podman_tmpdir_path = pathlib.Path(podman_tmpdir)
             podman_tmpdir_path.mkdir(exist_ok=True)
             self.podman_env = {
-                'TMPDIR': str(podman_tmpdir_path.absolute())
+                'TMPDIR': str(podman_tmpdir_path.absolute()),
             }
 
         # Runtime coverity scanning output directory; each stage will have an entry beneath this.
@@ -568,7 +570,8 @@ RUN cov-manage-emit --dir={container_stage_cov_dir} reset-host-name; timeout 3h 
         run_tag = f'{cc.image.image_name_short}_{cc.runtime.group_config.name}'
         rc, stdout, stderr = exectools.cmd_gather(
             f'{cc.podman_cmd} build {cc.build_args()} -v {str(cc.cov_root_path)}:/cov:z -v {str(dg_path)}:/covscan-src:z -t {run_tag} -f {str(covscan_df)} {str(dg_path)}',
-            set_env=cc.podman_env)
+            set_env=cc.podman_env,
+        )
         cc.logger.info(f'''Output from covscan build for {cc.image.distgit_key}
 stdout: {stdout}
 stderr: {stderr}
@@ -577,7 +580,8 @@ stderr: {stderr}
 
         _, cleanup_out, cleanup_err = exectools.cmd_gather(
             f'{cc.podman_cmd} rmi -f {run_tag}',
-            set_env=cc.podman_env)
+            set_env=cc.podman_env,
+        )
         cc.logger.info(f'''Output from image clean up {cc.image.distgit_key}
 stdout: {cleanup_out}
 stderr: {cleanup_err}
@@ -611,22 +615,24 @@ def records_results(cc: CoverityContext, stage_number, waived_cov_path_root=None
         diff_count = len(diff_json.get('issues', []))
         all_count = len(all_json.get('issues', []))
         host_stage_waived_flag_path = cc.get_stage_results_waive_path(stage_number)
-        cc.image.runtime.record_logger.add_record('covscan',
-                                                  distgit=cc.image.qualified_name,
-                                                  distgit_key=cc.image.distgit_key,
-                                                  commit_results_path=str(dest_result_path),
-                                                  all_results_js_path=str(dest_all_js_path),
-                                                  all_results_html_path=str(dest_all_results_html_path),
-                                                  diff_results_js_path=str(dest_diff_js_path),
-                                                  diff_results_html_path=str(dest_diff_results_html_path),
-                                                  diff_count=str(diff_count),
-                                                  all_count=str(all_count),
-                                                  stage_number=str(stage_number),
-                                                  waive_path=str(host_stage_waived_flag_path),
-                                                  waived=str(host_stage_waived_flag_path.exists()).lower(),
-                                                  owners=owners,
-                                                  image=cc.image.config.name,
-                                                  commit_hash=cc.dg_commit_hash)
+        cc.image.runtime.record_logger.add_record(
+            'covscan',
+            distgit=cc.image.qualified_name,
+            distgit_key=cc.image.distgit_key,
+            commit_results_path=str(dest_result_path),
+            all_results_js_path=str(dest_all_js_path),
+            all_results_html_path=str(dest_all_results_html_path),
+            diff_results_js_path=str(dest_diff_js_path),
+            diff_results_html_path=str(dest_diff_results_html_path),
+            diff_count=str(diff_count),
+            all_count=str(all_count),
+            stage_number=str(stage_number),
+            waive_path=str(host_stage_waived_flag_path),
+            waived=str(host_stage_waived_flag_path.exists()).lower(),
+            owners=owners,
+            image=cc.image.config.name,
+            commit_hash=cc.dg_commit_hash,
+        )
 
     if write_only:
         if dest_all_js_path.exists():

@@ -20,22 +20,30 @@ class TestImageMetadata(unittest.TestCase):
         rt = flexmock(logger=flexmock(debug=lambda *_: None), assembly=None, build_system=None)
         rt.should_receive("get_releases_config")
 
-        data_obj = flexmock(name="test",
-                            distgit=flexmock(namespace="hello"),
-                            key="_irrelevant_",
-                            data=flexmock(items=lambda: [("name", "_irrelevant")]),
-                            base_dir="_irrelevant_",
-                            filename="_irrelevant_",
-                            path="_irrelevant_")
+        data_obj = flexmock(
+            name="test",
+            distgit=flexmock(namespace="hello"),
+            key="_irrelevant_",
+            data=flexmock(items=lambda: [("name", "_irrelevant")]),
+            base_dir="_irrelevant_",
+            filename="_irrelevant_",
+            path="_irrelevant_",
+        )
 
-        base_data_obj = flexmock(name="test",
-                                 distgit=flexmock(namespace="hello"),
-                                 key="_irrelevant_",
-                                 data=flexmock(items=lambda: [("name", "_irrelevant"),
-                                                              ("base_only", True)]),
-                                 base_dir="_irrelevant_",
-                                 filename="_irrelevant_",
-                                 path="_irrelevant_")
+        base_data_obj = flexmock(
+            name="test",
+            distgit=flexmock(namespace="hello"),
+            key="_irrelevant_",
+            data=flexmock(
+                items=lambda: [
+                    ("name", "_irrelevant"),
+                    ("base_only", True),
+                ],
+            ),
+            base_dir="_irrelevant_",
+            filename="_irrelevant_",
+            path="_irrelevant_",
+        )
 
         md = imagecfg.ImageMetadata(rt, data_obj)
         md_base = imagecfg.ImageMetadata(rt, base_data_obj)

@@ -22,8 +22,10 @@ from doozerlib.source_resolver import SourceResolver
 
 
 class ConfigScanSources:
-    def __init__(self, runtime: Runtime, ci_kubeconfig: str, as_yaml: bool,
-                 rebase_priv: bool = False, dry_run: bool = False):
+    def __init__(
+        self, runtime: Runtime, ci_kubeconfig: str, as_yaml: bool,
+        rebase_priv: bool = False, dry_run: bool = False,
+    ):
         self.runtime = runtime
         self.ci_kubeconfig = ci_kubeconfig
         self.as_yaml = as_yaml
@@ -45,8 +47,10 @@ class ConfigScanSources:
 
     async def run(self):
         with self.runtime.shared_koji_client_session() as koji_api:
-            self.runtime.logger.info(f'scan-sources coordinate: brew_event: '
-                                     f'{koji_api.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))}')
+            self.runtime.logger.info(
+                f'scan-sources coordinate: brew_event: '
+                f'{koji_api.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))}',
+            )
             self.runtime.logger.info(f'scan-sources coordinate: emulated_brew_event: {self.runtime.brew_event}')
 
             # First, try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -82,10 +86,14 @@ class ConfigScanSources:
 
         else:
             # fast-forward failed, trying a merge commit
-            rc, _, _ = exectools.cmd_gather(cmd=['git', 'merge', f'public_upstream/{pub_branch_name}',
-                                                 '-m', f'Reconciled {repo_name} with public upstream'],
-                                            log_stderr=True,
-                                            log_stdout=True)
+            rc, _, _ = exectools.cmd_gather(
+                cmd=[
+                    'git', 'merge', f'public_upstream/{pub_branch_name}',
+                    '-m', f'Reconciled {repo_name} with public upstream',
+                ],
+                log_stderr=True,
+                log_stdout=True,
+            )
             if not rc:
                 # merge succeeded, will push to openshift-priv
                 reconciled = True
@@ -93,10 +101,14 @@ class ConfigScanSources:
 
         if not reconciled:
             # Could not rebase from public upstream: need manual reconciliation. Log a warning and return
-            self.runtime.logger.warning('failed rebasing %s from public upstream: will need manual reconciliation',
-                                        metadata.name)
-            self.issues.append({'name': metadata.distgit_key,
-                                'issue': 'Could not rebase into -priv as it needs manual reconciliation'})
+            self.runtime.logger.warning(
+                'failed rebasing %s from public upstream: will need manual reconciliation',
+                metadata.name,
+            )
+            self.issues.append({
+                'name': metadata.distgit_key,
+                'issue': 'Could not rebase into -priv as it needs manual reconciliation',
+            })
             return
 
         if self.dry_run:
@@ -107,17 +119,22 @@ class ConfigScanSources:
         try:
             exectools.cmd_assert(
                 cmd=['git', 'push', 'origin', priv_branch_name],
-                retries=3)
+                retries=3,
+            )
             self.runtime.logger.info('Successfully reconciled %s with public upstream', metadata.name)
 
         except ChildProcessError:
             # Failed pushing to openshift-priv
             self.runtime.logger.warning('failed pushing to openshift-priv for %s', metadata.name)
-            self.issues.append({'name': metadata.distgit_key,
-                                'issue': 'Failed pushing to openshift-priv'})
+            self.issues.append({
+                'name': metadata.distgit_key,
+                'issue': 'Failed pushing to openshift-priv',
+            })
 
-    def _do_shas_match(self, public_url, pub_branch_name,
-                       priv_url, priv_branch_name) -> bool:
+    def _do_shas_match(
+        self, public_url, pub_branch_name,
+        priv_url, priv_branch_name,
+    ) -> bool:
         """
         Use GitHub API to check commit SHAs on private and public upstream for a given branch.
         Return True if they match, False otherwise
@@ -125,13 +142,17 @@ class ConfigScanSources:
 
         try:
             # Check public commit ID
-            out, _ = exectools.cmd_assert(['git', 'ls-remote', public_url, pub_branch_name],
-                                          retries=5, on_retry='sleep 5')
+            out, _ = exectools.cmd_assert(
+                ['git', 'ls-remote', public_url, pub_branch_name],
+                retries=5, on_retry='sleep 5',
+            )
             pub_commit = out.strip().split()[0]
 
             # Check private commit ID
-            out, _ = exectools.cmd_assert(['git', 'ls-remote', priv_url, priv_branch_name],
-                                          retries=5, on_retry='sleep 5')
+            out, _ = exectools.cmd_assert(
+                ['git', 'ls-remote', priv_url, priv_branch_name],
+                retries=5, on_retry='sleep 5',
+            )
             priv_commit = out.strip().split()[0]
 
         except ChildProcessError:
@@ -142,8 +163,10 @@ class ConfigScanSources:
             self.runtime.logger.info('Latest commits match on public and priv upstreams for %s', public_url)
             return True
 
-        self.runtime.logger.info('Latest commits do not match on public and priv upstreams for %s: '
-                                 'public SHA = %s, private SHA = %s', public_url, pub_commit, priv_commit)
+        self.runtime.logger.info(
+            'Latest commits do not match on public and priv upstreams for %s: '
+            'public SHA = %s, private SHA = %s', public_url, pub_commit, priv_commit,
+        )
         return False
 
     def _is_pub_ancestor_of_priv(self, path: str, pub_branch_name: str, priv_branch_name: str, repo_name: str) -> bool:
@@ -158,8 +181,10 @@ class ConfigScanSources:
             # Check if the first <commit> is an ancestor of the second <commit>,
             # and exit with status 0 if true, or with status 1 if not.
             # Errors are signaled by a non-zero status that is not 1.
-            rc, _, _ = exectools.cmd_gather(['git', 'merge-base', '--is-ancestor',
-                                             f'public_upstream/{pub_branch_name}', f'origin/{priv_branch_name}'])
+            rc, _, _ = exectools.cmd_gather([
+                'git', 'merge-base', '--is-ancestor',
+                f'public_upstream/{pub_branch_name}', f'origin/{priv_branch_name}',
+            ])
         if rc == 1:
             self.runtime.logger.info('Public upstream is ahead of private for %s: will need to rebase', repo_name)
             return False
@@ -183,16 +208,20 @@ class ConfigScanSources:
                 continue
 
             if metadata.config.content is Missing:
-                self.runtime.logger.warning('%s %s is a distgit-only component: skipping openshift-priv rebase',
-                                            metadata.meta_type, metadata.name)
+                self.runtime.logger.warning(
+                    '%s %s is a distgit-only component: skipping openshift-priv rebase',
+                    metadata.meta_type, metadata.name,
+                )
                 continue
 
             public_url, public_branch_name, has_public_upstream = public_upstream
 
             # If no public upstream exists, skip the rebase
             if not has_public_upstream:
-                self.runtime.logger.warning('%s %s does not have a public upstream: skipping openshift-priv rebase',
-                                            metadata.meta_type, metadata.name)
+                self.runtime.logger.warning(
+                    '%s %s does not have a public upstream: skipping openshift-priv rebase',
+                    metadata.meta_type, metadata.name,
+                )
                 continue
 
             priv_url = artcommonlib.util.convert_remote_git_to_https(metadata.config.content.source.git.url)
@@ -214,16 +243,20 @@ class ConfigScanSources:
 
             if priv_url == public_url:
                 # Upstream repo does not have a public counterpart: no need to rebase
-                self.runtime.logger.warning('%s %s does not have a public upstream: skipping openshift-priv rebase',
-                                            metadata.meta_type, metadata.name)
+                self.runtime.logger.warning(
+                    '%s %s does not have a public upstream: skipping openshift-priv rebase',
+                    metadata.meta_type, metadata.name,
+                )
                 continue
 
             # First, quick check: if SHAs match across remotes, repo is synced and we can avoid cloning it
             _, public_org, public_repo_name = artcommonlib.util.split_git_url(public_url)
             _, priv_org, priv_repo_name = artcommonlib.util.split_git_url(priv_url)
 
-            if self._do_shas_match(public_url, public_branch_name,
-                                   metadata.config.content.source.git.url, priv_branch_name):
+            if self._do_shas_match(
+                public_url, public_branch_name,
+                metadata.config.content.source.git.url, priv_branch_name,
+            ):
                 # If they match, do nothing
                 continue
 
@@ -273,14 +306,20 @@ class ConfigScanSources:
 
                     self.runtime.logger.info(f'Determining build root changes for package {package_name} in tag {tag} and its eldest rpm {eldest_rpm_build}')
                     # Detect if our buildroot changed since the oldest rpm of the package latest build of was built.
-                    build_root_change = brew.has_tag_changed_since_build(self.runtime, koji_api, eldest_rpm_build,
-                                                                         meta.build_root_tag(), inherit=True)
+                    build_root_change = brew.has_tag_changed_since_build(
+                        self.runtime, koji_api, eldest_rpm_build,
+                        meta.build_root_tag(), inherit=True,
+                    )
 
                     if build_root_change:
-                        rebuild_hint = RebuildHint(RebuildHintCode.BUILD_ROOT_CHANGING,
-                                                   'Oldest package rpm build was before buildroot change')
-                        self.runtime.logger.info(f'{dgk} ({eldest_rpm_build}) in {package_name} '
-                                                 f'is older than more recent buildroot change: {build_root_change}')
+                        rebuild_hint = RebuildHint(
+                            RebuildHintCode.BUILD_ROOT_CHANGING,
+                            'Oldest package rpm build was before buildroot change',
+                        )
+                        self.runtime.logger.info(
+                            f'{dgk} ({eldest_rpm_build}) in {package_name} '
+                            f'is older than more recent buildroot change: {build_root_change}',
+                        )
 
                 if rebuild_hint.rebuild:
                     self.add_assessment_reason(meta, rebuild_hint)
@@ -320,9 +359,11 @@ class ConfigScanSources:
 
         await asyncio.gather(*[_inner(image_meta) for image_meta in self.runtime.image_metas()])
 
-        self.runtime.logger.debug('Will be assessing tagging changes between '
-                                  'newest_image_event_ts:%s and oldest_image_event_ts:%s',
-                                  self.newest_image_event_ts, self.oldest_image_event_ts)
+        self.runtime.logger.debug(
+            'Will be assessing tagging changes between '
+            'newest_image_event_ts:%s and oldest_image_event_ts:%s',
+            self.newest_image_event_ts, self.oldest_image_event_ts,
+        )
 
     def find_oldest_newest(self, koji_api, build_info):
         create_event_ts = koji_api.getEvent(build_info['creation_event_id'])['ts']
@@ -350,8 +391,10 @@ class ConfigScanSources:
         def _check_dep(dep_key):
             dep = self.runtime.image_map.get(dep_key)
             if not dep:
-                self.runtime.logger.warning("Image %s has unknown dependency %s. Is it excluded?",
-                                            image_meta.distgit_key, dep_key)
+                self.runtime.logger.warning(
+                    "Image %s has unknown dependency %s. Is it excluded?",
+                    image_meta.distgit_key, dep_key,
+                )
                 return
 
             dep_info = dep.get_latest_brew_build(default=None)
@@ -364,14 +407,18 @@ class ConfigScanSources:
 
             dep_rebase_time = datetime.strptime(dep_rebase_time, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
             if dep_rebase_time > rebase_time:
-                self.add_image_meta_change(image_meta,
-                                           RebuildHint(RebuildHintCode.DEPENDENCY_NEWER,
-                                                       'Dependency has a newer build'))
+                self.add_image_meta_change(
+                    image_meta,
+                    RebuildHint(
+                        RebuildHintCode.DEPENDENCY_NEWER,
+                        'Dependency has a newer build',
+                    ),
+                )
 
         exectools.parallel_exec(
             f=lambda dep, _: _check_dep(dep),
             args=dependencies,
-            n_threads=20
+            n_threads=20,
         )
 
     def check_config_changes(self, image_meta: ImageMetadata, build_info):
@@ -380,13 +427,17 @@ class ConfigScanSources:
             source_url = build_info['source']
             source_commit = source_url.split('#')[1]  # isolate the commit hash
             # Look at the digest that created THIS build. What is in head does not matter.
-            prev_digest = image_meta.fetch_cgit_file('.oit/config_digest',
-                                                     commit_hash=source_commit).decode('utf-8')
+            prev_digest = image_meta.fetch_cgit_file(
+                '.oit/config_digest',
+                commit_hash=source_commit,
+            ).decode('utf-8')
 
             current_digest = image_meta.calculate_config_digest(self.runtime.group_config, self.runtime.streams)
             if current_digest.strip() != prev_digest.strip():
-                self.runtime.logger.info('%s config_digest %s is differing from %s',
-                                         image_meta.distgit_key, prev_digest, current_digest)
+                self.runtime.logger.info(
+                    '%s config_digest %s is differing from %s',
+                    image_meta.distgit_key, prev_digest, current_digest,
+                )
                 # fetch latest commit message on branch for the image metadata file
                 with Dir(self.runtime.data_dir):
                     path = f'images/{image_meta.config_filename}'
@@ -397,15 +448,25 @@ class ConfigScanSources:
                 if 'scan-sources:noop' in commit_message.lower():
                     self.runtime.logger.info('Ignoring digest change since commit message indicates noop')
                 else:
-                    self.add_image_meta_change(image_meta,
-                                               RebuildHint(RebuildHintCode.CONFIG_CHANGE,
-                                                           'Metadata configuration change'))
+                    self.add_image_meta_change(
+                        image_meta,
+                        RebuildHint(
+                            RebuildHintCode.CONFIG_CHANGE,
+                            'Metadata configuration change',
+                        ),
+                    )
         except exectools.RetryException:
-            self.runtime.logger.info('%s config_digest cannot be retrieved; request a build',
-                                     image_meta.distgit_key)
-            self.add_image_meta_change(image_meta,
-                                       RebuildHint(RebuildHintCode.CONFIG_CHANGE,
-                                                   'Unable to retrieve config_digest'))
+            self.runtime.logger.info(
+                '%s config_digest cannot be retrieved; request a build',
+                image_meta.distgit_key,
+            )
+            self.add_image_meta_change(
+                image_meta,
+                RebuildHint(
+                    RebuildHintCode.CONFIG_CHANGE,
+                    'Unable to retrieve config_digest',
+                ),
+            )
 
         except IOError:
             # IOError is raised by fetch_cgit_file() when config_digest could not be found
@@ -423,10 +484,11 @@ class ConfigScanSources:
                 changing_rpm_packages=self.changing_rpm_packages,
                 buildroot_tag=image_meta.build_root_tag(),
                 newest_image_event_ts=self.newest_image_event_ts,
-                oldest_image_event_ts=self.oldest_image_event_ts)
+                oldest_image_event_ts=self.oldest_image_event_ts,
+            )
 
         change_results = await asyncio.gather(
-            *[_thread_does_image_need_change(image_meta) for image_meta in self.runtime.image_metas()]
+            *[_thread_does_image_need_change(image_meta) for image_meta in self.runtime.image_metas()],
         )
 
         for change_result in filter(lambda r: r, change_results):
@@ -449,9 +511,13 @@ class ConfigScanSources:
                 for builder in image_meta.config['from'].builder:
                     if builder.member and builder.member in changing_image_dgks:
                         self.runtime.logger.info(f'{dgk} will be rebuilt due to change in builder member ')
-                        self.add_image_meta_change(image_meta,
-                                                   RebuildHint(RebuildHintCode.BUILDER_CHANGING,
-                                                               f'Builder group member has changed: {builder.member}'))
+                        self.add_image_meta_change(
+                            image_meta,
+                            RebuildHint(
+                                RebuildHintCode.BUILDER_CHANGING,
+                                f'Builder group member has changed: {builder.member}',
+                            ),
+                        )
 
             if len(self.changing_image_metas) == len(changing_image_dgks):
                 # The for loop didn't find anything new, we can exit
@@ -470,8 +536,12 @@ class ConfigScanSources:
         self.add_assessment_reason(meta, rebuild_hint)
         for descendant_meta in meta.get_descendants():
             self.changing_image_metas.add(descendant_meta)
-            self.add_assessment_reason(descendant_meta, RebuildHint(RebuildHintCode.ANCESTOR_CHANGING,
-                                                                    f'Ancestor {meta.distgit_key} is changing'))
+            self.add_assessment_reason(
+                descendant_meta, RebuildHint(
+                    RebuildHintCode.ANCESTOR_CHANGING,
+                    f'Ancestor {meta.distgit_key} is changing',
+                ),
+            )
 
     def generate_report(self):
         image_results = []
@@ -483,7 +553,7 @@ class ConfigScanSources:
                 image_results.append({
                     'name': dgk,
                     'changed': is_changing,
-                    'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}')
+                    'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}'),
                 })
 
         rpm_results = []
@@ -495,12 +565,12 @@ class ConfigScanSources:
                 rpm_results.append({
                     'name': dgk,
                     'changed': is_changing,
-                    'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}')
+                    'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}'),
                 })
 
         results = dict(
             rpms=rpm_results,
-            images=image_results
+            images=image_results,
         )
 
         self.runtime.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')
@@ -519,9 +589,13 @@ class ConfigScanSources:
                     continue
                 click.echo(kind.upper() + ":")
                 for item in items:
-                    click.echo('  {} is {} (reason: {})'.format(item['name'],
-                                                                'changed' if item['changed'] else 'the same',
-                                                                item['reason']))
+                    click.echo(
+                        '  {} is {} (reason: {})'.format(
+                            item['name'],
+                            'changed' if item['changed'] else 'the same',
+                            item['reason'],
+                        ),
+                    )
             # Log issues
             click.echo("ISSUES:")
             for item in self.issues:
@@ -540,8 +614,10 @@ class ConfigScanSources:
         except rhcos.RHCOSNotFound as ex:
             # don't let flakiness in rhcos lookups prevent us from scanning regular builds;
             # if anything else changed it will sync anyway.
-            self.runtime.logger.warning(f"could not determine RHCOS build for "
-                                        f"{version}-{arch}{'-priv' if private else ''}: {ex}")
+            self.runtime.logger.warning(
+                f"could not determine RHCOS build for "
+                f"{version}-{arch}{'-priv' if private else ''}: {ex}",
+            )
             return None
 
     def _detect_rhcos_status(self) -> list:
@@ -638,11 +714,15 @@ class ConfigScanSources:
 
 
 @cli.command("config:scan-sources", short_help="Determine if any rpms / images need to be rebuilt.")
-@click.option("--ci-kubeconfig", metavar='KC_PATH', required=False,
-              help="File containing kubeconfig for looking at release-controller imagestreams")
+@click.option(
+    "--ci-kubeconfig", metavar='KC_PATH', required=False,
+    help="File containing kubeconfig for looking at release-controller imagestreams",
+)
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
-@click.option("--rebase-priv", default=False, is_flag=True,
-              help='Try to reconcile public upstream into openshift-priv')
+@click.option(
+    "--rebase-priv", default=False, is_flag=True,
+    help='Try to reconcile public upstream into openshift-priv',
+)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not actually perform reconciliation, just log it')
 @click_coroutine
 @pass_runtime

@@ -86,9 +86,11 @@ class BigQueryClient:
         query += ')'
         self.query(query)
 
-    async def select(self, where_clauses: typing.List[BinaryExpression] = None,
-                     order_by_clause: typing.Optional[UnaryExpression] = None,
-                     limit=None) -> RowIterator:
+    async def select(
+        self, where_clauses: typing.List[BinaryExpression] = None,
+        order_by_clause: typing.Optional[UnaryExpression] = None,
+        limit=None,
+    ) -> RowIterator:
         """
         Execute a SELECT statement and return a generator object with the results.
 
@@ -104,8 +106,11 @@ class BigQueryClient:
 
         if where_clauses:
             where_conditions = " AND ".join(
-                [str(where_clause.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
-                 for where_clause in where_clauses])
+                [
+                    str(where_clause.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
+                    for where_clause in where_clauses
+                ],
+            )
             query += f' WHERE {where_conditions}'
 
         if order_by_clause is not None:

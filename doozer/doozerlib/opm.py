@@ -40,7 +40,7 @@ class OpmRegistryAuth:
 async def gather_opm(
         args: List[str],
         auth: Optional[OpmRegistryAuth] = None,
-        **kwargs
+        **kwargs,
 ):
     """ Run opm with the given arguments and return the result.
 
@@ -67,8 +67,8 @@ async def gather_opm(
                     'auths': {
                         auth.registry_url or "quay.io": {
                             'auth': auth_token,
-                        }
-                    }
+                        },
+                    },
                 })
 
     if not auth_content:
@@ -101,8 +101,10 @@ async def verify_opm():
 
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
-async def render(*input: str, output_format: str = "yaml", migrate: bool = False,
-                 auth: Optional[OpmRegistryAuth] = None) -> List[dict]:
+async def render(
+    *input: str, output_format: str = "yaml", migrate: bool = False,
+    auth: Optional[OpmRegistryAuth] = None,
+) -> List[dict]:
     """
     Run `opm render` on the given input and return the parsed file-based catalog blobs.
 
@@ -121,8 +123,10 @@ database files to render.
     if migrate:
         args.append("--migrate")
     LOGGER.debug(f"Rendering FBC for {', '.join(input)}")
-    _, out, _ = await gather_opm(["render"] + args + ["-o", output_format, "--", *input],
-                                 auth=auth)
+    _, out, _ = await gather_opm(
+        ["render"] + args + ["-o", output_format, "--", *input],
+        auth=auth,
+    )
     blobs = yaml.load_all(StringIO(out))
     return list(blobs)
 
@@ -144,7 +148,8 @@ async def generate_basic_template(catalog_file: Path, template_file: Path, outpu
 
 async def render_catalog_from_template(
         template_file: Path, catalog_file: Path, migrate_level: str = "none", output_format: str = "yaml",
-        auth: Optional[OpmRegistryAuth] = None):
+        auth: Optional[OpmRegistryAuth] = None,
+):
     """
     Render a catalog from a template file.
 
@@ -160,8 +165,12 @@ async def render_catalog_from_template(
         raise ValueError(f"Invalid output format: {output_format}")
     LOGGER.debug(f"Rendering catalog {catalog_file} from template {template_file}")
     with open(catalog_file, 'w') as out:
-        await gather_opm(["alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o",
-                          output_format, "--", str(template_file)], stdout=out, auth=auth)
+        await gather_opm(
+            [
+                "alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o",
+                output_format, "--", str(template_file),
+            ], stdout=out, auth=auth,
+        )
 
 
 async def generate_dockerfile(dest_dir: Path, dc_dir_name: str, base_image: str, builder_image: str):

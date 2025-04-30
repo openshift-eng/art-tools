@@ -57,9 +57,11 @@ class SourceResolver:
     """ A class for resolving source code repositories.
     """
 
-    def __init__(self, sources_base_dir: str, cache_dir: Optional[str], group_config: Model,
-                 local=False, upcycle=False, stage=False,
-                 record_logger: Optional[RecordLogger] = None, state_holder: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self, sources_base_dir: str, cache_dir: Optional[str], group_config: Model,
+        local=False, upcycle=False, stage=False,
+        record_logger: Optional[RecordLogger] = None, state_holder: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """ Initialize a new SourceResolver instance.
         :param sources_base_dir: The base directory where source code repositories will be cloned.
         :param cache_dir: The base directory where source code repositories will be cached.
@@ -216,9 +218,11 @@ class SourceResolver:
             return self.source_resolutions[alias]
 
     @staticmethod
-    def detect_remote_source_branch(source_details: Dict[str, Any],
-                                    stage: bool,
-                                    use_source_fallback_branch: str = "yes") -> Tuple[str, str]:
+    def detect_remote_source_branch(
+        source_details: Dict[str, Any],
+        stage: bool,
+        use_source_fallback_branch: str = "yes",
+    ) -> Tuple[str, str]:
         """ Find a configured source branch that exists, or raise DoozerFatalError.
 
         :param source_details: The source details from the metadata config.
@@ -313,7 +317,8 @@ class SourceResolver:
             url = None
             origin_url = "?"
             rc1, out_origin, err_origin = exectools.cmd_gather(
-                ["git", "config", "--get", "remote.origin.url"])
+                ["git", "config", "--get", "remote.origin.url"],
+            )
             if rc1 == 0:
                 url = out_origin.strip()
                 # Usually something like "git@github.com:openshift/origin.git"
@@ -327,7 +332,8 @@ class SourceResolver:
 
             branch = None
             rc2, out_branch, err_branch = exectools.cmd_gather(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"])
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            )
             if rc2 == 0:
                 branch = out_branch.strip()
             else:
@@ -372,7 +378,7 @@ class SourceResolver:
                 self._state_holder[alias] = {
                     'url': origin_url,
                     'branch': branch or '?',
-                    'path': path
+                    'path': path,
                 }
             return resolution
 
@@ -437,8 +443,10 @@ class SourceResolver:
             exectools.cmd_assert(["git", "-C", source_dir, "remote", "add", "--", "public_upstream", public_source_url])
         else:
             exectools.cmd_assert(["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url])
-        exectools.cmd_assert(["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch], retries=3,
-                             set_env=constants.GIT_NO_PROMPTS)
+        exectools.cmd_assert(
+            ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch], retries=3,
+            set_env=constants.GIT_NO_PROMPTS,
+        )
 
     @staticmethod
     def get_source_dir(source: SourceResolution, metadata: 'Metadata', check=True) -> Path:

@@ -50,7 +50,7 @@ class TestBasicRebase(DoozerRunnerTestCase):
             'images:rebase',
             '--version', target_version,
             '--release', '999.p?',
-            '-m', 'test message'
+            '-m', 'test message',
         ]
 
         if assemblies:

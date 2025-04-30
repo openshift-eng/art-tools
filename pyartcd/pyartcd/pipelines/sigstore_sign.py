@@ -24,7 +24,7 @@ class SigstorePipeline:
         doozer_data_path = os.environ.get("DOOZER_DATA_PATH") or constants.OCP_BUILD_DATA_URL
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.runtime.working_dir,
-            self.group, self.assembly, doozer_data_path
+            self.group, self.assembly, doozer_data_path,
         )
         self.releases_config = await util.load_releases_config(
             group=self.group,
@@ -32,10 +32,11 @@ class SigstorePipeline:
         )
         return self
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str,
-                 multi: str, sign_release: str, verify_release: bool,
-                 pullspecs: Optional[List[str]]
-                 ) -> None:
+    def __init__(
+        self, runtime: Runtime, group: str, assembly: str,
+        multi: str, sign_release: str, verify_release: bool,
+        pullspecs: Optional[List[str]],
+    ) -> None:
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -141,26 +142,37 @@ class SigstorePipeline:
 
 
 @cli.command("sigstore-sign")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.15")
-@click.option("-a", "--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly to be signed. e.g. 4.15.1")
-@click.option("--multi", type=click.Choice(("yes", "no", "only")), default="yes",
-              help="Whether to sign multi-arch or arch-specific payloads.")
-@click.option("--sign-release", type=click.Choice(("yes", "no", "only")), default="yes",
-              help="Whether to sign the release image or just component images.")
-@click.option("--verify-release", is_flag=True, default=False,
-              help="Verify that release images have a legacy signature before re-signing.")
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.15",
+)
+@click.option(
+    "-a", "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly to be signed. e.g. 4.15.1",
+)
+@click.option(
+    "--multi", type=click.Choice(("yes", "no", "only")), default="yes",
+    help="Whether to sign multi-arch or arch-specific payloads.",
+)
+@click.option(
+    "--sign-release", type=click.Choice(("yes", "no", "only")), default="yes",
+    help="Whether to sign the release image or just component images.",
+)
+@click.option(
+    "--verify-release", is_flag=True, default=False,
+    help="Verify that release images have a legacy signature before re-signing.",
+)
 @click.argument('pullspecs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
 async def sigstore_sign_container(
         runtime: Runtime, group: str, assembly: str,
         multi: str, sign_release: str, verify_release: bool,
-        pullspecs: Optional[List[str]] = None):
+        pullspecs: Optional[List[str]] = None,
+):
     pipeline = await SigstorePipeline.create(
         runtime, group, assembly,
         multi, sign_release, verify_release,
-        pullspecs
+        pullspecs,
     )
     await pipeline.run()

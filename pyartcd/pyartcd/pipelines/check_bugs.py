@@ -25,7 +25,8 @@ class CheckBugsPipeline:
     async def run(self):
         # Load group config
         self.group_config = await util.load_group_config(
-            group=f'openshift-{self.version}', assembly='stream', doozer_data_path=self.data_path)
+            group=f'openshift-{self.version}', assembly='stream', doozer_data_path=self.data_path,
+        )
 
         # Check bugs only for GA releases
         if self.group_config['software_lifecycle']['phase'] != 'release':
@@ -42,7 +43,7 @@ class CheckBugsPipeline:
 
         return {
             'version': self.version,
-            'issues': self.issues
+            'issues': self.issues,
         }
 
     async def _find_blockers(self):
@@ -53,7 +54,7 @@ class CheckBugsPipeline:
             f'--group=openshift-{self.version}',
             f'--working-dir={self.artcd_working}',
             'find-bugs:blocker',
-            '--output=slack'
+            '--output=slack',
         ]
         rc, out, err = await exectools.cmd_gather_async(cmd)
 
@@ -80,7 +81,7 @@ class CheckBugsPipeline:
             '--assembly=stream',
             f'--working-dir={self.artcd_working}',
             'verify-bugs',
-            '--output=slack'
+            '--output=slack',
         ]
         rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
 
@@ -109,12 +110,18 @@ async def slack_report(results, slack_client):
 
 
 @cli.command('check-bugs')
-@click.option('--slack_channel', required=False,
-              help='Slack channel to be notified for failures')
-@click.option('--version', 'versions', required=True, multiple=True,
-              help='OCP version to check for blockers e.g. 4.7')
-@click.option("--data-path", required=False, default=OCP_BUILD_DATA_URL,
-              help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
+@click.option(
+    '--slack_channel', required=False,
+    help='Slack channel to be notified for failures',
+)
+@click.option(
+    '--version', 'versions', required=True, multiple=True,
+    help='OCP version to check for blockers e.g. 4.7',
+)
+@click.option(
+    "--data-path", required=False, default=OCP_BUILD_DATA_URL,
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
+)
 @pass_runtime
 @click_coroutine
 async def check_bugs(runtime: Runtime, slack_channel: str, versions: list, data_path: str):

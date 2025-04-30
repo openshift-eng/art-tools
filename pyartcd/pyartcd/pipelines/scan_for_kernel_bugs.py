@@ -12,8 +12,10 @@ from pyartcd.runtime import Runtime
 
 
 class ScanForKernelBugsPipeline:
-    def __init__(self, runtime: Runtime, data_path: Optional[str], group: str,
-                 reconcile: bool, trackers: Tuple[str, ...]) -> None:
+    def __init__(
+        self, runtime: Runtime, data_path: Optional[str], group: str,
+        reconcile: bool, trackers: Tuple[str, ...],
+    ) -> None:
         self._runtime = runtime
         self.data_path = data_path or runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self.group = group
@@ -84,22 +86,34 @@ class ScanForKernelBugsPipeline:
 
 
 @cli.command("scan-for-kernel-bugs", short_help="Scan for kernel bugs")
-@click.option("--data-path", metavar='BUILD_DATA', default=None,
-              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.12")
-@click.option("--reconcile",
-              is_flag=True,
-              help="Update summary, description, etc for already cloned Jira bugs")
-@click.option("--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
-              help="Find kernel bugs by the specified KMAINT tracker JIRA_KEY")
+@click.option(
+    "--data-path", metavar='BUILD_DATA', default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.12",
+)
+@click.option(
+    "--reconcile",
+    is_flag=True,
+    help="Update summary, description, etc for already cloned Jira bugs",
+)
+@click.option(
+    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
+    help="Find kernel bugs by the specified KMAINT tracker JIRA_KEY",
+)
 @pass_runtime
 @click_coroutine
-async def scan_for_kernel_bugs_cli(runtime: Runtime, data_path: Optional[str], group: str,
-                                   reconcile: bool, trackers: Tuple[str, ...]):
+async def scan_for_kernel_bugs_cli(
+    runtime: Runtime, data_path: Optional[str], group: str,
+    reconcile: bool, trackers: Tuple[str, ...],
+):
     """ This job scans KMAINT Jira tracker for kernel bugs in Bugzilla, clones them into OCP Jira,
     and move their statuses.
     """
-    pipeline = ScanForKernelBugsPipeline(runtime=runtime, data_path=data_path, group=group,
-                                         reconcile=reconcile, trackers=trackers)
+    pipeline = ScanForKernelBugsPipeline(
+        runtime=runtime, data_path=data_path, group=group,
+        reconcile=reconcile, trackers=trackers,
+    )
     await pipeline.run()

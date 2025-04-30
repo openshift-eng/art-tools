@@ -119,8 +119,10 @@ class RHCOSBuildFinder:
             return False
         for arch in arches_building:
             if not self.meta_has_required_attributes(self.rhcos_build_meta(build_dict["id"], arch=arch)):
-                logger.warning(f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run "
-                               "rhcos release job?")
+                logger.warning(
+                    f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run "
+                    "rhcos release job?",
+                )
                 return False
         return True
 
@@ -198,7 +200,7 @@ class RHCOSBuildFinder:
                 return None, None
             return build_id, rhcos.get_container_pullspec(
                 self.rhcos_build_meta(build_id),
-                container_conf or self.get_primary_container_conf()
+                container_conf or self.get_primary_container_conf(),
             )
 
 
@@ -219,8 +221,10 @@ class RHCOSBuildInspector:
             for tag, pullspec in pullspec_for_tag.items():
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
-                    raise Exception(f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus'
-                                    f' {self.build_id}')
+                    raise Exception(
+                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus'
+                        f' {self.build_id}',
+                    )
                 self.build_id = image_build_id
 
             # The first digits of the RHCOS build are the major.minor of the rhcos stream name.
@@ -441,7 +445,7 @@ class RHCOSBuildInspector:
                 "version": version,
                 "release": release,
                 "arch": arch,
-                "nvr": f"{name}-{version}-{release}"
+                "nvr": f"{name}-{version}-{release}",
             } for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
         ]
 

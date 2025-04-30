@@ -99,7 +99,8 @@ def wait_tasks(task_ids: Iterable[int], session: koji.ClientSession, sleep_secon
         if waiting_tasks:
             if logger:
                 logger.debug(
-                    f"There are still {len(waiting_tasks)} tagging task(s) running. Will recheck in {sleep_seconds} seconds.")
+                    f"There are still {len(waiting_tasks)} tagging task(s) running. Will recheck in {sleep_seconds} seconds.",
+                )
             time.sleep(sleep_seconds)
 
 
@@ -122,7 +123,8 @@ def get_build_objects(ids_or_nvrs, session=None):
     :return: a list Koji/Brew build objects
     """
     logger.debug(
-        "Fetching build info for {} from Koji/Brew...".format(ids_or_nvrs))
+        "Fetching build info for {} from Koji/Brew...".format(ids_or_nvrs),
+    )
     if not session:
         session = koji.ClientSession(constants.BREW_HUB)
     # Use Koji multicall interface to boost performance. See https://pagure.io/koji/pull-request/957
@@ -172,19 +174,26 @@ def get_brew_build(nvr, product_version='', session=None):
 
     """
     if session is not None:
-        res = session.get(constants.errata_get_build_url.format(id=nvr),
-                          verify=ssl.get_default_verify_paths().openssl_cafile,
-                          auth=HTTPSPNEGOAuth())
+        res = session.get(
+            constants.errata_get_build_url.format(id=nvr),
+            verify=ssl.get_default_verify_paths().openssl_cafile,
+            auth=HTTPSPNEGOAuth(),
+        )
     else:
-        res = requests.get(constants.errata_get_build_url.format(id=nvr),
-                           verify=ssl.get_default_verify_paths().openssl_cafile,
-                           auth=HTTPSPNEGOAuth())
+        res = requests.get(
+            constants.errata_get_build_url.format(id=nvr),
+            verify=ssl.get_default_verify_paths().openssl_cafile,
+            auth=HTTPSPNEGOAuth(),
+        )
     if res.status_code == 200:
         return Build(nvr=nvr, body=res.json(), product_version=product_version)
     else:
-        raise exceptions.BrewBuildException("{build}: {msg}".format(
+        raise exceptions.BrewBuildException(
+            "{build}: {msg}".format(
             build=nvr,
-            msg=res.text))
+            msg=res.text,
+            ),
+        )
 
 
 def get_nvr_arch_log(name, version, release, arch='x86_64'):
@@ -755,11 +764,13 @@ class KojiWrapper(koji.ClientSession):
                 if use_caching:
                     # We need a reproducible immutable key from a dict with nested dicts. json.dumps
                     # and sorting keys is a deterministic way of achieving this.
-                    caching_key = json.dumps({
-                        'method_name': name,
-                        'args': args,
-                        'kwargs': kwargs
-                    }, sort_keys=True)
+                    caching_key = json.dumps(
+                        {
+                            'method_name': name,
+                            'args': args,
+                            'kwargs': kwargs,
+                        }, sort_keys=True,
+                    )
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:
                         if logger:

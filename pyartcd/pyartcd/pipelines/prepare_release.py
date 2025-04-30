@@ -33,10 +33,12 @@ from pyartcd.jira import JIRAClient
 from pyartcd.slack import SlackClient
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_basis, get_assembly_type,
-                          get_release_name_for_assembly,
-                          is_greenwave_all_pass_on_advisory,
-                          nightlies_with_pullspecs)
+from pyartcd.util import (
+    get_assembly_basis, get_assembly_type,
+    get_release_name_for_assembly,
+    is_greenwave_all_pass_on_advisory,
+    nightlies_with_pullspecs,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -211,11 +213,14 @@ class PrepareReleasePipeline:
                         elif release_date.weekday() == 6:  # Sunday
                             release_date += timedelta(days=1)
                         release_date = release_date.strftime("%Y-%b-%d")
-                    advisories[ad] = self.create_advisory(advisory_type=advisory_type,
-                                                          art_advisory_key=ad,
-                                                          release_date=release_date)
+                    advisories[ad] = self.create_advisory(
+                        advisory_type=advisory_type,
+                        art_advisory_key=ad,
+                        release_date=release_date,
+                    )
                     await self._slack_client.say_in_thread(
-                        f"{ad} advisory created with release date {release_date}")
+                        f"{ad} advisory created with release date {release_date}",
+                    )
                     continue
                 batch_id = 0
                 if batch and ad != "microshift":
@@ -223,10 +228,12 @@ class PrepareReleasePipeline:
                     batch_id = int(batch["id"])
                     # Ensure that the batch is unlocked
                     batch = await self._ensure_batch_status(self._errata_api, batch, lock=False, dry_run=self.dry_run)
-                advisories[ad] = self.create_advisory(advisory_type=advisory_type,
-                                                      art_advisory_key=ad,
-                                                      release_date=self.release_date,
-                                                      batch_id=batch_id)
+                advisories[ad] = self.create_advisory(
+                    advisory_type=advisory_type,
+                    art_advisory_key=ad,
+                    release_date=self.release_date,
+                    batch_id=batch_id,
+                )
             await self._slack_client.say_in_thread(f"Regular advisories created with release date {self.release_date}")
 
         jira_issue_key = group_config.get("release_jira")
@@ -258,7 +265,7 @@ class PrepareReleasePipeline:
                 subtask = subtasks[1]
                 self._jira_client.add_comment(
                     subtask,
-                    "prepare release job : {}".format(os.environ.get("BUILD_URL"))
+                    "prepare release job : {}".format(os.environ.get("BUILD_URL")),
                 )
                 self._jira_client.assign_to_me(subtask)
                 self._jira_client.close_task(subtask)
@@ -286,8 +293,10 @@ class PrepareReleasePipeline:
                 # Remove all builds from the metadata advisory
                 await self.remove_builds_all(advisories["metadata"])
             else:
-                _LOGGER.info(f"'advance' advisory {advisories['advance']} is not editable. Defaulting bundle advisory"
-                             " to 'metadata'")
+                _LOGGER.info(
+                    f"'advance' advisory {advisories['advance']} is not editable. Defaulting bundle advisory"
+                    " to 'metadata'",
+                )
 
         if "prerelease" in advisories.keys():
             if self.advance_release:
@@ -301,8 +310,10 @@ class PrepareReleasePipeline:
                 # Remove all builds from the metadata advisory
                 await self.remove_builds_all(advisories["metadata"])
             else:
-                _LOGGER.info(f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle "
-                             "advisory to 'metadata'")
+                _LOGGER.info(
+                    f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle "
+                    "advisory to 'metadata'",
+                )
 
         _LOGGER.info("Sweep builds into the the advisories...")
         for impetus, advisory in advisories.items():
@@ -377,8 +388,10 @@ class PrepareReleasePipeline:
             assembly_is_base_name = assembly_imagestream_base_name_generic(image_stream_version, self.assembly, assembly_type, build_system='brew')
             arches = group_config.get("arches", [])
             imagestreams_per_arch = [
-                payload_imagestream_namespace_and_name(default_imagestream_namespace_base_name(),
-                                                       assembly_is_base_name, arch, private=False)
+                payload_imagestream_namespace_and_name(
+                    default_imagestream_namespace_base_name(),
+                    assembly_is_base_name, arch, private=False,
+                )
                 for arch in arches
             ]
             for is_namespace_and_name in imagestreams_per_arch:
@@ -391,7 +404,8 @@ class PrepareReleasePipeline:
                 if not is_greenwave_all_pass_on_advisory(advisory):
                     await self._slack_client.say_in_thread(
                         "Some greenwave tests failed on "
-                        f"https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists")
+                        f"https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists",
+                    )
 
         # Move advisories to QE
         for impetus, advisory in advisories.items():
@@ -430,8 +444,10 @@ class PrepareReleasePipeline:
         return AsyncErrataAPI()
 
     @staticmethod
-    async def _ensure_batch(errata_api: AsyncErrataAPI, release_name: str,
-                            batch_name: str, release_date: str, dry_run: bool = False):
+    async def _ensure_batch(
+        errata_api: AsyncErrataAPI, release_name: str,
+        batch_name: str, release_date: str, dry_run: bool = False,
+    ):
         """ Ensure that the batch exists and has the correct release date
 
         :param errata_api: Errata API object
@@ -447,10 +463,12 @@ class PrepareReleasePipeline:
         batches = [b async for b in errata_api.get_batches(name=batch_name)]
         if not batches:
             _LOGGER.info("Creating batch '%s'...", batch_name)
-            batch = await errata_api.create_batch(name=batch_name,
-                                                  release_name=release_name,
-                                                  release_date=release_date,
-                                                  description=batch_name)
+            batch = await errata_api.create_batch(
+                name=batch_name,
+                release_name=release_name,
+                release_date=release_date,
+                description=batch_name,
+            )
             _LOGGER.info("Created errata batch id %s", int(batch["id"]))
         else:
             batch = batches[0]
@@ -525,8 +543,10 @@ class PrepareReleasePipeline:
                 await asyncio.gather(*api_calls)
                 _LOGGER.info(f"Advisories updated in batch {batch['id']}")
             else:
-                _LOGGER.warning("[DRY RUN] Would have removed advisories %s from batch %s and added advisories %s to batch %s",
-                                advisories_to_remove, batch["id"], advisories_to_add, batch["id"])
+                _LOGGER.warning(
+                    "[DRY RUN] Would have removed advisories %s from batch %s and added advisories %s to batch %s",
+                    advisories_to_remove, batch["id"], advisories_to_add, batch["id"],
+                )
         # Lock batch if it was unlocked
         await PrepareReleasePipeline._ensure_batch_status(errata_api, batch, lock=True, dry_run=dry_run)
 
@@ -560,7 +580,7 @@ class PrepareReleasePipeline:
         result = subprocess.run(cmd, stdout=PIPE, stderr=PIPE, check=False, universal_newlines=True, cwd=self.working_dir)
         if result.returncode != 0:
             raise IOError(
-                f"Command {cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
+                f"Command {cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}",
             )
         _LOGGER.info(result.stdout)
         match = re.search(r"Found ([0-9]+) bugs", str(result.stdout))
@@ -587,10 +607,10 @@ class PrepareReleasePipeline:
         result = subprocess.run(create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self.working_dir)
         if result.returncode != 0:
             raise IOError(
-                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
+                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}",
             )
         match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout,
         )
         advisory_num = int(match[1])
         _LOGGER.info("Created %s advisory %s", art_advisory_key, advisory_num)
@@ -630,7 +650,7 @@ class PrepareReleasePipeline:
                 group_config = f.read()
             for impetus, advisory in advisories.items():
                 new_group_config = re.sub(
-                    fr"^(\s+{impetus}:)\s*[0-9]+$", fr"\1 {advisory}", group_config, count=1, flags=re.MULTILINE
+                    fr"^(\s+{impetus}:)\s*[0-9]+$", fr"\1 {advisory}", group_config, count=1, flags=re.MULTILINE,
                 )
                 group_config = new_group_config
             # freeze automation
@@ -683,7 +703,7 @@ class PrepareReleasePipeline:
         self,
         advisory: Optional[int] = None,
         permissive: bool = False,
-        advance_release: bool = False
+        advance_release: bool = False,
     ):
         cmd = self._elliott_base_command + [
             "find-bugs:sweep",
@@ -788,8 +808,10 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
     def create_release_jira(self, template_vars: Dict):
         template_issue_key = self.runtime.config["jira"]["templates"][f"ocp{self.release_version[0]}"]
 
-        _LOGGER.info("Creating release JIRA from template %s...",
-                     template_issue_key)
+        _LOGGER.info(
+            "Creating release JIRA from template %s...",
+            template_issue_key,
+        )
 
         template_issue = self._jira_client.get_issue(template_issue_key)
 
@@ -804,10 +826,12 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
         if self.dry_run:
             fields = fields_transform(template_issue.raw["fields"].copy())
             _LOGGER.warning(
-                "[DRY RUN] Would have created release JIRA: %s", fields["summary"])
+                "[DRY RUN] Would have created release JIRA: %s", fields["summary"],
+            )
             return []
         new_issues = self._jira_client.clone_issue_with_subtasks(
-            template_issue, fields_transform=fields_transform)
+            template_issue, fields_transform=fields_transform,
+        )
         _LOGGER.info("Created release JIRA: %s", new_issues[0].permalink())
         return new_issues
 
@@ -949,38 +973,64 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing.""")
 
 
 @cli.command("prepare-release")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True, default="stream",
-              help="The name of an assembly to rebase & build for. e.g. 4.9.1")
-@click.option('--data-path', required=False,
-              help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
-@click.option('--data-gitref', required=False,
-              help='Doozer data path git [branch / tag / sha] to use')
-@click.option("--name", metavar="RELEASE_NAME",
-              help="release name (e.g. 4.6.42)")
-@click.option("--date", metavar="YYYY-MMM-DD",
-              help="Expected release date (e.g. 2020-11-25)")
-@click.option("--package-owner", metavar='EMAIL',
-              help="Advisory package owner; Must be an individual email address; May be anyone who wants random advisory spam")
-@click.option("--nightly", "nightlies", metavar="TAG", multiple=True,
-              help="[MULTIPLE] Candidate nightly")
-@click.option("--default-advisories", is_flag=True,
-              help="don't create advisories/jira; pick them up from ocp-build-data")
-@click.option("--include-shipped", is_flag=True, required=False,
-              help="Do not filter our shipped builds, attach all builds to advisory")
-@click.option("--skip-batch", is_flag=True,
-              help="Skip using batch")
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True, default="stream",
+    help="The name of an assembly to rebase & build for. e.g. 4.9.1",
+)
+@click.option(
+    '--data-path', required=False,
+    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+)
+@click.option(
+    '--data-gitref', required=False,
+    help='Doozer data path git [branch / tag / sha] to use',
+)
+@click.option(
+    "--name", metavar="RELEASE_NAME",
+    help="release name (e.g. 4.6.42)",
+)
+@click.option(
+    "--date", metavar="YYYY-MMM-DD",
+    help="Expected release date (e.g. 2020-11-25)",
+)
+@click.option(
+    "--package-owner", metavar='EMAIL',
+    help="Advisory package owner; Must be an individual email address; May be anyone who wants random advisory spam",
+)
+@click.option(
+    "--nightly", "nightlies", metavar="TAG", multiple=True,
+    help="[MULTIPLE] Candidate nightly",
+)
+@click.option(
+    "--default-advisories", is_flag=True,
+    help="don't create advisories/jira; pick them up from ocp-build-data",
+)
+@click.option(
+    "--include-shipped", is_flag=True, required=False,
+    help="Do not filter our shipped builds, attach all builds to advisory",
+)
+@click.option(
+    "--skip-batch", is_flag=True,
+    help="Skip using batch",
+)
 @pass_runtime
 @click_coroutine
-async def prepare_release(runtime: Runtime, group: str, assembly: str, data_path: Optional[str], data_gitref: Optional[str],
-                          name: Optional[str], date: str,
-                          package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool,
-                          include_shipped: bool, skip_batch: bool):
+async def prepare_release(
+    runtime: Runtime, group: str, assembly: str, data_path: Optional[str], data_gitref: Optional[str],
+    name: Optional[str], date: str,
+    package_owner: Optional[str], nightlies: Tuple[str, ...], default_advisories: bool,
+    include_shipped: bool, skip_batch: bool,
+):
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
-    await slack_client.say_in_thread(f":construction: prepare-release for {name if name else assembly} "
-                                     ":construction:")
+    await slack_client.say_in_thread(
+        f":construction: prepare-release for {name if name else assembly} "
+        ":construction:",
+    )
     try:
         # parse environment variables for credentials
         jira_token = os.environ.get("JIRA_TOKEN")

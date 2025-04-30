@@ -12,19 +12,25 @@ LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("remove-bugs", short_help="Remove provided BUGS from ADVISORY")
-@click.option('--advisory', '-a', 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help='Remove found bugs from ADVISORY')
+@click.option(
+    '--advisory', '-a', 'advisory_id',
+    type=int, metavar='ADVISORY',
+    help='Remove found bugs from ADVISORY',
+)
 @use_default_advisory_option
 @click.argument('bug_ids', metavar='<BUGID>', nargs=-1, required=False, default=None)
-@click.option("--all", "remove_all",
-              required=False,
-              default=False, is_flag=True,
-              help="Remove all bugs attached to the Advisory")
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--all", "remove_all",
+    required=False,
+    default=False, is_flag=True,
+    help="Remove all bugs attached to the Advisory",
+)
+@click.option(
+    "--noop", "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Don't change anything",
+)
 @click.pass_obj
 def remove_bugs_cli(runtime, advisory_id, default_advisory_type, bug_ids, remove_all, noop):
     """Remove given BUGS (JIRA or Bugzilla) from ADVISORY.

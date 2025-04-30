@@ -34,8 +34,10 @@ class BuildStatusDetector:
         suspects = [b for b in builds if b["id"] not in shipped_ids]
 
         # next, consider remaining builds embargoed if the release field includes .p1/.p3
-        embargoed_ids = {b["id"] for b in suspects
-                         if is_release_embargoed(b["release"], self.runtime.build_system)}
+        embargoed_ids = {
+            b["id"] for b in suspects
+            if is_release_embargoed(b["release"], self.runtime.build_system)
+        }
 
         # finally, look at the remaining images in case they include embargoed rpms
         remaining_ids = {b["id"] for b in suspects if b["id"] not in embargoed_ids}

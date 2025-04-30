@@ -14,9 +14,11 @@ setuptools.setup(
     url='https://github.com/openshift/ocp-build-data-validator',
     license='Apache License, Version 2.0',
     packages=['validator', 'validator.schema'],
-    entry_points={'console_scripts': [
-        'validate-ocp-build-data = validator.__main__:main'
-    ]},
+    entry_points={
+        'console_scripts': [
+            'validate-ocp-build-data = validator.__main__:main',
+        ],
+    },
     include_package_data=True,
-    install_requires=INSTALL_REQUIRES
+    install_requires=INSTALL_REQUIRES,
 )

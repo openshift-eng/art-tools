@@ -284,11 +284,13 @@ class Runtime(GroupRuntime):
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
             yaml.safe_dump(self.state, f, default_flow_style=False)
 
-    def initialize(self, mode='images', clone_distgits=True,
-                   validate_content_sets=False,
-                   no_group=False, clone_source=None, disabled=None,
-                   prevent_cloning: bool = False, config_only: bool = False, group_only: bool = False,
-                   build_system: str = None):
+    def initialize(
+        self, mode='images', clone_distgits=True,
+        validate_content_sets=False,
+        no_group=False, clone_source=None, disabled=None,
+        prevent_cloning: bool = False, config_only: bool = False, group_only: bool = False,
+        build_system: str = None,
+    ):
 
         if self.initialized:
             return
@@ -530,7 +532,8 @@ class Runtime(GroupRuntime):
             if self.group_config.name != self.group:
                 raise IOError(
                     f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
-                    "may have copied this group without updating group.yml (make sure to check branch)")
+                    "may have copied this group without updating group.yml (make sure to check branch)",
+                )
 
             if self.branch is None:
                 if self.group_config.branch is not Missing:
@@ -551,7 +554,7 @@ class Runtime(GroupRuntime):
                     except Exception as e:
                         raise ValueError(
                             "could not compile image build log regex for group:\n{}\n{}"
-                            .format(val, e)
+                            .format(val, e),
                         )
                 scanner.matches = regexen
 
@@ -596,16 +599,20 @@ class Runtime(GroupRuntime):
                     short_name_with_ose = "ose-" + short_name_without_ose
                     _register_name_in_bundle(short_name_with_ose, img.key)
 
-            image_data = self.gitdata.load_data(path='images', keys=image_keys,
-                                                exclude=image_ex,
-                                                replace_vars=replace_vars,
-                                                filter_funcs=None if len(image_keys) else filter_func)
+            image_data = self.gitdata.load_data(
+                path='images', keys=image_keys,
+                exclude=image_ex,
+                replace_vars=replace_vars,
+                filter_funcs=None if len(image_keys) else filter_func,
+            )
 
             try:
-                rpm_data = self.gitdata.load_data(path='rpms', keys=rpm_keys,
-                                                  exclude=rpm_ex,
-                                                  replace_vars=replace_vars,
-                                                  filter_funcs=None if len(rpm_keys) else filter_func)
+                rpm_data = self.gitdata.load_data(
+                    path='rpms', keys=rpm_keys,
+                    exclude=rpm_ex,
+                    replace_vars=replace_vars,
+                    filter_funcs=None if len(rpm_keys) else filter_func,
+                )
             except gitdata.GitDataPathException:
                 # some older versions have no RPMs, that's ok.
                 rpm_data = {}
@@ -1039,20 +1046,23 @@ class Runtime(GroupRuntime):
         repo_url = self.repos['rhel-server-ose-rpms'].baseurl(repo_type, 'x86_64')
         self._logger.info(
             "Getting version from atomic-openshift package in {}".format(
-                repo_url)
+                repo_url,
+            ),
         )
 
         # create a randomish repo name to avoid erroneous cache hits
         repoid = "oit" + datetime.datetime.now().strftime("%s")
-        version_query = ["/usr/bin/repoquery", "--quiet", "--tempcache",
-                         "--repoid", repoid,
-                         "--repofrompath", repoid + "," + repo_url,
-                         "--queryformat", "%{VERSION}",
-                         "atomic-openshift"]
+        version_query = [
+            "/usr/bin/repoquery", "--quiet", "--tempcache",
+            "--repoid", repoid,
+            "--repofrompath", repoid + "," + repo_url,
+            "--queryformat", "%{VERSION}",
+            "atomic-openshift",
+        ]
         rc, auto_version, err = exectools.cmd_gather(version_query)
         if rc != 0:
             raise RuntimeError(
-                "Unable to get OCP version from RPM repository: {}".format(err)
+                "Unable to get OCP version from RPM repository: {}".format(err),
             )
 
         version = "v" + auto_version.strip()
@@ -1080,7 +1090,8 @@ class Runtime(GroupRuntime):
             return exectools.parallel_exec(
                 lambda m, _: m.distgit_repo(),
                 self.all_metas(),
-                n_threads=n_threads).get()
+                n_threads=n_threads,
+            ).get()
 
     def push_distgits(self, n_threads=None):
         self.assert_mutation_is_permitted()
@@ -1090,7 +1101,8 @@ class Runtime(GroupRuntime):
         return exectools.parallel_exec(
             lambda m, _: m.distgit_repo().push(),
             self.all_metas(),
-            n_threads=n_threads).get()
+            n_threads=n_threads,
+        ).get()
 
     def get_el_targeted_default_branch(self, el_target: Optional[Union[str, int]] = None):
         if not self.branch:
@@ -1147,14 +1159,18 @@ class Runtime(GroupRuntime):
 
         if self.data_path is None:
             raise DoozerFatalError(
-                ("No metadata path provided. Must be set via one of:\n"
-                 "* data_path key in {}\n"
-                 "* doozer --data-path [PATH|URL]\n"
-                 "* Environment variable DOOZER_DATA_PATH\n"
-                 ).format(self.cfg_obj.full_path))
+                (
+                    "No metadata path provided. Must be set via one of:\n"
+                    "* data_path key in {}\n"
+                    "* doozer --data-path [PATH|URL]\n"
+                    "* Environment variable DOOZER_DATA_PATH\n"
+                ).format(self.cfg_obj.full_path),
+            )
 
-        self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                       commitish=self.group_commitish, reclone=self.upcycle, logger=self._logger)
+        self.gitdata = gitdata.GitData(
+            data_path=self.data_path, clone_dir=self.working_dir,
+            commitish=self.group_commitish, reclone=self.upcycle, logger=self._logger,
+        )
         self.data_dir = self.gitdata.data_dir
 
     def get_rpm_config(self) -> dict:

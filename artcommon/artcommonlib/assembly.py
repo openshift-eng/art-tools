@@ -101,7 +101,7 @@ class AssemblyIssue:
         return {
             "code": self.code.value,
             "component": self.component,
-            "msg": self.msg
+            "msg": self.msg,
         }
 
 
@@ -140,8 +140,11 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
             key_struct = target_assembly[key]
             if hasattr(key_struct, "primitive"):
                 key_struct = key_struct.primitive()
-            key_struct = _merger(key_struct, parent_config_struct.primitive() if hasattr(
-                parent_config_struct, "primitive") else parent_config_struct)
+            key_struct = _merger(
+                key_struct, parent_config_struct.primitive() if hasattr(
+                parent_config_struct, "primitive",
+                ) else parent_config_struct,
+            )
         else:
             key_struct = parent_config_struct
     else:

@@ -8,8 +8,10 @@ from doozerlib.assembly_inspector import AssemblyInspector
 
 
 @cli.command("inspect:stream", short_help="Inspect stream assembly for assembly issues")
-@click.argument("code", type=click.Choice([code.name for code in AssemblyIssueCode], case_sensitive=False),
-                required=True)
+@click.argument(
+    "code", type=click.Choice([code.name for code in AssemblyIssueCode], case_sensitive=False),
+    required=True,
+)
 @click.option("--strict", default=False, type=bool, is_flag=True, help='Fail even if permitted')
 @click_coroutine
 @click.pass_obj
@@ -75,8 +77,11 @@ def _check_inconsistent_rhcos_rpms(runtime, assembly_inspector):
 def _check_cross_payload_consistency_requirements(runtime, assembly_inspector, requirements):
     issues = []
     for arch in runtime.group_config.arches:
-        issues.extend(PayloadGenerator.find_rhcos_payload_rpm_inconsistencies(
+        issues.extend(
+            PayloadGenerator.find_rhcos_payload_rpm_inconsistencies(
             assembly_inspector.get_rhcos_build(arch),
             assembly_inspector.get_group_release_images(),
-            requirements))
+            requirements,
+            ),
+        )
     return issues

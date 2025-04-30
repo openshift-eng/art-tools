@@ -18,11 +18,13 @@ class BuildRepo:
     """ A class to clone a build source repository into a local directory.
     """
 
-    def __init__(self,
-                 url: str,
-                 branch: Optional[str],
-                 local_dir: Union[str, Path],
-                 logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        branch: Optional[str],
+        local_dir: Union[str, Path],
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         """ Initialize a BuildRepo object.
         :param url: The URL of the build source repository.
         :param branch: The branch of the build source repository to clone. None to not switch to any branch.

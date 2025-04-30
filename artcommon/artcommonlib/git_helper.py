@@ -12,8 +12,10 @@ from artcommonlib.lock import get_named_semaphore
 LOGGER = logging.getLogger(__name__)
 
 
-def git_clone(remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=0,
-              git_cache_dir: Optional[str] = None):
+def git_clone(
+    remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=0,
+    git_cache_dir: Optional[str] = None,
+):
 
     # Do not change the outer scope param list
     gitargs = copy.copy(gitargs)

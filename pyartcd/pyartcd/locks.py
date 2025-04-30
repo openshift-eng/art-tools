@@ -44,67 +44,67 @@ LOCK_POLICY = {
     Lock.OLM_BUNDLE: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OLM_BUNDLE_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.MIRRORING_RPMS: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.PLASHET: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD: {
         'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_KONFLUX: {
         'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.KONFLUX_MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SIGNING: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
 }
 
@@ -147,7 +147,7 @@ class LockManager(Aioredlock):
             [redis.redis_url(use_ssl)],
             internal_lock_timeout=lock_policy['lock_timeout'],
             retry_count=lock_policy['retry_count'],
-            retry_delay_min=lock_policy['retry_delay_min']
+            retry_delay_min=lock_policy['retry_delay_min'],
         )
 
     async def lock(self, resource, *args, **kwargs):
@@ -189,8 +189,10 @@ class LockManager(Aioredlock):
         return await redis.get_keys(pattern)
 
 
-async def enqueue_for_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: str,
-                           ocp_version: str, version_queue_name):
+async def enqueue_for_lock(
+    coro: coroutine, lock: Lock, lock_name: str, lock_id: str,
+    ocp_version: str, version_queue_name,
+):
     lock_manager = LockManager.from_lock(lock)
     return await _enqueue_for_lock(coro, lock_manager, lock, lock_name, lock_id, ocp_version, version_queue_name)
 
@@ -200,8 +202,10 @@ async def enqueue_for_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id:
     stop=stop_after_attempt(600 * 24),  # wait for 24 hours
     retry=retry_if_exception_type(TryAgain),
 )
-async def _enqueue_for_lock(coro: coroutine, lock_manager, lock: Lock, lock_name: str, lock_id: str,
-                            ocp_version: str, version_queue_name):
+async def _enqueue_for_lock(
+    coro: coroutine, lock_manager, lock: Lock, lock_name: str, lock_id: str,
+    ocp_version: str, version_queue_name,
+):
     if not await lock_manager.is_locked(lock_name):
         # TODO: use a redis tx here
         # fetch the first element in the reverse sorted set by score (item with the max score)
@@ -235,8 +239,10 @@ async def run_with_lock(coro: coroutine, lock: Lock, lock_name: str, lock_id: st
         if skip_if_locked and await lock_manager.is_locked(lock_name):
             blocked_on_build_path = await lock_manager.get_lock_id(lock_name)
             blocked_on_build_url = f'{constants.JENKINS_UI_URL}/{blocked_on_build_path}'
-            lock_manager.logger.info(f'Cannot acquire {lock_name}, which is acquired by {blocked_on_build_url} -- '
-                                     'skipping')
+            lock_manager.logger.info(
+                f'Cannot acquire {lock_name}, which is acquired by {blocked_on_build_url} -- '
+                'skipping',
+            )
             coro.close()
             return
 

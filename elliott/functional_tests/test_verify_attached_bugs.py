@@ -126,7 +126,7 @@ class VerifyBugs(unittest.TestCase):
         cmd = constants.ELLIOTT_CMD + [
             "--group=openshift-4.12",
             "--assembly=4.12.73",
-            "verify-attached-bugs"
+            "verify-attached-bugs",
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(result.returncode, 0, msg=f"stdout: {result.stdout.decode('utf-8')}, stderr: {result.stderr.decode('utf-8')}")

@@ -33,33 +33,37 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         dry_run = False
         rpms = []
 
-        data_obj = gitdata.DataObj("foo", "/path/to/ocp-build-data/rpms/foo.yml", {
-            "name": "foo",
-            "content": {
-                "source": {
-                    "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
-                    "specfile": "foo.spec",
-                    "modifications": [
-                        {"action": "add", "command": ["my-command", "--my-arg"]}
-                    ],
-                }
+        data_obj = gitdata.DataObj(
+            "foo", "/path/to/ocp-build-data/rpms/foo.yml", {
+                "name": "foo",
+                "content": {
+                    "source": {
+                        "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
+                        "specfile": "foo.spec",
+                        "modifications": [
+                            {"action": "add", "command": ["my-command", "--my-arg"]},
+                        ],
+                    },
+                },
+                "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
             },
-            "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
-        })
+        )
         rpm = rpmcfg.RPMMetadata(runtime, data_obj, clone_source=False)
         rpm.distgit_repo = MagicMock(branch="rhaos-4.4-rhel-8")
         rpms.append(rpm)
 
-        data_obj = gitdata.DataObj("bar", "/path/to/ocp-build-data/rpms/bar.yml", {
-            "name": "bar",
-            "content": {
-                "source": {
-                    "git": {"url": "git@github.com:openshift-priv/bar.git", "branch": {"target": "release-4.8"}},
-                    "specfile": "bar.spec",
-                }
+        data_obj = gitdata.DataObj(
+            "bar", "/path/to/ocp-build-data/rpms/bar.yml", {
+                "name": "bar",
+                "content": {
+                    "source": {
+                        "git": {"url": "git@github.com:openshift-priv/bar.git", "branch": {"target": "release-4.8"}},
+                        "specfile": "bar.spec",
+                    },
+                },
+                "targets": ["rhaos-4.4-rhel-8-candidate"],
             },
-            "targets": ["rhaos-4.4-rhel-8-candidate"],
-        })
+        )
         rpm = rpmcfg.RPMMetadata(runtime, data_obj, clone_source=False)
         rpm.distgit_repo = MagicMock(branch="rhaos-4.4-rhel-8")
         rpms.append(rpm)
@@ -82,33 +86,37 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         dry_run = False
         rpms = []
 
-        data_obj = gitdata.DataObj("foo", "/path/to/ocp-build-data/rpms/foo.yml", {
-            "name": "foo",
-            "content": {
-                "source": {
-                    "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
-                    "specfile": "foo.spec",
-                    "modifications": [
-                        {"action": "add", "command": ["my-command", "--my-arg"]}
-                    ],
-                }
+        data_obj = gitdata.DataObj(
+            "foo", "/path/to/ocp-build-data/rpms/foo.yml", {
+                "name": "foo",
+                "content": {
+                    "source": {
+                        "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
+                        "specfile": "foo.spec",
+                        "modifications": [
+                            {"action": "add", "command": ["my-command", "--my-arg"]},
+                        ],
+                    },
+                },
+                "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
             },
-            "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
-        })
+        )
         rpm = rpmcfg.RPMMetadata(runtime, data_obj, clone_source=False)
         rpm.distgit_repo = MagicMock(branch="rhaos-4.4-rhel-8")
         rpms.append(rpm)
 
-        data_obj = gitdata.DataObj("bar", "/path/to/ocp-build-data/rpms/bar.yml", {
-            "name": "bar",
-            "content": {
-                "source": {
-                    "git": {"url": "git@github.com:openshift-priv/bar.git", "branch": {"target": "release-4.8"}},
-                    "specfile": "bar.spec",
-                }
+        data_obj = gitdata.DataObj(
+            "bar", "/path/to/ocp-build-data/rpms/bar.yml", {
+                "name": "bar",
+                "content": {
+                    "source": {
+                        "git": {"url": "git@github.com:openshift-priv/bar.git", "branch": {"target": "release-4.8"}},
+                        "specfile": "bar.spec",
+                    },
+                },
+                "targets": ["rhaos-4.4-rhel-8-candidate"],
             },
-            "targets": ["rhaos-4.4-rhel-8-candidate"],
-        })
+        )
         rpm = rpmcfg.RPMMetadata(runtime, data_obj, clone_source=False)
         rpm.distgit_repo = MagicMock(branch="rhaos-4.4-rhel-8")
         rpms.append(rpm)

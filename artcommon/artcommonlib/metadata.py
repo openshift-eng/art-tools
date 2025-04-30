@@ -42,8 +42,10 @@ class MetadataBase(object):
         self.raw_config = Model(data_obj.data)  # Config straight from ocp-build-data
         assert (self.raw_config.name is not Missing)
 
-        self.config = assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, meta_type,
-                                               self.distgit_key, self.raw_config)
+        self.config = assembly_metadata_config(
+            runtime.get_releases_config(), runtime.assembly, meta_type,
+            self.distgit_key, self.raw_config,
+        )
         self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config)
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
         if self.mode not in CONFIG_MODES:
@@ -172,9 +174,11 @@ class MetadataBase(object):
         """
         return self._component_name
 
-    def get_latest_brew_build(self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
-                              build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
-                              el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None):
+    def get_latest_brew_build(
+        self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
+        build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
+        el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None,
+    ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
@@ -246,8 +250,10 @@ class MetadataBase(object):
                     list_builds_kwargs['completeBefore'] = complete_before_ts
 
             def default_return():
-                msg = (f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', "
-                       f"assembly: '{assembly}', build_state: '{build_state.name}', el_ver: '{el_ver}'")
+                msg = (
+                    f"No builds detected for using prefix: '{pattern_prefix}', extra_pattern: '{extra_pattern}', "
+                    f"assembly: '{assembly}', build_state: '{build_state.name}', el_ver: '{el_ver}'"
+                )
                 if default != -1:
                     self.logger.info(msg)
                     return default
@@ -262,11 +268,13 @@ class MetadataBase(object):
                 # so this pattern will need update as new nvr naming components are added
                 pattern = f"{pattern_prefix}{extra_pattern}{assembly_suffix}{el_suffix}"
 
-                builds = koji_api.listBuilds(packageID=package_id,
-                                             state=None if build_state is None else build_state.value,
-                                             pattern=pattern,
-                                             queryOpts={'limit': 1, 'order': '-creation_event_id'},
-                                             **list_builds_kwargs)
+                builds = koji_api.listBuilds(
+                    packageID=package_id,
+                    state=None if build_state is None else build_state.value,
+                    pattern=pattern,
+                    queryOpts={'limit': 1, 'order': '-creation_event_id'},
+                    **list_builds_kwargs,
+                )
 
                 # Ensure the suffix ends the string OR at least terminated by a '.' .
                 # This latter check ensures that 'assembly.how' doesn't match a build from
@@ -296,7 +304,8 @@ class MetadataBase(object):
                     accepted_tags = [name for name in tags if name.startswith(tag_prefix)]
                     if not accepted_tags:
                         self.logger.warning(
-                            f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way')
+                            f'Expected to find at least one tag starting with {self.branch()} on latest build {check_nvr} but found [{tags}]; tagging failed after build or something has changed tags in an unexpected way',
+                        )
 
                 return refined
 
@@ -375,7 +384,8 @@ class MetadataBase(object):
         if self.meta_type == 'rpm':
             if el_target is None:
                 raise ValueError(
-                    f'Expected el_target to be set when querying a pinned RPM component {self.distgit_key}')
+                    f'Expected el_target to be set when querying a pinned RPM component {self.distgit_key}',
+                )
             is_nvr = is_config[f'el{el_target}']
             if not is_nvr:
                 self.logger.warning('No pinned NVR found for RPM %s and target %s', self.config.name, el_target)
@@ -395,15 +405,17 @@ class MetadataBase(object):
         # strict means raise an exception if not found.
         return await self.runtime.konflux_db.get_build_record_by_nvr(is_nvr, strict=True)
 
-    async def get_latest_konflux_build(self,
-                                       default=None,
-                                       assembly: Optional[str] = None,
-                                       outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-                                       el_target: Optional[Union[int, str]] = None,
-                                       honor_is: bool = True,
-                                       completed_before: Optional[datetime.datetime] = None,
-                                       extra_patterns: dict = {},
-                                       **kwargs) -> Optional[KonfluxBuildRecord]:
+    async def get_latest_konflux_build(
+        self,
+        default=None,
+        assembly: Optional[str] = None,
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        el_target: Optional[Union[int, str]] = None,
+        honor_is: bool = True,
+        completed_before: Optional[datetime.datetime] = None,
+        extra_patterns: dict = {},
+        **kwargs,
+    ) -> Optional[KonfluxBuildRecord]:
         """
         :param default: the value to be returned when no build is found
         :param assembly: A non-default assembly name to search relative to. If not specified, runtime.assembly
@@ -437,7 +449,7 @@ class MetadataBase(object):
             'completed_before': completed_before,
             'engine': self.runtime.build_system,
             'extra_patterns': extra_patterns,
-            **kwargs
+            **kwargs,
         }
         if el_target and isinstance(el_target, int):
             el_target = f'el{el_target}'
@@ -476,8 +488,10 @@ class MetadataBase(object):
                 )
 
         if not build_record:
-            self.logger.warning('No build found for %s in group and %s assembly %s',
-                                self.distgit_key, self.runtime.group, self.runtime.assembly)
+            self.logger.warning(
+                'No build found for %s in group and %s assembly %s',
+                self.distgit_key, self.runtime.group, self.runtime.assembly,
+            )
             return default
         return build_record
 

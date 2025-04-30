@@ -26,11 +26,13 @@ yaml = new_roundtrip_yaml_handler()
 class GenAssemblyPipeline:
     """ Rebase and build MicroShift for an assembly """
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, build_system: str, data_path: str,
-                 nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
-                 custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
-                 auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
-                 ignore_non_x86_nightlies: Optional[bool] = False, logger: Optional[logging.Logger] = None, gen_microshift: bool = False):
+    def __init__(
+        self, runtime: Runtime, group: str, assembly: str, build_system: str, data_path: str,
+        nightlies: Tuple[str, ...], allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool,
+        custom: bool, arches: Tuple[str, ...], in_flight: Optional[str], previous_list: Tuple[str, ...],
+        auto_previous: bool, auto_trigger_build_sync: bool, pre_ga_mode: str, skip_get_nightlies: bool,
+        ignore_non_x86_nightlies: Optional[bool] = False, logger: Optional[logging.Logger] = None, gen_microshift: bool = False,
+    ):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -87,7 +89,8 @@ class GenAssemblyPipeline:
     async def run(self):
         self._slack_client.bind_channel(self.group)
         slack_response = await self._slack_client.say(
-            f":construction: Generating assembly definition {self.assembly} :construction:")
+            f":construction: Generating assembly definition {self.assembly} :construction:",
+        )
         slack_thread = slack_response["message"]["ts"]
         try:
             if self.arches and not self.custom:
@@ -102,7 +105,8 @@ class GenAssemblyPipeline:
                 candidate_nightlies = [await self._get_latest_accepted_nightly()]
             else:
                 candidate_nightlies, latest_nightly = await asyncio.gather(
-                    *[self._get_nightlies(), self._get_latest_accepted_nightly()])
+                    *[self._get_nightlies(), self._get_latest_accepted_nightly()],
+                )
 
             self._logger.info("Generating assembly definition...")
             assembly_definition = await self._gen_assembly_from_releases(candidate_nightlies)
@@ -118,8 +122,10 @@ class GenAssemblyPipeline:
             pr = await self._create_or_update_pull_request(assembly_definition)
 
             # Sends a slack message
-            message = (f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
-                       f"The inflight release is {self.in_flight}")
+            message = (
+                f"Hi @release-artists, please review assembly definition for {self.assembly}: {pr.html_url}\n\n"
+                f"The inflight release is {self.in_flight}"
+            )
             if not self.skip_get_nightlies:
                 if not self.ignore_non_x86_nightlies and latest_nightly not in candidate_nightlies:
                     message += '\n\n:warning: note that `gen-assembly` did not select the latest accepted amd64 nightly'
@@ -158,7 +164,7 @@ class GenAssemblyPipeline:
             "doozer",
             "--group", self.group,
             "--assembly", "stream",
-            "--build-system", self.build_system
+            "--build-system", self.build_system,
         ]
         if self.arches:
             cmd.append("--arches")
@@ -185,7 +191,7 @@ class GenAssemblyPipeline:
             "doozer",
             "--group", self.group,
             "--assembly", "stream",
-            "--build-system", self.build_system
+            "--build-system", self.build_system,
         ]
         if self.arches:
             cmd.append("--arches")
@@ -225,7 +231,8 @@ class GenAssemblyPipeline:
         match = re.search(r"github\.com[:/](.+)/(.+)(?:.git)?", ocp_build_data_repo_push_url)
         if not match:
             raise ValueError(
-                f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")
+                f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo",
+            )
 
         title = f"Add assembly {self.assembly}"
         body = f"Created by job run {jenkins.get_build_url()}"
@@ -237,11 +244,13 @@ class GenAssemblyPipeline:
         if self.runtime.dry_run:
             self._logger.warning(
                 "[DRY RUN] Would have created pull-request with head '%s', base '%s' title '%s', body '%s'",
-                head, base, title, body)
+                head, base, title, body,
+            )
 
             if self.auto_trigger_build_sync:
                 self._logger.info(
-                    "[DRY RUN] Would have triggered build-sync with the PR assembly definition")
+                    "[DRY RUN] Would have triggered build-sync with the PR assembly definition",
+                )
             d = {"html_url": "https://github.example.com/foo/bar/pull/1234", "number": 1234}
             result = namedtuple('pull_request', d.keys())(*d.values())
             return result
@@ -276,40 +285,66 @@ class GenAssemblyPipeline:
         if self.auto_trigger_build_sync:
             self._logger.info("Triggering build-sync")
             build_version = self.group.split("-")[1]  # eg: 4.14 from openshift-4.14
-            start_build_sync(build_version=build_version,
-                             assembly=self.assembly,
-                             doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
-                             # to build-sync because we always create branch on the base repo
-                             doozer_data_gitref=branch)
+            start_build_sync(
+                build_version=build_version,
+                assembly=self.assembly,
+                doozer_data_path=constants.OCP_BUILD_DATA_URL,  # we're not passing doozer_data_path
+                # to build-sync because we always create branch on the base repo
+                doozer_data_gitref=branch,
+            )
 
         return result
 
 
 @cli.command("gen-assembly")
-@click.option("--data-path", metavar='BUILD_DATA', default=None,
-              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly to generate for. e.g. 4.9.1")
-@click.option("--build-system", metavar="BUILD_SYSTEM", required=False, default='brew',
-              help="What build system we're operating on ('brew'|'konflux')")
-@click.option("--nightly", "nightlies", metavar="TAG", multiple=True,
-              help="(Optional) [MULTIPLE] List of nightlies to match with `doozer get-nightlies` (if empty, find latest)")
-@click.option("--allow-pending", is_flag=True,
-              help="Match nightlies that have not completed tests")
-@click.option("--allow-rejected", is_flag=True,
-              help="Match nightlies that have failed their tests")
-@click.option("--allow-inconsistency", is_flag=True,
-              help="Allow matching nightlies built from matching commits but with inconsistent RPMs")
-@click.option("--custom", is_flag=True,
-              help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.")
-@click.option("--pre-ga-mode", type=click.Choice(["prerelease"], case_sensitive=False),
-              help="Prepare the advisory for 'prerelease' operator release")
-@click.option('--auto-trigger-build-sync', is_flag=True,
-              help='Will trigger build-sync automatically after PR creation')
-@click.option("--arch", "arches", metavar="TAG", multiple=True,
-              help="(Optional) [MULTIPLE] (for custom assemblies only) Limit included arches to this list")
+@click.option(
+    "--data-path", metavar='BUILD_DATA', default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly to generate for. e.g. 4.9.1",
+)
+@click.option(
+    "--build-system", metavar="BUILD_SYSTEM", required=False, default='brew',
+    help="What build system we're operating on ('brew'|'konflux')",
+)
+@click.option(
+    "--nightly", "nightlies", metavar="TAG", multiple=True,
+    help="(Optional) [MULTIPLE] List of nightlies to match with `doozer get-nightlies` (if empty, find latest)",
+)
+@click.option(
+    "--allow-pending", is_flag=True,
+    help="Match nightlies that have not completed tests",
+)
+@click.option(
+    "--allow-rejected", is_flag=True,
+    help="Match nightlies that have failed their tests",
+)
+@click.option(
+    "--allow-inconsistency", is_flag=True,
+    help="Allow matching nightlies built from matching commits but with inconsistent RPMs",
+)
+@click.option(
+    "--custom", is_flag=True,
+    help="Custom assemblies are not for official release. They can, for example, not have all required arches for the group.",
+)
+@click.option(
+    "--pre-ga-mode", type=click.Choice(["prerelease"], case_sensitive=False),
+    help="Prepare the advisory for 'prerelease' operator release",
+)
+@click.option(
+    '--auto-trigger-build-sync', is_flag=True,
+    help='Will trigger build-sync automatically after PR creation',
+)
+@click.option(
+    "--arch", "arches", metavar="TAG", multiple=True,
+    help="(Optional) [MULTIPLE] (for custom assemblies only) Limit included arches to this list",
+)
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option('--previous', 'previous_list', metavar='EDGES', default=[], multiple=True, help='A list of releases that can upgrade to this release')
 @click.option('--auto-previous', 'auto_previous', is_flag=True, help='If specified, previous list is calculated from Cincinnati graph')
@@ -318,16 +353,20 @@ class GenAssemblyPipeline:
 @click.option("--gen-microshift", 'gen_microshift', default=False, is_flag=True, help="Create microshift entry for assembly release.")
 @pass_runtime
 @click_coroutine
-async def gen_assembly(runtime: Runtime, data_path: str, group: str, assembly: str, build_system: str, nightlies: Tuple[str, ...],
-                       allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
-                       auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
-                       previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool, ignore_non_x86_nightlies: bool,
-                       gen_microshift: bool):
-    pipeline = GenAssemblyPipeline(runtime=runtime, group=group, assembly=assembly, build_system=build_system, data_path=data_path,
-                                   nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
-                                   allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
-                                   auto_trigger_build_sync=auto_trigger_build_sync,
-                                   in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous,
-                                   pre_ga_mode=pre_ga_mode, skip_get_nightlies=skip_get_nightlies,
-                                   ignore_non_x86_nightlies=ignore_non_x86_nightlies, gen_microshift=gen_microshift)
+async def gen_assembly(
+    runtime: Runtime, data_path: str, group: str, assembly: str, build_system: str, nightlies: Tuple[str, ...],
+    allow_pending: bool, allow_rejected: bool, allow_inconsistency: bool, custom: bool, pre_ga_mode: str,
+    auto_trigger_build_sync: bool, arches: Tuple[str, ...], in_flight: Optional[str],
+    previous_list: Tuple[str, ...], auto_previous: bool, skip_get_nightlies: bool, ignore_non_x86_nightlies: bool,
+    gen_microshift: bool,
+):
+    pipeline = GenAssemblyPipeline(
+        runtime=runtime, group=group, assembly=assembly, build_system=build_system, data_path=data_path,
+        nightlies=nightlies, allow_pending=allow_pending, allow_rejected=allow_rejected,
+        allow_inconsistency=allow_inconsistency, arches=arches, custom=custom,
+        auto_trigger_build_sync=auto_trigger_build_sync,
+        in_flight=in_flight, previous_list=previous_list, auto_previous=auto_previous,
+        pre_ga_mode=pre_ga_mode, skip_get_nightlies=skip_get_nightlies,
+        ignore_non_x86_nightlies=ignore_non_x86_nightlies, gen_microshift=gen_microshift,
+    )
     await pipeline.run()

@@ -22,7 +22,8 @@ def isdir(path, message):
     if not os.path.isdir(path):
         raise FileNotFoundError(
             errno.ENOENT,
-            "{}: {}".format(message, os.strerror(errno.ENOENT)), path)
+            "{}: {}".format(message, os.strerror(errno.ENOENT)), path,
+        )
 
 
 def isfile(path, message):
@@ -38,7 +39,8 @@ def isfile(path, message):
     if not os.path.isfile(path):
         raise FileNotFoundError(
             errno.ENOENT,
-            "{}: {}".format(message, os.strerror(errno.ENOENT)), path)
+            "{}: {}".format(message, os.strerror(errno.ENOENT)), path,
+        )
 
 
 def success(exitcode, message):

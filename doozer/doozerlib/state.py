@@ -4,7 +4,7 @@ STATE_FAIL = 'failed'
 
 TEMPLATE_BASE_STATE = {
     'status': STATE_PASS,
-    'msg': 'Complete'
+    'msg': 'Complete',
 }
 
 TEMPLATE_IMAGE = {

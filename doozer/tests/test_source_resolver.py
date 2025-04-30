@@ -16,7 +16,7 @@ class SourceResolverTestCase(TestCase):
         return SourceResolver(
             sources_base_dir="/path/to/sources",
             cache_dir="/path/to/cache",
-            group_config=Model()
+            group_config=Model(),
         )
 
     def test_get_remote_branch_ref(self):
@@ -47,10 +47,12 @@ class SourceResolverTestCase(TestCase):
         self.assertEqual(("main_branch", "spam"), sr.detect_remote_source_branch(source_details, stage=False))
 
         # got a hit on the fallback branch
-        (flexmock(SourceResolver).
+        (
+            flexmock(SourceResolver).
             should_receive("_get_remote_branch_ref").
             and_return(None).
-            and_return("eggs"))
+            and_return("eggs")
+        )
         self.assertEqual(("fallback_branch", "eggs"), sr.detect_remote_source_branch(source_details, stage=False))
 
         # no target or fallback branch

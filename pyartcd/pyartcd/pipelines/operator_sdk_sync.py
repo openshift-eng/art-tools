@@ -45,8 +45,11 @@ class OperatorSDKPipeline:
             self._logger.info("Advisory status already in post REL_PREP, update subtask 7 ...")
             self._jira_client.complete_subtask(self.parent_jira_key, "moves advisories to REL_PREP", "Advisory status already in REL_PREP")
 
-            sdk_build = [b for b in sum(list(map(list, advisory.errata_builds.values())), []) if b.startswith(
-                'openshift-enterprise-operator-sdk-container')]
+            sdk_build = [
+                b for b in sum(list(map(list, advisory.errata_builds.values())), []) if b.startswith(
+                'openshift-enterprise-operator-sdk-container',
+                )
+            ]
             if not sdk_build:
                 self._logger.info("No SDK build to ship, update subtask 8 then close ...")
                 self._jira_client.complete_subtask(self.parent_jira_key, "operator-sdk", f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}")
@@ -122,18 +125,30 @@ class OperatorSDKPipeline:
 
 
 @cli.command("operator-sdk-sync")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly. e.g. 4.9.1")
-@click.option("--nvr", metavar="BUILD_NVR", required=False,
-              help="Pin specific Build NVR")
-@click.option("--prerelease", metavar="PRE_RELEASE", is_flag=True, required=False,
-              help="Use pre-release as directory name.")
-@click.option("--updatelatest", metavar="UPDATE_LATEST_SYMLINK", is_flag=True, required=False,
-              help="Update latest symlink on mirror")
-@click.option("--arches", metavar="ARCHES", required=False,
-              help="Arches in the build")
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly. e.g. 4.9.1",
+)
+@click.option(
+    "--nvr", metavar="BUILD_NVR", required=False,
+    help="Pin specific Build NVR",
+)
+@click.option(
+    "--prerelease", metavar="PRE_RELEASE", is_flag=True, required=False,
+    help="Use pre-release as directory name.",
+)
+@click.option(
+    "--updatelatest", metavar="UPDATE_LATEST_SYMLINK", is_flag=True, required=False,
+    help="Update latest symlink on mirror",
+)
+@click.option(
+    "--arches", metavar="ARCHES", required=False,
+    help="Arches in the build",
+)
 @pass_runtime
 @click_coroutine
 async def operator_sdk_sync(runtime: Runtime, group: str, assembly: str, nvr: str, prerelease: bool, updatelatest: bool, arches: str):

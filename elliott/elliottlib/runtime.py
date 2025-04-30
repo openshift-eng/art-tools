@@ -122,8 +122,10 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none', no_group=False, disabled=None, build_system: str = None,
-                   with_shipment: bool = False):
+    def initialize(
+        self, mode='none', no_group=False, disabled=None, build_system: str = None,
+        with_shipment: bool = False,
+    ):
         if self.initialized:
             return
 
@@ -167,7 +169,8 @@ class Runtime(GroupRuntime):
         self.group_config = self.get_group_config()
         if self.group_config.name != self.group:
             raise IOError(
-                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)")
+                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)",
+            )
 
         self.product = self.group_config.product or "ocp"
         self.resolve_shipment_metadata(strict=with_shipment)
@@ -234,20 +237,24 @@ class Runtime(GroupRuntime):
 
         image_data = {}
         if mode in ['images', 'both']:
-            image_data = self.gitdata.load_data(path='images', keys=image_keys,
-                                                exclude=image_ex,
-                                                filter_funcs=None if len(image_keys) else filter_func,
-                                                replace_vars=replace_vars)
+            image_data = self.gitdata.load_data(
+                path='images', keys=image_keys,
+                exclude=image_ex,
+                filter_funcs=None if len(image_keys) else filter_func,
+                replace_vars=replace_vars,
+            )
             for i in image_data.values():
                 self.late_resolve_image(i.key, add=True, data_obj=i)
             if not self.image_map:
                 self._logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
 
         if mode in ['rpms', 'both']:
-            rpm_data = self.gitdata.load_data(path='rpms', keys=rpm_keys,
-                                              exclude=rpm_ex,
-                                              replace_vars=replace_vars,
-                                              filter_funcs=None if len(rpm_keys) else filter_func)
+            rpm_data = self.gitdata.load_data(
+                path='rpms', keys=rpm_keys,
+                exclude=rpm_ex,
+                replace_vars=replace_vars,
+                filter_funcs=None if len(rpm_keys) else filter_func,
+            )
             for r in rpm_data.values():
                 metadata = RPMMetadata(self, r)
                 self.rpm_map[metadata.distgit_key] = metadata
@@ -336,15 +343,19 @@ class Runtime(GroupRuntime):
 
         if self.data_path is None:
             raise ElliottFatalError(
-                ("No metadata path provided. Must be set via one of:\n"
-                 "* data_path key in {}\n"
-                 "* elliott --data-path [PATH|URL]\n"
-                 "* Environment variable ELLIOTT_DATA_PATH\n"
-                 ).format(self.cfg_obj.full_path))
+                (
+                    "No metadata path provided. Must be set via one of:\n"
+                    "* data_path key in {}\n"
+                    "* elliott --data-path [PATH|URL]\n"
+                    "* Environment variable ELLIOTT_DATA_PATH\n"
+                ).format(self.cfg_obj.full_path),
+            )
 
         try:
-            self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                           commitish=self.group_commitish, logger=self._logger)
+            self.gitdata = gitdata.GitData(
+                data_path=self.data_path, clone_dir=self.working_dir,
+                commitish=self.group_commitish, logger=self._logger,
+            )
             self.data_dir = self.gitdata.data_dir
 
         except gitdata.GitDataException as ex:
@@ -374,8 +385,10 @@ class Runtime(GroupRuntime):
                         self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {shipment_path}: {e}")
 
             try:
-                self.shipment_gitdata = gitdata.GitData(data_path=shipment_path, clone_dir=self.working_dir,
-                                                        commitish=commitish, logger=self._logger)
+                self.shipment_gitdata = gitdata.GitData(
+                    data_path=shipment_path, clone_dir=self.working_dir,
+                    commitish=commitish, logger=self._logger,
+                )
             except gitdata.GitDataException as ex:
                 raise ElliottFatalError(ex)
 

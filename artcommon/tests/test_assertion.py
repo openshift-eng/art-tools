@@ -23,8 +23,10 @@ class TestAssert(unittest.TestCase):
         try:
             assertion.isdir(dir_exists, "dir missing: {}".format(dir_exists))
         except FileNotFoundError as fnf_error:
-            self.fail("asserted real directory does not exist: {}".
-                      format(fnf_error))
+            self.fail(
+                "asserted real directory does not exist: {}".
+                format(fnf_error),
+            )
 
         with self.assertRaises(FileNotFoundError):
             assertion.isdir(dir_missing, "dir missing: {}".format(dir_missing))
@@ -49,7 +51,7 @@ class TestAssert(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             assertion.isfile(
                 file_missing,
-                "file missing: {}".format(file_missing)
+                "file missing: {}".format(file_missing),
             )
 
         # Should raise IsADirectory

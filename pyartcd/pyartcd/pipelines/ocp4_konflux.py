@@ -52,10 +52,12 @@ class EnumEncoder(json.JSONEncoder):
 
 
 class KonfluxOcp4Pipeline:
-    def __init__(self, runtime: Runtime, assembly: str, data_path: Optional[str], image_build_strategy: Optional[str],
-                 image_list: Optional[str], version: str, data_gitref: Optional[str],
-                 kubeconfig: Optional[str], skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...],
-                 plr_template: str, lock_identifier: str):
+    def __init__(
+        self, runtime: Runtime, assembly: str, data_path: Optional[str], image_build_strategy: Optional[str],
+        image_list: Optional[str], version: str, data_gitref: Optional[str],
+        kubeconfig: Optional[str], skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...],
+        plr_template: str, lock_identifier: str,
+    ):
         self.runtime = runtime
         self.assembly = assembly
         self.version = version
@@ -81,7 +83,7 @@ class KonfluxOcp4Pipeline:
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
             '--build-system=konflux',
-            group_param
+            group_param,
         ]
 
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy))
@@ -214,7 +216,8 @@ class KonfluxOcp4Pipeline:
 
         else:
             _, out, _ = await exectools.cmd_gather_async([
-                *self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml'])
+                *self._doozer_base_command.copy(), 'config:read-group', 'arches', '--yaml',
+            ])
             exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
             for arch in self.arches:
                 exclude_arches.remove(arch)
@@ -226,7 +229,7 @@ class KonfluxOcp4Pipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD=False
+            SKIP_MULTI_ARCH_PAYLOAD=False,
         )
 
     async def init_build_plan(self):
@@ -269,8 +272,10 @@ class KonfluxOcp4Pipeline:
             n_images = self.build_plan.active_image_count - len(self.build_plan.images_excluded)
             jenkins.update_title(f'[{n_images} images]')
             if len(self.build_plan.images_excluded) <= 10:
-                jenkins.update_description(f'Images: building all images except '
-                                           f'{",".join(self.build_plan.images_excluded)}.<br/>')
+                jenkins.update_description(
+                    f'Images: building all images except '
+                    f'{",".join(self.build_plan.images_excluded)}.<br/>',
+                )
             else:
                 jenkins.update_description(f'Images: building {n_images} images.<br/>')
 
@@ -293,10 +298,12 @@ class KonfluxOcp4Pipeline:
 
     async def clean_up(self):
         LOGGER.info('Cleaning up Doozer source dirs')
-        await asyncio.gather(*[
-            self.runtime.cleanup_sources('sources'),
-            self.runtime.cleanup_sources('konflux_build_sources'),
-        ])
+        await asyncio.gather(
+            *[
+                self.runtime.cleanup_sources('sources'),
+                self.runtime.cleanup_sources('konflux_build_sources'),
+            ],
+        )
 
     def trigger_bundle_build(self):
         if self.skip_bundle_build:
@@ -336,7 +343,8 @@ class KonfluxOcp4Pipeline:
 
     async def request_mass_rebuild(self):
         await self.slack_client.say(
-            f':konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:')
+            f':konflux: :loading-correct: Enqueuing mass rebuild for {self.version} :loading-correct:',
+        )
 
         queue = locks.Keys.KONFLUX_MASS_REBUILD_QUEUE.value
         mapping = {self.version: mass_rebuild_score(self.version)}
@@ -349,7 +357,7 @@ class KonfluxOcp4Pipeline:
             lock_name=Lock.KONFLUX_MASS_REBUILD.value,
             lock_id=self.lock_identifier,
             ocp_version=self.version,
-            version_queue_name=queue
+            version_queue_name=queue,
         )
 
     async def run(self):
@@ -378,32 +386,48 @@ class KonfluxOcp4Pipeline:
 
 
 @cli.command("beta:ocp4-konflux", help="A pipeline to build images with Konflux for OCP 4")
-@click.option('--image-build-strategy', required=True,
-              type=click.Choice(['all', 'only', 'except'], case_sensitive=False),
-              help='Which images are candidates for building? "only/except" refer to the --image-list param')
-@click.option('--image-list', required=True,
-              help='Comma/space-separated list to include/exclude per BUILD_IMAGES '
-                   '(e.g. logging-kibana5,openshift-jenkins-2)')
+@click.option(
+    '--image-build-strategy', required=True,
+    type=click.Choice(['all', 'only', 'except'], case_sensitive=False),
+    help='Which images are candidates for building? "only/except" refer to the --image-list param',
+)
+@click.option(
+    '--image-list', required=True,
+    help='Comma/space-separated list to include/exclude per BUILD_IMAGES '
+         '(e.g. logging-kibana5,openshift-jenkins-2)',
+)
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
-@click.option('--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
-              help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
+@click.option(
+    '--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
+    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+)
 @click.option('--version', required=True, help='OCP version to scan, e.g. 4.14')
-@click.option('--data-gitref', required=False, default='',
-              help='Doozer data path git [branch / tag / sha] to use')
+@click.option(
+    '--data-gitref', required=False, default='',
+    help='Doozer data path git [branch / tag / sha] to use',
+)
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
-@click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
+@click.option(
+    '--ignore-locks', is_flag=True, default=False,
+    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
+)
 @click.option("--skip-rebase", is_flag=True, help="(For testing) Skip the rebase step")
 @click.option("--skip-bundle-build", is_flag=True, help="(For testing) Skip the bundle build step")
-@click.option("--arch", "arches", metavar="TAG", multiple=True,
-              help="(Optional) [MULTIPLE] Limit included arches to this list")
-@click.option('--plr-template', required=False, default='',
-              help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>')
+@click.option(
+    "--arch", "arches", metavar="TAG", multiple=True,
+    help="(Optional) [MULTIPLE] Limit included arches to this list",
+)
+@click.option(
+    '--plr-template', required=False, default='',
+    help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
+)
 @pass_runtime
 @click_coroutine
-async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional[str], assembly: str,
-               data_path: Optional[str], version: str, data_gitref: Optional[str], kubeconfig: Optional[str],
-               ignore_locks: bool, skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...], plr_template: str):
+async def ocp4(
+    runtime: Runtime, image_build_strategy: str, image_list: Optional[str], assembly: str,
+    data_path: Optional[str], version: str, data_gitref: Optional[str], kubeconfig: Optional[str],
+    ignore_locks: bool, skip_rebase: bool, skip_bundle_build: bool, arches: Tuple[str, ...], plr_template: str,
+):
     if not kubeconfig:
         kubeconfig = os.environ.get('KONFLUX_SA_KUBECONFIG')
 
@@ -424,7 +448,8 @@ async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional
         skip_bundle_build=skip_bundle_build,
         arches=arches,
         plr_template=plr_template,
-        lock_identifier=lock_identifier)
+        lock_identifier=lock_identifier,
+    )
 
     if ignore_locks:
         await pipeline.run()
@@ -433,5 +458,5 @@ async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional
             coro=pipeline.run(),
             lock=Lock.BUILD_KONFLUX,
             lock_name=Lock.BUILD_KONFLUX.value.format(version=version),
-            lock_id=lock_identifier
+            lock_id=lock_identifier,
         )

@@ -60,10 +60,12 @@ class RpmMirror:
 
 
 class Ocp4Pipeline:
-    def __init__(self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-                 build_rpms: str, rpm_list: str, build_images: str, image_list: str,
-                 skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool = False,
-                 lock_identifier: str = None):
+    def __init__(
+        self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
+        build_rpms: str, rpm_list: str, build_images: str, image_list: str,
+        skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool = False,
+        lock_identifier: str = None,
+    ):
 
         self.runtime = runtime
         self.assembly = assembly
@@ -100,7 +102,7 @@ class Ocp4Pipeline:
             f'--assembly={assembly}',
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
-            group_param
+            group_param,
         ]
         self._slack_client = runtime.new_slack_client()
         self._mail_client = self.runtime.new_mail_client()
@@ -115,12 +117,15 @@ class Ocp4Pipeline:
         cmd.extend(['config:read-group', '--default=False', 'assemblies.enabled'])
         _, out, err = await exectools.cmd_gather_async(cmd)
         assemblies_enabled = out.strip() == 'True'
-        self.runtime.logger.info('Assemblies %s enabled for %s',
-                                 'NOT' if not assemblies_enabled else '', self.version.stream)
+        self.runtime.logger.info(
+            'Assemblies %s enabled for %s',
+            'NOT' if not assemblies_enabled else '', self.version.stream,
+        )
 
         if self.assembly != 'stream' and not assemblies_enabled:
             raise RuntimeError(
-                f"ASSEMBLY cannot be set to '{self.assembly}' because assemblies are not enabled in ocp-build-data.")
+                f"ASSEMBLY cannot be set to '{self.assembly}' because assemblies are not enabled in ocp-build-data.",
+            )
 
         if self.assembly.lower() == "test":
             jenkins.update_title(" [TEST]")
@@ -222,7 +227,8 @@ class Ocp4Pipeline:
             version=self.version.stream,
             data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
-            doozer_data_gitref=self.data_gitref)
+            doozer_data_gitref=self.data_gitref,
+        )
 
     async def _initialize(self):
         jenkins.init_jenkins()
@@ -230,7 +236,8 @@ class Ocp4Pipeline:
         if not await self._is_build_permitted():
             jenkins.update_description('Builds not permitted', append=False)
             raise RuntimeError(
-                'This build is being terminated because it is not permitted according to current group.yml')
+                'This build is being terminated because it is not permitted according to current group.yml',
+            )
 
         await self._check_assembly()
         await self._initialize_version()
@@ -253,7 +260,8 @@ class Ocp4Pipeline:
 
         elif self.build_plan.rpms_excluded:
             jenkins.update_description(
-                f'RPMs: building all except {self.build_plan.rpms_excluded}.<br/>')
+                f'RPMs: building all except {self.build_plan.rpms_excluded}.<br/>',
+            )
 
         else:
             jenkins.update_description('RPMs: building all.<br/>')
@@ -263,7 +271,8 @@ class Ocp4Pipeline:
 
         elif self.build_plan.rpms_excluded:
             jenkins.update_title(
-                self._display_tag_for(self.build_plan.rpms_excluded, 'RPM', is_excluded=True))
+                self._display_tag_for(self.build_plan.rpms_excluded, 'RPM', is_excluded=True),
+            )
 
         elif self.build_plan.build_rpms:
             jenkins.update_title(' [all RPMs]')
@@ -295,7 +304,8 @@ class Ocp4Pipeline:
 
         elif self.build_plan.images_excluded:
             jenkins.update_title(
-                self._display_tag_for(self.build_plan.images_excluded, 'image', is_excluded=True))
+                self._display_tag_for(self.build_plan.images_excluded, 'image', is_excluded=True),
+            )
 
         elif self.build_plan.build_images:
             jenkins.update_title(' [all images]')
@@ -344,7 +354,7 @@ class Ocp4Pipeline:
         cmd.extend([
             'rpms:rebase-and-build',
             f'--version={self.version.stream}',
-            f'--release={self.version.release}'
+            f'--release={self.version.release}',
         ])
 
         if self.runtime.dry_run:
@@ -397,7 +407,7 @@ class Ocp4Pipeline:
             version=self.version.stream,
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
-            doozer_data_gitref=self.data_gitref
+            doozer_data_gitref=self.data_gitref,
         )
         self.runtime.logger.info('Automation freeze for %s: %s', self.version.stream, automation_state)
 
@@ -409,7 +419,7 @@ class Ocp4Pipeline:
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(
                 "*:alert: ocp4 build compose running during automation freeze*\n"
-                "There were RPMs in the build plan that forced build compose during automation freeze."
+                "There were RPMs in the build plan that forced build compose during automation freeze.",
             )
 
             return True
@@ -437,7 +447,7 @@ class Ocp4Pipeline:
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
                 dry_run=self.runtime.dry_run,
-                copy_links=self.copy_links
+                copy_links=self.copy_links,
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -479,7 +489,7 @@ class Ocp4Pipeline:
         cmd.extend([
             'images:rebase', f'--version=v{self.version.stream}', f'--release={self.version.release}',
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
-            '--push', f"--message='{os.environ['BUILD_URL']}'"
+            '--push', f"--message='{os.environ['BUILD_URL']}'",
         ])
 
         if self.runtime.dry_run:
@@ -495,15 +505,15 @@ class Ocp4Pipeline:
                 state = yaml.safe_load(state_yaml)
             failed_images = list(
                 dict(
-                    filter(lambda item: item[1] is not True, state['images:rebase']['images'].items())
-                ).keys()
+                    filter(lambda item: item[1] is not True, state['images:rebase']['images'].items()),
+                ).keys(),
             )
 
             # Notify about rebase failures
             if self.assembly == 'stream':
                 self._slack_client.bind_channel(f'openshift-{self.version.stream}')
                 await self._slack_client.say(
-                    f":alert: Following images failed to rebase in {self.version.stream}: {','.join(failed_images)}"
+                    f":alert: Following images failed to rebase in {self.version.stream}: {','.join(failed_images)}",
                 )
 
             # Remove failed images from build plan
@@ -514,14 +524,14 @@ class Ocp4Pipeline:
         util.notify_dockerfile_reconciliations(
             version=self.version.stream,
             doozer_working=self.runtime.doozer_working,
-            mail_client=self._mail_client
+            mail_client=self._mail_client,
         )
 
         # TODO: if a non-required rebase fails, notify ART and the image owners
         util.notify_bz_info_missing(
             version=self.version.stream,
             doozer_working=self.runtime.doozer_working,
-            mail_client=self._mail_client
+            mail_client=self._mail_client,
         )
 
     def _handle_image_build_failures(self):
@@ -550,15 +560,17 @@ class Ocp4Pipeline:
 
         if (ratio['total'] > 10 and ratio['ratio'] > 0.25) or \
                 (ratio['ratio'] > 1 and ratio['failed'] == ratio['total']):
-            self.runtime.logger.warning("%s of %s image builds failed; probably not the owners' fault, "
-                                        "will not spam", {ratio['failed']}, {ratio['total']})
+            self.runtime.logger.warning(
+                "%s of %s image builds failed; probably not the owners' fault, "
+                "will not spam", {ratio['failed']}, {ratio['total']},
+            )
 
         else:
             util.mail_build_failure_owners(
                 failed_builds=failed_map,
                 doozer_working=self.runtime.doozer_working,
                 mail_client=self._mail_client,
-                default_owner=self.mail_list_failure
+                default_owner=self.mail_list_failure,
             )
 
     async def _build_images(self):
@@ -574,7 +586,7 @@ class Ocp4Pipeline:
             group=f'openshift-{self.version.stream}',
             assembly=self.assembly,
             doozer_data_path=self.data_path,
-            doozer_data_gitref=self.data_gitref
+            doozer_data_gitref=self.data_gitref,
         )
 
         # Doozer command
@@ -627,7 +639,8 @@ class Ocp4Pipeline:
 
         if self.mass_rebuild:
             await self._slack_client.say(
-                f':construction: Starting image builds for {self.version.stream} mass rebuild :construction:')
+                f':construction: Starting image builds for {self.version.stream} mass rebuild :construction:',
+            )
 
         # In case of mass rebuilds, rebase and build should happend within the same lock scope
         # Otherwise we might rebase, then get blocked on the mass rebuild lock
@@ -673,7 +686,7 @@ class Ocp4Pipeline:
                 build_version=self.version.stream,
                 assembly=self.assembly,
                 doozer_data_path=self.data_path,
-                doozer_data_gitref=self.data_gitref
+                doozer_data_gitref=self.data_gitref,
             )
 
         if operator_nvrs:
@@ -682,7 +695,7 @@ class Ocp4Pipeline:
                 assembly=self.assembly,
                 operator_nvrs=operator_nvrs,
                 doozer_data_path=self.data_path,
-                doozer_data_gitref=self.data_gitref
+                doozer_data_gitref=self.data_gitref,
             )
 
     async def _mirror_rpms(self):
@@ -699,34 +712,40 @@ class Ocp4Pipeline:
         # Sync plashets to mirror
         try:
             await locks.run_with_lock(
-                coro=sync_repo_to_s3_mirror(local_dir=self.rpm_mirror.local_plashet_path,
-                                            s3_path=f'{s3_base_dir}/latest/',
-                                            dry_run=self.runtime.dry_run),
+                coro=sync_repo_to_s3_mirror(
+                    local_dir=self.rpm_mirror.local_plashet_path,
+                    s3_path=f'{s3_base_dir}/latest/',
+                    dry_run=self.runtime.dry_run,
+                ),
                 lock=Lock.MIRRORING_RPMS,
                 lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier
+                lock_id=self.lock_identifier,
             )
 
             await locks.run_with_lock(
                 coro=sync_repo_to_s3_mirror(
                     local_dir=self.rpm_mirror.local_plashet_path,
                     s3_path=f'/enterprise/all/{self.version.stream}/latest/',
-                    dry_run=self.runtime.dry_run
+                    dry_run=self.runtime.dry_run,
                 ),
                 lock=Lock.MIRRORING_RPMS,
                 lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier
+                lock_id=self.lock_identifier,
             )
-            self.runtime.logger.info('Finished mirroring OCP %s to openshift mirrors',
-                                     f'{self.version.stream}-{self.version.release}')
+            self.runtime.logger.info(
+                'Finished mirroring OCP %s to openshift mirrors',
+                f'{self.version.stream}-{self.version.release}',
+            )
 
         except ChildProcessError as e:
             error_msg = f'Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3: {e}',
             self.runtime.logger.error(error_msg)
             self.runtime.logger.error(traceback.format_exc())
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
-            await self._slack_client.say(f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to "
-                                         f"art-srv-enterprise S3")
+            await self._slack_client.say(
+                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to "
+                f"art-srv-enterprise S3",
+            )
             raise
 
     async def _sweep(self):
@@ -740,7 +759,7 @@ class Ocp4Pipeline:
         cmd = [
             'elliott',
             f'--group=openshift-{self.version.stream}',
-            "find-bugs:qe"
+            "find-bugs:qe",
         ]
         if self.runtime.dry_run:
             cmd.append('--dry-run')
@@ -769,7 +788,7 @@ class Ocp4Pipeline:
             f'--group=openshift-{self.version.stream}',
             "find-bugs:golang",
             "--analyze",
-            "--update-tracker"
+            "--update-tracker",
         ]
 
         if self.runtime.dry_run:
@@ -822,7 +841,7 @@ class Ocp4Pipeline:
             lock_name=Lock.MASS_REBUILD.value,
             lock_id=self.lock_identifier,
             ocp_version=self.version.stream,
-            version_queue_name=queue
+            version_queue_name=queue,
         )
 
     async def run(self):
@@ -840,7 +859,7 @@ class Ocp4Pipeline:
                 coro=self._build_compose(),
                 lock=lock,
                 lock_name=lock_name,
-                lock_id=self.lock_identifier
+                lock_id=self.lock_identifier,
             )
 
         else:
@@ -850,7 +869,8 @@ class Ocp4Pipeline:
         if self.build_plan.build_images:
             if self.mass_rebuild:
                 await self._slack_client.say(
-                    f':loading-correct: Enqueuing mass rebuild for {self.version.stream} :loading-correct:')
+                    f':loading-correct: Enqueuing mass rebuild for {self.version.stream} :loading-correct:',
+                )
                 await self._request_mass_rebuild()
             else:
                 await self._rebase_and_build_images()
@@ -871,43 +891,67 @@ class Ocp4Pipeline:
         await self.runtime.cleanup_sources('sources')
 
 
-@cli.command("ocp4",
-             help="Build OCP 4.y components incrementally. In typical usage, scans for changes that could affect "
-                  "package or image builds and rebuilds the affected components. Creates new plashets if the "
-                  "automation is not frozen or if there are RPMs that are built in this run, and runs other jobs to "
-                  "sync builds to nightlies, create operator metadata, and sets MODIFIED bugs to ON_QA")
+@cli.command(
+    "ocp4",
+    help="Build OCP 4.y components incrementally. In typical usage, scans for changes that could affect "
+         "package or image builds and rebuilds the affected components. Creates new plashets if the "
+         "automation is not frozen or if there are RPMs that are built in this run, and runs other jobs to "
+         "sync builds to nightlies, create operator metadata, and sets MODIFIED bugs to ON_QA",
+)
 @click.option('--version', required=True, help='OCP version to scan, e.g. 4.14')
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
-@click.option('--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
-              help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
-@click.option('--data-gitref', required=False, default='',
-              help='Doozer data path git [branch / tag / sha] to use')
-@click.option('--build-rpms', required=True,
-              type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
-              help='Which RPMs are candidates for building? "only/except" refer to --rpm-list param')
-@click.option('--rpm-list', required=False, default='',
-              help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS '
-                   '(e.g. openshift,openshift-kuryr)')
-@click.option('--build-images', required=True,
-              type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
-              help='Which images are candidates for building? "only/except" refer to --image-list param')
-@click.option('--image-list', required=False, default='',
-              help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES '
-                   '(e.g. logging-kibana5,openshift-jenkins-2)')
-@click.option('--skip-plashets', is_flag=True, default=False,
-              help='Do not build plashets (for example to save time when running multiple builds against test assembly)')
-@click.option('--mail-list-failure', required=False, default='aos-art-automation+failed-ocp4-build@redhat.com',
-              help='Failure Mailing List')
-@click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
+@click.option(
+    '--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
+    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+)
+@click.option(
+    '--data-gitref', required=False, default='',
+    help='Doozer data path git [branch / tag / sha] to use',
+)
+@click.option(
+    '--build-rpms', required=True,
+    type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
+    help='Which RPMs are candidates for building? "only/except" refer to --rpm-list param',
+)
+@click.option(
+    '--rpm-list', required=False, default='',
+    help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS '
+         '(e.g. openshift,openshift-kuryr)',
+)
+@click.option(
+    '--build-images', required=True,
+    type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
+    help='Which images are candidates for building? "only/except" refer to --image-list param',
+)
+@click.option(
+    '--image-list', required=False, default='',
+    help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES '
+         '(e.g. logging-kibana5,openshift-jenkins-2)',
+)
+@click.option(
+    '--skip-plashets', is_flag=True, default=False,
+    help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
+)
+@click.option(
+    '--mail-list-failure', required=False, default='aos-art-automation+failed-ocp4-build@redhat.com',
+    help='Failure Mailing List',
+)
+@click.option(
+    '--ignore-locks', is_flag=True, default=False,
+    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
+)
 @click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
-@click.option('--copy-links', is_flag=True, default=False,
-              help='Call rsync with --copy-links instead of --links')
+@click.option(
+    '--copy-links', is_flag=True, default=False,
+    help='Call rsync with --copy-links instead of --links',
+)
 @pass_runtime
 @click_coroutine
-async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-               build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
-               mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool, copy_links: bool):
+async def ocp4(
+    runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
+    build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
+    mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool, copy_links: bool,
+):
 
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
@@ -927,7 +971,7 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         mail_list_failure=mail_list_failure,
         lock_identifier=lock_identifier,
         comment_on_pr=comment_on_pr,
-        copy_links=copy_links
+        copy_links=copy_links,
     )
 
     if ignore_locks:
@@ -938,5 +982,5 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
             coro=pipeline.run(),
             lock=Lock.BUILD,
             lock_name=Lock.BUILD.value.format(version=version),
-            lock_id=lock_identifier
+            lock_id=lock_identifier,
         )

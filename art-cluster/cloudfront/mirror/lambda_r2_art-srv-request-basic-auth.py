@@ -22,9 +22,9 @@ def unauthorized():
         'headers': {
             'www-authenticate': [{
                 'key': 'WWW-Authenticate',
-                'value': 'Basic'
+                'value': 'Basic',
             }],
-        }
+        },
     }
 
 
@@ -35,9 +35,9 @@ def redirect(uri: str, code: int = 302, description="Found"):
         'headers': {
             "location": [{
                 'key': 'Location',
-                "value": str(uri)
+                "value": str(uri),
             }],
-        }
+        },
     }
 
 
@@ -49,15 +49,15 @@ def not_found(description="File Not Found"):
             'cache-control': [
                 {
                     'key': 'Cache-Control',
-                    'value': 'max-age=0'
-                }
+                    'value': 'max-age=0',
+                },
             ],
             "content-type": [
                 {
                     'key': 'Content-Type',
-                    'value': 'text/html'
-                }
-            ]
+                    'value': 'text/html',
+                },
+            ],
         },
         'body': 'File not found',
     }
@@ -113,7 +113,8 @@ def lambda_handler(event: Dict, context: Dict):
                 return redirect("/pub/")
             return unauthorized()
         auth_split = authorization[0]["value"].split(
-            maxsplit=1)  # Basic <base64> => ['Basic', '<base64>']
+            maxsplit=1,
+        )  # Basic <base64> => ['Basic', '<base64>']
         if len(auth_split) != 2:
             return unauthorized()
         auth_schema, b64_auth_val = auth_split
@@ -133,7 +134,8 @@ def lambda_handler(event: Dict, context: Dict):
         if uri.startswith('/enterprise/') or uri.startswith('/libra/'):
             if not ENTERPRISE_SERVICE_ACCOUNTS:
                 ENTERPRISE_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS')
+                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS',
+                )
 
             if username in ENTERPRISE_SERVICE_ACCOUNTS:
                 # like `==`, but in a timing-safe way
@@ -149,7 +151,8 @@ def lambda_handler(event: Dict, context: Dict):
             if username.index('+') > 0:
                 if not POCKET_SERVICE_ACCOUNTS:
                     POCKET_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS')
+                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS',
+                    )
                 pocket_name = username.split('+')[0]
                 if uri.startswith(f'/pockets/{pocket_name}/'):
                     if username in POCKET_SERVICE_ACCOUNTS:
@@ -238,7 +241,7 @@ def lambda_handler(event: Dict, context: Dict):
                 # When the browser hits that presigned URL, the S3 API will find the
                 # content-disposition preference in the encoding, and return that back to
                 # the browser along with the file content.
-                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"'
+                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"',
             },
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )

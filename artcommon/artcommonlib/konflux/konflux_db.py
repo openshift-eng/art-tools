@@ -180,7 +180,8 @@ class KonfluxDb:
                 rows = await self.bq_client.select(
                     where_clauses=where_clauses,
                     order_by_clause=order_by_clause,
-                    limit=limit-total_rows if limit is not None else None)
+                    limit=limit-total_rows if limit is not None else None,
+                )
             except Exception as e:
                 self.logger.error('Failed executing query: %s', e)
                 raise
@@ -193,9 +194,13 @@ class KonfluxDb:
         if total_rows == 0:
             # We can print out BinaryExpression search clause, but it gets much trickier with Function
             # that comes into play when extra_patterns is used, so exclude those cases
-            self.logger.debug('No builds found with the given criteria: %s',
-                              [f"{clause.left}={clause.right.value if not isinstance(clause.right, Null) else clause.right}"
-                               for clause in base_clauses if isinstance(clause, BinaryExpression)])
+            self.logger.debug(
+                'No builds found with the given criteria: %s',
+                [
+                    f"{clause.left}={clause.right.value if not isinstance(clause.right, Null) else clause.right}"
+                    for clause in base_clauses if isinstance(clause, BinaryExpression)
+                ],
+            )
             if strict:
                 raise IOError('No builds found with the given criteria')
 
@@ -217,7 +222,8 @@ class KonfluxDb:
         For a list of component names, run get_latest_build() in a concurrent pool executor.
         """
 
-        return await asyncio.gather(*[
+        return await asyncio.gather(
+            *[
             self.get_latest_build(
                 name=name,
                 group=group,
@@ -229,8 +235,11 @@ class KonfluxDb:
                 completed_before=completed_before,
                 embargoed=embargoed,
                 extra_patterns=extra_patterns,
-                strict=strict)
-            for name in names])
+                strict=strict,
+            )
+            for name in names
+            ],
+        )
 
     async def get_latest_build(
             self,
@@ -270,7 +279,7 @@ class KonfluxDb:
         base_clauses = [
             Column('name', String) == name,
             Column('group', String) == group,
-            Column('outcome', String) == str(outcome)
+            Column('outcome', String) == str(outcome),
         ]
         if assembly:
             base_clauses.append(Column('assembly', String) == assembly)
@@ -284,7 +293,7 @@ class KonfluxDb:
             self.logger.info('Searching for %s builds completed before %s', name, completed_before)
             base_clauses.extend([
                 Column('end_time').isnot(None),
-                Column('end_time', DateTime) < completed_before
+                Column('end_time', DateTime) < completed_before,
             ])
 
         if el_target:
@@ -322,8 +331,10 @@ class KonfluxDb:
         # If we got here, no builds have been found in the whole 36 months period
         if strict:
             raise IOError(f"Build record for {name} not found.")
-        self.logger.warning('No builds found for %s in %s with status %s in assembly %s and target %s',
-                            name, group, outcome.value, assembly, el_target)
+        self.logger.warning(
+            'No builds found for %s in %s with status %s in assembly %s and target %s',
+            name, group, outcome.value, assembly, el_target,
+        )
         return None
 
     def from_result_row(self, row: Row) -> KonfluxRecord:
@@ -332,14 +343,18 @@ class KonfluxDb:
         """
         assert self.record_cls is not None, 'DB client is not bound to a table'
         try:
-            return self.record_cls(**{
-                field: (row[field])
-                for field in row.keys()
-            })
+            return self.record_cls(
+                **{
+                    field: (row[field])
+                    for field in row.keys()
+                },
+            )
 
         except AttributeError as e:
-            self.logger.error('Could not construct a %s object from result row %s: %s',
-                              self.record_cls.__name__, row, e)
+            self.logger.error(
+                'Could not construct a %s object from result row %s: %s',
+                self.record_cls.__name__, row, e,
+            )
             raise
 
     async def get_build_record_by_nvr(self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True) -> typing.Optional[KonfluxRecord]:
@@ -362,10 +377,12 @@ class KonfluxDb:
         self.logger.warning('No builds found for NVR %s', nvr)
         return None
 
-    async def get_build_records_by_nvrs(self, nvrs: typing.Sequence[str],
-                                        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
-                                        where: typing.Optional[typing.Dict[str, typing.Any]] = None,
-                                        strict: bool = True) -> typing.List[KonfluxRecord]:
+    async def get_build_records_by_nvrs(
+        self, nvrs: typing.Sequence[str],
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        where: typing.Optional[typing.Dict[str, typing.Any]] = None,
+        strict: bool = True,
+    ) -> typing.List[KonfluxRecord]:
         """ Get build records by NVRS.
         Note that this function only searches for the build records in the last 3 years.
         :param nvrs: The NVRS of the builds.
@@ -381,8 +398,10 @@ class KonfluxDb:
             # do not modify the original dict
             where = where.copy()
             if "nvr" in where or "outcome" in where:
-                raise ValueError("'nvr' and 'outcome' fields are reserved and should not be used in the 'where' "
-                                 "parameter")
+                raise ValueError(
+                    "'nvr' and 'outcome' fields are reserved and should not be used in the 'where' "
+                    "parameter",
+                )
 
         async def _task(nvr):
             where.update({"nvr": nvr, "outcome": str(outcome)})
@@ -390,8 +409,10 @@ class KonfluxDb:
         tasks = [asyncio.create_task(_task(nvr)) for nvr in nvrs]
         records = await asyncio.gather(*tasks, return_exceptions=True)
 
-        error_or_not_found = [(nvr, record) for nvr, record in zip(nvrs, records)
-                              if record is None or isinstance(record, BaseException)]
+        error_or_not_found = [
+            (nvr, record) for nvr, record in zip(nvrs, records)
+            if record is None or isinstance(record, BaseException)
+        ]
         if error_or_not_found:
             error_message = f"Failed to fetch NVRs from Konflux DB: {', '.join(nvr for nvr, _ in error_or_not_found)}"
             if strict:

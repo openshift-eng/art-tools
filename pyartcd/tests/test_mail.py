@@ -12,7 +12,7 @@ class TestMailService(TestCase):
                 "from": "alice@example.com",
                 "reply_to": "reply_to@example.com",
                 "cc": ["cc1@example.com", "cc2@example.com"],
-            }
+            },
         }
         svc = MailService.from_config(config)
         self.assertEqual(svc.smtp_server, config["email"]["smtp_server"])
@@ -34,7 +34,7 @@ class TestMailService(TestCase):
                 "from": "alice@example.com",
                 "reply_to": "reply_to@example.com",
                 "cc": ["cc1@example.com", "cc2@example.com"],
-            }
+            },
         }
         archive_dir = pathlib.Path("foo/mails")
         svc = MailService.from_config(config)

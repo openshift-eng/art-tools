@@ -22,12 +22,14 @@ class TestInsert(TestBigQuery):
         query_mock.reset_mock()
         self.client.insert({'name': "'ironic'"})
         query_mock.assert_called_once_with(
-            f"INSERT INTO `{constants.BUILDS_TABLE_ID}` (`name`) VALUES ('ironic')")
+            f"INSERT INTO `{constants.BUILDS_TABLE_ID}` (`name`) VALUES ('ironic')",
+        )
 
         query_mock.reset_mock()
         self.client.insert({'name': "'ironic'", 'group': "'openshift-4.18'"})
         query_mock.assert_called_once_with(
-            f"INSERT INTO `{constants.BUILDS_TABLE_ID}` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')")
+            f"INSERT INTO `{constants.BUILDS_TABLE_ID}` (`name`, `group`) VALUES ('ironic', 'openshift-4.18')",
+        )
         return
 
 
@@ -51,11 +53,14 @@ class TestSelect(TestBigQuery):
         query_mock.assert_called_once_with("SELECT * FROM `builds` WHERE name = 'ironic'")
 
         query_mock.reset_mock()
-        where_clauses = [Column('name', String) == 'ironic',
-                         Column('group', String) == 'openshift-4.18']
+        where_clauses = [
+            Column('name', String) == 'ironic',
+            Column('group', String) == 'openshift-4.18',
+        ]
         await self.client.select(where_clauses=where_clauses)
         query_mock.assert_called_once_with(
-            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18'")
+            "SELECT * FROM `builds` WHERE name = 'ironic' AND `group` = 'openshift-4.18'",
+        )
 
     @patch('artcommonlib.bigquery.BigQueryClient.query_async')
     async def test_order_by(self, query_mock):

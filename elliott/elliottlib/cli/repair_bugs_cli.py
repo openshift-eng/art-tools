@@ -12,40 +12,58 @@ from elliottlib.cli.common import cli, use_default_advisory_option, find_default
 
 
 @cli.command("repair-bugs", short_help="Move bugs attached to ADVISORY from one state to another")
-@click.option("--advisory", "-a", 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help="Repair bugs attached to ADVISORY.")
-@click.option("--auto",
-              required=False,
-              default=False, is_flag=True,
-              help="AUTO mode, check all bugs attached to ADVISORY")
-@click.option("--id", default=None, metavar='BUGID',
-              multiple=True, required=False,
-              help="Bug IDs to modify, conflicts with --auto [MULTIPLE]")
-@click.option("--from", "original_state",
-              multiple=True,
-              default=['MODIFIED'],
-              type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
-              help="Current state of the bugs (default: MODIFIED)")
-@click.option("--to", "new_state",
-              default='ON_QA',
-              type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
-              help="Final state of the bugs (default: ON_QA)")
-@click.option("--comment", "comment",
-              required=False,
-              help="Add comment to bug")
-@click.option("--close-placeholder", "close_placeholder",
-              required=False,
-              default=False, is_flag=True,
-              help="When checking bug state, close the bug if it's a placehoder bug.")
-@click.option("--noop", "--dry-run",
-              required=False,
-              default=False, is_flag=True,
-              help="Check bugs attached, print what would change, but don't change anything")
+@click.option(
+    "--advisory", "-a", 'advisory_id',
+    type=int, metavar='ADVISORY',
+    help="Repair bugs attached to ADVISORY.",
+)
+@click.option(
+    "--auto",
+    required=False,
+    default=False, is_flag=True,
+    help="AUTO mode, check all bugs attached to ADVISORY",
+)
+@click.option(
+    "--id", default=None, metavar='BUGID',
+    multiple=True, required=False,
+    help="Bug IDs to modify, conflicts with --auto [MULTIPLE]",
+)
+@click.option(
+    "--from", "original_state",
+    multiple=True,
+    default=['MODIFIED'],
+    type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
+    help="Current state of the bugs (default: MODIFIED)",
+)
+@click.option(
+    "--to", "new_state",
+    default='ON_QA',
+    type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
+    help="Final state of the bugs (default: ON_QA)",
+)
+@click.option(
+    "--comment", "comment",
+    required=False,
+    help="Add comment to bug",
+)
+@click.option(
+    "--close-placeholder", "close_placeholder",
+    required=False,
+    default=False, is_flag=True,
+    help="When checking bug state, close the bug if it's a placehoder bug.",
+)
+@click.option(
+    "--noop", "--dry-run",
+    required=False,
+    default=False, is_flag=True,
+    help="Check bugs attached, print what would change, but don't change anything",
+)
 @use_default_advisory_option
 @click.pass_obj
-def repair_bugs_cli(runtime, advisory_id, auto, id, original_state, new_state, comment, close_placeholder, noop,
-                    default_advisory_type):
+def repair_bugs_cli(
+    runtime, advisory_id, auto, id, original_state, new_state, comment, close_placeholder, noop,
+    default_advisory_type,
+):
     """Move bugs attached to the advisory from one state to another
 state. This is useful if the bugs have changed states *after* they
 were attached. Similar to `find-bugs` but in reverse. `repair-bugs`
@@ -115,11 +133,15 @@ providing an advisory with the -a/--advisory option.
         jira_ids, bz_ids = get_jira_bz_bug_ids(id)
 
     if jira_ids:
-        repair_bugs(jira_ids, original_state, new_state, comment, close_placeholder, noop,
-                    runtime.get_bug_tracker('jira'))
+        repair_bugs(
+            jira_ids, original_state, new_state, comment, close_placeholder, noop,
+            runtime.get_bug_tracker('jira'),
+        )
     if bz_ids:
-        repair_bugs(bz_ids, original_state, new_state, comment, close_placeholder, noop,
-                    runtime.get_bug_tracker('bugzilla'))
+        repair_bugs(
+            bz_ids, original_state, new_state, comment, close_placeholder, noop,
+            runtime.get_bug_tracker('bugzilla'),
+        )
 
 
 def repair_bugs(bug_ids, original_state, new_state, comment, close_placeholder, noop, bug_tracker: BugTracker):
@@ -127,15 +149,18 @@ def repair_bugs(bug_ids, original_state, new_state, comment, close_placeholder, 
 
     # Fetch bugs in parallel because it can be really slow doing it
     # one-by-one when you have hundreds of bugs
-    pbar_header("Fetching data for {} bugs: ".format(len(bug_ids)),
-                "Hold on a moment, we have to grab each one",
-                bug_ids)
+    pbar_header(
+        "Fetching data for {} bugs: ".format(len(bug_ids)),
+        "Hold on a moment, we have to grab each one",
+        bug_ids,
+    )
     pool = ThreadPool(cpu_count())
     click.secho("[", nl=False)
 
     attached_bugs = pool.map(
         lambda bug_id: progress_func(lambda: bug_tracker.get_bug(bug_id), '*'),
-        bug_ids)
+        bug_ids,
+    )
     # Wait for results
     pool.close()
     pool.join()

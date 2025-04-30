@@ -11,7 +11,8 @@ from artcommonlib.runtime import GroupRuntime
 default_primary_container = dict(
     name="machine-os-content",
     build_metadata_key="oscontainer",
-    primary=True)
+    primary=True,
+)
 
 logger = logutil.get_logger(__name__)
 
@@ -67,7 +68,8 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     key = container_conf.build_metadata_key
     if key not in build_meta:
         raise RhcosMissingContainerException(
-            f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata")
+            f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata",
+        )
 
     container = build_meta[key]
 

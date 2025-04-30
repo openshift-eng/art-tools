@@ -4,8 +4,10 @@ from errata_tool import ErrataException
 
 from artcommonlib import logutil
 from elliottlib import Runtime, errata
-from elliottlib.cli.common import (cli, find_default_advisory,
-                                   use_default_advisory_option)
+from elliottlib.cli.common import (
+    cli, find_default_advisory,
+    use_default_advisory_option,
+)
 from elliottlib.util import ensure_erratatool_auth
 
 
@@ -14,18 +16,24 @@ LOGGER = logutil.get_logger(__name__)
 
 @cli.command('remove-builds', short_help='Remove builds from ADVISORY')
 @click.argument('builds', metavar='<NVR_OR_ID>', nargs=-1, required=False, default=None)
-@click.option('--advisory', '-a', 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help='Remove found builds from ADVISORY')
+@click.option(
+    '--advisory', '-a', 'advisory_id',
+    type=int, metavar='ADVISORY',
+    help='Remove found builds from ADVISORY',
+)
 @use_default_advisory_option
-@click.option("--all", "clean",
-              required=False,
-              default=False, is_flag=True,
-              help="Remove all builds attached to the Advisory")
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--all", "clean",
+    required=False,
+    default=False, is_flag=True,
+    help="Remove all builds attached to the Advisory",
+)
+@click.option(
+    "--noop", "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Don't change anything",
+)
 @click.option(
     "--builds-file", "-f", "builds_file",
     help="File to read builds from, `-` to read from STDIN.",

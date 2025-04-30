@@ -9,7 +9,7 @@ class TestArchUtil(unittest.TestCase):
             "x86_64": "",
             "amd64": "",
             "aarch64": "-aarch64",
-            "arm64": "-aarch64"
+            "arm64": "-aarch64",
         }
         for arch, suffix in expectations.items():
             self.assertEqual(arch_util.brew_suffix_for_arch(arch), suffix)
@@ -20,7 +20,7 @@ class TestArchUtil(unittest.TestCase):
             "s390x": "s390x",
             "ppc64le": "ppc64le",
             "aarch64": "arm64",
-            "multi": "multi"
+            "multi": "multi",
         }
 
         for brew_arch, go_arch in expectations.items():
@@ -37,7 +37,7 @@ class TestArchUtil(unittest.TestCase):
             "x86_64": "",
             "amd64": "",
             "aarch64": "-arm64",
-            "arm64": "-arm64"
+            "arm64": "-arm64",
         }
 
         for arch, suffix in expectations.items():
@@ -52,7 +52,7 @@ class TestArchUtil(unittest.TestCase):
             "s390x": "s390x",
             "ppc64le": "ppc64le",
             "arm64": "aarch64",
-            "multi": "multi"
+            "multi": "multi",
         }
 
         for go_arch, brew_arch in expectations.items():

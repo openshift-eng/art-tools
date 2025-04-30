@@ -10,11 +10,13 @@ from doozerlib.cli import get_nightlies as subject
 class TestGetNightlies(IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock(
-            group_config=Model(dict(
-                arches=["x86_64", "s390x", "ppc64le", "aarch64"],
-                multi_arch=dict(enabled=True),
-            )),
-            arches=["x86_64", "s390x", "ppc64le", "aarch64"]
+            group_config=Model(
+                dict(
+                    arches=["x86_64", "s390x", "ppc64le", "aarch64"],
+                    multi_arch=dict(enabled=True),
+                ),
+            ),
+            arches=["x86_64", "s390x", "ppc64le", "aarch64"],
         )
         subject.image_info_cache = {}
 
@@ -22,7 +24,7 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         self.assertEqual(
             # {"aarch64", "x86_64", "multi"},  # no multi yet
             {"aarch64", "x86_64"},
-            set(subject.determine_arch_list(self.runtime, ["s390x", "ppc64le"]))
+            set(subject.determine_arch_list(self.runtime, ["s390x", "ppc64le"])),
         )
 
         runtime = MagicMock(arches=["x86_64", "aarch64"])
@@ -68,7 +70,8 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         nightlies = await subject.find_rc_nightlies(self.runtime, {"x86_64"}, True, True)
         self.assertEqual(3, len(nightlies["x86_64"]))
         nightlies = await subject.find_rc_nightlies(
-            self.runtime, {"x86_64"}, True, True, ["4.12.0-0.nightly-2022-07-15-132344"])
+            self.runtime, {"x86_64"}, True, True, ["4.12.0-0.nightly-2022-07-15-132344"],
+        )
         self.assertEqual(1, len(nightlies["x86_64"]))
 
         with self.assertRaises(subject.NoMatchingNightlyException):
@@ -83,13 +86,17 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         # just give me an instance to test (default supplies "pod" entry)
         nightly = subject.Nightly(
             release_image_info=release_image_info or {
-                "references": {"spec": {"tags": [
-                    {
-                        "name": "pod",
-                        "annotations": {"io.openshift.build.commit.id": "pod-commit"},
-                        "from": {"name": "pod-pullspec"},
-                    }
-                ]}}
+                "references": {
+                    "spec": {
+                        "tags": [
+                            {
+                                "name": "pod",
+                                "annotations": {"io.openshift.build.commit.id": "pod-commit"},
+                                "from": {"name": "pod-pullspec"},
+                            },
+                        ],
+                    },
+                },
             },
             name=name or "name", phase="Accepted", pullspec="nightly-pullspec",
         )
@@ -185,11 +192,19 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
     async def test_retrieve_nvr_for_tag(self):
         nightly = self.vanilla_nightly()
         nightly.retrieve_image_info_async = AsyncMock()
-        nightly.retrieve_image_info_async.return_value = Model(dict(config=dict(config=dict(Labels={
-            "com.redhat.component": "spam",
-            "version": "1.0",
-            "release": "1.el8",
-        }))))
+        nightly.retrieve_image_info_async.return_value = Model(
+            dict(
+                config=dict(
+                    config=dict(
+                        Labels={
+                            "com.redhat.component": "spam",
+                            "version": "1.0",
+                            "release": "1.el8",
+                        },
+                    ),
+                ),
+            ),
+        )
         self.assertEqual(("spam", "1.0", "1.el8"), await nightly.retrieve_nvr_for_tag("pod"))
 
         nightly.retrieve_image_info_async.return_value = Exception()  # should be cached from last call

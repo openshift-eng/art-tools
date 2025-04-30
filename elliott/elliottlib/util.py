@@ -69,7 +69,8 @@ def validate_email_address(ctx, param, value):
     email_re = re.compile(r'^[^@ ]+@[^@ ]+\.[^@ ]+$')
     if not email_re.match(value):
         raise click.BadParameter(
-            "Invalid email address for {}: {}".format(param, value))
+            "Invalid email address for {}: {}".format(param, value),
+        )
 
     return value
 
@@ -146,7 +147,8 @@ def parallel_results_with_progress(inputs, func, file=None):
     pool = ThreadPool(cpu_count())
     results = pool.map(
         lambda it: progress_func(lambda: func(it), file=file),
-        inputs)
+        inputs,
+    )
 
     # Wait for results
     pool.close()
@@ -521,7 +523,8 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
     log("Fetching release info...")
     if is_pullspec:
         rc, stdout, stderr = await exectools.cmd_gather_async(
-            f'oc adm release info -o json -n ocp {pullspec_or_imagestream}')
+            f'oc adm release info -o json -n ocp {pullspec_or_imagestream}',
+        )
         tags = json.loads(stdout)['references']['spec']['tags']
     else:  # it is an imagestream
         # get image_stream and name_space out of pullspec_or_imagestream
@@ -529,13 +532,16 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
         name_space = pullspec_or_imagestream.split("/")[0]  # Get the part before /
 
         rc, stdout, stderr = await exectools.cmd_gather_async(
-            f'oc -o json -n {name_space} get is/{image_stream}')
+            f'oc -o json -n {name_space} get is/{image_stream}',
+        )
         tags = json.loads(stdout)['spec']['tags']
 
     log("Looping over payload images...")
     log(f"{len(tags)} images to check")
-    cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
-            tags]
+    cmds = [
+        ['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
+        tags
+    ]
 
     log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])

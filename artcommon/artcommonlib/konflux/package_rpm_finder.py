@@ -48,7 +48,7 @@ class PackageRpmFinder:
             if not_found_packages:
                 self._logger.warning(
                     'The following packages could not be found in Brew and will be excluded from the check: %s',
-                    ', '.join(not_found_packages)
+                    ', '.join(not_found_packages),
                 )
 
                 # Remove missing builds from packages in need for caching
@@ -85,8 +85,10 @@ class PackageRpmFinder:
         installed_packages = build_record.installed_packages
         installed_packages = [pkg for pkg in installed_packages if pkg not in self._not_found_packages]
         self._cache_packages(installed_packages)
-        return {self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
-                for package_nvr in installed_packages}
+        return {
+            self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
+            for package_nvr in installed_packages
+        }
 
     def get_rpms_in_pkg_build(self, nvr: str) -> list:
         return self._package_to_rpms.get(nvr, [])

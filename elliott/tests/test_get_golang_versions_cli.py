@@ -73,8 +73,12 @@ class TestGetGolangVersionsCli(unittest.IsolatedAsyncioTestCase):
         flexmock(utillib). \
             should_receive("pretty_print_nvrs_go").with_args(go_map, report=False)
 
-        result = runner.invoke(cli, ['--group=openshift-4.14', 'go', '--release',
-                                     'registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-04-24-145153'])
+        result = runner.invoke(
+            cli, [
+                '--group=openshift-4.14', 'go', '--release',
+                'registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-04-24-145153',
+            ],
+        )
         self.assertEqual(result.exit_code, 0)
 
 

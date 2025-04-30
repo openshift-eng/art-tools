@@ -31,7 +31,7 @@ previous_packages = [
     "ovn",
     "podman",
     "python3-openvswitch",
-    "spdlog"
+    "spdlog",
 ]
 
 ironic_previous_packages_for_4_15_plus = [
@@ -134,19 +134,20 @@ def plashet_config_for_major_minor(major, minor):
             "include_embargoed": False,
             "embargoed_tags": [],
             "include_previous_packages": [],
-        }
+        },
     }
 
 
-async def build_plashets(stream: str, release: str,
-                         assembly: str = 'stream',
-                         repos: Sequence[str] = (),
-                         doozer_working: str = 'doozer-working',
-                         data_path: str = constants.OCP_BUILD_DATA_URL,
-                         data_gitref: str = '',
-                         copy_links: bool = False,
-                         dry_run: bool = False,
-                         ) -> dict:
+async def build_plashets(
+    stream: str, release: str,
+    assembly: str = 'stream',
+    repos: Sequence[str] = (),
+    doozer_working: str = 'doozer-working',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    data_gitref: str = '',
+    copy_links: bool = False,
+    dry_run: bool = False,
+) -> dict:
     """
     Unless no RPMs have changed, create multiple yum repos (one for each arch) of RPMs
     based on -candidate tags. Based on release state, those repos can be signed
@@ -182,8 +183,10 @@ async def build_plashets(stream: str, release: str,
     revision = release.replace('.p?', '')  # e.g. '202304181947' from '202304181947.p?'
 
     # Load group config
-    group_config = await util.load_group_config(group=f'openshift-{stream}', assembly=assembly,
-                                                doozer_data_path=data_path, doozer_data_gitref=data_gitref)
+    group_config = await util.load_group_config(
+        group=f'openshift-{stream}', assembly=assembly,
+        doozer_data_path=data_path, doozer_data_gitref=data_gitref,
+    )
 
     # Check if assemblies are enabled for current group
     if not group_config.get('assemblies', {}).get('enabled'):
@@ -232,21 +235,24 @@ async def build_plashets(stream: str, release: str,
             include_previous_packages=config['include_previous_packages'],
             data_path=data_path,
             dry_run=dry_run,
-            doozer_working=doozer_working
+            doozer_working=doozer_working,
         )
 
         logger.info('Plashet repo for %s created: %s', repo_type, local_path)
         symlink_path = create_latest_symlink(
-            base_dir=base_dir, plashet_name=name)
+            base_dir=base_dir, plashet_name=name,
+        )
         logger.info('Symlink for %s created: %s', repo_type, symlink_path)
 
         remote_base_dir = Path(f'/mnt/data/pub/RHOCP/plashets/{major}.{minor}/{assembly}/{slug}')
         logger.info('Copying %s to remote host...', base_dir)
 
-        await asyncio.gather(*[
-            copy_to_remote(plashet_remote['host'], base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
-            for plashet_remote in PLASHET_REMOTES
-        ])
+        await asyncio.gather(
+            *[
+                copy_to_remote(plashet_remote['host'], base_dir, remote_base_dir, dry_run=dry_run, copy_links=copy_links)
+                for plashet_remote in PLASHET_REMOTES
+            ],
+        )
 
         plashets_built[repo_type] = {
             'plashetDirName': revision,
@@ -256,12 +262,14 @@ async def build_plashets(stream: str, release: str,
     return plashets_built
 
 
-async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.PathLike, name: str, arches: Sequence[str],
-                                  include_embargoed: bool, signing_mode: str, signing_advisory: int,
-                                  tag_pvs: Sequence[Tuple[str, str]], embargoed_tags: Optional[Sequence[str]],
-                                  include_previous_packages: Optional[Sequence[str]] = None,
-                                  poll_for: int = 0, data_path: str = constants.OCP_BUILD_DATA_URL,
-                                  doozer_working: str = 'doozer-working', dry_run: bool = False):
+async def build_plashet_from_tags(
+    group_param: str, assembly: str, base_dir: os.PathLike, name: str, arches: Sequence[str],
+    include_embargoed: bool, signing_mode: str, signing_advisory: int,
+    tag_pvs: Sequence[Tuple[str, str]], embargoed_tags: Optional[Sequence[str]],
+    include_previous_packages: Optional[Sequence[str]] = None,
+    poll_for: int = 0, data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = 'doozer-working', dry_run: bool = False,
+):
     """
     Builds Plashet repo with "from-tags"
     """
@@ -278,7 +286,7 @@ async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.
         "config:plashet",
         "--base-dir", str(base_dir),
         "--name", name,
-        "--repo-subdir", "os"
+        "--repo-subdir", "os",
     ]
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])
@@ -317,8 +325,10 @@ def create_latest_symlink(base_dir: os.PathLike, plashet_name: str):
     return symlink_path
 
 
-async def copy_to_remote(plashet_remote_host: str, local_base_dir: os.PathLike, remote_base_dir: os.PathLike,
-                         dry_run: bool = False, copy_links: bool = False):
+async def copy_to_remote(
+    plashet_remote_host: str, local_base_dir: os.PathLike, remote_base_dir: os.PathLike,
+    dry_run: bool = False, copy_links: bool = False,
+):
     """
     Copies plashet out to remote host (ocp-artifacts)
     """
@@ -347,8 +357,10 @@ async def copy_to_remote(plashet_remote_host: str, local_base_dir: os.PathLike, 
         cmd.append('--copy-links')
     else:
         cmd.append('--links')
-    cmd.extend(["--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
-                "--perms", "--", f"{local_base_dir}/", f"{plashet_remote_host}:{remote_base_dir}"])
+    cmd.extend([
+        "--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
+        "--perms", "--", f"{local_base_dir}/", f"{plashet_remote_host}:{remote_base_dir}",
+    ])
 
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)

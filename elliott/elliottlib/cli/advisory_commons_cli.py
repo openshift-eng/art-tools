@@ -20,22 +20,30 @@ supported_update_fields = [
 
 @cli.command("advisory-commons", short_help="Show or update advisory commons for a group of advisories")
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=False)
-@click.option("--field",
-              help="Advisory field (like publish_date) to show or update. Examples of show only fields: ["
-                   "'errata_state', "
-                   "'errata_name', 'content_types', 'synopsis', "
-                   "'errata_bugs', "
-                   "'errata_type']")
-@click.option("--new",
-              help="New value of field to update advisories with. --field should be one of"
-                   f" {supported_update_fields}")
-@click.option("--version-replace",
-              help="<existing_version>:<new_version>"
-                   "Update synopsis, topic, description fields of advisories with new version."
-                   "Example --version-replace '4.7.26:4.7.28' ")
-@click.option('--yes', '-y', is_flag=True,
-              default=False, type=bool,
-              help="Update the advisories (by default only a preview is displayed)")
+@click.option(
+    "--field",
+    help="Advisory field (like publish_date) to show or update. Examples of show only fields: ["
+         "'errata_state', "
+         "'errata_name', 'content_types', 'synopsis', "
+         "'errata_bugs', "
+         "'errata_type']",
+)
+@click.option(
+    "--new",
+    help="New value of field to update advisories with. --field should be one of"
+         f" {supported_update_fields}",
+)
+@click.option(
+    "--version-replace",
+    help="<existing_version>:<new_version>"
+         "Update synopsis, topic, description fields of advisories with new version."
+         "Example --version-replace '4.7.26:4.7.28' ",
+)
+@click.option(
+    '--yes', '-y', is_flag=True,
+    default=False, type=bool,
+    help="Update the advisories (by default only a preview is displayed)",
+)
 @click.pass_obj
 def advisory_commons_cli(runtime, advisories, field, new, version_replace, yes):
     """Display or Change a common field (like date) across multiple advisories.
@@ -108,7 +116,7 @@ will need updating. This command helps with that.
                 current = getattr(advisory, f)
                 lines_to_match = [
                     "This advisory contains the RPM packages for Red Hat OpenShift Container Platform {version}",
-                    "quay.io/openshift-release-dev/ocp-release:{version}"
+                    "quay.io/openshift-release-dev/ocp-release:{version}",
                 ]
                 for line in lines_to_match:
                     search_line = line.format(version=search_version)

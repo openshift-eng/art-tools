@@ -20,9 +20,11 @@ from artcommonlib import exectools
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (get_assembly_type, isolate_el_version_in_branch,
-                          isolate_el_version_in_release, load_group_config,
-                          load_releases_config)
+from pyartcd.util import (
+    get_assembly_type, isolate_el_version_in_branch,
+    isolate_el_version_in_release, load_group_config,
+    load_releases_config,
+)
 
 
 class RebuildType(Enum):
@@ -37,8 +39,10 @@ PlashetBuildResult = namedtuple("PlashetBuildResult", ("repo_name", "local_dir",
 class RebuildPipeline:
     """ Rebuilds a component for an assembly """
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, plashet_remote: dict,
-                 type: RebuildType, dg_key: str, ocp_build_data_url: str, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self, runtime: Runtime, group: str, assembly: str, plashet_remote: dict,
+        type: RebuildType, dg_key: str, ocp_build_data_url: str, logger: Optional[logging.Logger] = None,
+    ):
         if type in [RebuildType.RPM, RebuildType.IMAGE] and not dg_key:
             raise ValueError("'dg_key' is required.")
         elif type == RebuildType.RHCOS and dg_key:
@@ -61,8 +65,10 @@ class RebuildPipeline:
         self._doozer_env_vars["DOOZER_WORKING_DIR"] = str(self.runtime.working_dir / "doozer-working")
 
         if not ocp_build_data_url:
-            ocp_build_data_url = self.runtime.config.get("build_config", {}).get("ocp_build_data_url",
-                                                                                 constants.OCP_BUILD_DATA_URL)
+            ocp_build_data_url = self.runtime.config.get("build_config", {}).get(
+                "ocp_build_data_url",
+                constants.OCP_BUILD_DATA_URL,
+            )
         if ocp_build_data_url:
             self._doozer_env_vars["DOOZER_DATA_PATH"] = ocp_build_data_url
 
@@ -70,11 +76,13 @@ class RebuildPipeline:
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M")
         release = f"{timestamp}.p?"
 
-        group_config = await load_group_config(self.group, self.assembly, env=self._doozer_env_vars,
-                                               doozer_data_path=self.ocp_build_data_url)
+        group_config = await load_group_config(
+            self.group, self.assembly, env=self._doozer_env_vars,
+            doozer_data_path=self.ocp_build_data_url,
+        )
         releases_config = await load_releases_config(
             group=self.group,
-            data_path=self.ocp_build_data_url
+            data_path=self.ocp_build_data_url,
         )
 
         if get_assembly_type(releases_config, self.assembly) == AssemblyTypes.STREAM:
@@ -110,9 +118,11 @@ class RebuildPipeline:
                 self._generate_repo_file_for_image(file, plashets, group_config["arches"])
 
             # Copies plashet repos out to ocp-artifacts
-            await asyncio.gather(*[
-                self._copy_plashet_out_to_remote(el_version, plashet[1]) for plashet in plashets
-            ])
+            await asyncio.gather(
+                *[
+                    self._copy_plashet_out_to_remote(el_version, plashet[1]) for plashet in plashets
+                ],
+            )
 
             # Builds image
             nvrs = await self._build_image(plashets[-1][2] + "/rebuild.repo")
@@ -132,9 +142,11 @@ class RebuildPipeline:
                 self._generate_repo_file_for_rhcos(file, plashets)
 
             # Copies plashet repos out to ocp-artifacts
-            await asyncio.gather(*[
-                self._copy_plashet_out_to_remote(el_version, plashet[1]) for plashet in plashets
-            ])
+            await asyncio.gather(
+                *[
+                    self._copy_plashet_out_to_remote(el_version, plashet[1]) for plashet in plashets
+                ],
+            )
 
             # Prints further instructions
             click.secho(f"RHCOS build is not triggered by this job. Please manually run the individual rhcos build jobs on the arch-specific rhcos build clusters with the following Plashet repo:\n\t{plashets[-1][2]}/rebuild.repo", fg="yellow")
@@ -183,7 +195,7 @@ class RebuildPipeline:
             "config:plashet",
             "--base-dir", str(base_dir),
             "--name", directory_name,
-            "--repo-subdir", "os"
+            "--repo-subdir", "os",
         ]
         for arch in arches:
             cmd.extend(["--arch", arch, signing_mode])
@@ -243,7 +255,7 @@ class RebuildPipeline:
             "config:plashet",
             "--base-dir", str(base_dir),
             "--name", directory_name,
-            "--repo-subdir", "os"
+            "--repo-subdir", "os",
         ]
         for arch in arches:
             cmd.extend(["--arch", arch, signing_mode])
@@ -308,7 +320,7 @@ class RebuildPipeline:
             "--perms",
             "--",
             f"{local_plashet_dir}",
-            f"{self.plashet_remote['host']}:{remote_dir}"
+            f"{self.plashet_remote['host']}:{remote_dir}",
         ]
         if self.runtime.dry_run:
             self.logger.warning("[DRY RUN] Would have run %s", cmd)
@@ -556,43 +568,57 @@ class RebuildPipeline:
                                 {
                                     "distgit_key": self.dg_key,
                                     "metadata": {
-                                        "is": is_entry
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
+                                        "is": is_entry,
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
         }
         return schema
 
 
 @cli.command("rebuild")
-@click.option("--ocp-build-data-url", metavar='BUILD_DATA', default=None,
-              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
+@click.option(
+    "--ocp-build-data-url", metavar='BUILD_DATA', default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
 @click.option("--version", required=True, help="OSE Version")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly to rebase & build for. e.g. 4.9.1")
-@click.option("--type", metavar="BUILD_TYPE", required=True,
-              type=click.Choice(("rpm", "image", "rhcos")),
-              help="image or rpm or rhcos")
-@click.option("--component", "-c", metavar="DISTGIT_KEY",
-              help="The name of a component to rebase & build for. e.g. openshift-enterprise-cli")
-@click.option('--ignore-locks', is_flag=True, default=False,
-              help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)')
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly to rebase & build for. e.g. 4.9.1",
+)
+@click.option(
+    "--type", metavar="BUILD_TYPE", required=True,
+    type=click.Choice(("rpm", "image", "rhcos")),
+    help="image or rpm or rhcos",
+)
+@click.option(
+    "--component", "-c", metavar="DISTGIT_KEY",
+    help="The name of a component to rebase & build for. e.g. openshift-enterprise-cli",
+)
+@click.option(
+    '--ignore-locks', is_flag=True, default=False,
+    help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
+)
 @pass_runtime
 @click_coroutine
-async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assembly: str, type: str,
-                  component: Optional[str], ignore_locks: bool):
+async def rebuild(
+    runtime: Runtime, ocp_build_data_url: str, version: str, assembly: str, type: str,
+    component: Optional[str], ignore_locks: bool,
+):
 
     if type != "rhcos" and not component:
         raise click.BadParameter(f"'--component' is required for type {type}")
     elif type == "rhcos" and component:
         raise click.BadParameter("Option '--component' cannot be used when --type == 'rhcos'")
     pipelines = [
-        RebuildPipeline(runtime, group=f'openshift-{version}', assembly=assembly, plashet_remote=remote,
-                        type=RebuildType[type.upper()], dg_key=component, ocp_build_data_url=ocp_build_data_url)
+        RebuildPipeline(
+            runtime, group=f'openshift-{version}', assembly=assembly, plashet_remote=remote,
+            type=RebuildType[type.upper()], dg_key=component, ocp_build_data_url=ocp_build_data_url,
+        )
         for remote in constants.PLASHET_REMOTES
     ]
 
@@ -604,15 +630,19 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
         lock_name = lock.value.format(version=version)
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
-            runtime.logger.warning('Env var BUILD_URL has not been defined: '
-                                   'a random identifier will be used for the locks')
-
-        await asyncio.gather(*[
-            locks.run_with_lock(
-                coro=pipeline.run(),
-                lock=lock,
-                lock_name=lock_name,
-                lock_id=lock_identifier
+            runtime.logger.warning(
+                'Env var BUILD_URL has not been defined: '
+                'a random identifier will be used for the locks',
             )
-            for pipeline in pipelines
-        ])
+
+        await asyncio.gather(
+            *[
+                locks.run_with_lock(
+                    coro=pipeline.run(),
+                    lock=lock,
+                    lock_name=lock_name,
+                    lock_id=lock_identifier,
+                )
+                for pipeline in pipelines
+            ],
+        )

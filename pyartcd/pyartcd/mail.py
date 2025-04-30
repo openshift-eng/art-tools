@@ -40,8 +40,10 @@ class MailService:
                 gen.flatten(msg)
             _LOGGER.info("Saved email to %s", archive_dir / filename)
 
-        _LOGGER.info("Sending email to %s: %s - %s",
-                     msg["To"], subject, content)
+        _LOGGER.info(
+            "Sending email to %s: %s - %s",
+            msg["To"], subject, content,
+        )
 
         if not dry_run:
             # The SMTP server may have a limit on how many simultaneous open connections it will accept from a single IP address.
@@ -60,8 +62,10 @@ class MailService:
                         _LOGGER.warn("(%s/%s) Will retry in %s seconds.", i + 1, retry_count, sleep_secs)
                         time.sleep(sleep_secs)
                         sleep_secs *= 2
-            _LOGGER.info("Sent email to %s: %s - %s",
-                         msg["To"], subject, content)
+            _LOGGER.info(
+                "Sent email to %s: %s - %s",
+                msg["To"], subject, content,
+            )
         else:
             _LOGGER.warn("[DRY RUN] Would have sent email: %s", msg)
         return msg

@@ -104,14 +104,16 @@ class AddModifier(object):
         # Data race might happen but it should suffice for prevent from accidently overwriting in-tree sources.
         if not self.overwriting and os.path.exists(dest_path):
             raise IOError(
-                "Destination path {} exists. Use 'overwriting: true' to overwrite.".format(self.path))
+                "Destination path {} exists. Use 'overwriting: true' to overwrite.".format(self.path),
+            )
         if build_system == "brew" and ceiling_dir and not is_in_directory(dest_path, ceiling_dir):
             raise ValueError("Writing to a file out of {} is not allowed.".format(ceiling_dir))
         if self.source:
             source = urlparse(self.source)
             if source.scheme not in self.SUPPORTED_URL_SCHEMES:
                 raise ValueError(
-                    "Unsupported URL scheme {} used in 'add' action.".format(source.scheme))
+                    "Unsupported URL scheme {} used in 'add' action.".format(source.scheme),
+                )
             source_address = source.geturl()  # normalized URL
             LOGGER.debug("Getting out-of-tree source {}...".format(source_address))
             session = kwargs.get("session") or requests.session()
@@ -167,11 +169,14 @@ class ReplaceModifier(object):
         pre = content
         post = pre.replace(match, replacement)
         if post == pre:
-            raise DoozerFatalError("{}: Replace ({}->{}) modification did not make a change to the Dockerfile content"
-                                   .format(component_name, match, replacement))
+            raise DoozerFatalError(
+                "{}: Replace ({}->{}) modification did not make a change to the Dockerfile content"
+                .format(component_name, match, replacement),
+            )
         LOGGER.debug(
             "Performed string replace '%s' -> '%s':\n%s\n" %
-            (match, replacement, post))
+            (match, replacement, post),
+        )
         context["result"] = post
 
 

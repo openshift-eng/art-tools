@@ -15,7 +15,8 @@ from elliottlib import errata, constants, brew, exceptions
 unshipped_builds = [
     Mock(product_version='OSE-4.7-RHEL-8', build='image1-container-123', nvr='image1-container-123', file_types=['tar']),
     Mock(product_version='OSE-4.7-RHEL-8', build='image2-container-456', nvr='image2-container-456', file_types=['tar']),
-    Mock(product_version='ANOTHER_PV', build='image3-container-789', nvr='image3-container-789', file_types=['tar'])]
+    Mock(product_version='ANOTHER_PV', build='image3-container-789', nvr='image3-container-789', file_types=['tar']),
+]
 
 
 class TestAdvisory(unittest.TestCase):
@@ -81,8 +82,10 @@ class TestErrata(unittest.TestCase):
 
         self.assertEqual([], errata.parse_exception_error_message('invalid format'))
 
-        self.assertEqual([1685398, 1685399], errata.parse_exception_error_message('''Bug #1685398 The bug is filed already in RHBA-2019:1589.
-        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''))
+        self.assertEqual(
+            [1685398, 1685399], errata.parse_exception_error_message('''Bug #1685398 The bug is filed already in RHBA-2019:1589.
+        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''),
+        )
 
     def test_get_advisories_for_bug(self):
         bug = 123456
@@ -117,43 +120,43 @@ class TestAdvisoryImages(unittest.TestCase):
                 'target': {
                     'repos': {
                         'redhat-openshift3-ose-kube-rbac-proxy': {
-                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1']
-                        }
+                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1'],
+                        },
                     },
                     'external_repos': {
-                        "openshift3/ose-kube-rbac-proxy": {}
-                    }
-                }
-            }
+                        "openshift3/ose-kube-rbac-proxy": {},
+                    },
+                },
+            },
         },
         'jenkins-subordinate-base-rhel7-container-v3.11.154-1': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift3-jenkins-subordinate-base-rhel7': {
-                            'tags': ['v3.11', 'v3.11.154', 'v3.11.154-1']
-                        }
+                            'tags': ['v3.11', 'v3.11.154', 'v3.11.154-1'],
+                        },
                     },
                     'external_repos': {
-                        "openshift3/jenkins-subordinate-base-rhel7": {}
-                    }
-                }
-            }
+                        "openshift3/jenkins-subordinate-base-rhel7": {},
+                    },
+                },
+            },
         },
         'openshift-enterprise-pod-container-v3.11.154-1': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift3-ose-pod': {
-                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1']
-                        }
+                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1'],
+                        },
                     },
                     'external_repos': {
-                        "openshift3/ose-pod": {}
-                    }
-                }
-            }
-        }
+                        "openshift3/ose-pod": {},
+                    },
+                },
+            },
+        },
     }
 
     mocked_ocp4_response = {
@@ -162,44 +165,44 @@ class TestAdvisoryImages(unittest.TestCase):
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-cluster-autoscaler': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
         'cluster-monitoring-operator-container-v4.2.5-201911121709': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-cluster-monitoring-operator': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
         'cluster-node-tuning-operator-container-v4.2.5-201911121709': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-cluster-node-tuning-operator': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
         'golang-github-openshift-oauth-proxy-container-v4.2.5-201911121709': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-oauth-proxy': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
     }
 

@@ -238,8 +238,8 @@ class CiOperatorImageConfig:
         build_args = [  # Used by some images to differentiate output during prow/ci-operator based builds.
             {
                 'name': 'TAGS',
-                'value': 'scos'
-            }
+                'value': 'scos',
+            },
         ]
         if image_meta.config.content.source.okd_alignment.build_args:
             build_args.extend(image_meta.config.content.source.okd_alignment.build_args.primitive())
@@ -263,7 +263,7 @@ class CiOperatorImageConfig:
                     'gpgcheck = 0',
                     'sslverify = false',
                     'skip_if_unavailable = true',
-                    ''
+                    '',
                 ])
 
             repo_lines = '\n'.join(repo_def_lines)
@@ -275,20 +275,20 @@ cat << EOF > /etc/yum.repos.d/art.repo
 EOF
         """,
                     'from': ci_operator_image_names[self.base_image],
-                    'to': intermediate_tag
-                }
+                    'to': intermediate_tag,
+                },
             }
 
             base_obj = {
                 'build_args': build_args,
                 'from': intermediate_tag,
-                'to': self.payload_tag
+                'to': self.payload_tag,
             }
 
         else:
             base_obj = {
                 'build_args': build_args,
-                'to': self.payload_tag
+                'to': self.payload_tag,
             }
 
             if self.base_image:
@@ -311,7 +311,7 @@ EOF
 
         for coordinate, replacements in self.replacements.items():
             inputs[ci_operator_image_names[coordinate]] = {
-                'as': replacements
+                'as': replacements,
             }
 
         if inputs:
@@ -336,8 +336,8 @@ class CiOperatorConfig:
                 {
                     'namespace': promotion_namespace,
                     'name': promotion_imagestream,
-                }
-            ]
+                },
+            ],
         }
         self.build_root = None
         self.releases = dict()
@@ -402,10 +402,10 @@ class CiOperatorConfig:
                 '*': {
                     'requests': {
                         'cpu': '100m',
-                        'memory': '200Mi'
-                    }
-                }
-            }
+                        'memory': '200Mi',
+                    },
+                },
+            },
         }
         if raw_steps:
             config['raw_steps'] = raw_steps
@@ -413,7 +413,7 @@ class CiOperatorConfig:
             config['base_images'] = base_images
         if self.build_root:
             config['build_root'] = {
-                'image_stream_tag': self.build_root
+                'image_stream_tag': self.build_root,
             }
         if self.releases:
             config['releases'] = self.releases
@@ -545,8 +545,10 @@ def images_okg_check(runtime):
 @click.option('--non-master', default=False, is_flag=True, help='Acknowledge that this is a non-master branch and proceed anyway')
 @pass_runtime
 @click_coroutine
-async def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_version,
-                         draft_prs, moist_run, add_auto_labels, add_label, non_master):
+async def images_okd_prs(
+    runtime, github_access_token, ignore_missing_images, okd_version,
+    draft_prs, moist_run, add_auto_labels, add_label, non_master,
+):
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
     runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
@@ -659,9 +661,11 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
         else:
             # ci-operator configuration, even if it is not building anything, fails if there is no
             # build root. Just get the default golang.
-            default_build_root = resolve_okd_from_entry(runtime, image_meta, Model({
-                'stream': 'rhel-9-golang'
-            }), okd_version=okd_version)
+            default_build_root = resolve_okd_from_entry(
+                runtime, image_meta, Model({
+                    'stream': 'rhel-9-golang',
+                }), okd_version=okd_version,
+            )
             desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(default_build_root)
 
         source_repo_url, source_repo_branch = _get_upstream_source(runtime, image_meta, skip_branch_check=True)
@@ -741,7 +745,8 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
                 branch=public_branch,
                 path=dockerfile_path,
                 token=github_access_token,
-                destination=dockerfile_abs_path)
+                destination=dockerfile_abs_path,
+            )
 
             content = dockerfile_abs_path.read_text()
             if len(content.strip().splitlines()) == 1:
@@ -765,13 +770,15 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
         # reconcile_info = f"Reconciling with {reconcile_url}"
 
         ci_operator_image_config = ci_operator_config.get_image_config(image_meta)
-        ci_operator_config.add_release('latest', {
-            'integration': {
-                # 'include_built_images': True,
-                'namespace': 'origin',
-                'name': f'scos-{okd_version}'
-            }
-        })
+        ci_operator_config.add_release(
+            'latest', {
+                'integration': {
+                    # 'include_built_images': True,
+                    'namespace': 'origin',
+                    'name': f'scos-{okd_version}',
+                },
+            },
+        )
 
         stage_names = extract_stage_names(dfp)
         for index, stage_name in enumerate(stage_names[:-1]):  # For all stages except the last (i.e. except for the base image)

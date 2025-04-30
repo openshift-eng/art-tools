@@ -20,8 +20,10 @@ from .metadata import Metadata
 
 class RPMMetadata(Metadata):
 
-    def __init__(self, runtime, data_obj, commitish: Optional[str] = None, clone_source=True,
-                 source_modifier_factory=SourceModifierFactory(), prevent_cloning: Optional[bool] = False):
+    def __init__(
+        self, runtime, data_obj, commitish: Optional[str] = None, clone_source=True,
+        source_modifier_factory=SourceModifierFactory(), prevent_cloning: Optional[bool] = False,
+    ):
         super(RPMMetadata, self).__init__('rpm', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
 
         self.source = self.config.content.source
@@ -63,9 +65,11 @@ class RPMMetadata(Metadata):
         if self.source.specfile:
             self.specfile = os.path.join(self.source_path, self.source.specfile)
             if not os.path.isfile(self.specfile):
-                raise ValueError('{} config specified a spec file that does not exist: {}'.format(
-                    self.config_filename, self.specfile
-                ))
+                raise ValueError(
+                    '{} config specified a spec file that does not exist: {}'.format(
+                        self.config_filename, self.specfile,
+                    ),
+                )
         else:
             with Dir(self.source_path):
                 specs = []
@@ -96,7 +100,8 @@ class RPMMetadata(Metadata):
 
         self.logger.debug(
             "About to start modifying spec file [{}]:\n{}\n".
-            format(self.name, specfile_data))
+            format(self.name, specfile_data),
+        )
 
         # add build data modifications dir to path; we *could* add more
         # specific paths for the group and the individual config but
@@ -111,7 +116,7 @@ class RPMMetadata(Metadata):
             "set_env": {
                 "PATH": path,
                 "BREW_EVENT": f'{self.runtime.brew_event}',
-                "BREW_TAG": f'{self.candidate_brew_tag()}'
+                "BREW_TAG": f'{self.candidate_brew_tag()}',
             },
             "runtime_assembly": self.runtime.assembly,
             "release_name": "",

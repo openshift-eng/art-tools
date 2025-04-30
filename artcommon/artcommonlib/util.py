@@ -353,7 +353,7 @@ async def _limit_concurrency(tasks: List, limit: int):
             return
 
         done, pending = await asyncio.wait(
-            pending, return_when=asyncio.FIRST_COMPLETED
+            pending, return_when=asyncio.FIRST_COMPLETED,
         )
         while done:
             yield done.pop()
@@ -406,7 +406,8 @@ def is_cachito_enabled(metadata, group_config, logger):
         elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
             logger.warning(
                 f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in "
-                "image metadata or group config.")
+                "image metadata or group config.",
+            )
     if cachito_enabled and not metadata.has_source():
         logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)
         cachito_enabled = False

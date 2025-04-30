@@ -20,12 +20,14 @@ class TestJIRAClient(TestCase):
     def test_create_issue(self):
         client = JIRAClient(mock.MagicMock())
         client.create_issue("TEST-PROJECT", "Ticket", "summary", "description")
-        client._client.create_issue.assert_called_once_with(fields={
-            "project": {"key": "TEST-PROJECT"},
-            "summary": "summary",
-            "description": "description",
-            "issuetype": {"name": "Ticket"},
-        })
+        client._client.create_issue.assert_called_once_with(
+            fields={
+                "project": {"key": "TEST-PROJECT"},
+                "summary": "summary",
+                "description": "description",
+                "issuetype": {"name": "Ticket"},
+            },
+        )
 
     def test_clone_issue(self):
         source_issue = mock.MagicMock(
@@ -39,8 +41,9 @@ class TestJIRAClient(TestCase):
                     "components": [],
                     "labels": ["label-1", "label-2"],
                     "reporter": {"name": "someone"},
-                }
-            })
+                },
+            },
+        )
         source_issue.fields.issuetype.subtask = True
         mock_jira = mock.MagicMock()
         mock_jira.create_issue.side_effect = lambda fields: mock.MagicMock(raw={"fields": fields.copy()})
@@ -68,8 +71,9 @@ class TestJIRAClient(TestCase):
                     "components": [],
                     "labels": ["label-1", "label-2"],
                     "reporter": {"name": "someone"},
-                }
-            })
+                },
+            },
+        )
         source_issue.fields.subtasks = [
             mock.MagicMock(
                 key="FOO-2",
@@ -83,8 +87,9 @@ class TestJIRAClient(TestCase):
                         "components": [],
                         "labels": ["label-1", "label-2"],
                         "reporter": {"name": "someone"},
-                    }
-                }),
+                    },
+                },
+            ),
             mock.MagicMock(
                 key="FOO-3",
                 id="3",
@@ -97,8 +102,9 @@ class TestJIRAClient(TestCase):
                         "components": [],
                         "labels": ["label-1", "label-2"],
                         "reporter": {"name": "someone"},
-                    }
-                }),
+                    },
+                },
+            ),
         ]
 
         mock_jira = mock.MagicMock()

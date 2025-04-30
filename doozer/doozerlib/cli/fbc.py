@@ -7,16 +7,21 @@ from typing import Dict, List, Optional, Sequence, Tuple, cast
 import click
 from artcommonlib.konflux.konflux_build_record import (
     KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord,
-    KonfluxFbcBuildRecord)
+    KonfluxFbcBuildRecord,
+)
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 from doozerlib import constants, opm
-from doozerlib.backend.konflux_fbc import (KonfluxFbcBuilder,
-                                           KonfluxFbcImporter,
-                                           KonfluxFbcRebaser)
-from doozerlib.cli import (cli, click_coroutine, option_commit_message,
-                           option_push, pass_runtime,
-                           validate_semver_major_minor_patch)
+from doozerlib.backend.konflux_fbc import (
+    KonfluxFbcBuilder,
+    KonfluxFbcImporter,
+    KonfluxFbcRebaser,
+)
+from doozerlib.cli import (
+    cli, click_coroutine, option_commit_message,
+    option_push, pass_runtime,
+    validate_semver_major_minor_patch,
+)
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
@@ -26,8 +31,10 @@ yaml = opm.yaml
 
 
 class FbcImportCli:
-    def __init__(self, runtime: Runtime, index_image: str | None, keep_templates: bool, push: bool,
-                 registry_auth: Optional[str], fbc_repo: str, message: str, dest_dir: str | None):
+    def __init__(
+        self, runtime: Runtime, index_image: str | None, keep_templates: bool, push: bool,
+        registry_auth: Optional[str], fbc_repo: str, message: str, dest_dir: str | None,
+    ):
         self.runtime = runtime
         self.index_image = index_image
         self.keep_templates = keep_templates
@@ -103,8 +110,10 @@ class FbcImportCli:
 @click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
 @pass_runtime
 @click_coroutine
-async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates: bool, push: bool, fbc_repo: str,
-                     registry_auth: Optional[str], message: str, dest_dir: Optional[str]):
+async def fbc_import(
+    runtime: Runtime, from_index: Optional[str], keep_templates: bool, push: bool, fbc_repo: str,
+    registry_auth: Optional[str], message: str, dest_dir: Optional[str],
+):
     """
     Create an FBC repository by importing from the provided index image
 
@@ -112,8 +121,10 @@ async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates
 
     doozer --group=openshift-4.17 beta:fbc:import registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
-    cli = FbcImportCli(runtime=runtime, index_image=from_index, keep_templates=keep_templates, push=push,
-                       fbc_repo=fbc_repo, registry_auth=registry_auth, message=message, dest_dir=dest_dir)
+    cli = FbcImportCli(
+        runtime=runtime, index_image=from_index, keep_templates=keep_templates, push=push,
+        fbc_repo=fbc_repo, registry_auth=registry_auth, message=message, dest_dir=dest_dir,
+    )
     await cli.run()
 
 
@@ -126,7 +137,8 @@ class FbcRebaseCli:
             commit_message: str,
             push: bool,
             fbc_repo: str,
-            operator_nvrs: Tuple[str, ...]):
+            operator_nvrs: Tuple[str, ...],
+    ):
         self.runtime = runtime
         self.version = version
         self.release = release
@@ -259,8 +271,10 @@ class FbcRebaseCli:
 
 
 @cli.command("beta:fbc:rebase", short_help="Refresh a group's FBC konflux source content")
-@click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
-              help="Version string to populate in Dockerfiles.")
+@click.option(
+    "--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
+    help="Version string to populate in Dockerfiles.",
+)
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
 @option_commit_message
 @option_push
@@ -275,7 +289,7 @@ async def fbc_rebase(
     message: str,
     push: bool,
     fbc_repo: str,
-    operator_nvrs: Tuple[str, ...]
+    operator_nvrs: Tuple[str, ...],
 ):
     """
     Refresh a group's FBC source content
@@ -283,15 +297,19 @@ async def fbc_rebase(
     The group's FBC konflux source content will be updated to include OLM bundles of the runtime assembly. The group's Dockerfiles will be
     updated to use the specified version and release.
     """
-    cli = FbcRebaseCli(runtime=runtime, version=version, release=release,
-                       commit_message=message, push=push, fbc_repo=fbc_repo, operator_nvrs=operator_nvrs)
+    cli = FbcRebaseCli(
+        runtime=runtime, version=version, release=release,
+        commit_message=message, push=push, fbc_repo=fbc_repo, operator_nvrs=operator_nvrs,
+    )
     await cli.run()
 
 
 class FbcBuildCli:
-    def __init__(self, runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-                 konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, plr_template: str,
-                 dry_run: bool):
+    def __init__(
+        self, runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
+        konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, plr_template: str,
+        dry_run: bool,
+    ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
@@ -346,14 +364,20 @@ class FbcBuildCli:
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
-              help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template')
+@click.option(
+    '--plr-template', required=False, default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+    help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
+)
 @pass_runtime
 @click_coroutine
-async def fbc_build(runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-                    konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, dry_run: bool,
-                    plr_template: str):
-    cli = FbcBuildCli(runtime=runtime, konflux_kubeconfig=konflux_kubeconfig, konflux_context=konflux_context,
-                      konflux_namespace=konflux_namespace, image_repo=image_repo, skip_checks=skip_checks,
-                      fbc_repo=fbc_repo, plr_template=plr_template, dry_run=dry_run)
+async def fbc_build(
+    runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
+    konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, dry_run: bool,
+    plr_template: str,
+):
+    cli = FbcBuildCli(
+        runtime=runtime, konflux_kubeconfig=konflux_kubeconfig, konflux_context=konflux_context,
+        konflux_namespace=konflux_namespace, image_repo=image_repo, skip_checks=skip_checks,
+        fbc_repo=fbc_repo, plr_template=plr_template, dry_run=dry_run,
+    )
     await cli.run()

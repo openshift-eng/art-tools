@@ -30,12 +30,12 @@ def get_secrets_manager_secret_dict(secret_name):
         # a role that allows access to necessary secrets.
         secrets_client = boto3.client(
             service_name='secretsmanager',
-            region_name='us-east-1'
+            region_name='us-east-1',
         )
 
     try:
         get_secret_value_response = secrets_client.get_secret_value(
-            SecretId=secret_name
+            SecretId=secret_name,
         )
     except:
         raise
@@ -51,13 +51,15 @@ def get_r2_s3_client():
     # If we have not initialized an R2 client, do so now.
     if s3_client is None:
         cloudflare_r2_bucket_info = get_secrets_manager_secret_dict(
-            'prod/lambda/cloudflare-r2-art-srv-enterprise-read-only')
+            'prod/lambda/cloudflare-r2-art-srv-enterprise-read-only',
+        )
         s3_client = boto3.client(
             "s3",
             aws_access_key_id=cloudflare_r2_bucket_info['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=cloudflare_r2_bucket_info['AWS_SECRET_ACCESS_KEY'],
             endpoint_url=cloudflare_r2_bucket_info['AWS_ENDPOINT_URL'],
             region_name=S3_REGION_NAME,
-            config=BOTO3_CLIENT_CONFIG)
+            config=BOTO3_CLIENT_CONFIG,
+        )
 
     return s3_client

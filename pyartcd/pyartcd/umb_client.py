@@ -254,7 +254,7 @@ class AsyncUMBClient:
         self,
         uri: str,
         cert_file: Optional[str] = None,
-        key_file: Optional[str] = None
+        key_file: Optional[str] = None,
     ):
         conn = self._create_connection(uri, cert_file, key_file)
         self._listener = UMBClientConnectionListener(self)
@@ -277,7 +277,8 @@ class AsyncUMBClient:
     def __del__(self):
         if self.connected:
             warnings.warn(
-                f"Unclosed UMB connection {self!r}", ResourceWarning)
+                f"Unclosed UMB connection {self!r}", ResourceWarning,
+            )
 
     @property
     def connected(self):
@@ -310,7 +311,7 @@ class AsyncUMBClient:
     def _create_connection(
         uri: str,
         cert_file: Optional[str] = None,
-        key_file: Optional[str] = None
+        key_file: Optional[str] = None,
     ):
         """ Creates and configures a stomp connection
         """
@@ -346,7 +347,7 @@ class AsyncUMBClient:
         _LOGGER.info("Connecting to message bus...")
         if not self._sender_loop:
             self._sender_loop = asyncio.new_event_loop()
-            self._sender_thread = threading.Thread(target=self._sender_thread_func, args=(self._sender_loop, ), daemon=True)
+            self._sender_thread = threading.Thread(target=self._sender_thread_func, args=(self._sender_loop,), daemon=True)
             self._sender_thread.start()
         receipt = str(uuid.uuid4())
         fut = self._main_loop.create_future()
@@ -404,11 +405,13 @@ class AsyncUMBClient:
         fut = self._main_loop.create_future()
         self._listener.add_future(receipt, fut)
         try:
-            await self._call_in_sender_thread(lambda: self._conn.send(
-                body=body,
-                destination=destination,
-                headers={"receipt": receipt},
-            ))
+            await self._call_in_sender_thread(
+                lambda: self._conn.send(
+                    body=body,
+                    destination=destination,
+                    headers={"receipt": receipt},
+                ),
+            )
             await fut
         finally:
             self._listener.remove_future(receipt)

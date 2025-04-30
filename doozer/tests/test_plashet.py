@@ -63,13 +63,15 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake2-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
-        builder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-        ])
+        builder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+            ],
+        )
         actual = builder.from_group_deps(8, group_config, {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8"])
         builder._get_builds.assert_called_once()
@@ -84,14 +86,16 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
-        builder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-            {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
-        ])
+        builder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+                {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
+            ],
+        )
         with self.assertRaises(ValueError) as ex:
             builder.from_group_deps(8, group_config, {"fake3": MagicMock(rpm_name="fake3")})
         self.assertIn("Group dependencies cannot have ART managed RPMs", str(ex.exception))
@@ -108,19 +112,21 @@ class TestPlashetBuilder(TestCase):
         meta_configs = {
             "fake1": Model({
                 "is": {
-                    "el8": "fake1-1.2.3-1.el8"
-                }
+                    "el8": "fake1-1.2.3-1.el8",
+                },
             }),
             "fake2": Model({
                 "is": {
-                    "el8": "fake2-1.2.3-1.el8"
-                }
+                    "el8": "fake2-1.2.3-1.el8",
+                },
             }),
         }
-        builder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-        ])
+        builder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+            ],
+        )
         assembly_metadata_config.side_effect = lambda *args: meta_configs[args[3]]
         actual = builder.from_pinned_by_is(8, "art1", releases_config, rpm_metas)
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8"])
@@ -137,14 +143,16 @@ class TestPlashetBuilder(TestCase):
             [{"rpms": [{"build_id": 101}, {"build_id": 102}, {"build_id": 103}]}, {"rpms": [{"build_id": 102}, {"build_id": 104}]}],
             [{"rpms": [{"build_id": 201}, {"build_id": 202}]}],
         ]
-        builder._get_builds = MagicMock(return_value=[
-            {"id": 101, "build_id": 101, "name": "fake101", "nvr": "fake101-1.2.3-1.el8"},
-            {"id": 102, "build_id": 102, "name": "fake102", "nvr": "fake102-1.2.3-1.el8"},
-            {"id": 103, "build_id": 103, "name": "fake103", "nvr": "fake103-1.2.3-1.el8"},
-            {"id": 104, "build_id": 104, "name": "fake104", "nvr": "fake104-1.2.3-1.el8"},
-            {"id": 201, "build_id": 201, "name": "fake201", "nvr": "fake201-1.2.3-1.el8"},
-            {"id": 202, "build_id": 202, "name": "fake202", "nvr": "fake202-1.2.3-1.el8"},
-        ])
+        builder._get_builds = MagicMock(
+            return_value=[
+                {"id": 101, "build_id": 101, "name": "fake101", "nvr": "fake101-1.2.3-1.el8"},
+                {"id": 102, "build_id": 102, "name": "fake102", "nvr": "fake102-1.2.3-1.el8"},
+                {"id": 103, "build_id": 103, "name": "fake103", "nvr": "fake103-1.2.3-1.el8"},
+                {"id": 104, "build_id": 104, "name": "fake104", "nvr": "fake104-1.2.3-1.el8"},
+                {"id": 201, "build_id": 201, "name": "fake201", "nvr": "fake201-1.2.3-1.el8"},
+                {"id": 202, "build_id": 202, "name": "fake202", "nvr": "fake202-1.2.3-1.el8"},
+            ],
+        )
         actual = builder.from_images(image_map)
         self.assertEqual({rpm_build["nvr"] for rpm_build in actual["fake-image1"]}, {"fake101-1.2.3-1.el8", "fake102-1.2.3-1.el8", "fake103-1.2.3-1.el8", "fake104-1.2.3-1.el8"})
         self.assertEqual({rpm_build["nvr"] for rpm_build in actual["fake-image2"]}, {"fake201-1.2.3-1.el8", "fake202-1.2.3-1.el8"})
@@ -157,11 +165,13 @@ class TestPlashetBuilder(TestCase):
     def test_from_image_member_deps(self, assembly_metadata_config: Mock):
         builder = PlashetBuilder(MagicMock())
 
-        builder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-            {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
-        ])
+        builder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+                {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
+            ],
+        )
         assembly_metadata_config.return_value = Model({
             "dependencies": {
                 "rpms": [
@@ -170,8 +180,8 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         image_meta = Model({
             "distgit_key": "fake-image",
@@ -185,11 +195,13 @@ class TestPlashetBuilder(TestCase):
     def test_from_rhcos_deps(self, assembly_rhcos_config: Mock):
         builder = PlashetBuilder(MagicMock())
 
-        builder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-            {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
-        ])
+        builder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+                {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
+            ],
+        )
         assembly_rhcos_config.return_value = Model({
             "dependencies": {
                 "rpms": [
@@ -198,8 +210,8 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         actual = builder.from_rhcos_deps(8, "art1", Model(), {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8", "fake3-1.2.3-1.el8"])

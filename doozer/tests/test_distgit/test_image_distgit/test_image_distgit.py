@@ -48,7 +48,7 @@ class TestImageDistGit(TestDistgit):
             command="some-command",
             add_record=lambda *_, **__: None,
             assembly_type=AssemblyTypes.STANDARD,
-            get_major_minor_fields=lambda *_, **__: (4, 14)
+            get_major_minor_fields=lambda *_, **__: (4, 14),
         )
 
     def test_clone_invokes_read_master_data(self):
@@ -56,32 +56,44 @@ class TestImageDistGit(TestDistgit):
         Mocking `clone` method of parent class, since we are only interested
         in validating that `_read_master_data` is called in the child class.
         """
-        (flexmock(distgit.DistGitRepo)
+        (
+            flexmock(distgit.DistGitRepo)
             .should_receive("clone")
-            .replace_with(lambda *_: None))
+            .replace_with(lambda *_: None)
+        )
 
-        (flexmock(distgit.ImageDistGitRepo)
+        (
+            flexmock(distgit.ImageDistGitRepo)
             .should_receive("_read_master_data")
-            .once())
+            .once()
+        )
 
-        metadata = flexmock(runtime=self.mock_runtime(),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing)),
-                            name="_irrelevant_",
-                            canonical_builders_enabled=False,
-                            logger="_irrelevant_")
+        metadata = flexmock(
+            runtime=self.mock_runtime(),
+            config=flexmock(distgit=flexmock(branch=distgit.Missing)),
+            name="_irrelevant_",
+            canonical_builders_enabled=False,
+            logger="_irrelevant_",
+        )
 
-        (distgit.ImageDistGitRepo(metadata, autoclone=False)
-            .clone("distgits_root_dir", "distgit_branch"))
+        (
+            distgit.ImageDistGitRepo(metadata, autoclone=False)
+            .clone("distgits_root_dir", "distgit_branch")
+        )
 
     def test_image_build_method_default(self):
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method=distgit.Missing,
-                                            get=lambda *_: {}),
-                            image_build_method="default-method",
-                            canonical_builders_enabled=False,
-                            name="_irrelevant_",
-                            logger="_irrelevant_")
+        metadata = flexmock(
+            runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
+            config=flexmock(
+                distgit=flexmock(branch=distgit.Missing),
+                image_build_method=distgit.Missing,
+                get=lambda *_: {},
+            ),
+            image_build_method="default-method",
+            canonical_builders_enabled=False,
+            name="_irrelevant_",
+            logger="_irrelevant_",
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("default-method", repo.image_build_method)
@@ -89,51 +101,67 @@ class TestImageDistGit(TestDistgit):
     def test_image_build_method_imagebuilder(self):
         get = lambda key, default: dict({"builder": "..."}) if key == "from" else default
 
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method=distgit.Missing)),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method=distgit.Missing,
-                                            get=get),
-                            name="_irrelevant_",
-                            image_build_method="osbs2",
-                            canonical_builders_enabled=False,
-                            logger="_irrelevant_")
+        metadata = flexmock(
+            runtime=self.mock_runtime(group_config=flexmock(default_image_build_method=distgit.Missing)),
+            config=flexmock(
+                distgit=flexmock(branch=distgit.Missing),
+                image_build_method=distgit.Missing,
+                get=get,
+            ),
+            name="_irrelevant_",
+            image_build_method="osbs2",
+            canonical_builders_enabled=False,
+            logger="_irrelevant_",
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("osbs2", repo.image_build_method)
 
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="osbs2")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method=distgit.Missing,
-                                            get=get),
-                            name="_irrelevant_",
-                            image_build_method="osbs2",
-                            canonical_builders_enabled=False,
-                            logger="_irrelevant_")
+        metadata = flexmock(
+            runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="osbs2")),
+            config=flexmock(
+                distgit=flexmock(branch=distgit.Missing),
+                image_build_method=distgit.Missing,
+                get=get,
+            ),
+            name="_irrelevant_",
+            image_build_method="osbs2",
+            canonical_builders_enabled=False,
+            logger="_irrelevant_",
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("osbs2", repo.image_build_method)
 
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="osbs2")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method="imagebuilder",
-                                            get=get),
-                            name="_irrelevant_",
-                            image_build_method="imagebuilder",
-                            canonical_builders_enabled=False,
-                            logger="_irrelevant_")
+        metadata = flexmock(
+            runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="osbs2")),
+            config=flexmock(
+                distgit=flexmock(branch=distgit.Missing),
+                image_build_method="imagebuilder",
+                get=get,
+            ),
+            name="_irrelevant_",
+            image_build_method="imagebuilder",
+            canonical_builders_enabled=False,
+            logger="_irrelevant_",
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("imagebuilder", repo.image_build_method)
 
     def test_image_build_method_from_config(self):
-        metadata = flexmock(runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
-                            config=flexmock(distgit=flexmock(branch=distgit.Missing),
-                                            image_build_method="config-method",
-                                            get=lambda _, d: d),
-                            name="_irrelevant_",
-                            image_build_method="config-method",
-                            canonical_builders_enabled=False,
-                            logger="_irrelevant_")
+        metadata = flexmock(
+            runtime=self.mock_runtime(group_config=flexmock(default_image_build_method="default-method")),
+            config=flexmock(
+                distgit=flexmock(branch=distgit.Missing),
+                image_build_method="config-method",
+                get=lambda _, d: d,
+            ),
+            name="_irrelevant_",
+            image_build_method="config-method",
+            canonical_builders_enabled=False,
+            logger="_irrelevant_",
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         self.assertEqual("config-method", repo.image_build_method)
@@ -141,23 +169,29 @@ class TestImageDistGit(TestDistgit):
     def test_wait_for_build_with_build_status_true(self):
         logger = flexmock()
 
-        (logger
+        (
+            logger
             .should_receive("info")
             .with_args("Member waiting for me to build: i-am-waiting")
             .once()
-            .ordered())
+            .ordered()
+        )
 
-        (logger
+        (
+            logger
             .should_receive("info")
             .with_args("Member successfully waited for me to build: i-am-waiting")
             .once()
-            .ordered())
+            .ordered()
+        )
 
-        metadata = flexmock(logger=logger,
-                            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
-                            runtime=self.mock_runtime(),
-                            canonical_builders_enabled=False,
-                            name="_irrelevant_")
+        metadata = flexmock(
+            logger=logger,
+            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
+            runtime=self.mock_runtime(),
+            canonical_builders_enabled=False,
+            name="_irrelevant_",
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         repo.build_lock = flexmock()  # we don't want tests to be blocked
@@ -166,12 +200,14 @@ class TestImageDistGit(TestDistgit):
         repo.wait_for_build("i-am-waiting")
 
     def test_wait_for_build_with_build_status_false(self):
-        metadata = flexmock(qualified_name="my-qualified-name",
-                            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
-                            runtime=self.mock_runtime(),
-                            name="_irrelevant_",
-                            canonical_builders_enabled=False,
-                            logger=flexmock(info=lambda *_: None))
+        metadata = flexmock(
+            qualified_name="my-qualified-name",
+            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
+            runtime=self.mock_runtime(),
+            name="_irrelevant_",
+            canonical_builders_enabled=False,
+            logger=flexmock(info=lambda *_: None),
+        )
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         repo.build_lock = flexmock()  # we don't want tests to be blocked
@@ -199,11 +235,13 @@ class TestImageDistGit(TestDistgit):
             .with_args("timeout 999 git push --tags", retries=3)\
             .ordered()
 
-        metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": 999}),
-                            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
-                            name="_irrelevant_",
-                            canonical_builders_enabled=False,
-                            logger=flexmock(info=lambda *_: None))
+        metadata = flexmock(
+            runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": 999}),
+            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
+            name="_irrelevant_",
+            canonical_builders_enabled=False,
+            logger=flexmock(info=lambda *_: None),
+        )
 
         expected = (metadata, True)
         actual = distgit.ImageDistGitRepo(metadata, autoclone=False).push()
@@ -220,11 +258,13 @@ class TestImageDistGit(TestDistgit):
         # pretending cmd_assert raised an IOError
         flexmock(distgit.exectools).should_receive("cmd_assert").and_raise(IOError("io-error"))
 
-        metadata = flexmock(runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": "_irrelevant_"}),
-                            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
-                            name="_irrelevant_",
-                            canonical_builders_enabled=False,
-                            logger=flexmock(info=lambda *_: None))
+        metadata = flexmock(
+            runtime=self.mock_runtime(global_opts={"rhpkg_push_timeout": "_irrelevant_"}),
+            config=flexmock(distgit=flexmock(branch="_irrelevant_")),
+            name="_irrelevant_",
+            canonical_builders_enabled=False,
+            logger=flexmock(info=lambda *_: None),
+        )
 
         expected = (metadata, repr(IOError("io-error")))
         actual = distgit.ImageDistGitRepo(metadata, autoclone=False).push()
@@ -312,7 +352,7 @@ class TestImageDistGit(TestDistgit):
             """yum repolist && \
                ( foo || yum-config-manager --enable blah && verify-something )""":
             """yum repolist \\\n && \
-               ( foo \\\n || : 'removed yum-config-manager' \\\n && verify-something )"""
+               ( foo \\\n || : 'removed yum-config-manager' \\\n && verify-something )""",
         }
         for cmd, expect in changes.items():
             changed, result = distgit.ImageDistGitRepo._mangle_pkgmgr(cmd)
@@ -373,14 +413,16 @@ class TestImageDistGit(TestDistgit):
 
     def test_inject_yum_update_commands_without_final_stage_user(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "enabled_repos": ["repo-a", "repo-b"]
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "enabled_repos": ["repo-a", "repo-b"],
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dockerfile = """
 FROM some-base-image:some-tag AS builder
@@ -405,15 +447,17 @@ COPY --from=builder /some/path/a /some/path/b
 
     def test_inject_yum_update_commands_with_final_stage_user(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-7'},
-                "enabled_repos": ["repo-a", "repo-b"],
-                "final_stage_user": 1002,
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-7'},
+                    "enabled_repos": ["repo-a", "repo-b"],
+                    "final_stage_user": 1002,
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dockerfile = """
 FROM some-base-image:some-tag AS builder
@@ -442,14 +486,16 @@ COPY --from=builder /some/path/a /some/path/b
 
     def test_remove_yum_update_commands(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "enabled_repos": ["repo-a", "repo-b"]
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "enabled_repos": ["repo-a", "repo-b"],
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dg.logger = logging.getLogger()
         dg.dg_path = MagicMock()
@@ -482,14 +528,16 @@ COPY --from=builder /some/path/a /some/path/b
 
     def test_inject_yum_update_commands_without_repos(self):
         runtime = MagicMock()
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "enabled_repos": []
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "enabled_repos": [],
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dg.logger = logging.getLogger()
         dg.dg_path = MagicMock()
@@ -523,14 +571,16 @@ COPY --from=builder /some/path/a /some/path/b
     def test_generate_osbs_image_config_with_addtional_tags(self):
         runtime = MagicMock(uuid="123456")
         runtime.group_config.cachito.enabled = False
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"]
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "additional_tags": ["tag_a", "tag_b"],
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dg.logger = logging.getLogger()
 
@@ -547,14 +597,16 @@ COPY --from=builder /some/path/a /some/path/b
     def test_detect_package_manangers_without_git_clone(self):
         runtime = MagicMock(uuid="123456")
         runtime.group_config.cachito.enabled = True
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"]
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "additional_tags": ["tag_a", "tag_b"],
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dg.logger = logging.getLogger()
 
@@ -566,14 +618,16 @@ COPY --from=builder /some/path/a /some/path/b
     def test_detect_package_manangers(self, is_file: Mock, is_dir: Mock):
         runtime = MagicMock(uuid="123456")
         runtime.group_config.cachito.enabled = True
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"]
-            },
-        }))
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "additional_tags": ["tag_a", "tag_b"],
+                },
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dg.logger = logging.getLogger()
         dg.distgit_dir = "/path/to/distgit/containers/foo"
@@ -588,18 +642,20 @@ COPY --from=builder /some/path/a /some/path/b
     def test_generate_osbs_image_config_with_cachito_enabled(self, is_dir: Mock):
         runtime = MagicMock(uuid="123456", assembly="test", assembly_basis_event=None, profile=None, odcs_mode=False)
         runtime.group_config = Model()
-        meta = ImageMetadata(runtime, Model({
-            "key": "foo",
-            'data': {
-                'name': 'openshift/foo',
-                'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"],
-                "content": {
-                    "source": {"git": {"url": "git@example.com:openshift-priv/foo.git", "branch": {"target": "release-4.10"}}}
+        meta = ImageMetadata(
+            runtime, Model({
+                "key": "foo",
+                'data': {
+                    'name': 'openshift/foo',
+                    'distgit': {'branch': 'fake-branch-rhel-8'},
+                    "additional_tags": ["tag_a", "tag_b"],
+                    "content": {
+                        "source": {"git": {"url": "git@example.com:openshift-priv/foo.git", "branch": {"target": "release-4.10"}}},
+                    },
+                    "cachito": {"enabled": True, "flags": ["gomod-vendor-check"]},
                 },
-                "cachito": {"enabled": True, "flags": ["gomod-vendor-check"]}
-            },
-        }))
+            }),
+        )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
         dg.logger = logging.getLogger()
         dg.distgit_dir = "/path/to/distgit/containers/foo"
@@ -619,9 +675,12 @@ COPY --from=builder /some/path/a /some/path/b
         # 'when' clause matching upstream rhel version: override
         self.img_dg.should_match_upstream = True
         self.img_dg.config = Model(
-            {'canonical_builders_from_upstream': True,
+            {
+                'canonical_builders_from_upstream': True,
                 'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
+                'alternative_upstream': [{'when': 'el8', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            },
+        )
         self.img_dg.upstream_intended_el_version = '8'
         self.img_dg._update_image_config()
         self.assertTrue(self.img_dg.should_match_upstream)
@@ -630,8 +689,11 @@ COPY --from=builder /some/path/a /some/path/b
         # no 'when' clause matching upstream rhel version: do not match upstream
         self.img_dg.should_match_upstream = True
         self.img_dg.config = Model(
-            {'distgit': {'branch': 'rhaos-4.16-rhel-9'},
-             'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}]})
+            {
+                'distgit': {'branch': 'rhaos-4.16-rhel-9'},
+                'alternative_upstream': [{'when': 'el7', 'distgit': {'branch': 'rhaos-4.16-rhel-8'}}],
+            },
+        )
         self.img_dg.upstream_intended_el_version = 8  # also valid as an integer
         self.img_dg._update_image_config()
         self.assertFalse(self.img_dg.should_match_upstream)

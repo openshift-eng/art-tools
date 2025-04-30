@@ -22,10 +22,12 @@ class WatchReleaseCli:
         self.konflux_config = konflux_config
         self.timeout = timeout
         self.dry_run = dry_run
-        self.konflux_client = KonfluxClient.from_kubeconfig(default_namespace=self.konflux_config['namespace'],
-                                                            config_file=self.konflux_config['kubeconfig'],
-                                                            context=self.konflux_config['context'],
-                                                            dry_run=self.dry_run)
+        self.konflux_client = KonfluxClient.from_kubeconfig(
+            default_namespace=self.konflux_config['namespace'],
+            config_file=self.konflux_config['kubeconfig'],
+            context=self.konflux_config['context'],
+            dry_run=self.dry_run,
+        )
         self.konflux_client.verify_connection()
 
     async def run(self):
@@ -57,13 +59,17 @@ class WatchReleaseCli:
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
-@click.option('--timeout', metavar='TIMEOUT_HOURS', type=click.INT, default=5,
-              help='Time to wait, in hours. Set 0 to report and exit.')
+@click.option(
+    '--timeout', metavar='TIMEOUT_HOURS', type=click.INT, default=5,
+    help='Time to wait, in hours. Set 0 to report and exit.',
+)
 @click.option('--dry-run', is_flag=True, help='Init and exit')
 @click.pass_obj
 @click_coroutine
-async def watch_release_cli(runtime: Runtime, release: str, konflux_kubeconfig: str, konflux_context: str,
-                            konflux_namespace, timeout: int, dry_run: bool):
+async def watch_release_cli(
+    runtime: Runtime, release: str, konflux_kubeconfig: str, konflux_context: str,
+    konflux_namespace, timeout: int, dry_run: bool,
+):
     """
     Watch the given Konflux Release and report on its status
     \b
@@ -82,8 +88,10 @@ async def watch_release_cli(runtime: Runtime, release: str, konflux_kubeconfig: 
         'context': konflux_context,
     }
 
-    pipeline = WatchReleaseCli(runtime, release=release, konflux_config=konflux_config, timeout=timeout,
-                               dry_run=dry_run)
+    pipeline = WatchReleaseCli(
+        runtime, release=release, konflux_config=konflux_config, timeout=timeout,
+        dry_run=dry_run,
+    )
     release_status = await pipeline.run()
     if release_status is True:
         click.echo("Release successful!")

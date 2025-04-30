@@ -44,8 +44,10 @@ class PlashetBuilder:
         if "epoch" in build:
             self._build_cache[to_nvre(build)] = build
 
-    def from_tag(self, tag: str, inherit: bool, assembly: Optional[str], event: Optional[int] = None,
-                 only: Optional[List[str]] = None) -> Dict[str, Dict]:
+    def from_tag(
+        self, tag: str, inherit: bool, assembly: Optional[str], event: Optional[int] = None,
+        only: Optional[List[str]] = None,
+    ) -> Dict[str, Dict]:
         """ Returns RPM builds from the specified brew tag
         :param tag: Brew tag name
         :param inherit: Descend into brew tag inheritance

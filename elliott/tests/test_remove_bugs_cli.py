@@ -23,8 +23,12 @@ class RemoveBugsTestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("remove_bugs").with_args(advisory, {'OCPBUGS-3', 'OCPBUGS-4'}, False)
         flexmock(BugzillaBugTracker).should_receive("remove_bugs").with_args(advisory, {1, 2}, False)
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'remove-bugs', '1', '2', 'OCPBUGS-3', 'OCPBUGS-4', '-a',
-                                     advisory.errata_id])
+        result = runner.invoke(
+            cli, [
+                '-g', 'openshift-4.6', 'remove-bugs', '1', '2', 'OCPBUGS-3', 'OCPBUGS-4', '-a',
+                advisory.errata_id,
+            ],
+        )
         self.assertIn("Found 2 jira bugs", result.output)
         self.assertIn(f"Removing jira bugs from advisory {advisory.errata_id}", result.output)
         self.assertIn("Found 2 bugzilla bugs", result.output)

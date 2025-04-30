@@ -27,8 +27,10 @@ def _search_issues(jira_client, *args, **kwargs):
 
 
 class FindBugsKernelCli:
-    def __init__(self, runtime: Runtime, trackers: Sequence[str],
-                 clone: bool, reconcile: bool, update_tracker: bool, dry_run: bool):
+    def __init__(
+        self, runtime: Runtime, trackers: Sequence[str],
+        clone: bool, reconcile: bool, update_tracker: bool, dry_run: bool,
+    ):
         self._runtime = runtime
         self._logger = LOGGER
         self.trackers = list(trackers)
@@ -206,8 +208,10 @@ class FindBugsKernelCli:
             text = f"{bug['tracker']}\t{bug['id']}\t{'N/A' if not cloned_issues else ','.join(cloned_issues)}\t{bug['status']}\t{bug['summary']}"
             print_func(text, file=out)
 
-    def _update_tracker(self, jira_client: JIRA, tracker: Issue, koji_api: koji.ClientSession,
-                        conf: KernelBugSweepConfig.TargetJiraConfig):
+    def _update_tracker(
+        self, jira_client: JIRA, tracker: Issue, koji_api: koji.ClientSession,
+        conf: KernelBugSweepConfig.TargetJiraConfig,
+    ):
         logger = LOGGER
         logger.info("Checking if an update to tracker %s is needed...", tracker.key)
         # Determine which NVRs have the fix. e.g. ["kernel-5.14.0-284.14.1.el9_2"]
@@ -218,7 +222,7 @@ class FindBugsKernelCli:
         elif candidate:
             early_kernel.comment_on_tracker(
                 logger, self.dry_run, jira_client, tracker,
-                [f"Build(s) {nvrs} was/were already tagged into {candidate}."]
+                [f"Build(s) {nvrs} was/were already tagged into {candidate}."],
                 # do not reword, see NOTE in method
             )
         else:
@@ -284,29 +288,40 @@ class FindBugsKernelCli:
 
 
 @cli.command("find-bugs:kernel", short_help="Find kernel bugs")
-@click.option("--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
-              help="Find by the specified KMAINT tracker JIRA_KEY")
-@click.option("--clone",
-              is_flag=True,
-              default=False,
-              help="Clone kernel bugs into OCP Jira")
-@click.option("--reconcile",
-              is_flag=True,
-              default=False,
-              help="Update summary, description, etc for already cloned Jira bugs. Must be used with --clone")
-@click.option("--update-tracker",
-              is_flag=True,
-              default=False,
-              help="Update KMAINT trackers state, links, and comments")
-@click.option("--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
+    help="Find by the specified KMAINT tracker JIRA_KEY",
+)
+@click.option(
+    "--clone",
+    is_flag=True,
+    default=False,
+    help="Clone kernel bugs into OCP Jira",
+)
+@click.option(
+    "--reconcile",
+    is_flag=True,
+    default=False,
+    help="Update summary, description, etc for already cloned Jira bugs. Must be used with --clone",
+)
+@click.option(
+    "--update-tracker",
+    is_flag=True,
+    default=False,
+    help="Update KMAINT trackers state, links, and comments",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Don't change anything",
+)
 @click.pass_obj
 @click_coroutine
 async def find_bugs_kernel_cli(
         runtime: Runtime, trackers: Tuple[str, ...], clone: bool,
-        reconcile: bool, update_tracker: bool, dry_run: bool):
+        reconcile: bool, update_tracker: bool, dry_run: bool,
+):
     """Find kernel bugs in Bugzilla for weekly kernel release through OCP.
 
     Example 1: Find kernel bugs and print them out
@@ -328,6 +343,6 @@ async def find_bugs_kernel_cli(
         clone=clone,
         reconcile=reconcile,
         update_tracker=update_tracker,
-        dry_run=dry_run
+        dry_run=dry_run,
     )
     await cli.run()

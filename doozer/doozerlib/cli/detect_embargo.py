@@ -24,10 +24,14 @@ cli.add_command(detect_embargo)
 
 
 @detect_embargo.command("nvr", short_help="Detect embargoed fixes in given builds")
-@click.option("--yaml", "as_yaml", is_flag=True,
-              help="Print out the result as YAML format.")
-@click.option("--json", "as_json", is_flag=True,
-              help="Print out the result as JSON format.")
+@click.option(
+    "--yaml", "as_yaml", is_flag=True,
+    help="Print out the result as YAML format.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Print out the result as JSON format.",
+)
 @click.argument("nvrs", metavar="NVRS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_nvr(runtime: Runtime, nvrs, as_yaml, as_json):
@@ -48,16 +52,26 @@ def detect_in_nvr(runtime: Runtime, nvrs, as_yaml, as_json):
 
 
 @detect_embargo.command("tag", short_help="Detect embargoed fixes in builds with given Koji tags")
-@click.option("--kind", "kind", default="all", metavar="KIND", type=click.Choice(["rpm", "image", "all"]),
-              help="Only detect the specified kind of builds. [rpm, image, all] (Default to all)")
-@click.option("--exclude", "excluded_tags", metavar="TAG", multiple=True,
-              help="Koji tag name that the build must not have [multiple]")
-@click.option("--event-id", metavar='NUM', required=False, type=int,
-              help="A Brew event ID. If specified, the last NVRs as of the given Brew event will be chosen instead of latest")
-@click.option("--yaml", "as_yaml", is_flag=True,
-              help="Print out the result as YAML format.")
-@click.option("--json", "as_json", is_flag=True,
-              help="Print out the result as JSON format.")
+@click.option(
+    "--kind", "kind", default="all", metavar="KIND", type=click.Choice(["rpm", "image", "all"]),
+    help="Only detect the specified kind of builds. [rpm, image, all] (Default to all)",
+)
+@click.option(
+    "--exclude", "excluded_tags", metavar="TAG", multiple=True,
+    help="Koji tag name that the build must not have [multiple]",
+)
+@click.option(
+    "--event-id", metavar='NUM', required=False, type=int,
+    help="A Brew event ID. If specified, the last NVRs as of the given Brew event will be chosen instead of latest",
+)
+@click.option(
+    "--yaml", "as_yaml", is_flag=True,
+    help="Print out the result as YAML format.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Print out the result as JSON format.",
+)
 @click.argument("tags", metavar="TAGS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_tag(runtime: Runtime, kind, tags, excluded_tags, event_id, as_yaml, as_json):
@@ -77,10 +91,14 @@ def detect_in_tag(runtime: Runtime, kind, tags, excluded_tags, event_id, as_yaml
 
 
 @detect_embargo.command("pullspec", short_help="Check whether one or more arbitrary brew images (referred by pullspecs) has embargoed fixes.")
-@click.option("--yaml", "as_yaml", is_flag=True,
-              help="Print out the result as YAML format.")
-@click.option("--json", "as_json", is_flag=True,
-              help="Print out the result as JSON format.")
+@click.option(
+    "--yaml", "as_yaml", is_flag=True,
+    help="Print out the result as YAML format.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Print out the result as JSON format.",
+)
 @click.argument("pullspecs", metavar="PULLSPECS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_pullspec(runtime, pullspecs, as_yaml, as_json):
@@ -101,10 +119,14 @@ def detect_in_pullspec(runtime, pullspecs, as_yaml, as_json):
 
 
 @detect_embargo.command("release", short_help="Check whether one or more release payloads has embargoed fixes.")
-@click.option("--yaml", "as_yaml", is_flag=True,
-              help="Print out the result as YAML format.")
-@click.option("--json", "as_json", is_flag=True,
-              help="Print out the result as JSON format.")
+@click.option(
+    "--yaml", "as_yaml", is_flag=True,
+    help="Print out the result as YAML format.",
+)
+@click.option(
+    "--json", "as_json", is_flag=True,
+    help="Print out the result as JSON format.",
+)
 @click.argument("pullspecs", metavar="PULLSPECS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_release(runtime, pullspecs, as_yaml, as_json):
@@ -179,8 +201,10 @@ def detect_embargoes_in_pullspecs(runtime: Runtime, pullspecs: List[str]):
     :return: list of Brew build dicts that have embargoed fixes
     """
     runtime.logger.info(f"Fetching manifests for {len(pullspecs)} pullspecs...")
-    jobs = exectools.parallel_exec(lambda pullspec, _: get_nvr_by_pullspec(pullspec), pullspecs,
-                                   min(len(pullspecs), multiprocessing.cpu_count() * 4, 32))
+    jobs = exectools.parallel_exec(
+        lambda pullspec, _: get_nvr_by_pullspec(pullspec), pullspecs,
+        min(len(pullspecs), multiprocessing.cpu_count() * 4, 32),
+    )
     nvrs = jobs.get()
     suspect_nvrs = []
     suspect_pullspecs = []
@@ -209,7 +233,7 @@ def detect_embargoes_in_releases(runtime: Runtime, pullspecs: List[str]):
     jobs = exectools.parallel_exec(
         lambda pullspec, _: get_image_pullspecs_from_release_payload(pullspec, ignore_rhcos_tags),
         pullspecs,
-        min(len(pullspecs), multiprocessing.cpu_count() * 4, 32)
+        min(len(pullspecs), multiprocessing.cpu_count() * 4, 32),
     )
     pullspec_lists = jobs.get()
     embargoed_releases = []
@@ -233,7 +257,7 @@ def print_result_and_exit(embargoed_builds, embargoed_pullspecs, embargoed_relea
     :as_json: if true, print the result as a JSON document
     """
     out = {
-        "has_embargoes": bool(embargoed_builds)
+        "has_embargoes": bool(embargoed_builds),
     }
     if embargoed_builds:
         out["builds"] = embargoed_builds

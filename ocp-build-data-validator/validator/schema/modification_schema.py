@@ -24,4 +24,4 @@ def modification(file):
                   Optional('path'): And(str, len),
                   Optional('why'): And(str, len),  # consider making this required once it becomes customary
                   Optional('overwriting'): bool,
-                  }).validate(file)
+    }).validate(file)

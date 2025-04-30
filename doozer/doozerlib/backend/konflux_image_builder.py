@@ -19,9 +19,11 @@ from artcommonlib import constants as artlib_constants
 from artcommonlib import exectools, bigquery
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.exectools import limit_concurrency
-from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
-                                                       KonfluxBuildOutcome,
-                                                       KonfluxBuildRecord)
+from artcommonlib.konflux.konflux_build_record import (
+    ArtifactType, Engine,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+)
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
 
@@ -121,7 +123,7 @@ class KonfluxImageBuilder:
                 dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
                     "group": metadata.runtime.group,
                     "assembly_name": metadata.runtime.assembly,
-                    "distgit_key": metadata.distgit_key
+                    "distgit_key": metadata.distgit_key,
                 })
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
@@ -132,20 +134,24 @@ class KonfluxImageBuilder:
 
             # Sanity check to make sure a successful NVR build doesn't already exist in DB
             where = {"engine": Engine.KONFLUX.value}
-            build_records = await metadata.runtime.konflux_db.get_build_records_by_nvrs([nvr],
-                                                                                        outcome=KonfluxBuildOutcome.SUCCESS,
-                                                                                        where=where,
-                                                                                        strict=False)
+            build_records = await metadata.runtime.konflux_db.get_build_records_by_nvrs(
+                [nvr],
+                outcome=KonfluxBuildOutcome.SUCCESS,
+                where=where,
+                strict=False,
+            )
             build_records = [b for b in build_records if b]
             if build_records:
-                raise ValueError(f"Successful NVR build {nvr} already exists in DB! "
-                                 f"pullspec: {build_records[0].image_pullspec}. "
-                                 "To rebuild, please do another rebase")
+                raise ValueError(
+                    f"Successful NVR build {nvr} already exists in DB! "
+                    f"pullspec: {build_records[0].image_pullspec}. "
+                    "To rebuild, please do another rebase",
+                )
 
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
             additional_tags = [
-                f"{metadata.image_name_short}-{version}-{release}"
+                f"{metadata.image_name_short}-{version}-{release}",
             ]
 
             # Wait for parent members to be built
@@ -162,12 +168,14 @@ class KonfluxImageBuilder:
             error = None
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
-                pipelinerun = await self._start_build(metadata=metadata,
-                                                      build_repo=build_repo,
-                                                      building_arches=building_arches,
-                                                      output_image=output_image,
-                                                      additional_tags=additional_tags,
-                                                      dest_dir=dest_dir)
+                pipelinerun = await self._start_build(
+                    metadata=metadata,
+                    build_repo=build_repo,
+                    building_arches=building_arches,
+                    output_image=output_image,
+                    additional_tags=additional_tags,
+                    dest_dir=dest_dir,
+                )
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.build_pipeline_url(pipelinerun)
@@ -190,8 +198,10 @@ class KonfluxImageBuilder:
                     await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
-                    error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
-                                                   pipelinerun_name, pipelinerun)
+                    error = KonfluxImageBuildError(
+                        f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
+                        pipelinerun_name, pipelinerun,
+                    )
                 else:
                     metadata.build_status = True
                     record["message"] = "Success"
@@ -275,8 +285,10 @@ class KonfluxImageBuilder:
         else:
             # Enable cachi2 based on cachito config
             logger.info("cachi2 override not found. fallback to use cachito config")
-            cachi2_enabled = artlib_util.is_cachito_enabled(metadata=metadata,
-                                                            group_config=metadata.runtime.group_config, logger=logger)
+            cachi2_enabled = artlib_util.is_cachito_enabled(
+                metadata=metadata,
+                group_config=metadata.runtime.group_config, logger=logger,
+            )
 
         return cachi2_enabled
 
@@ -335,8 +347,10 @@ class KonfluxImageBuilder:
 
         return prefetch
 
-    async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
-                           output_image: str, additional_tags: list[str], dest_dir: Optional[Path] = None):
+    async def _start_build(
+        self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
+        output_image: str, additional_tags: list[str], dest_dir: Optional[Path] = None,
+    ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not build_repo.commit_hash:
             raise IOError(f"The build branch {build_repo.branch} doesn't have any commits in the build repository {build_repo.https_url}")
@@ -392,7 +406,7 @@ class KonfluxImageBuilder:
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
-            sast=sast
+            sast=sast,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
@@ -519,7 +533,7 @@ class KonfluxImageBuilder:
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
-            'pipeline_commit': 'n/a'  # TODO: populate this
+            'pipeline_commit': 'n/a',  # TODO: populate this
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
@@ -533,12 +547,16 @@ class KonfluxImageBuilder:
             image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
 
             if not (image_pullspec and image_digest):
-                raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                                 f"pipelinerun {pipelinerun_name}")
+                raise ValueError(
+                    f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                    f"pipelinerun {pipelinerun_name}",
+                )
 
-            installed_packages = await self.get_installed_packages(image_pullspec, building_arches,
-                                                                   self._config.image_repo_creds,
-                                                                   logger=logger)
+            installed_packages = await self.get_installed_packages(
+                image_pullspec, building_arches,
+                self._config.image_repo_creds,
+                logger=logger,
+            )
 
             build_record_params.update({
                 'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
@@ -634,7 +652,7 @@ class KonfluxImageBuilder:
                             # The caller should capture logs they are interested
                             # in and stuff it into the associated containerStatus
                             # entry.
-                            'log_output': container_status.get('log_output')
+                            'log_output': container_status.get('log_output'),
                         }
                         containers_info.append(container_info)
 

@@ -16,7 +16,11 @@ class TestSchema(unittest.TestCase):
 
     def test_unsupported_schema(self):
         err = validate('unknown/my-file.yml', 'data')
-        self.assertEqual(err, ('Could not determine a schema\n'
-                               'Supported schemas: image, rpm\n'
-                               'Make sure the file is placed in either dir '
-                               '"images" or "rpms"'))
+        self.assertEqual(
+            err, (
+                'Could not determine a schema\n'
+                'Supported schemas: image, rpm\n'
+                'Make sure the file is placed in either dir '
+                '"images" or "rpms"'
+            ),
+        )

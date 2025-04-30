@@ -19,7 +19,7 @@ VISIBILITY_SUFFIX = {
     'konflux': {
         BuildVisibility.PUBLIC: 'p2',
         BuildVisibility.PRIVATE: 'p3',
-    }
+    },
 }
 
 
