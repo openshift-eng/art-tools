@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint
+.PHONY: venv tox lint test pylint format format-check
 
 venv:
 	uv venv --python 3.11
@@ -6,7 +6,13 @@ venv:
 	uv pip install -r doozer/requirements-dev.txt -r pyartcd/requirements-dev.txt -r ocp-build-data-validator/requirements-dev.txt
 	cd elliott && uv pip install '.[tests]'
 
-lint:
+format:
+	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma --exit-zero-even-if-changed
+
+format-check:
+	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma
+
+lint: format-check
 	uv run -m flake8
 
 pylint:
