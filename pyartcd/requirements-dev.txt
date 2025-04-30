@@ -1,7 +1,5 @@
 coverage
 add-trailing-comma
-black
-isort >= 5.0.0
+ruff
 flake8
 pytest == 8.0.2
-tox

@@ -8,16 +8,14 @@ venv:
 
 format:
 	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma --exit-zero-even-if-changed
-	uv run -m black --target-version py311 --skip-string-normalization --line-length 150 .
-	uv run -m isort --profile black --line-length 150 .
+	uv run -m ruff format
 
 format-check:
 	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma
-	uv run -m black --check --target-version py311 --skip-string-normalization --line-length 150 .
-	uv run -m isort --check-only --profile black --line-length 150 .
+	uv run -m ruff format --check
 
 lint: format-check
-	uv run -m flake8
+	uv run -m ruff check
 
 pylint:
 	uv run -m pylint --errors-only .

@@ -72,16 +72,11 @@ repository = "https://github.com/openshift-eng/art-tools.git"
 tests = [
     # test reqs
     "flexmock",
-    # tox reqs
-    "coverage>=5.3",
-    "flake8>=3.8.4",
-    "tox>=3.20.1",
     # makefile reqs
     "virtualenv>=20.2.2",
     "pytest>=6.2.1",
     "mypy>=0.812",
     "pylint",
     "add-trailing-comma",
-    "black",
-    "isort>=5.0.0",
+    "ruff",
 ]
