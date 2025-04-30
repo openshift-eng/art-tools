@@ -1344,7 +1344,7 @@ class GenPayloadCli:
         async with aiofiles.open(multi_release_is_path, mode="w+") as mf:
             await mf.write(yaml.safe_dump(multi_release_is))
 
-        @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
+        @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
         async def _run(to_image, to_image_base):
             return await exectools.cmd_assert_async([
                 "oc", "adm", "release", "new",
