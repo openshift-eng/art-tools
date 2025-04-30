@@ -1,4 +1,6 @@
 coverage
+black
+isort >= 5.0.0
 flake8
 pytest == 8.0.2
 tox

@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint
+.PHONY: venv format format-check lint test pylint
 
 venv:
 	uv venv --python 3.11
@@ -6,7 +6,15 @@ venv:
 	uv pip install -r doozer/requirements-dev.txt -r pyartcd/requirements-dev.txt -r ocp-build-data-validator/requirements-dev.txt
 	cd elliott && uv pip install '.[tests]'
 
-lint:
+format:
+	uv run -m black --target-version py311 --skip-string-normalization . --line-length 150
+	uv run -m isort --profile black --line-length 150 .
+
+format-check:
+	uv run -m black --check --target-version py311 --skip-string-normalization . --line-length 150
+	uv run -m isort --check-only --profile black --line-length 150 .
+
+lint: format-check
 	uv run -m flake8
 
 pylint:

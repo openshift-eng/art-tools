@@ -1,4 +1,6 @@
 autopep8
+black
+isort >= 5.0.0
 coverage
 flake8
 flexmock
