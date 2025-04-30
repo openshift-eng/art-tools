@@ -1,38 +1,37 @@
 import asyncio
-from datetime import datetime, timezone
-
-import requests
-import click
 import json
 import re
-from semver import VersionInfo
 import sys
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
-import yaml
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-from artcommonlib.arch_util import go_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.arch_util import go_suffix_for_arch
+import click
+import requests
+import yaml
+from artcommonlib import exectools, rhcos
+from artcommonlib.arch_util import go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
+from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
-from artcommonlib.constants import RHCOS_RELEASES_STREAM_URL
-from doozerlib import util
+from doozerlib import brew, util
 from doozerlib.brew import brew_event_from_datetime
-from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib import brew
-from artcommonlib import rhcos, exectools
+from doozerlib.build_info import BrewBuildRecordInspector, BuildRecordInspector, KonfluxBuildRecordInspector
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.rpmcfg import RPMMetadata
-from doozerlib.build_info import BrewBuildRecordInspector, KonfluxBuildRecordInspector, BuildRecordInspector
 from doozerlib.runtime import Runtime
+from requests.adapters import HTTPAdapter
+from semver import VersionInfo
+from urllib3.util.retry import Retry
 
 
 @cli.group("release:gen-assembly", short_help="Output assembly metadata based on inputs")
 @click.option(
-    '--name', metavar='ASSEMBLY_NAME', required=True,
+    '--name',
+    metavar='ASSEMBLY_NAME',
+    required=True,
     help='The name of the assembly (e.g. "4.9.99", "art1234") to scaffold',
 )
 @click.pass_context
@@ -47,67 +46,105 @@ def releases_gen_assembly(ctx, name):
     short_help='Outputs assembly metadata based on a set of specified releases',
 )
 @click.option(
-    '--nightly', 'nightlies', metavar='NIGHTLY_NAME', default=[], multiple=True,
+    '--nightly',
+    'nightlies',
+    metavar='NIGHTLY_NAME',
+    default=[],
+    multiple=True,
     help='A nightly release name for each architecture (e.g. 4.7.0-0.nightly-2021-07-07-214918)',
 )
 @click.option(
-    '--standard', 'standards', metavar='4.y.z-ARCH', default=[], multiple=True,
-    help='The name and arch of an official release (e.g. 4.8.3-x86_64) '
-         'where ARCH in [x86_64, s390x, ppc64le, aarch64].',
+    '--standard',
+    'standards',
+    metavar='4.y.z-ARCH',
+    default=[],
+    multiple=True,
+    help='The name and arch of an official release (e.g. 4.8.3-x86_64) ' 'where ARCH in [x86_64, s390x, ppc64le, aarch64].',
 )
 @click.option(
-    "--custom", default=False, is_flag=True,
-    help="If specified, weaker conformance criteria are applied "
-         "(e.g. a nightly is not required for every arch).",
+    "--custom",
+    default=False,
+    is_flag=True,
+    help="If specified, weaker conformance criteria are applied " "(e.g. a nightly is not required for every arch).",
 )
 @click.option(
-    "--pre-ga-mode", type=click.Choice(["prerelease"], case_sensitive=False),
+    "--pre-ga-mode",
+    type=click.Choice(["prerelease"], case_sensitive=False),
     help="Prepare the advisory for 'prerelease' operator release",
 )
 @click.option('--in-flight', 'in_flight', metavar='EDGE', help='An in-flight release that can upgrade to this release')
 @click.option(
-    '--previous', 'previous_list', metavar='EDGES', default=[], multiple=True,
+    '--previous',
+    'previous_list',
+    metavar='EDGES',
+    default=[],
+    multiple=True,
     help='A list of releases that can upgrade to this release',
 )
 @click.option(
-    '--auto-previous', 'auto_previous', is_flag=True,
+    '--auto-previous',
+    'auto_previous',
+    is_flag=True,
     help='If specified, previous list is calculated from Cincinnati graph',
 )
 @click.option(
-    "--graph-url", metavar='GRAPH_URL', required=False,
+    "--graph-url",
+    metavar='GRAPH_URL',
+    required=False,
     default='https://api.openshift.com/api/upgrades_info/v1/graph',
     help="When using --auto-previous, set custom Cincinnati graph URL to query",
 )
 @click.option(
-    "--graph-content-stable", metavar='JSON_FILE', required=False,
+    "--graph-content-stable",
+    metavar='JSON_FILE',
+    required=False,
     help="When using --auto-previous, override content from stable channel - primarily for testing",
 )
 @click.option(
-    "--graph-content-candidate", metavar='JSON_FILE', required=False,
+    "--graph-content-candidate",
+    metavar='JSON_FILE',
+    required=False,
     help="When using --auto-previous, override content from candidate channel - primarily for testing",
 )
 @click.option(
-    "--suggestions-url", metavar='SUGGESTIONS_URL', required=False,
+    "--suggestions-url",
+    metavar='SUGGESTIONS_URL',
+    required=False,
     default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
     help="When using --auto-previous, set custom suggestions URL, load from {major}-{minor}-{arch}.yaml",
 )
 @click.option(
-    '--output-file', '-o', required=False,
+    '--output-file',
+    '-o',
+    required=False,
     help='Specify a file path to write the generated assembly definition to',
 )
 @click.option(
-    "--gen-microshift", 'gen_microshift', default=False, is_flag=True,
+    "--gen-microshift",
+    'gen_microshift',
+    default=False,
+    is_flag=True,
     help="Create microshift entry for assembly release.",
 )
 @pass_runtime
 @click_coroutine
 @click.pass_context
 async def gen_assembly_from_releases(
-    ctx, runtime: Runtime, nightlies: Tuple[str, ...], standards: Tuple[str, ...],
-    custom: bool, pre_ga_mode: str, in_flight: Optional[str], previous_list: Tuple[str, ...],
-    auto_previous: bool, graph_url: Optional[str], graph_content_stable: Optional[str],
-    graph_content_candidate: Optional[str], suggestions_url: Optional[str],
-    output_file: Optional[str], gen_microshift: bool,
+    ctx,
+    runtime: Runtime,
+    nightlies: Tuple[str, ...],
+    standards: Tuple[str, ...],
+    custom: bool,
+    pre_ga_mode: str,
+    in_flight: Optional[str],
+    previous_list: Tuple[str, ...],
+    auto_previous: bool,
+    graph_url: Optional[str],
+    graph_content_stable: Optional[str],
+    graph_content_candidate: Optional[str],
+    suggestions_url: Optional[str],
+    output_file: Optional[str],
+    gen_microshift: bool,
 ):
     # Initialize group config: we need this to determine the canonical builders behavior
     runtime.initialize(config_only=True)
@@ -142,22 +179,22 @@ async def gen_assembly_from_releases(
 
 class GenAssemblyCli:
     def __init__(
-            self,
-            # leave these all optional to make testing easier
-            runtime: Runtime = None,
-            gen_assembly_name: str = '',
-            nightlies: Tuple[str, ...] = [],
-            standards: Tuple[str, ...] = [],
-            custom: bool = False,
-            pre_ga_mode: str = '',
-            in_flight: Optional[str] = None,
-            previous_list: Tuple[str, ...] = None,
-            auto_previous: bool = False,
-            graph_url: Optional[str] = None,
-            graph_content_stable: Optional[str] = None,
-            graph_content_candidate: Optional[str] = None,
-            suggestions_url: Optional[str] = None,
-            gen_microshift: bool = False,
+        self,
+        # leave these all optional to make testing easier
+        runtime: Runtime = None,
+        gen_assembly_name: str = '',
+        nightlies: Tuple[str, ...] = [],
+        standards: Tuple[str, ...] = [],
+        custom: bool = False,
+        pre_ga_mode: str = '',
+        in_flight: Optional[str] = None,
+        previous_list: Tuple[str, ...] = None,
+        auto_previous: bool = False,
+        graph_url: Optional[str] = None,
+        graph_content_stable: Optional[str] = None,
+        graph_content_candidate: Optional[str] = None,
+        suggestions_url: Optional[str] = None,
+        gen_microshift: bool = False,
     ):
 
         self.runtime = runtime
@@ -202,8 +239,7 @@ class GenAssemblyCli:
         self.includes_release_version = getattr(self.runtime.group_config, 'new_payload_versioning_scheme', None)
 
         # Create a map of package_name to RPMMetadata
-        self.package_rpm_meta: Dict[str, RPMMetadata] = \
-            {rpm_meta.get_package_name(): rpm_meta for rpm_meta in self.runtime.rpm_metas()}
+        self.package_rpm_meta: Dict[str, RPMMetadata] = {rpm_meta.get_package_name(): rpm_meta for rpm_meta in self.runtime.rpm_metas()}
 
         # ECs are always prerelease
         if self.assembly_type == AssemblyTypes.PREVIEW:
@@ -276,8 +312,7 @@ class GenAssemblyCli:
             standard_pullspec = f'quay.io/openshift-release-dev/ocp-release:{standard_release_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
-                    f'Cannot process {standard_release_name} since '
-                    f'{self.release_pullspecs[brew_cpu_arch]} is already included',
+                    f'Cannot process {standard_release_name} since ' f'{self.release_pullspecs[brew_cpu_arch]} is already included',
                 )
             self.release_pullspecs[brew_cpu_arch] = standard_pullspec
 
@@ -342,8 +377,7 @@ class GenAssemblyCli:
                     if explicit:
                         if payload_name != payload_tag_name:
                             self.logger.warning(
-                                f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is '
-                                'explicitly defined in image config',
+                                f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is ' 'explicitly defined in image config',
                             )
                             continue
                         else:
@@ -355,8 +389,7 @@ class GenAssemblyCli:
                             self.component_image_builds[package_name] = build_inspector
                     else:
                         self._exit_with_error(
-                            'Found disparate nvrs between releases; '
-                            f'{existing_nvr} in processed and {build_nvr} in {pullspec}',
+                            'Found disparate nvrs between releases; ' f'{existing_nvr} in processed and {build_nvr} in {pullspec}',
                         )
             else:
                 # Otherwise, record the build as the first time we've seen an NVR for this
@@ -391,10 +424,7 @@ class GenAssemblyCli:
     async def _determine_basis_brew_event(self):
         rhcos_tag_names = rhcos.get_container_names(self.runtime)
         await asyncio.gather(
-            *[
-                self._process_release(brew_cpu_arch, pullspec, rhcos_tag_names)
-                for brew_cpu_arch, pullspec in self.release_pullspecs.items()
-            ],
+            *[self._process_release(brew_cpu_arch, pullspec, rhcos_tag_names) for brew_cpu_arch, pullspec in self.release_pullspecs.items()],
         )
 
         # basis_event_ts (for Brew) or assembly_basis_time (for Konflux) should now be greater than the build completion
@@ -455,11 +485,13 @@ class GenAssemblyCli:
 
             if self.runtime.build_system == 'brew':
                 basis_event_build_dict: BuildRecordInspector = BrewBuildRecordInspector(
-                    self.runtime, basis_event_dict['id'],
+                    self.runtime,
+                    basis_event_dict['id'],
                 )
             else:
                 basis_event_build_dict: KonfluxBuildRecordInspector = KonfluxBuildRecordInspector(
-                    self.runtime, basis_event_dict,
+                    self.runtime,
+                    basis_event_dict,
                 )
             basis_event_build_nvr = basis_event_build_dict.get_nvr()
 
@@ -483,14 +515,16 @@ class GenAssemblyCli:
                         'in ART metadata; this may be because the image is not built for every arch '
                         'or it is not labeled appropriately for the payload. '
                         'Choosing what was in the estimated basis event sweep: %s',
-                        dgk, basis_event_build_nvr,
+                        dgk,
+                        basis_event_build_nvr,
                     )
                 else:
                     self.logger.error(
                         'Unable to find %s in releases despite it being marked as is_payload '
                         'in ART metadata; this may mean the image does not have the proper labeling for '
                         'being in the payload. Choosing what was in the estimated basis event sweep: %s',
-                        dgk, basis_event_build_nvr,
+                        dgk,
+                        basis_event_build_nvr,
                     )
                 self.component_image_builds[package_name] = basis_event_build_dict
                 continue
@@ -501,7 +535,9 @@ class GenAssemblyCli:
             if basis_event_build_nvr != ref_nightlies_component_build_nvr:
                 self.logger.info(
                     '%s build %s was selected by estimated basis event. That is not what is in the '
-                    'specified releases, so this image will be pinned.', dgk, basis_event_build_nvr,
+                    'specified releases, so this image will be pinned.',
+                    dgk,
+                    basis_event_build_nvr,
                 )
                 self.force_is.add(package_name)
                 continue
@@ -524,8 +560,9 @@ class GenAssemblyCli:
                 # This is permitted for custom assemblies which do not need to be assembled for every
                 # architecture. The customer may just need x86_64.
                 self.logger.info(
-                    'Did not find RHCOS "%s" image for active group architecture: %s; '
-                    'ignoring for custom assembly type.', self.primary_rhcos_tag, arch,
+                    'Did not find RHCOS "%s" image for active group architecture: %s; ' 'ignoring for custom assembly type.',
+                    self.primary_rhcos_tag,
+                    arch,
                 )
             else:
                 if not self.rhcos_version:
@@ -535,7 +572,9 @@ class GenAssemblyCli:
                     if self.runtime.group_config.rhcos.get("layered_rhcos", False):
                         if not self.rhcos_node_id:
                             self._exit_with_error(f"Did not find RHCOS {self.primary_rhcos_tag} node image id for architecture: {arch}")
-                        rhcos_info = util.oc_image_info_for_arch(tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'), go_arch_for_brew_arch(arch))
+                        rhcos_info = util.oc_image_info_for_arch(
+                            tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'), go_arch_for_brew_arch(arch)
+                        )
                         self.rhcos_by_tag[tag.name][arch] = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
                     else:
                         url_key = f"{major_minor}-{rhcos_el_major}.{rhcos_el_minor}" if rhcos_el_major > 8 else major_minor
@@ -603,7 +642,8 @@ class GenAssemblyCli:
                 # Now it is time to see whether a query for the RPM from the basis event
                 # estimate comes up with this RPM NVR.
                 basis_event_build_dict = rpm_meta.get_latest_brew_build(
-                    el_target=el_ver, complete_before_event=self.basis_event,
+                    el_target=el_ver,
+                    complete_before_event=self.basis_event,
                 )
 
                 if not basis_event_build_dict:
@@ -626,7 +666,8 @@ class GenAssemblyCli:
                     self.logger.info(
                         '%s build %s was selected by estimated basis event. '
                         'That is not what is in the specified releases, so this RPM will be pinned.',
-                        dgk, basis_event_build_nvr,
+                        dgk,
+                        basis_event_build_nvr,
                     )
                     self.force_is.add(package_name)
 
@@ -641,14 +682,20 @@ class GenAssemblyCli:
             if self.assembly_type == AssemblyTypes.CANDIDATE or self.assembly_type == AssemblyTypes.PREVIEW:
                 major_minor = self.runtime.get_minor_version()  # x.y
                 # Support both 4.19+ and lower versions (former has release version while the latter does not)
-                version = f"{major_minor}.0-0.{self.gen_assembly_name}" if self.includes_release_version else f"{major_minor}.0-{self.gen_assembly_name}"
+                version = (
+                    f"{major_minor}.0-0.{self.gen_assembly_name}" if self.includes_release_version else f"{major_minor}.0-{self.gen_assembly_name}"
+                )
             else:
                 version = self.gen_assembly_name
             for arch in self.runtime.arches:
                 self.logger.info("Calculating previous list for %s", arch)
                 previous_list = util.get_release_calc_previous(
-                    version, arch, self.graph_url, self.graph_content_stable,
-                    self.graph_content_candidate, self.suggestions_url,
+                    version,
+                    arch,
+                    self.graph_url,
+                    self.graph_content_stable,
+                    self.graph_content_candidate,
+                    self.suggestions_url,
                 )
                 final_previous_list |= set(map(VersionInfo.parse, previous_list))
         self.final_previous_list = sorted(final_previous_list)
@@ -785,28 +832,30 @@ class GenAssemblyCli:
             if package_name in self.component_image_builds:
                 build_inspector: BrewBuildRecordInspector = self.component_image_builds[package_name]
                 dgk = build_inspector.get_image_meta().distgit_key
-                image_member_overrides.append({
-                    'distgit_key': dgk,
-                    'why': 'Query from assembly basis event failed to replicate '
-                           'referenced nightly content exactly. Pinning to replicate.',
-                    'metadata': {
-                        'is': {
-                            'nvr': build_inspector.get_nvr(),
+                image_member_overrides.append(
+                    {
+                        'distgit_key': dgk,
+                        'why': 'Query from assembly basis event failed to replicate ' 'referenced nightly content exactly. Pinning to replicate.',
+                        'metadata': {
+                            'is': {
+                                'nvr': build_inspector.get_nvr(),
+                            },
                         },
-                    },
-                })
+                    }
+                )
             elif package_name in self.component_rpm_builds:
                 dgk = self.package_rpm_meta[package_name].distgit_key
-                rpm_member_overrides.append({
-                    'distgit_key': dgk,
-                    'why': 'Query from assembly basis event failed to replicate '
-                           'referenced nightly content exactly. Pinning to replicate.',
-                    'metadata': {
-                        'is': {
-                            f'el{el_ver}': self.component_rpm_builds[package_name][el_ver]['nvr'] for el_ver in
-                            self.component_rpm_builds[package_name]
+                rpm_member_overrides.append(
+                    {
+                        'distgit_key': dgk,
+                        'why': 'Query from assembly basis event failed to replicate ' 'referenced nightly content exactly. Pinning to replicate.',
+                        'metadata': {
+                            'is': {
+                                f'el{el_ver}': self.component_rpm_builds[package_name][el_ver]['nvr']
+                                for el_ver in self.component_rpm_builds[package_name]
+                            },
                         },
-                    },
-                })
+                    }
+                )
 
         return image_member_overrides, rpm_member_overrides

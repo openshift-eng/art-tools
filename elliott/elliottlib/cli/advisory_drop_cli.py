@@ -2,13 +2,12 @@ import itertools
 
 import click
 import requests
-from errata_tool import Erratum
-from requests_gssapi import HTTPSPNEGOAuth
-
 from elliottlib.cli.common import cli
 from elliottlib.constants import errata_drop_url
+from elliottlib.errata import remove_blocking_advisories_depends, remove_dependent_advisories, unset_advisory_batch
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.errata import remove_dependent_advisories, remove_blocking_advisories_depends, unset_advisory_batch
+from errata_tool import Erratum
+from requests_gssapi import HTTPSPNEGOAuth
 
 
 @cli.command("advisory-drop", short_help="Drop advisory")

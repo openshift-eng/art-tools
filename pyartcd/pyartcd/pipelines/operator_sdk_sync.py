@@ -1,16 +1,17 @@
 import os
 import re
 import subprocess
-import requests
-import yaml
+
 import click
 import koji
-from errata_tool import Erratum
-
+import requests
+import yaml
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.constants import BREW_DOWNLOAD_URL, BREW_HUB
 from artcommonlib.util import isolate_major_minor_in_group
-from pyartcd import util, jenkins
+from errata_tool import Erratum
+
+from pyartcd import jenkins, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 
@@ -41,18 +42,24 @@ class OperatorSDKPipeline:
                 raise ValueError("Advisory status not in REL_PREP yet ...")
             if advisory.errata_state == "SHIPPED_LIVE":
                 self._logger.info("Advisory status already in SHIPPED_LIVE, update subtask 9 ...")
-                self._jira_client.complete_subtask(self.parent_jira_key, "pushes advisory content to production CDN", "Advisory status already in SHIPPED_LIVE")
+                self._jira_client.complete_subtask(
+                    self.parent_jira_key, "pushes advisory content to production CDN", "Advisory status already in SHIPPED_LIVE"
+                )
             self._logger.info("Advisory status already in post REL_PREP, update subtask 7 ...")
             self._jira_client.complete_subtask(self.parent_jira_key, "moves advisories to REL_PREP", "Advisory status already in REL_PREP")
 
             sdk_build = [
-                b for b in sum(list(map(list, advisory.errata_builds.values())), []) if b.startswith(
-                'openshift-enterprise-operator-sdk-container',
+                b
+                for b in sum(list(map(list, advisory.errata_builds.values())), [])
+                if b.startswith(
+                    'openshift-enterprise-operator-sdk-container',
                 )
             ]
             if not sdk_build:
                 self._logger.info("No SDK build to ship, update subtask 8 then close ...")
-                self._jira_client.complete_subtask(self.parent_jira_key, "operator-sdk", f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}")
+                self._jira_client.complete_subtask(
+                    self.parent_jira_key, "operator-sdk", f"No SDK build to ship, operator_sdk_sync job: {jenkins.get_build_url()}"
+                )
                 return
             build = koji.ClientSession(BREW_HUB).getBuild(sdk_build[0])
         elif self.nvr:
@@ -85,18 +92,22 @@ class OperatorSDKPipeline:
         rarch = brew_arch_for_go_arch(arch)
         tarballFilename = f"{self.sdk}-{sdkVersion}-linux-{rarch}.tar.gz"
 
-        cmd = f"rm -rf ./{rarch} && mkdir ./{rarch}" + \
-              f" && oc image extract {pullspec} --path /usr/local/bin/{self.sdk}:./{rarch}/ --confirm" + \
-              f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}" + \
-              f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
+        cmd = (
+            f"rm -rf ./{rarch} && mkdir ./{rarch}"
+            + f" && oc image extract {pullspec} --path /usr/local/bin/{self.sdk}:./{rarch}/ --confirm"
+            + f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}"
+            + f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-linux-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
+        )
         self.exec_cmd(cmd)
         if arch == 'amd64' or arch == 'arm64':
             tarballFilename = f"{self.sdk}-{sdkVersion}-darwin-{rarch}.tar.gz"
             major, minor = isolate_major_minor_in_group(self.group)
             share_path = "mac_arm64" if arch == 'arm64' and (major, minor) >= (4, 12) else "mac"
-            cmd = f"oc image extract {pullspec} --path /usr/share/{self.sdk}/{share_path}/{self.sdk}:./{rarch}/ --confirm" + \
-                  f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}" + \
-                  f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-darwin-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
+            cmd = (
+                f"oc image extract {pullspec} --path /usr/share/{self.sdk}/{share_path}/{self.sdk}:./{rarch}/ --confirm"
+                + f" && chmod +x ./{rarch}/{self.sdk} && tar -c -z -v --file ./{rarch}/{tarballFilename} ./{rarch}/{self.sdk}"
+                + f" && ln -s {tarballFilename} ./{rarch}/{self.sdk}-darwin-{rarch}.tar.gz && rm -f ./{rarch}/{self.sdk}"
+            )
             self.exec_cmd(cmd)
         self._sync_mirror(rarch)
 
@@ -126,27 +137,42 @@ class OperatorSDKPipeline:
 
 @cli.command("operator-sdk-sync")
 @click.option(
-    "-g", "--group", metavar='NAME', required=True,
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option(
-    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    "--assembly",
+    metavar="ASSEMBLY_NAME",
+    required=True,
     help="The name of an assembly. e.g. 4.9.1",
 )
 @click.option(
-    "--nvr", metavar="BUILD_NVR", required=False,
+    "--nvr",
+    metavar="BUILD_NVR",
+    required=False,
     help="Pin specific Build NVR",
 )
 @click.option(
-    "--prerelease", metavar="PRE_RELEASE", is_flag=True, required=False,
+    "--prerelease",
+    metavar="PRE_RELEASE",
+    is_flag=True,
+    required=False,
     help="Use pre-release as directory name.",
 )
 @click.option(
-    "--updatelatest", metavar="UPDATE_LATEST_SYMLINK", is_flag=True, required=False,
+    "--updatelatest",
+    metavar="UPDATE_LATEST_SYMLINK",
+    is_flag=True,
+    required=False,
     help="Update latest symlink on mirror",
 )
 @click.option(
-    "--arches", metavar="ARCHES", required=False,
+    "--arches",
+    metavar="ARCHES",
+    required=False,
     help="Arches in the build",
 )
 @pass_runtime

@@ -3,16 +3,15 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import koji
+from artcommonlib.assembly import AssemblyTypes
 from bugzilla import Bugzilla
 from bugzilla.bug import Bug
-from jira import JIRA, Issue
-
-from artcommonlib.assembly import AssemblyTypes
+from elliottlib import early_kernel
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.find_bugs_kernel_cli import FindBugsKernelCli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.runtime import Runtime
-from elliottlib.bzutil import JIRABugTracker
-from elliottlib import early_kernel
+from jira import JIRA, Issue
 
 
 class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
@@ -28,7 +27,12 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
     def test_get_and_filter_bugs(self):
         runtime = MagicMock()
         cli = FindBugsKernelCli(
-            runtime=runtime, trackers=[], clone=True, reconcile=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            clone=True,
+            reconcile=True,
+            update_tracker=True,
+            dry_run=False,
         )
         bz_client = MagicMock(spec=Bugzilla)
         bz_client.getbugs.return_value = [
@@ -47,11 +51,18 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
     def test_find_bugs(self, _get_and_filter_bugs: Mock):
         runtime = MagicMock()
         cli = FindBugsKernelCli(
-            runtime=runtime, trackers=[], clone=True, reconcile=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            clone=True,
+            reconcile=True,
+            update_tracker=True,
+            dry_run=False,
         )
         bz_client = MagicMock(spec=Bugzilla)
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="foo-1.0.1-1.el8_6 and bar-1.0.1-1.el8_6 early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             ),
@@ -64,10 +75,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             MagicMock(object=MagicMock(title="fake4", url="https://example.com/show_bug.cgi?id=4")),
         ]
         expected_bug_ids = [1, 2, 3, 5, 6]
-        _get_and_filter_bugs.return_value = [
-            MagicMock(spec=Bug, id=bug_id, cf_zstream_target_release="8.6.0")
-            for bug_id in expected_bug_ids
-        ]
+        _get_and_filter_bugs.return_value = [MagicMock(spec=Bug, id=bug_id, cf_zstream_target_release="8.6.0") for bug_id in expected_bug_ids]
         bz_target_releases = ["8.6.0"]
         actual = cli._find_bugs(jira_client, tracker, bz_client, bz_target_releases)
         self.assertEqual([b.id for b in actual], expected_bug_ids)
@@ -77,32 +85,44 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         # Test cloning a bug that has not already been cloned
         runtime = MagicMock()
         cli = FindBugsKernelCli(
-            runtime=runtime, trackers=[], clone=True, reconcile=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            clone=True,
+            reconcile=True,
+            update_tracker=True,
+            dry_run=False,
         )
         jira_client = MagicMock(spec=JIRA)
         bugs = [
             MagicMock(
-                spec=Bug, id=1, weburl="https://example.com/1",
-                groups=["private"], priority="high", keywords=[],
-                summary="fake summary 1", description="fake description 1",
+                spec=Bug,
+                id=1,
+                weburl="https://example.com/1",
+                groups=["private"],
+                priority="high",
+                keywords=[],
+                summary="fake summary 1",
+                description="fake description 1",
             ),
         ]
         conf = KernelBugSweepConfig.TargetJiraConfig(
             project="TARGET-PROJECT",
             component="Target Component",
-            version="4.14", target_release="4.14.z",
-            candidate_brew_tag="fake-candidate", prod_brew_tag="fake-prod",
+            version="4.14",
+            target_release="4.14.z",
+            candidate_brew_tag="fake-candidate",
+            prod_brew_tag="fake-prod",
         )
         jira_client.search_issues.return_value = []
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="foo-1.0.1-1.el8_6 and bar-1.0.1-1.el8_6 early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             ),
         )
-        cli._tracker_map = {
-            bug_id: tracker for bug_id in range(5)
-        }
+        cli._tracker_map = {bug_id: tracker for bug_id in range(5)}
         actual = cli._clone_bugs(jira_client, bugs, conf)
         expected_fields = {
             "project": {"key": "TARGET-PROJECT"},
@@ -123,35 +143,47 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         # Test cloning a bug that has already been cloned
         runtime = MagicMock()
         cli = FindBugsKernelCli(
-            runtime=runtime, trackers=[], clone=True, reconcile=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            clone=True,
+            reconcile=True,
+            update_tracker=True,
+            dry_run=False,
         )
         jira_client = MagicMock(spec=JIRA)
         bugs = [
             MagicMock(
-                spec=Bug, id=1, weburl="https://example.com/1",
-                groups=["private"], priority="high", keywords=[],
-                summary="fake summary 1", description="fake description 1",
+                spec=Bug,
+                id=1,
+                weburl="https://example.com/1",
+                groups=["private"],
+                priority="high",
+                keywords=[],
+                summary="fake summary 1",
+                description="fake description 1",
             ),
         ]
         conf = KernelBugSweepConfig.TargetJiraConfig(
             project="TARGET-PROJECT",
             component="Target Component",
-            version="4.14", target_release="4.14.z",
-            candidate_brew_tag="fake-candidate", prod_brew_tag="fake-prod",
+            version="4.14",
+            target_release="4.14.z",
+            candidate_brew_tag="fake-candidate",
+            prod_brew_tag="fake-prod",
         )
         found_issues = [
             MagicMock(spec=Issue, **{"key": "BUG-1", "fields": MagicMock(), "fields.status.name": "New"}),
         ]
         jira_client.search_issues.return_value = found_issues
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="foo-1.0.1-1.el8_6 and bar-1.0.1-1.el8_6 early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             ),
         )
-        cli._tracker_map = {
-            bug_id: tracker for bug_id in range(5)
-        }
+        cli._tracker_map = {bug_id: tracker for bug_id in range(5)}
         actual = cli._clone_bugs(jira_client, bugs, conf)
         expected_fields = {
             "project": {"key": "TARGET-PROJECT"},
@@ -181,7 +213,8 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
         out = StringIO()
         FindBugsKernelCli._print_report(report, out=out)
         self.assertEqual(
-            out.getvalue().strip(), """
+            out.getvalue().strip(),
+            """
 TRACKER-1	1	BUG-1	Verified	test bug 1
 TRACKER-1	2	N/A	Verified	test bug 2
 """.strip(),
@@ -189,13 +222,20 @@ TRACKER-1	2	N/A	Verified	test bug 2
 
     def test_new_jira_fields_from_bug(self):
         bug = MagicMock(
-            spec=Bug, id=12345, cf_zstream_target_release="8.6.0",
+            spec=Bug,
+            id=12345,
+            cf_zstream_target_release="8.6.0",
             weburl="https://example.com/12345",
-            groups=[], priority="high", keywords=[],
-            summary="fake summary 12345", description="fake description 12345",
+            groups=[],
+            priority="high",
+            keywords=[],
+            summary="fake summary 12345",
+            description="fake description 12345",
         )
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             ),
@@ -203,8 +243,10 @@ TRACKER-1	2	N/A	Verified	test bug 2
         conf = KernelBugSweepConfig.TargetJiraConfig(
             project="TARGET-PROJECT",
             component="Target Component",
-            version="4.14", target_release="4.14.z",
-            candidate_brew_tag="fake-candidate", prod_brew_tag="fake-prod",
+            version="4.14",
+            target_release="4.14.z",
+            candidate_brew_tag="fake-candidate",
+            prod_brew_tag="fake-prod",
         )
 
         # Test 1: new jira fields for a public bug
@@ -234,11 +276,16 @@ TRACKER-1	2	N/A	Verified	test bug 2
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._find_bugs")
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._find_kmaint_trackers")
     async def test_run_without_specified_trackers(
-            self, _find_kmaint_trackers: Mock, _find_bugs: Mock, _update_tracker: Mock,
-            _clone_bugs: Mock, _print_report: Mock,
+        self,
+        _find_kmaint_trackers: Mock,
+        _find_bugs: Mock,
+        _update_tracker: Mock,
+        _clone_bugs: Mock,
+        _print_report: Mock,
     ):
         runtime = MagicMock(
-            autospec=Runtime, assembly_type=AssemblyTypes.STREAM,
+            autospec=Runtime,
+            assembly_type=AssemblyTypes.STREAM,
         )
         runtime.gitdata.load_data.return_value = MagicMock(
             data={
@@ -262,7 +309,9 @@ TRACKER-1	2	N/A	Verified	test bug 2
         )
         _find_kmaint_trackers.return_value = [
             MagicMock(
-                spec=Issue, key="TRACKER-1", fields=MagicMock(
+                spec=Issue,
+                key="TRACKER-1",
+                fields=MagicMock(
                     summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                     description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
                 ),
@@ -270,26 +319,46 @@ TRACKER-1	2	N/A	Verified	test bug 2
         ]
         _find_bugs.return_value = [
             MagicMock(
-                spec=Bug, id=10001, cf_zstream_target_release="9.2.0", status="on_qa",
+                spec=Bug,
+                id=10001,
+                cf_zstream_target_release="9.2.0",
+                status="on_qa",
                 weburl="https://example.com/10001",
-                groups=[], priority="high",
-                summary="fake summary 10001", description="fake description 10001",
+                groups=[],
+                priority="high",
+                summary="fake summary 10001",
+                description="fake description 10001",
             ),
             MagicMock(
-                spec=Bug, id=10002, cf_zstream_target_release="9.2.0", status="on_qa",
+                spec=Bug,
+                id=10002,
+                cf_zstream_target_release="9.2.0",
+                status="on_qa",
                 weburl="https://example.com/10002",
-                groups=["private"], priority="high",
-                summary="fake summary 10002", description="fake description 10002",
+                groups=["private"],
+                priority="high",
+                summary="fake summary 10002",
+                description="fake description 10002",
             ),
             MagicMock(
-                spec=Bug, id=10003, cf_zstream_target_release="9.2.0", status="on_qa",
+                spec=Bug,
+                id=10003,
+                cf_zstream_target_release="9.2.0",
+                status="on_qa",
                 weburl="https://example.com/10003",
-                groups=["private"], priority="high",
-                summary="fake summary 10003", description="fake description 10003",
+                groups=["private"],
+                priority="high",
+                summary="fake summary 10003",
+                description="fake description 10003",
             ),
         ]
         cli = FindBugsKernelCli(
-            runtime=runtime, trackers=[], clone=True, reconcile=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            clone=True,
+            reconcile=True,
+            update_tracker=True,
+            dry_run=False,
         )
         await cli.run()
         _update_tracker.assert_called_once_with(ANY, _find_kmaint_trackers.return_value[0], ANY, ANY)
@@ -301,11 +370,16 @@ TRACKER-1	2	N/A	Verified	test bug 2
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._find_bugs")
     @patch("elliottlib.cli.find_bugs_kernel_cli.FindBugsKernelCli._find_kmaint_trackers")
     async def test_run_with_specified_trackers(
-            self, _find_kmaint_trackers: Mock, _find_bugs: Mock, _update_tracker: Mock,
-            _clone_bugs: Mock, _print_report: Mock,
+        self,
+        _find_kmaint_trackers: Mock,
+        _find_bugs: Mock,
+        _update_tracker: Mock,
+        _clone_bugs: Mock,
+        _print_report: Mock,
     ):
         runtime = MagicMock(
-            autospec=Runtime, assembly_type=AssemblyTypes.STREAM,
+            autospec=Runtime,
+            assembly_type=AssemblyTypes.STREAM,
         )
         runtime.gitdata.load_data.return_value = MagicMock(
             data={
@@ -328,35 +402,56 @@ TRACKER-1	2	N/A	Verified	test bug 2
             },
         )
         jira_client = runtime.bug_trackers.return_value._client
-        jira_client.issue.return_value = \
-            MagicMock(
-                spec=Issue, key="TRACKER-999", fields=MagicMock(
-                    summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
-                    description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
-                ),
-            )
+        jira_client.issue.return_value = MagicMock(
+            spec=Issue,
+            key="TRACKER-999",
+            fields=MagicMock(
+                summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
+                description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
+            ),
+        )
         _find_bugs.return_value = [
             MagicMock(
-                spec=Bug, id=10001, cf_zstream_target_release="9.2.0", status="on_qa",
+                spec=Bug,
+                id=10001,
+                cf_zstream_target_release="9.2.0",
+                status="on_qa",
                 weburl="https://example.com/10001",
-                groups=[], priority="high",
-                summary="fake summary 10001", description="fake description 10001",
+                groups=[],
+                priority="high",
+                summary="fake summary 10001",
+                description="fake description 10001",
             ),
             MagicMock(
-                spec=Bug, id=10002, cf_zstream_target_release="9.2.0", status="on_qa",
+                spec=Bug,
+                id=10002,
+                cf_zstream_target_release="9.2.0",
+                status="on_qa",
                 weburl="https://example.com/10002",
-                groups=["private"], priority="high",
-                summary="fake summary 10002", description="fake description 10002",
+                groups=["private"],
+                priority="high",
+                summary="fake summary 10002",
+                description="fake description 10002",
             ),
             MagicMock(
-                spec=Bug, id=10003, cf_zstream_target_release="9.2.0", status="on_qa",
+                spec=Bug,
+                id=10003,
+                cf_zstream_target_release="9.2.0",
+                status="on_qa",
                 weburl="https://example.com/10003",
-                groups=["private"], priority="high",
-                summary="fake summary 10003", description="fake description 10003",
+                groups=["private"],
+                priority="high",
+                summary="fake summary 10003",
+                description="fake description 10003",
             ),
         ]
         cli = FindBugsKernelCli(
-            runtime=runtime, trackers=["TRACKER-999"], clone=True, reconcile=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=["TRACKER-999"],
+            clone=True,
+            reconcile=True,
+            update_tracker=True,
+            dry_run=False,
         )
         await cli.run()
         _update_tracker.assert_called_once()

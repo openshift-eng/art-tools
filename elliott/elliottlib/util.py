@@ -1,20 +1,19 @@
 import asyncio
-import json
 import datetime
+import json
 import re
-import click
 from collections import deque
 from itertools import chain
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 from sys import getsizeof, stderr
-from typing import Dict, Iterable, List, Optional, Tuple, Sequence, Any
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import click
 from artcommonlib import exectools
-from artcommonlib.format_util import red_prefix, green_prefix, green_print
+from artcommonlib.format_util import green_prefix, green_print, red_prefix
 from elliottlib import brew
 from elliottlib.exceptions import BrewBuildException
-
 from errata_tool import Erratum
 
 # -----------------------------------------------------------------------------
@@ -77,30 +76,30 @@ def validate_email_address(ctx, param, value):
 
 def pbar_header(msg_prefix='', msg='', seq=[], char='*', file=None):
     """Generate a progress bar header for a given iterable or
-sequence. The given sequence must have a countable length. A bar of
-`char` characters is printed between square brackets.
+    sequence. The given sequence must have a countable length. A bar of
+    `char` characters is printed between square brackets.
 
-    :param string msg_prefix: Header text to print in heavy green text
-    :param string msg: Header text to print in the default char face
-    :param sequence seq: A sequence (iterable) to size the progress
-    bar against
-    :param str char: The character to use when drawing the progress
-    :param file: the file to print the progress. None means stdout.
-    bar
+        :param string msg_prefix: Header text to print in heavy green text
+        :param string msg: Header text to print in the default char face
+        :param sequence seq: A sequence (iterable) to size the progress
+        bar against
+        :param str char: The character to use when drawing the progress
+        :param file: the file to print the progress. None means stdout.
+        bar
 
-For example:
+    For example:
 
-    pbar_header("Foo: ", "bar", seq=[None, None, None], char='-')
+        pbar_header("Foo: ", "bar", seq=[None, None, None], char='-')
 
-would produce:
+    would produce:
 
-    Foo: bar
-    [---]
+        Foo: bar
+        [---]
 
-where 'Foo: ' is printed using green_prefix() and 'bar' is in the
-default console fg color and weight.
+    where 'Foo: ' is printed using green_prefix() and 'bar' is in the
+    default console fg color and weight.
 
-TODO: This would make a nice context wrapper.
+    TODO: This would make a nice context wrapper.
 
     """
     green_prefix(msg_prefix, file=file)
@@ -110,16 +109,16 @@ TODO: This would make a nice context wrapper.
 
 def progress_func(func, char='*', file=None):
     """Use to wrap functions called in parallel. Prints a character for
-each function call.
+    each function call.
 
-    :param lambda-function func: A 'lambda wrapped' function to call
-    after printing a progress character
-    :param str char: The character (or multi-char string, if you
-    really wanted to) to print before calling `func`
-    :param file: the file to print the progress. None means stdout.
+        :param lambda-function func: A 'lambda wrapped' function to call
+        after printing a progress character
+        :param str char: The character (or multi-char string, if you
+        really wanted to) to print before calling `func`
+        :param file: the file to print the progress. None means stdout.
 
-    Usage examples:
-      * See find-builds command
+        Usage examples:
+          * See find-builds command
     """
     click.secho(char, fg='green', nl=False, file=file)
     return func()
@@ -159,13 +158,13 @@ def parallel_results_with_progress(inputs, func, file=None):
 
 
 def get_release_version(pv):
-    """ known formats of product_version:
-        - OSE-4.1-RHEL-8
-        - RHEL-7-OSE-4.1
-        - ...-FOR-POWER-LE and similar suffixes we probably no longer need
-        - OSE-IRONIC-4.11-RHEL-8
+    """known formats of product_version:
+    - OSE-4.1-RHEL-8
+    - RHEL-7-OSE-4.1
+    - ...-FOR-POWER-LE and similar suffixes we probably no longer need
+    - OSE-IRONIC-4.11-RHEL-8
 
-        this will break and need fixing if we introduce more.
+    this will break and need fixing if we introduce more.
     """
     return re.search(r'OSE-(IRONIC-)?(\d+\.\d+)', pv).groups()[1]
 
@@ -319,7 +318,7 @@ def strip_epoch(nvr: str):
 
 # https://code.activestate.com/recipes/577504/
 def total_size(o, handlers={}, verbose=False):
-    """ Returns the approximate memory footprint an object and all of its contents.
+    """Returns the approximate memory footprint an object and all of its contents.
 
     Automatically finds the contents of the following builtin containers and
     their subclasses:  tuple, list, deque, dict, set and frozenset.
@@ -385,9 +384,7 @@ def get_golang_container_nvrs(nvrs: List[Tuple[str, str, str]], logger) -> Dict[
 
     :return: a dict mapping go version string to a list of nvrs built from that go version
     """
-    all_build_objs = brew.get_build_objects([
-        '{}-{}-{}'.format(*n) for n in nvrs
-    ])
+    all_build_objs = brew.get_build_objects(['{}-{}-{}'.format(*n) for n in nvrs])
     go_nvr_map = {}
     for build in all_build_objs:
         go_version = None
@@ -497,11 +494,11 @@ def pretty_print_nvrs_go_json(go_nvr_map, report=False):
 
 def chunk(a_sequence: Sequence[Any], chunk_size: int) -> List[Any]:
     for i in range(0, len(a_sequence), chunk_size):
-        yield a_sequence[i:i + chunk_size]
+        yield a_sequence[i : i + chunk_size]
 
 
 def all_same(items: Iterable[Any]):
-    """ Determine if all items are the same """
+    """Determine if all items are the same"""
     it = iter(items)
     first = next(it, None)
     return all(x == first for x in it)
@@ -538,10 +535,7 @@ async def get_nvrs_from_release(pullspec_or_imagestream, rhcos_images, logger=No
 
     log("Looping over payload images...")
     log(f"{len(tags)} images to check")
-    cmds = [
-        ['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in
-        tags
-    ]
+    cmds = [['oc', 'image', 'info', '-o', 'json', tag['from']['name']] for tag in tags]
 
     log("Querying image infos...")
     cmd_results = await asyncio.gather(*[exectools.cmd_gather_async(cmd) for cmd in cmds])

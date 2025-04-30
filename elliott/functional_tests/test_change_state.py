@@ -1,5 +1,6 @@
-import unittest
 import subprocess
+import unittest
+
 from functional_tests import constants
 
 

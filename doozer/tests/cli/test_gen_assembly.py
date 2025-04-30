@@ -1,11 +1,10 @@
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from flexmock import flexmock
-
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 from doozerlib.cli.release_gen_assembly import GenAssemblyCli
+from flexmock import flexmock
 
 
 class TestGenPayloadCli(TestCase):
@@ -277,7 +276,8 @@ class TestGenPayloadCli(TestCase):
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.11.2')
         advisories, release_jira = gacli._get_advisories_release_jira()
         self.assertEqual(
-            advisories, {
+            advisories,
+            {
                 'image': -1,
                 'rpm': -1,
                 'extras': -1,
@@ -290,7 +290,8 @@ class TestGenPayloadCli(TestCase):
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.3')
         advisories, release_jira = gacli._get_advisories_release_jira()
         self.assertEqual(
-            advisories, {
+            advisories,
+            {
                 'image': -1,
                 'rpm': -1,
                 'extras': -1,
@@ -302,7 +303,8 @@ class TestGenPayloadCli(TestCase):
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='3.11.2')
         advisories, release_jira = gacli._get_advisories_release_jira()
         self.assertEqual(
-            advisories, {
+            advisories,
+            {
                 'image': -1,
                 'rpm': -1,
                 'extras': -1,
@@ -314,7 +316,8 @@ class TestGenPayloadCli(TestCase):
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='5.1.12')
         advisories, release_jira = gacli._get_advisories_release_jira()
         self.assertEqual(
-            advisories, {
+            advisories,
+            {
                 'image': -1,
                 'rpm': -1,
                 'extras': -1,
@@ -326,18 +329,20 @@ class TestGenPayloadCli(TestCase):
         runtime = MagicMock()
         advisories = {'image': 123, 'rpm': 456, 'extras': 789, 'metadata': 654}
         release_jira = "ART-123"
-        runtime.get_releases_config.return_value = Model({
-            'releases': {
-                'rc.0': {
-                    'assembly': {
-                        'group': {
-                            'advisories': advisories,
-                            'release_jira': release_jira,
+        runtime.get_releases_config.return_value = Model(
+            {
+                'releases': {
+                    'rc.0': {
+                        'assembly': {
+                            'group': {
+                                'advisories': advisories,
+                                'release_jira': release_jira,
+                            },
                         },
                     },
                 },
-            },
-        })
+            }
+        )
         runtime.get_major_minor_fields.return_value = (4, 12)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')
         actual = gacli._get_advisories_release_jira()

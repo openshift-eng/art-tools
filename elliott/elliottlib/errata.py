@@ -7,24 +7,23 @@ associated metadata.
 Classes representing an ERRATUM (a single errata)
 
 """
+
 import datetime
 import json
-import ssl
 import re
+import ssl
+from functools import lru_cache
+from typing import Dict, List
+
 import click
 import requests
-from functools import lru_cache
-
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from artcommonlib import logutil
 from artcommonlib.format_util import green_print
-from elliottlib import exceptions, constants, brew
+from elliottlib import brew, bzutil, constants, exceptions
 from elliottlib.util import chunk
-from elliottlib import bzutil
+from errata_tool import ErrataConnector, ErrataException, Erratum
 from requests_gssapi import HTTPSPNEGOAuth
-from errata_tool import Erratum, ErrataException, ErrataConnector
-from typing import List, Dict
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logutil.get_logger(__name__)
 
@@ -35,6 +34,7 @@ class Advisory(Erratum):
     """
     Wrapper class of errata_tool.Erratum
     """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -210,8 +210,14 @@ def get_erratum_content_type(advisory_id: str):
 
 
 def new_erratum(
-    et_data, errata_type, boilerplate_name, release_date=None, create=False,
-    assigned_to=None, manager=None, package_owner=None,
+    et_data,
+    errata_type,
+    boilerplate_name,
+    release_date=None,
+    create=False,
+    assigned_to=None,
+    manager=None,
+    package_owner=None,
 ):
     """5.2.1.1. POST /api/v1/erratum
 
@@ -298,8 +304,8 @@ def build_signed(build):
     else:
         raise exceptions.ErrataToolError(
             "Other error (status_code={code}): {msg}".format(
-            code=res.status_code,
-            msg=res.text,
+                code=res.status_code,
+                msg=res.text,
             ),
         )
 
@@ -318,17 +324,17 @@ def get_art_release_from_erratum(advisory_id):
 def add_comment(advisory_id, comment):
     """5.2.1.8. POST /api/v1/erratum/{id}/add_comment
 
-        Add a comment to an advisory.
-        Example request body:
+    Add a comment to an advisory.
+    Example request body:
 
-            {"comment": "This is my comment"}
+        {"comment": "This is my comment"}
 
-        The response body is the updated or unmodified advisory, in the same format as GET /api/v1/erratum/{id}.
+    The response body is the updated or unmodified advisory, in the same format as GET /api/v1/erratum/{id}.
 
-        https://errata.devel.redhat.com/developer-guide/api-http-api.html#api-post-apiv1erratumidadd_comment
+    https://errata.devel.redhat.com/developer-guide/api-http-api.html#api-post-apiv1erratumidadd_comment
 
-        :param dict comment: The metadata object to add as a comment
-        """
+    :param dict comment: The metadata object to add as a comment
+    """
     data = {"comment": json.dumps(comment)}
     return requests.post(
         constants.errata_add_comment_url.format(id=advisory_id),
@@ -364,6 +370,7 @@ def get_builds(advisory_id, session=None):
         return res.json()
     else:
         raise exceptions.ErrataToolUnauthorizedException(res.text)
+
 
 # https://errata.devel.redhat.com/bugs/1743872/advisories.json
 
@@ -404,8 +411,8 @@ def get_brew_builds(errata_id, session=None):
     else:
         raise exceptions.BrewBuildException(
             "fetch builds from {id}: {msg}".format(
-            id=errata_id,
-            msg=res.text,
+                id=errata_id,
+                msg=res.text,
             ),
         )
 
@@ -446,14 +453,14 @@ def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
     else:
         raise exceptions.BrewBuildException(
             "{build}: {msg}".format(
-            build=nvr,
-            msg=res.text,
+                build=nvr,
+                msg=res.text,
             ),
         )
 
 
 def get_advisories_for_bug(bug_id, session=None):
-    """ Fetch the list of advisories which a specified bug is attached to.
+    """Fetch the list of advisories which a specified bug is attached to.
 
     5.2.26.7 /bugs/{id}/advisories.json
 
@@ -487,7 +494,9 @@ def remove_bugzilla_bugs(advisory_obj, bugids: List):
 
 
 def add_bugzilla_bugs_with_retry(
-    advisory: Erratum, bugids: List, noop: bool = False,
+    advisory: Erratum,
+    bugids: List,
+    noop: bool = False,
     batch_size: int = constants.BUG_ATTACH_CHUNK_SIZE,
 ):
     """
@@ -537,7 +546,9 @@ def add_bugzilla_bugs_with_retry(
 
 
 def add_jira_bugs_with_retry(
-    advisory: Erratum, bugids: List[str], noop: bool = False,
+    advisory: Erratum,
+    bugids: List[str],
+    noop: bool = False,
     batch_size: int = constants.BUG_ATTACH_CHUNK_SIZE,
 ):
     """
@@ -607,10 +618,7 @@ def get_advisory_images(image_advisory_id, raw=False):
         parts = component.split('-')
         return '{}-{}'.format(parts[-2], parts[-1])
 
-    image_list = [
-        '{}:{}'.format(_get_image_name(nvr, repo), _get_vr(nvr))
-        for nvr, repo in sorted(cdn_docker_file_list.items())
-    ]
+    image_list = ['{}:{}'.format(_get_image_name(nvr, repo), _get_vr(nvr)) for nvr, repo in sorted(cdn_docker_file_list.items())]
 
     return '#########\n{}\n#########'.format('\n'.join(image_list))
 
@@ -779,8 +787,7 @@ def remove_dependent_advisories(advisory_id):
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(
-                f'Failed to remove dependent {dependent} from {advisory_id}'
-                f'with code {response.status_code} and error: {response.text}',
+                f'Failed to remove dependent {dependent} from {advisory_id}' f'with code {response.status_code} and error: {response.text}',
             )
 
 
@@ -792,8 +799,7 @@ def remove_blocking_advisories_depends(advisory_id):
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(
-                f'Failed to remove blocking {advisory_id} from {blocking_advisory}'
-                f'with code {response.status_code} and error: {response.text}',
+                f'Failed to remove blocking {advisory_id} from {blocking_advisory}' f'with code {response.status_code} and error: {response.text}',
             )
 
 
@@ -858,8 +864,7 @@ def unlock_batch(batch_id):
 
 
 def get_advisory_batch(advisory_id):
-    """Get the batch id for an advisory.
-    """
+    """Get the batch id for an advisory."""
     erratum = get_raw_erratum(advisory_id)['errata']
     advisory_type_key = list(erratum.keys())[0]
     return erratum[advisory_type_key]['batch_id']

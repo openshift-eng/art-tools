@@ -1,4 +1,5 @@
 import unittest
+
 from elliottlib.bzutil import BugzillaBugTracker
 from flexmock import flexmock
 
@@ -31,7 +32,10 @@ class BugzillaBugTrackerUpdateBugStatus(unittest.TestCase):
         client.should_receive("update_bugs").ordered()
         comment = 'Elliott changed bug status from status1 to status2.\ncomment'
         flexmock(BugzillaBugTracker).should_receive("add_comment").with_args(
-            bug.id, comment, private=True, noop=False,
+            bug.id,
+            comment,
+            private=True,
+            noop=False,
         )
 
         bz = BugzillaBugTracker({})
@@ -45,8 +49,7 @@ class BugzillaBugTrackerUpdateAddComment(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         client = flexmock()
         mock_arg = 1
-        client.should_receive("build_update").with_args(comment='comment', comment_private=True)\
-            .ordered().and_return(mock_arg)
+        client.should_receive("build_update").with_args(comment='comment', comment_private=True).ordered().and_return(mock_arg)
         client.should_receive("update_bugs").with_args([123], mock_arg).ordered()
 
         bz = BugzillaBugTracker({})

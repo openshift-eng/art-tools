@@ -1,18 +1,17 @@
 import asyncio
-from typing import Dict, List, Optional
-import click
 import logging
+from typing import Dict, List, Optional
 
+import click
+import koji
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
-from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_rhcos_config
+from artcommonlib.assembly import AssemblyTypes, assembly_rhcos_config, assembly_type
 from elliottlib import brew, rhcos
 from elliottlib.build_finder import BuildFinder
-
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.runtime import Runtime
-import koji
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ class FindUnconsumedRpms:
 
     @staticmethod
     def _list_image_rpms(image_ids: List[int], session: koji.ClientSession) -> List[Optional[List[Dict]]]:
-        """ Retrieve RPMs in given images
+        """Retrieve RPMs in given images
         :param image_ids: image IDs list
         :param session: instance of Brew session
         :return: a list of Koji/Brew RPM lists
@@ -34,7 +33,7 @@ class FindUnconsumedRpms:
 
     @staticmethod
     def _list_archives_by_builds(build_ids: List[int], build_type: str, session: koji.ClientSession) -> List[Optional[List[Dict]]]:
-        """ Retrieve information about archives by builds
+        """Retrieve information about archives by builds
         :param build_ids: List of build IDs
         :param build_type: build type, such as "image"
         :param session: instance of Brew session
@@ -75,7 +74,9 @@ class FindUnconsumedRpms:
                 # for non-stream assemblies we expect explicit config for RHCOS
                 if runtime_assembly_type is not AssemblyTypes.STREAM:
                     if container_conf.primary:
-                        raise Exception(f'Assembly {self._runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid')
+                        raise Exception(
+                            f'Assembly {self._runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid'
+                        )
                     # require the primary container at least to be specified, but
                     # allow the edge case where we add an RHCOS container type and
                     # previous assemblies don't specify it
@@ -140,7 +141,6 @@ class FindUnconsumedRpms:
 @click.pass_obj
 @click_coroutine
 async def find_unconsumed_rpms_cli(runtime: Runtime):
-    """ Finds rpms that are tagged into candidate brew tags but not used in images or RHCOS.
-    """
+    """Finds rpms that are tagged into candidate brew tags but not used in images or RHCOS."""
     runtime.initialize(mode="both")
     await FindUnconsumedRpms(runtime=runtime).run()

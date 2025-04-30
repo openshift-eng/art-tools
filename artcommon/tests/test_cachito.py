@@ -1,8 +1,8 @@
+from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from artcommonlib.util import is_cachito_enabled, detect_package_managers
 from artcommonlib.model import Missing
-from unittest import TestCase
+from artcommonlib.util import detect_package_managers, is_cachito_enabled
 
 
 class TestKonfluxCachi2(TestCase):

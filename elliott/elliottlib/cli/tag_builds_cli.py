@@ -1,13 +1,12 @@
-from typing import List, Tuple
-import click
-import requests
-import koji
 import logging
+from typing import List, Tuple
 
-from artcommonlib.format_util import red_print, green_print, yellow_print
-from elliottlib import Runtime
-from elliottlib import errata, brew, constants, exceptions
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
+import click
+import koji
+import requests
+from artcommonlib.format_util import green_print, red_print, yellow_print
+from elliottlib import Runtime, brew, constants, errata, exceptions
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
@@ -20,40 +19,61 @@ LOGGER = logging.getLogger(__name__)
 #
 @cli.command("tag-builds", short_help="Tag specified Brew builds into specified tag")
 @click.option(
-    '--advisory', '-a', 'advisories',
-    multiple=True, metavar='ADVISORY', type=int,
+    '--advisory',
+    '-a',
+    'advisories',
+    multiple=True,
+    metavar='ADVISORY',
+    type=int,
     help='Add builds on ADVISORY to tag [MULTIPLE]',
 )
 @use_default_advisory_option
 @click.option(
-    '--product-version', '--pv', 'product_version',
-    metavar='PRODUCT_VERSION', type=str,
+    '--product-version',
+    '--pv',
+    'product_version',
+    metavar='PRODUCT_VERSION',
+    type=str,
     help='Narrow builds with specified product version. e.g. RHEL-7-OSE-4.4, OSE-4.4-RHEL-8',
 )
 @click.option(
-    '--build', '-b', 'builds',
-    multiple=True, metavar='NVR_OR_ID',
+    '--build',
+    '-b',
+    'builds',
+    multiple=True,
+    metavar='NVR_OR_ID',
     help='Add build NVR_OR_ID to tag [MULTIPLE]',
 )
 @click.option(
-    '--tag', '-t',
-    metavar='TAG', required=True,
+    '--tag',
+    '-t',
+    metavar='TAG',
+    required=True,
     help='Tag name. e.g. rhaos-4.4-rhel-8-image-build',
 )
 @click.option(
-    '--dont-untag', '-d', is_flag=True,
+    '--dont-untag',
+    '-d',
+    is_flag=True,
     help="Don't untag unspecified Brew builds",
 )
 @click.option(
-    '--dry-run', is_flag=True,
+    '--dry-run',
+    is_flag=True,
     help="Don't really tag/untag any builds. Just print which builds should be tagged and untagged",
 )
 @pass_runtime
 def tag_builds_cli(
-    runtime: Runtime, advisories: Tuple[int], default_advisory_type: str, product_version: str,
-    builds: Tuple[str], tag: str, dont_untag: bool, dry_run: bool,
+    runtime: Runtime,
+    advisories: Tuple[int],
+    default_advisory_type: str,
+    product_version: str,
+    builds: Tuple[str],
+    tag: str,
+    dont_untag: bool,
+    dry_run: bool,
 ):
-    """ Tag builds into Brew tag and optionally untag unspecified builds.
+    """Tag builds into Brew tag and optionally untag unspecified builds.
 
     Example 1: Tag RHEL7 RPMs that on ocp-build-data recorded advisory into rhaos-4.3-rhel-7-image-build
 

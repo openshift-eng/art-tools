@@ -1,15 +1,16 @@
-import click
 from pprint import pprint
 
-from artcommonlib.assembly import AssemblyIssueCode, AssemblyIssue
+import click
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode
+from doozerlib.assembly_inspector import AssemblyInspector
 from doozerlib.cli import cli, click_coroutine
 from doozerlib.cli.release_gen_payload import PayloadGenerator
-from doozerlib.assembly_inspector import AssemblyInspector
 
 
 @cli.command("inspect:stream", short_help="Inspect stream assembly for assembly issues")
 @click.argument(
-    "code", type=click.Choice([code.name for code in AssemblyIssueCode], case_sensitive=False),
+    "code",
+    type=click.Choice([code.name for code in AssemblyIssueCode], case_sensitive=False),
     required=True,
 )
 @click.option("--strict", default=False, type=bool, is_flag=True, help='Fail even if permitted')
@@ -79,9 +80,9 @@ def _check_cross_payload_consistency_requirements(runtime, assembly_inspector, r
     for arch in runtime.group_config.arches:
         issues.extend(
             PayloadGenerator.find_rhcos_payload_rpm_inconsistencies(
-            assembly_inspector.get_rhcos_build(arch),
-            assembly_inspector.get_group_release_images(),
-            requirements,
+                assembly_inspector.get_rhcos_build(arch),
+                assembly_inspector.get_group_release_images(),
+                requirements,
             ),
         )
     return issues

@@ -1,17 +1,15 @@
 import traceback
 import unittest
-
-from click.testing import CliRunner
-from flexmock import flexmock
-from unittest.mock import patch, MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import elliottlib.cli.find_bugs_sweep_cli as sweep_cli
+from click.testing import CliRunner
 from elliottlib import errata
-from elliottlib.exceptions import ElliottFatalError
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
-from elliottlib.cli.common import cli, Runtime
-from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
-from elliottlib.cli.find_bugs_sweep_cli import extras_bugs, get_assembly_bug_ids, categorize_bugs_by_type
+from elliottlib.cli.common import Runtime, cli
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, categorize_bugs_by_type, extras_bugs, get_assembly_bug_ids
+from elliottlib.exceptions import ElliottFatalError
+from flexmock import flexmock
 
 
 class TestFindBugsMode(unittest.TestCase):
@@ -154,11 +152,11 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         runner = CliRunner()
         bugs = [
             flexmock(
-            id='BZ1',
-            is_tracker_bug=lambda: False,
-            is_invalid_tracker_bug=lambda: False,
-            component='whatever',
-            sub_component='whatever',
+                id='BZ1',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='whatever',
+                sub_component='whatever',
             ),
         ]
         advisory_id = 123
@@ -176,8 +174,10 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
         flexmock(JIRABugTracker).should_receive("attach_bugs").with_args(
-            [b.id for b in bugs], advisory_id=advisory_id,
-            noop=False, verbose=False,
+            [b.id for b in bugs],
+            advisory_id=advisory_id,
+            noop=False,
+            verbose=False,
         )
         jira_filter_mock.return_value = []
 
@@ -186,8 +186,10 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
         flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(
-            [b.id for b in bugs], advisory_id=advisory_id,
-            noop=False, verbose=False,
+            [b.id for b in bugs],
+            advisory_id=advisory_id,
+            noop=False,
+            verbose=False,
         )
         bugzilla_filter_mock.return_value = []
 
@@ -226,7 +228,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
         bugzilla_filter_mock.return_value = []
         flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(
-            ['BZ1'], advisory_id=123, noop=False,
+            ['BZ1'],
+            advisory_id=123,
+            noop=False,
             verbose=False,
         )
 
@@ -253,12 +257,17 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
                 "image": set(image_bugs),
                 "rpm": set(rpm_bugs),
                 "extras": set(extras_bugs),
-            }, [],
+            },
+            [],
         )
-        flexmock(Runtime).should_receive("get_default_advisories").and_return({
-            'image': 123, 'rpm': 123, 'extras': 123,
-            'metadata': 123,
-        })
+        flexmock(Runtime).should_receive("get_default_advisories").and_return(
+            {
+                'image': 123,
+                'rpm': 123,
+                'extras': 123,
+                'metadata': 123,
+            }
+        )
 
         # bz mocks
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})

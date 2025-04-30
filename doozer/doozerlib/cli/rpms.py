@@ -1,15 +1,14 @@
 import asyncio
-import os
-from datetime import datetime
-
-import click
 import io
+import os
 import traceback
+from datetime import datetime
 from typing import List
 
+import click
 from artcommonlib import exectools
 from artcommonlib.exectools import RetryException
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, ArtifactType, Engine, KonfluxBuildOutcome
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.util import convert_remote_git_to_https
@@ -67,7 +66,8 @@ def rpms_clone(runtime):
 
 @cli.command("rpms:clone-sources", help="Clone a group's rpm source repos locally and add to sources yaml.")
 @click.option(
-    "--output-yml", metavar="YAML_PATH",
+    "--output-yml",
+    metavar="YAML_PATH",
     help="Output yml file to write sources dict to. Can be same as --sources option but must be explicitly specified.",
 )
 @pass_runtime
@@ -82,15 +82,24 @@ def rpms_clone_sources(runtime, output_yml):
 
 @cli.command("rpms:rebase-and-build", help="Rebase and build rpms in the group or given by --rpms.")
 @click.option(
-    "--version", metavar='VERSION', default=None, callback=validate_rpm_version,
-    help="Version string to populate in specfile.", required=True,
+    "--version",
+    metavar='VERSION',
+    default=None,
+    callback=validate_rpm_version,
+    help="Version string to populate in specfile.",
+    required=True,
 )
 @click.option(
-    "--release", metavar='RELEASE', default=None,
-    help="Release label to populate in specfile.", required=True,
+    "--release",
+    metavar='RELEASE',
+    default=None,
+    help="Release label to populate in specfile.",
+    required=True,
 )
 @click.option(
-    "--embargoed", default=False, is_flag=True,
+    "--embargoed",
+    default=False,
+    is_flag=True,
     help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes",
 )
 @click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
@@ -98,7 +107,11 @@ def rpms_clone_sources(runtime, output_yml):
 @pass_runtime
 @click_coroutine
 async def rpms_rebase_and_build(
-    runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool,
+    runtime: Runtime,
+    version: str,
+    release: str,
+    embargoed: bool,
+    scratch: bool,
     dry_run: bool,
 ):
     """
@@ -106,14 +119,22 @@ async def rpms_rebase_and_build(
     in a group.
     """
     exit_code = await _rpms_rebase_and_build(
-        runtime, version=version, release=release, embargoed=embargoed,
-        scratch=scratch, dry_run=dry_run,
+        runtime,
+        version=version,
+        release=release,
+        embargoed=embargoed,
+        scratch=scratch,
+        dry_run=dry_run,
     )
     exit(exit_code)
 
 
 async def _rpms_rebase_and_build(
-    runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool,
+    runtime: Runtime,
+    version: str,
+    release: str,
+    embargoed: bool,
+    scratch: bool,
     dry_run: bool,
 ):
     if version.startswith('v'):
@@ -162,20 +183,31 @@ async def _rpms_rebase_and_build(
 
 @cli.command("rpms:rebase", help="Rebase rpms in the group or given by --rpms.")
 @click.option(
-    "--version", metavar='VERSION', default=None, callback=validate_rpm_version,
-    help="Version string to populate in specfile.", required=True,
+    "--version",
+    metavar='VERSION',
+    default=None,
+    callback=validate_rpm_version,
+    help="Version string to populate in specfile.",
+    required=True,
 )
 @click.option(
-    "--release", metavar='RELEASE', default=None,
-    help="Release label to populate in specfile.", required=True,
+    "--release",
+    metavar='RELEASE',
+    default=None,
+    help="Release label to populate in specfile.",
+    required=True,
 )
 @click.option(
-    "--embargoed", default=False, is_flag=True,
+    "--embargoed",
+    default=False,
+    is_flag=True,
     help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes",
 )
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @click.option(
-    '--push/--no-push', default=False, is_flag=True,
+    '--push/--no-push',
+    default=False,
+    is_flag=True,
     help='Push changes back to config repo. --no-push is default',
 )
 @pass_runtime
@@ -191,7 +223,11 @@ async def rpms_rebase(runtime: Runtime, version: str, release: str, embargoed: b
     command line arguments provided.
     """
     exit_code = await _rpms_rebase(
-        runtime, version=version, release=release, embargoed=embargoed, push=push,
+        runtime,
+        version=version,
+        release=release,
+        embargoed=embargoed,
+        push=push,
         dry_run=dry_run,
     )
     exit(exit_code)

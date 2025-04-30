@@ -14,10 +14,19 @@ from pyartcd.runtime import Runtime
 
 class BuildFbcPipeline:
     def __init__(
-        self, runtime: Runtime,
-        version: str, assembly: str, data_path: str, data_gitref: str,
-        only: str, exclude: str, operator_nvrs: str, fbc_repo: str,
-        kubeconfig: str, plr_template: str, skip_checks: bool,
+        self,
+        runtime: Runtime,
+        version: str,
+        assembly: str,
+        data_path: str,
+        data_gitref: str,
+        only: str,
+        exclude: str,
+        operator_nvrs: str,
+        fbc_repo: str,
+        kubeconfig: str,
+        plr_template: str,
+        skip_checks: bool,
     ):
         self.runtime = runtime
         self.version = version
@@ -83,9 +92,12 @@ class BuildFbcPipeline:
     async def _rebase(self, release: str, commit_message: str):
         doozer_opts = [
             'beta:fbc:rebase',
-            '--version', self.version,
-            '--release', release,
-            '--message', commit_message,
+            '--version',
+            self.version,
+            '--release',
+            release,
+            '--message',
+            commit_message,
         ]
         if not self.runtime.dry_run:
             doozer_opts.append('--push')
@@ -143,46 +155,65 @@ class BuildFbcPipeline:
 @click.option('--version', required=True, help='OCP version')
 @click.option('--assembly', required=True, help='Assembly name')
 @click.option(
-    '--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
+    '--data-path',
+    required=False,
+    default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
 @click.option(
-    '--data-gitref', required=False,
+    '--data-gitref',
+    required=False,
     help='(Optional) Doozer data path git [branch / tag / sha] to use',
 )
 @click.option(
-    '--only', required=False,
+    '--only',
+    required=False,
     help='(Optional) List **only** the operators you want to build, everything else gets ignored.\n'
     'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-         'Leave empty to build all (except EXCLUDE, if defined)',
+    'Leave empty to build all (except EXCLUDE, if defined)',
 )
 @click.option(
-    '--exclude', required=False,
+    '--exclude',
+    required=False,
     help='(Optional) List the operators you **don\'t** want to build, everything else gets built.\n'
     'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-         'Leave empty to build all (or ONLY, if defined)',
+    'Leave empty to build all (or ONLY, if defined)',
 )
 @click.option(
-    '--operator-nvrs', required=False,
+    '--operator-nvrs',
+    required=False,
     help='(Optional) List **only** the operator NVRs you want to build FBC segments for, everything else '
     'gets ignored. The operators should not be mode:disabled/wip in ocp-build-data',
 )
 @click.option(
-    '--fbc-repo', required=False, default='',
+    '--fbc-repo',
+    required=False,
+    default='',
     help='(Optional) URL of the FBC repository',
 )
 @click.option("--kubeconfig", required=False, help="Path to kubeconfig file to use for Konflux cluster connections")
 @click.option(
-    '--plr-template', required=False, default='',
+    '--plr-template',
+    required=False,
+    default='',
     help='Override the Pipeline Run template commit from openshift-priv/art-konflux-template; format: <owner>@<branch>',
 )
 @click.option("--skip-checks", is_flag=True, help="Skip all post build checks in the FBC build pipeline")
 @pass_runtime
 @click_coroutine
 async def build_fbc(
-        runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-        only: str, exclude: str, operator_nvrs: str, fbc_repo: str, kubeconfig: str, plr_template: str,
-        skip_checks: bool,
+    runtime: Runtime,
+    version: str,
+    assembly: str,
+    data_path: str,
+    data_gitref: str,
+    only: str,
+    exclude: str,
+    operator_nvrs: str,
+    fbc_repo: str,
+    kubeconfig: str,
+    plr_template: str,
+    skip_checks: bool,
 ):
     pipeline = BuildFbcPipeline(
         runtime=runtime,

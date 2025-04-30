@@ -13,7 +13,11 @@ LOGGER = logging.getLogger(__name__)
 
 
 def git_clone(
-    remote_url: str, target_dir: str, gitargs=[], set_env={}, timeout=0,
+    remote_url: str,
+    target_dir: str,
+    gitargs=[],
+    set_env={},
+    timeout=0,
     git_cache_dir: Optional[str] = None,
 ):
 
@@ -72,7 +76,7 @@ def git_clone(
 
 
 async def run_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):
-    """ Run a git command and optionally raises an exception if the return code of the command indicates failure.
+    """Run a git command and optionally raises an exception if the return code of the command indicates failure.
     :param args: List of arguments to pass to git
     :param env: Optional environment variables to set
     :param check: If True, raise an exception if the git command fails
@@ -88,7 +92,7 @@ async def run_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = Non
 
 
 async def gather_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = None, check: bool = True, **kwargs):
-    """ Run a git command asynchronously and returns rc,stdout,stderr as a tuple
+    """Run a git command asynchronously and returns rc,stdout,stderr as a tuple
     :param args: List of arguments to pass to git
     :param env: Optional environment variables to set
     :param check: If True, raise an exception if the git command fails
@@ -104,7 +108,7 @@ async def gather_git_async(args: Sequence[str], env: Optional[Dict[str, str]] = 
 
 
 def gather_git(args: Sequence[str], **kwargs):
-    """ Run a git command asynchronously and returns rc,stdout,stderr as a tuple
+    """Run a git command asynchronously and returns rc,stdout,stderr as a tuple
     :param args: List of arguments to pass to git
     :param kwargs: Additional arguments to pass to exectools.cmd_gather_async
     :return: exit code of the git command

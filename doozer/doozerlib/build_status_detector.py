@@ -1,6 +1,6 @@
 from logging import Logger
 from multiprocessing import Lock
-from typing import Dict, List, Optional, Set, Iterable
+from typing import Dict, Iterable, List, Optional, Set
 
 from doozerlib import brew, util
 from doozerlib.build_visibility import is_release_embargoed
@@ -12,7 +12,7 @@ class BuildStatusDetector:
     """
 
     def __init__(self, runtime, logger: Optional[Logger] = None):
-        """ creates a new BuildStatusDetector
+        """creates a new BuildStatusDetector
         :param runtime: The doozer runtime
         :param logger: a logger
         """
@@ -20,10 +20,12 @@ class BuildStatusDetector:
         self.koji_session = runtime.build_retrying_koji_client()
         self.logger = logger
         self.shipping_statuses: Dict[int, bool] = {}  # a dict for caching build shipping statues. key is build id, value is True if shipped.
-        self.archive_lists: Dict[int, List[Dict]] = {}  # a dict for caching archive lists. key is build id, value is a list of archives associated with that build.
+        self.archive_lists: Dict[int, List[Dict]] = (
+            {}
+        )  # a dict for caching archive lists. key is build id, value is a list of archives associated with that build.
 
     def find_embargoed_builds(self, builds: List[Dict], candidate_tags: Iterable[str]) -> Set[int]:
-        """ find embargoed builds in given list of koji builds
+        """find embargoed builds in given list of koji builds
         :param builds: a list of koji build dicts returned by the koji api
         :param candidate_tags: a list of candidate tags for the images being examined
         :return: a set of build IDs that have embargoed fixes
@@ -34,10 +36,7 @@ class BuildStatusDetector:
         suspects = [b for b in builds if b["id"] not in shipped_ids]
 
         # next, consider remaining builds embargoed if the release field includes .p1/.p3
-        embargoed_ids = {
-            b["id"] for b in suspects
-            if is_release_embargoed(b["release"], self.runtime.build_system)
-        }
+        embargoed_ids = {b["id"] for b in suspects if is_release_embargoed(b["release"], self.runtime.build_system)}
 
         # finally, look at the remaining images in case they include embargoed rpms
         remaining_ids = {b["id"] for b in suspects if b["id"] not in embargoed_ids}
@@ -46,7 +45,7 @@ class BuildStatusDetector:
         return embargoed_ids
 
     def find_shipped_builds(self, build_ids: Set[int]) -> Set[int]:
-        """ find shipped builds in the given builds
+        """find shipped builds in the given builds
         :param build_ids: a list of build IDs
         :return: a set of shipped build IDs
         """
@@ -64,7 +63,7 @@ class BuildStatusDetector:
         return result
 
     def find_with_embargoed_rpms(self, suspect_build_ids: Set[int], candidate_tags: Iterable[str]) -> Set[int]:
-        """ look for embargoed RPMs in the image archives (one per arch for every image)
+        """look for embargoed RPMs in the image archives (one per arch for every image)
         :param suspect_build_ids: a list of koji build ids
         :param candidate_tags: a list of candidate tags for the images being examined
         :return: a set of build IDs that contain embargoed RPM contents
@@ -80,9 +79,9 @@ class BuildStatusDetector:
             for archive in self.archive_lists[suspect]:
                 rpms = archive["rpms"]
                 suspected_rpms = [
-                    rpm for rpm in rpms
-                    if is_release_embargoed(rpm["release"], self.runtime.build_system, default=False)
-                    or rpm["build_id"] in embargoed_rpm_ids
+                    rpm
+                    for rpm in rpms
+                    if is_release_embargoed(rpm["release"], self.runtime.build_system, default=False) or rpm["build_id"] in embargoed_rpm_ids
                 ]
                 shipped = self.find_shipped_builds([rpm["build_id"] for rpm in suspected_rpms])
                 embargoed_rpms = [rpm for rpm in suspected_rpms if rpm["build_id"] not in shipped]
@@ -94,20 +93,22 @@ class BuildStatusDetector:
         return embargoed_image_ids
 
     def populate_archive_lists(self, suspect_build_ids: Set[int]):
-        """ populate self.archive_lists with any build IDs not already cached
+        """populate self.archive_lists with any build IDs not already cached
         :param suspect_build_ids: a list of koji build ids
         """
         build_ids = list(suspect_build_ids - self.archive_lists.keys())  # Only update cache with missing builds
         if build_ids:
             self.logger and self.logger.info(f"Fetching image archives for {len(build_ids)} builds...")
-            archive_lists = brew.list_archives_by_builds(build_ids, "image", self.koji_session)  # if a build is not an image (e.g. rpm), Brew will return an empty archive list for that build
+            archive_lists = brew.list_archives_by_builds(
+                build_ids, "image", self.koji_session
+            )  # if a build is not an image (e.g. rpm), Brew will return an empty archive list for that build
             for build_id, archive_list in zip(build_ids, archive_lists):
                 self.archive_lists[build_id] = archive_list  # save to cache
 
     embargoed_rpms_cache = {}  # define cache field to be used in method
 
     def rpms_in_embargoed_tag(self, candidate_tag: List[str]) -> Set[int]:
-        """ find a list of RPMs in an -embargoed tag.
+        """find a list of RPMs in an -embargoed tag.
         these are builds tagged in from an external source, e.g. kernel.
         :param candidate_tag: string tag name that contains candidate builds
         :return: a list of brew RPMs from builds in the corresponding embargoed tag
@@ -126,7 +127,7 @@ class BuildStatusDetector:
     unshipped_candidate_rpms_cache = {}
 
     def find_unshipped_candidate_rpms(self, candidate_tag: str, event: Optional[int] = None):
-        """ find latest RPMs in the candidate tag that have not been shipped yet.
+        """find latest RPMs in the candidate tag that have not been shipped yet.
 
         <lmeyer> i debated whether to consider builds unshipped if not shipped
         in the same OCP version (IOW the base tag), and ultimately decided we're

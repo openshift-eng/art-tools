@@ -1,14 +1,12 @@
-
 import errno
 import os
 import unittest
-
-from flexmock import flexmock
 from unittest import mock
 
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 from doozerlib import distgit
+from flexmock import flexmock
 
 from .support import MockConfig, MockMetadata, MockRuntime, TestDistgit
 
@@ -75,10 +73,7 @@ class TestGenericDistGit(TestDistgit):
         # pretenting the directory exists (already cloned)
         flexmock(distgit.os.path).should_receive("isdir").and_return(True)
 
-        expected_log_msg = (
-            "Distgit directory already exists; "
-            "skipping clone: my-root-dir/my-namespace/my-distgit-key"
-        )
+        expected_log_msg = "Distgit directory already exists; " "skipping clone: my-root-dir/my-namespace/my-distgit-key"
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
@@ -93,13 +88,7 @@ class TestGenericDistGit(TestDistgit):
         )
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd, strip=True)
-            .and_return(0, "abcdefg", "")
-            .once()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(expected_cmd, strip=True).and_return(0, "abcdefg", "").once())
 
         distgit.DistGitRepo(metadata, autoclone=False).clone("my-root-dir", "my-branch")
 
@@ -128,11 +117,7 @@ class TestGenericDistGit(TestDistgit):
         repo = distgit.DistGitRepo(metadata, autoclone=False)
 
         # simulating a "File exists" error
-        (
-            flexmock(distgit.os)
-            .should_receive("mkdir")
-            .and_raise(OSError(errno.EEXIST, os.strerror(errno.EEXIST)))
-        )
+        (flexmock(distgit.os).should_receive("mkdir").and_raise(OSError(errno.EEXIST, os.strerror(errno.EEXIST))))
 
         try:
             repo.clone("my-root-dir", "my-branch")
@@ -142,11 +127,7 @@ class TestGenericDistGit(TestDistgit):
             pass  # doesn't matter if something fails at a later point
 
         # simulating any other OSError
-        (
-            flexmock(distgit.os)
-            .should_receive("mkdir")
-            .and_raise(OSError)
-        )
+        (flexmock(distgit.os).should_receive("mkdir").and_raise(OSError))
 
         self.assertRaises(OSError, repo.clone, "my-root-dir", "my-branch")
 
@@ -158,29 +139,15 @@ class TestGenericDistGit(TestDistgit):
         # pretenting the directory doesn't exist (not yet cloned)
         flexmock(distgit.os.path).should_receive("isdir").and_return(False)
 
-        expected_log_msg = (
-            "Creating local build dir: "
-            "my-root-dir/my-namespace/my-distgit-key"
-        )
+        expected_log_msg = "Creating local build dir: " "my-root-dir/my-namespace/my-distgit-key"
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
         expected_cmd = ["mkdir", "-p", "my-root-dir/my-namespace/my-distgit-key"]
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_cmd)
-            .once()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_cmd).once())
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd, strip=True)
-            .and_return(0, "abcdefg", "")
-            .once()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(expected_cmd, strip=True).and_return(0, "abcdefg", "").once())
 
         metadata = flexmock(
             config=MockConfig(content="_irrelevant_"),
@@ -207,34 +174,25 @@ class TestGenericDistGit(TestDistgit):
         # pretenting the directory doesn't exist (not yet cloned)
         flexmock(distgit.os.path).should_receive("isdir").and_return(False)
 
-        expected_log_msg = (
-            "Cloning distgit repository [branch:my-branch] "
-            "into: my-root-dir/my-namespace/my-distgit-key"
-        )
+        expected_log_msg = "Cloning distgit repository [branch:my-branch] " "into: my-root-dir/my-namespace/my-distgit-key"
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
         expected_cmd = [
-            "timeout", "999", "rhpkg", "clone", "my-qualified-name",
-            "my-root-dir/my-namespace/my-distgit-key", "--branch", "my-branch",
+            "timeout",
+            "999",
+            "rhpkg",
+            "clone",
+            "my-qualified-name",
+            "my-root-dir/my-namespace/my-distgit-key",
+            "--branch",
+            "my-branch",
         ]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_cmd, retries=3, set_env=object)
-            .once()
-            .and_return(None)
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_cmd, retries=3, set_env=object).once().and_return(None))
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd, strip=True)
-            .and_return(0, "abcdefg", "")
-            .once()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(expected_cmd, strip=True).and_return(0, "abcdefg", "").once())
 
         expected_warning = (
             "Warning: images:rebase was skipped and "
@@ -243,12 +201,7 @@ class TestGenericDistGit(TestDistgit):
             "the typical GitHub source. "
         )
 
-        (
-            flexmock(distgit)
-            .should_receive("yellow_print")
-            .with_args(expected_warning)
-            .once()
-        )
+        (flexmock(distgit).should_receive("yellow_print").with_args(expected_warning).once())
 
         metadata = flexmock(
             config=MockConfig(content="_irrelevant_"),
@@ -283,26 +236,21 @@ class TestGenericDistGit(TestDistgit):
         flexmock(distgit).should_receive("yellow_print").replace_with(lambda _: None)
 
         expected_cmd = [
-            "timeout", "999", "rhpkg", "--user=my-user", "clone", "my-qualified-name",
-            "my-root-dir/my-namespace/my-distgit-key", "--branch", "my-branch",
+            "timeout",
+            "999",
+            "rhpkg",
+            "--user=my-user",
+            "clone",
+            "my-qualified-name",
+            "my-root-dir/my-namespace/my-distgit-key",
+            "--branch",
+            "my-branch",
         ]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_cmd, retries=3, set_env=object)
-            .once()
-            .and_return(None)
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_cmd, retries=3, set_env=object).once().and_return(None))
 
         expected_cmd = ['git', '-C', 'my-root-dir/my-namespace/my-distgit-key', 'rev-parse', 'HEAD']
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd, strip=True)
-            .and_return(0, "abcdefg", "")
-            .once()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(expected_cmd, strip=True).and_return(0, "abcdefg", "").once())
 
         metadata = flexmock(
             config=MockConfig(content="_irrelevant_"),
@@ -320,7 +268,8 @@ class TestGenericDistGit(TestDistgit):
             qualified_name="my-qualified-name",
             logger=flexmock(info=lambda _: None),
             prevent_cloning=False,
-            name="_irrelevant_", )
+            name="_irrelevant_",
+        )
 
         distgit.DistGitRepo(metadata, autoclone=False).clone("my-root-dir", "my-branch")
 
@@ -336,31 +285,23 @@ class TestGenericDistGit(TestDistgit):
 
         expected_1st_cmd = ["rhpkg", "switch-branch", "my-target"]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_1st_cmd, retries=3)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_1st_cmd, retries=3).once().ordered())
 
         expected_2nd_log_msg = "Merging source branch history over current branch"
         logger.should_receive("info").with_args(expected_2nd_log_msg).once().ordered()
 
         expected_2nd_cmd = [
-            "git", "merge", "--allow-unrelated-histories", "-m",
-            "Merge branch my-branch into my-target", "my-branch",
+            "git",
+            "merge",
+            "--allow-unrelated-histories",
+            "-m",
+            "Merge branch my-branch into my-target",
+            "my-branch",
         ]
 
         expected_on_retry = ["git", "reset", "--hard", "my-target"]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_2nd_cmd, retries=3, on_retry=expected_on_retry)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_2nd_cmd, retries=3, on_retry=expected_on_retry).once().ordered())
 
         metadata = flexmock(
             config=flexmock(distgit=flexmock(branch="my-branch")),
@@ -386,31 +327,23 @@ class TestGenericDistGit(TestDistgit):
 
         expected_1st_cmd = ["rhpkg", "switch-branch", "my-target"]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_1st_cmd, retries=3)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_1st_cmd, retries=3).once().ordered())
 
         expected_2nd_log_msg = "Merging source branch history over current branch"
         logger.should_receive("info").with_args(expected_2nd_log_msg).once().ordered()
 
         expected_2nd_cmd = [
-            "git", "merge", "--allow-unrelated-histories", "-m",
-            "Merge branch my-branch into my-target", "my-branch",
+            "git",
+            "merge",
+            "--allow-unrelated-histories",
+            "-m",
+            "Merge branch my-branch into my-target",
+            "my-branch",
         ]
 
         expected_on_retry = ["git", "reset", "--hard", "my-target"]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_2nd_cmd, retries=3, on_retry=expected_on_retry)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_2nd_cmd, retries=3, on_retry=expected_on_retry).once().ordered())
 
         metadata = flexmock(
             config=flexmock(distgit=flexmock(branch="my-branch")),
@@ -422,21 +355,14 @@ class TestGenericDistGit(TestDistgit):
             name="_irrelevant_",
         )
 
-        (
-            distgit.DistGitRepo(metadata, autoclone=False)
-            .merge_branch("my-target", allow_overwrite=True)
-        )
+        (distgit.DistGitRepo(metadata, autoclone=False).merge_branch("my-target", allow_overwrite=True))
 
     def test_merge_branch_dockerfile_or_oit_dir_already_present(self):
         # pretenting there is a Dockerfile present
         flexmock(distgit.os.path).should_receive("isfile").and_return(True)
 
         # avoid actually executing any command
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .replace_with(lambda *_, **__: None)
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").replace_with(lambda *_, **__: None))
 
         metadata = flexmock(
             config=flexmock(distgit=flexmock(branch="my-branch")),
@@ -454,11 +380,7 @@ class TestGenericDistGit(TestDistgit):
             repo.merge_branch("my-target")
             self.fail()
         except IOError as e:
-            expected_msg = (
-                "Unable to continue merge. "
-                "Dockerfile found in target branch. "
-                "Use --allow-overwrite to force."
-            )
+            expected_msg = "Unable to continue merge. " "Dockerfile found in target branch. " "Use --allow-overwrite to force."
             self.assertEqual(expected_msg, str(e))
 
     def test_commit_local(self):
@@ -479,12 +401,7 @@ class TestGenericDistGit(TestDistgit):
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
         # simulating a failure when running "git diff Dockerfile"
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(["git", "diff", "Dockerfile"])
-            .and_return((1, "stdout", "stderr"))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(["git", "diff", "Dockerfile"]).and_return((1, "stdout", "stderr")))
 
         metadata = flexmock(
             runtime=self.mock_runtime(local=False, branch="_irrelevant_"),
@@ -492,17 +409,19 @@ class TestGenericDistGit(TestDistgit):
             logger=flexmock(info=lambda _: None),
             name="_irrelevant_",
         )
-        (flexmock(distgit.DistGitRepo).should_receive("_get_diff").once().and_raise(ChildProcessError, "Command returned non-zero exit status: Failed fetching distgit diff"))
+        (
+            flexmock(distgit.DistGitRepo)
+            .should_receive("_get_diff")
+            .once()
+            .and_raise(ChildProcessError, "Command returned non-zero exit status: Failed fetching distgit diff")
+        )
         repo = distgit.DistGitRepo(metadata, autoclone=False)
 
         try:
             repo.commit("commit msg", log_diff=True)
             self.fail()
         except ChildProcessError as e:
-            expected_msg = (
-                "Command returned non-zero exit status: "
-                "Failed fetching distgit diff"
-            )
+            expected_msg = "Command returned non-zero exit status: " "Failed fetching distgit diff"
             self.assertEqual(expected_msg, str(e))
 
     def test_commit_log_diff_succeeded(self):
@@ -510,11 +429,7 @@ class TestGenericDistGit(TestDistgit):
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
         # avoid actually executing any command
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .and_return((0, "stdout", "stderr"))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").and_return((0, "stdout", "stderr")))
 
         metadata = flexmock(
             distgit_key="my-distgit-key",
@@ -524,13 +439,7 @@ class TestGenericDistGit(TestDistgit):
             name="_irrelevant_",
         )
 
-        (
-            flexmock(metadata.runtime)
-            .should_receive("add_distgits_diff")
-            .with_args("my-distgit-key", "stdout")
-            .once()
-            .and_return(None)
-        )
+        (flexmock(metadata.runtime).should_receive("add_distgits_diff").with_args("my-distgit-key", "stdout").once().and_return(None))
 
         (flexmock(distgit.DistGitRepo).should_receive("_get_diff").once().and_return("stdout"))
 
@@ -542,33 +451,19 @@ class TestGenericDistGit(TestDistgit):
 
         expected_1st_cmd = ["git", "add", "-A", "."]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_1st_cmd)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_1st_cmd).once().ordered())
 
         expected_2nd_cmd = [
-            "git", "commit", "--allow-empty", "-m",
+            "git",
+            "commit",
+            "--allow-empty",
+            "-m",
             "# commit msg\nMaxFileSize: 104857600\njenkins.url: null\n",
         ]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_2nd_cmd)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_2nd_cmd).once().ordered())
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(["git", "rev-parse", "HEAD"])
-            .and_return((0, "sha-from-stdout", ""))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(["git", "rev-parse", "HEAD"]).and_return((0, "sha-from-stdout", "")))
 
         metadata = flexmock(
             distgit_key="my-distgit-key",
@@ -595,33 +490,19 @@ class TestGenericDistGit(TestDistgit):
 
         expected_1st_cmd = ["git", "add", "-A", "."]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_1st_cmd)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_1st_cmd).once().ordered())
 
         expected_2nd_cmd = [
-            "git", "commit", "--allow-empty", "-m",
+            "git",
+            "commit",
+            "--allow-empty",
+            "-m",
             "# commit msg\nMaxFileSize: 104857600\njenkins.url: null\n",
         ]
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_assert")
-            .with_args(expected_2nd_cmd)
-            .once()
-            .ordered()
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_2nd_cmd).once().ordered())
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(["git", "rev-parse", "HEAD"])
-            .and_return((0, "sha-from-stdout", ""))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(["git", "rev-parse", "HEAD"]).and_return((0, "sha-from-stdout", "")))
 
         metadata = flexmock(
             distgit_key="my-distgit-key",
@@ -670,10 +551,7 @@ class TestGenericDistGit(TestDistgit):
             repo.commit("commit msg")
             self.fail()
         except IOError as e:
-            expected_msg = (
-                "Command returned non-zero exit status: "
-                "Failure fetching commit SHA for my-distgit-dir"
-            )
+            expected_msg = "Command returned non-zero exit status: " "Failure fetching commit SHA for my-distgit-dir"
             self.assertEqual(expected_msg, str(e))
 
     def test_tag_local(self):

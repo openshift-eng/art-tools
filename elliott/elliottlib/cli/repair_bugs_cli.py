@@ -1,109 +1,130 @@
-import click
-import elliottlib
-
 from multiprocessing import cpu_count
 from multiprocessing.dummy import Pool as ThreadPool
 
+import click
+import elliottlib
 from artcommonlib.format_util import green_print
 from elliottlib import errata
-from elliottlib.bzutil import BugTracker, JIRABugTracker, BugzillaBugTracker, get_jira_bz_bug_ids
-from elliottlib.util import progress_func, pbar_header
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
+from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker, get_jira_bz_bug_ids
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
+from elliottlib.util import pbar_header, progress_func
 
 
 @cli.command("repair-bugs", short_help="Move bugs attached to ADVISORY from one state to another")
 @click.option(
-    "--advisory", "-a", 'advisory_id',
-    type=int, metavar='ADVISORY',
+    "--advisory",
+    "-a",
+    'advisory_id',
+    type=int,
+    metavar='ADVISORY',
     help="Repair bugs attached to ADVISORY.",
 )
 @click.option(
     "--auto",
     required=False,
-    default=False, is_flag=True,
+    default=False,
+    is_flag=True,
     help="AUTO mode, check all bugs attached to ADVISORY",
 )
 @click.option(
-    "--id", default=None, metavar='BUGID',
-    multiple=True, required=False,
+    "--id",
+    default=None,
+    metavar='BUGID',
+    multiple=True,
+    required=False,
     help="Bug IDs to modify, conflicts with --auto [MULTIPLE]",
 )
 @click.option(
-    "--from", "original_state",
+    "--from",
+    "original_state",
     multiple=True,
     default=['MODIFIED'],
     type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
     help="Current state of the bugs (default: MODIFIED)",
 )
 @click.option(
-    "--to", "new_state",
+    "--to",
+    "new_state",
     default='ON_QA',
     type=click.Choice(elliottlib.constants.VALID_BUG_STATES),
     help="Final state of the bugs (default: ON_QA)",
 )
 @click.option(
-    "--comment", "comment",
+    "--comment",
+    "comment",
     required=False,
     help="Add comment to bug",
 )
 @click.option(
-    "--close-placeholder", "close_placeholder",
+    "--close-placeholder",
+    "close_placeholder",
     required=False,
-    default=False, is_flag=True,
+    default=False,
+    is_flag=True,
     help="When checking bug state, close the bug if it's a placehoder bug.",
 )
 @click.option(
-    "--noop", "--dry-run",
+    "--noop",
+    "--dry-run",
     required=False,
-    default=False, is_flag=True,
+    default=False,
+    is_flag=True,
     help="Check bugs attached, print what would change, but don't change anything",
 )
 @use_default_advisory_option
 @click.pass_obj
 def repair_bugs_cli(
-    runtime, advisory_id, auto, id, original_state, new_state, comment, close_placeholder, noop,
+    runtime,
+    advisory_id,
+    auto,
+    id,
+    original_state,
+    new_state,
+    comment,
+    close_placeholder,
+    noop,
     default_advisory_type,
 ):
     """Move bugs attached to the advisory from one state to another
-state. This is useful if the bugs have changed states *after* they
-were attached. Similar to `find-bugs` but in reverse. `repair-bugs`
-begins by reading bugs from an advisory, whereas `find-bugs` reads
-from a bug tracker (jira/bugzilla).
+    state. This is useful if the bugs have changed states *after* they
+    were attached. Similar to `find-bugs` but in reverse. `repair-bugs`
+    begins by reading bugs from an advisory, whereas `find-bugs` reads
+    from a bug tracker (jira/bugzilla).
 
-This looks at attached bugs in the provided --from state and moves
-them to the provided --to state.
+    This looks at attached bugs in the provided --from state and moves
+    them to the provided --to state.
 
-\b
-    Background: This is intended for bugs which went to MODIFIED, were
-    attached to advisories, set to ON_QA, and then failed
-    testing. When this happens their state is reset back to ASSIGNED.
+    \b
+        Background: This is intended for bugs which went to MODIFIED, were
+        attached to advisories, set to ON_QA, and then failed
+        testing. When this happens their state is reset back to ASSIGNED.
 
-Using --use-default-advisory without a value set for the matching key
-in the build-data will cause an error and elliott will exit in a
-non-zero state. Most likely you will only want to use the `rpm` state,
-but that could change in the future. Use of this option conflicts with
-providing an advisory with the -a/--advisory option.
+    Using --use-default-advisory without a value set for the matching key
+    in the build-data will cause an error and elliott will exit in a
+    non-zero state. Most likely you will only want to use the `rpm` state,
+    but that could change in the future. Use of this option conflicts with
+    providing an advisory with the -a/--advisory option.
 
-    Move bugs on 123456 FROM the MODIFIED state back TO ON_QA state:
+        Move bugs on 123456 FROM the MODIFIED state back TO ON_QA state:
 
-\b
-    $ elliott --group=openshift-4.1 repair-bugs --auto --advisory 123456 --from MODIFIED --to ON_QA
+    \b
+        $ elliott --group=openshift-4.1 repair-bugs --auto --advisory 123456 --from MODIFIED --to ON_QA
 
-    As above, but using the default RPM advisory defined in ocp-build-data:
+        As above, but using the default RPM advisory defined in ocp-build-data:
 
-\b
-    $ elliott --group=openshift-4.1 repair-bugs --auto --use-default-advisory rpm --from MODIFIED --to ON_QA
+    \b
+        $ elliott --group=openshift-4.1 repair-bugs --auto --use-default-advisory rpm --from MODIFIED --to ON_QA
 
-    The previous examples could also be run like this (MODIFIED and ON_QA are both defaults):
+        The previous examples could also be run like this (MODIFIED and ON_QA are both defaults):
 
-\b
-    $ elliott --group=openshift-4.1 repair-bugs --auto --use-default-advisory rpm
+    \b
+        $ elliott --group=openshift-4.1 repair-bugs --auto --use-default-advisory rpm
 
-    Bug ids may be given manually instead of using --auto:
+        Bug ids may be given manually instead of using --auto:
 
-\b
-    $ elliott --group=openshift-4.1 repair-bugs --id OCPBUGS-1 170899 8675309 --use-default-advisory rpm
-"""
+    \b
+        $ elliott --group=openshift-4.1 repair-bugs --id OCPBUGS-1 170899 8675309 --use-default-advisory rpm
+    """
     if auto and len(id) > 0:
         raise click.BadParameter("Combining the automatic and manual bug modification options is not supported")
 
@@ -134,12 +155,22 @@ providing an advisory with the -a/--advisory option.
 
     if jira_ids:
         repair_bugs(
-            jira_ids, original_state, new_state, comment, close_placeholder, noop,
+            jira_ids,
+            original_state,
+            new_state,
+            comment,
+            close_placeholder,
+            noop,
             runtime.get_bug_tracker('jira'),
         )
     if bz_ids:
         repair_bugs(
-            bz_ids, original_state, new_state, comment, close_placeholder, noop,
+            bz_ids,
+            original_state,
+            new_state,
+            comment,
+            close_placeholder,
+            noop,
             runtime.get_bug_tracker('bugzilla'),
         )
 

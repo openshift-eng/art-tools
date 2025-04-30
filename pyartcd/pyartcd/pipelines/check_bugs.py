@@ -1,8 +1,8 @@
 import asyncio
 
 import click
-
 from artcommonlib import exectools
+
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.constants import OCP_BUILD_DATA_URL
@@ -25,7 +25,9 @@ class CheckBugsPipeline:
     async def run(self):
         # Load group config
         self.group_config = await util.load_group_config(
-            group=f'openshift-{self.version}', assembly='stream', doozer_data_path=self.data_path,
+            group=f'openshift-{self.version}',
+            assembly='stream',
+            doozer_data_path=self.data_path,
         )
 
         # Check bugs only for GA releases
@@ -111,15 +113,21 @@ async def slack_report(results, slack_client):
 
 @cli.command('check-bugs')
 @click.option(
-    '--slack_channel', required=False,
+    '--slack_channel',
+    required=False,
     help='Slack channel to be notified for failures',
 )
 @click.option(
-    '--version', 'versions', required=True, multiple=True,
+    '--version',
+    'versions',
+    required=True,
+    multiple=True,
     help='OCP version to check for blockers e.g. 4.7',
 )
 @click.option(
-    "--data-path", required=False, default=OCP_BUILD_DATA_URL,
+    "--data-path",
+    required=False,
+    default=OCP_BUILD_DATA_URL,
     help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
 )
 @pass_runtime

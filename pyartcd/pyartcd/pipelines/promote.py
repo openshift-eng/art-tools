@@ -1,49 +1,58 @@
 import asyncio
+import hashlib
+import io
 import json
 import logging
 import os
 import re
-import io
-import sys
-import traceback
-import requests
-import aiohttp
-import click
-import tarfile
-import hashlib
 import shutil
+import sys
+import tarfile
+import traceback
 from collections import OrderedDict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Union, Set
+from typing import Dict, Iterable, List, Optional, Set, Union
 from urllib.parse import quote
-from ruamel.yaml import YAML
-from semver import VersionInfo
-from tenacity import (
-    RetryCallState, RetryError, retry,
-    retry_if_exception_type, retry_if_result,
-    stop_after_attempt, wait_fixed,
-)
 
-from artcommonlib.arch_util import brew_suffix_for_arch, brew_arch_for_go_arch, \
-    go_suffix_for_arch, go_arch_for_brew_arch
+import aiohttp
+import click
+import requests
+from artcommonlib import exectools
+from artcommonlib.arch_util import brew_arch_for_go_arch, brew_suffix_for_arch, go_arch_for_brew_arch, go_suffix_for_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.exectools import to_thread, manifest_tool
+from artcommonlib.exceptions import VerificationError
+from artcommonlib.exectools import manifest_tool, to_thread
 from artcommonlib.rhcos import get_primary_container_name
 from artcommonlib.util import isolate_major_minor_in_group
-from pyartcd.locks import Lock
-from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
-from pyartcd import constants, locks, util, jenkins
-from artcommonlib import exectools
-from pyartcd.cli import cli, click_coroutine, pass_runtime
-from artcommonlib.exceptions import VerificationError
-from pyartcd.jira import JIRAClient
-from pyartcd.mail import MailService
-from pyartcd.oc import get_release_image_info, get_release_image_pullspec, extract_release_binary, \
-    extract_release_client_tools, get_release_image_info_from_pullspec, extract_baremetal_installer
-from pyartcd.runtime import Runtime, GroupRuntime
 from github import Github, GithubException
+from ruamel.yaml import YAML
 from ruamel.yaml.parser import ParserError
+from semver import VersionInfo
+from tenacity import (
+    RetryCallState,
+    RetryError,
+    retry,
+    retry_if_exception_type,
+    retry_if_result,
+    stop_after_attempt,
+    wait_fixed,
+)
 
+from pyartcd import constants, jenkins, locks, util
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.jira import JIRAClient
+from pyartcd.locks import Lock
+from pyartcd.mail import MailService
+from pyartcd.oc import (
+    extract_baremetal_installer,
+    extract_release_binary,
+    extract_release_client_tools,
+    get_release_image_info,
+    get_release_image_info_from_pullspec,
+    get_release_image_pullspec,
+)
+from pyartcd.runtime import GroupRuntime, Runtime
+from pyartcd.signatory import AsyncSignatory, SigstoreSignatory
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
@@ -56,13 +65,18 @@ class PromotePipeline:
     async def create(cls, *args, **kwargs):
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
-            self.runtime.config, self.runtime.working_dir,
-            self.group, self.assembly,
+            self.runtime.config,
+            self.runtime.working_dir,
+            self.group,
+            self.assembly,
         )
         return self
 
     def __init__(
-        self, runtime: Runtime, group: str, assembly: str,
+        self,
+        runtime: Runtime,
+        group: str,
+        assembly: str,
         skip_blocker_bug_check: bool = False,
         skip_attached_bug_check: bool = False,
         skip_image_list: bool = False,
@@ -72,7 +86,8 @@ class PromotePipeline:
         skip_cincinnati_prs: bool = False,
         skip_ota_notification: bool = False,
         permit_overwrite: bool = False,
-        no_multi: bool = False, multi_only: bool = False,
+        no_multi: bool = False,
+        multi_only: bool = False,
         skip_mirror_binaries: bool = False,
         use_multi_hack: bool = False,
         signing_env: Optional[str] = None,
@@ -183,7 +198,9 @@ class PromotePipeline:
             # Get previous list
             upgrades_str: Optional[str] = group_config.get("upgrades")
             if upgrades_str is None and assembly_type not in [AssemblyTypes.CUSTOM]:
-                raise ValueError(f"Group config for assembly {self.assembly} is missing the required `upgrades` field. If no upgrade edges are expected, please explicitly set the `upgrades` field to empty string.")
+                raise ValueError(
+                    f"Group config for assembly {self.assembly} is missing the required `upgrades` field. If no upgrade edges are expected, please explicitly set the `upgrades` field to empty string."
+                )
             previous_list = list(map(lambda s: s.strip(), upgrades_str.split(","))) if upgrades_str else []
             # Ensure all versions in previous list are valid semvers.
             if any(map(lambda version: not VersionInfo.is_valid(version), previous_list)):
@@ -310,8 +327,7 @@ class PromotePipeline:
 
                     if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                         await self._slack_client.say_in_thread(
-                            "Attached bugs have some issues. Permitting since "
-                            f"assembly is of type {assembly_type}",
+                            "Attached bugs have some issues. Permitting since " f"assembly is of type {assembly_type}",
                         )
                         await self._slack_client.say_in_thread(str(err))
                     else:
@@ -328,8 +344,13 @@ class PromotePipeline:
                 metadata["url"] = errata_url
             tag_stable = assembly_type in [AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW]
             release_infos = await self.promote(
-                assembly_type, release_name, arches, previous_list, next_list,
-                metadata, tag_stable=tag_stable,
+                assembly_type,
+                release_name,
+                arches,
+                previous_list,
+                next_list,
+                metadata,
+                tag_stable=tag_stable,
             )
             pullspecs = {arch: release_info["image"] for arch, release_info in release_infos.items()}
             pullspecs_repr = ", ".join(f"{arch}: {pullspecs[arch]}" for arch in sorted(pullspecs.keys()))
@@ -387,8 +408,7 @@ class PromotePipeline:
                     # Wait for release images to be accepted by the release controllers
                     self._logger.info("Waiting for release images for %s to be accepted by the release controller...", release_name)
                     await self._slack_client.say_in_thread(
-                        f"Release {release_name} has been tagged on release "
-                        "controller, but is not accepted yet. Waiting.",
+                        f"Release {release_name} has been tagged on release " "controller, but is not accepted yet. Waiting.",
                     )
                     tasks = []
                     for arch, release_info in release_infos.items():
@@ -442,7 +462,10 @@ class PromotePipeline:
 
                 # extract client binaries
                 client_type = "ocp"
-                if (assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')) or assembly_type in [AssemblyTypes.CUSTOM, AssemblyTypes.PREVIEW]:
+                if (assembly_type == AssemblyTypes.CANDIDATE and not self.assembly.startswith('rc.')) or assembly_type in [
+                    AssemblyTypes.CUSTOM,
+                    AssemblyTypes.PREVIEW,
+                ]:
                     client_type = "ocp-dev-preview"
                 message_digests = []
                 if not self.skip_mirror_binaries:
@@ -568,7 +591,9 @@ class PromotePipeline:
         mail = MailService.from_config(self.runtime.config)
         mail.send_mail(
             self.runtime.config["email"]["promote_complete_recipients"],
-            f"Success building release payload: {name}", content, dry_run=self.runtime.dry_run,
+            f"Success building release payload: {name}",
+            content,
+            dry_run=self.runtime.dry_run,
         )
 
     def _reraise_if_not_permitted(self, err: VerificationError, code: str, permits: Iterable[Dict]):
@@ -602,8 +627,7 @@ class PromotePipeline:
         return message_digests
 
     async def sign_artifacts(self, release_name: str, client_type: str, release_infos: Dict, message_digests: List[str]):
-        """ Signs artifacts and publishes signature files to mirror
-        """
+        """Signs artifacts and publishes signature files to mirror"""
         if not self.signing_env:
             raise ValueError("--signing-env is missing")
         cert_file = os.environ["SIGNING_CERT"]
@@ -656,7 +680,7 @@ class PromotePipeline:
             self._logger.warning("[DRY RUN] Would have published signatures.")
 
     async def _sign_json_digest(self, signatory: AsyncSignatory, release_name: str, pullspec: str, digest: str, sig_path: Path):
-        """ Sign a JSON digest claim
+        """Sign a JSON digest claim
         :param signatory: Signatory
         :param pullspec: Pullspec of the payload
         :param digest: SHA256 digest of the payload
@@ -674,7 +698,7 @@ class PromotePipeline:
             )
 
     async def _sign_message_digest(self, signatory: AsyncSignatory, release_name, input_path: Path, sig_path: Path):
-        """ Sign a message digest
+        """Sign a message digest
         :param signatory: Signatory
         :param input_path: Path to the message digest file
         :param sig_path: Where to save the signature file
@@ -693,22 +717,64 @@ class PromotePipeline:
         tasks = []
         # mirror to S3
         mirror_release_path = "release" if env == "prod" else "test"
-        tasks.append(util.mirror_to_s3(local_dir, f"s3://art-srv-enterprise/pub/openshift-v4/signatures/openshift/{mirror_release_path}/", exclude="*", include="sha256=*", dry_run=self.runtime.dry_run))
+        tasks.append(
+            util.mirror_to_s3(
+                local_dir,
+                f"s3://art-srv-enterprise/pub/openshift-v4/signatures/openshift/{mirror_release_path}/",
+                exclude="*",
+                include="sha256=*",
+                dry_run=self.runtime.dry_run,
+            )
+        )
         if mirror_release_path == "release":
-            tasks.append(util.mirror_to_s3(local_dir, "s3://art-srv-enterprise/pub/openshift-v4/signatures/openshift-release-dev/ocp-release/", exclude="*", include="sha256=*", dry_run=self.runtime.dry_run))
-            tasks.append(util.mirror_to_s3(local_dir, "s3://art-srv-enterprise/pub/openshift-v4/signatures/openshift-release-dev/ocp-release-nightly/", exclude="*", include="sha256=*", dry_run=self.runtime.dry_run))
+            tasks.append(
+                util.mirror_to_s3(
+                    local_dir,
+                    "s3://art-srv-enterprise/pub/openshift-v4/signatures/openshift-release-dev/ocp-release/",
+                    exclude="*",
+                    include="sha256=*",
+                    dry_run=self.runtime.dry_run,
+                )
+            )
+            tasks.append(
+                util.mirror_to_s3(
+                    local_dir,
+                    "s3://art-srv-enterprise/pub/openshift-v4/signatures/openshift-release-dev/ocp-release-nightly/",
+                    exclude="*",
+                    include="sha256=*",
+                    dry_run=self.runtime.dry_run,
+                )
+            )
 
         # mirror to google storage
         google_storage_path = "official" if env == "prod" else "test-1"
-        tasks.append(util.mirror_to_google_cloud(f"{local_dir}/*", f"gs://openshift-release/{google_storage_path}/signatures/openshift/release", dry_run=self.runtime.dry_run))
-        tasks.append(util.mirror_to_google_cloud(f"{local_dir}/*", f"gs://openshift-release/{google_storage_path}/signatures/openshift-release-dev/ocp-release", dry_run=self.runtime.dry_run))
-        tasks.append(util.mirror_to_google_cloud(f"{local_dir}/*", f"gs://openshift-release/{google_storage_path}/signatures/openshift-release-dev/ocp-release-nightly", dry_run=self.runtime.dry_run))
+        tasks.append(
+            util.mirror_to_google_cloud(
+                f"{local_dir}/*", f"gs://openshift-release/{google_storage_path}/signatures/openshift/release", dry_run=self.runtime.dry_run
+            )
+        )
+        tasks.append(
+            util.mirror_to_google_cloud(
+                f"{local_dir}/*",
+                f"gs://openshift-release/{google_storage_path}/signatures/openshift-release-dev/ocp-release",
+                dry_run=self.runtime.dry_run,
+            )
+        )
+        tasks.append(
+            util.mirror_to_google_cloud(
+                f"{local_dir}/*",
+                f"gs://openshift-release/{google_storage_path}/signatures/openshift-release-dev/ocp-release-nightly",
+                dry_run=self.runtime.dry_run,
+            )
+        )
 
         await asyncio.gather(*tasks)
 
     async def _publish_message_digest_signatures(self, local_dir: Union[str, Path]):
         # mirror to S3
-        await util.mirror_to_s3(local_dir, "s3://art-srv-enterprise/pub/openshift-v4/", exclude="*", include="*/sha256sum.txt.gpg", dry_run=self.runtime.dry_run)
+        await util.mirror_to_s3(
+            local_dir, "s3://art-srv-enterprise/pub/openshift-v4/", exclude="*", include="*/sha256sum.txt.gpg", dry_run=self.runtime.dry_run
+        )
 
     async def publish_client(self, base_to_mirror_dir: str, pullspec, release_name, build_arch, client_type):
         # Anything under this directory will be sync'd to the mirror
@@ -802,15 +868,16 @@ class PromotePipeline:
                 raise ValueError(f'Duplicate archive entries in {client_mirror_dir}/sha256sum.txt: {dupes}')
 
         # Publish the clients to our S3 bucket.
-        await util.mirror_to_s3(f"{base_to_mirror_dir}/{build_arch}", f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}", dry_run=self.runtime.dry_run)
+        await util.mirror_to_s3(
+            f"{base_to_mirror_dir}/{build_arch}", f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}", dry_run=self.runtime.dry_run
+        )
 
         await util.invalidate_cloudfront_cache("/pub/openshift-v4/clients/ocp-dev-preview/latest/*")
 
         return f"{build_arch}/clients/{client_type}/{release_name}/sha256sum.txt"
 
     async def sigstore_sign(self, release_name: str, release_infos: Dict):
-        """ Signs release and component images with sigstore/cosign which publishes to quay
-        """
+        """Signs release and component images with sigstore/cosign which publishes to quay"""
         CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
         signatory = SigstoreSignatory(
             logger=self._logger,
@@ -975,9 +1042,12 @@ class PromotePipeline:
         cmd = [
             "elliott",
             "change-state",
-            "-s", "QE",
-            "--from", "NEW_FILES",
-            "-a", str(advisory),
+            "-s",
+            "QE",
+            "--from",
+            "NEW_FILES",
+            "-a",
+            str(advisory),
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -998,15 +1068,19 @@ class PromotePipeline:
         if not match:
             raise IOError(f"Could determine whether this release has blocker bugs. Elliott printed unexpected message: {stdout}")
         if int(match[1]) != 0:
-            raise VerificationError(f"{int(match[1])} blocker Bug(s) found for release; do not proceed without resolving. See https://art-docs.engineering.redhat.com/release/4.y.z-stream/#handling-blocker-bugs. To permit this validation error, see https://art-docs.engineering.redhat.com/jenkins/build-promote-assembly-readme/#permit-certain-validation-failures. Elliott output: {stdout}")
+            raise VerificationError(
+                f"{int(match[1])} blocker Bug(s) found for release; do not proceed without resolving. See https://art-docs.engineering.redhat.com/release/4.y.z-stream/#handling-blocker-bugs. To permit this validation error, see https://art-docs.engineering.redhat.com/jenkins/build-promote-assembly-readme/#permit-certain-validation-failures. Elliott output: {stdout}"
+            )
 
     async def get_advisory_info(self, advisory: int) -> Dict:
         cmd = [
             "elliott",
             f"--group={self.group}",
             "get",
-            "--json", "-",
-            "--", f"{advisory}",
+            "--json",
+            "-",
+            "--",
+            f"{advisory}",
         ]
         async with self._elliott_lock:
             _, stdout, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
@@ -1052,7 +1126,9 @@ class PromotePipeline:
             raise VerificationError(f"Advisory {advisory_info['id']} should not be in {advisory_info['status']} state.")
 
     async def verify_attached_bugs(
-        self, advisories: Iterable[int], no_verify_blocking_bugs: bool,
+        self,
+        advisories: Iterable[int],
+        no_verify_blocking_bugs: bool,
         verify_flaws: bool = True,
     ):
         advisories = list(advisories)
@@ -1073,11 +1149,16 @@ class PromotePipeline:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars, stdout=sys.stderr)
 
     async def promote(
-        self, assembly_type: AssemblyTypes, release_name: str, arches: List[str],
-        previous_list: List[str], next_list: List[str],
-        metadata: Optional[Dict], tag_stable: bool,
+        self,
+        assembly_type: AssemblyTypes,
+        release_name: str,
+        arches: List[str],
+        previous_list: List[str],
+        next_list: List[str],
+        metadata: Optional[Dict],
+        tag_stable: bool,
     ):
-        """ Promote all release payloads
+        """Promote all release payloads
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"]. Don't use "multi" in this parameter.
@@ -1090,16 +1171,24 @@ class PromotePipeline:
         tasks = OrderedDict()
         if not self.no_multi and self._multi_enabled:
             tasks["heterogeneous"] = self._promote_heterogeneous_payload(
-                assembly_type, release_name, arches,
-                previous_list, next_list,
-                metadata, tag_stable=tag_stable,
+                assembly_type,
+                release_name,
+                arches,
+                previous_list,
+                next_list,
+                metadata,
+                tag_stable=tag_stable,
             )
         else:
             self._logger.warning("Multi/heterogeneous payload is disabled.")
         if not self.multi_only:
             tasks["homogeneous"] = self._promote_homogeneous_payloads(
-                assembly_type, release_name, arches,
-                previous_list, next_list, metadata,
+                assembly_type,
+                release_name,
+                arches,
+                previous_list,
+                next_list,
+                metadata,
                 tag_stable=tag_stable,
             )
         else:
@@ -1117,11 +1206,16 @@ class PromotePipeline:
         return return_value
 
     async def _promote_homogeneous_payloads(
-        self, assembly_type: AssemblyTypes, release_name: str, arches: List[str],
-        previous_list: List[str], next_list: List[str], metadata: Optional[Dict],
+        self,
+        assembly_type: AssemblyTypes,
+        release_name: str,
+        arches: List[str],
+        previous_list: List[str],
+        next_list: List[str],
+        metadata: Optional[Dict],
         tag_stable: bool,
     ):
-        """ Promote homogeneous payloads for specified architectures
+        """Promote homogeneous payloads for specified architectures
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arches: List of architecture names. e.g. ["x86_64", "s390x"].
@@ -1135,17 +1229,28 @@ class PromotePipeline:
         release_infos = []
         for arch in arches:
             result = await self._promote_arch(
-                assembly_type, release_name, arch, previous_list, next_list, metadata,
+                assembly_type,
+                release_name,
+                arch,
+                previous_list,
+                next_list,
+                metadata,
                 tag_stable=tag_stable,
             )
             release_infos.append(result)
         return dict(zip(arches, release_infos))
 
     async def _promote_arch(
-        self, assembly_type: AssemblyTypes, release_name: str, arch: str, previous_list: List[str],
-        next_list: List[str], metadata: Optional[Dict], tag_stable: bool,
+        self,
+        assembly_type: AssemblyTypes,
+        release_name: str,
+        arch: str,
+        previous_list: List[str],
+        next_list: List[str],
+        metadata: Optional[Dict],
+        tag_stable: bool,
     ):
-        """ Promote an arch-specific homogeneous payload
+        """Promote an arch-specific homogeneous payload
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
         :param arch: Architecture name.
@@ -1183,8 +1288,14 @@ class PromotePipeline:
             reference_pullspec = None
             source_image_stream = is_name
             await self.build_release_image(
-                release_name, brew_arch, previous_list, next_list, metadata,
-                dest_image_pullspec, reference_pullspec, source_image_stream,
+                release_name,
+                brew_arch,
+                previous_list,
+                next_list,
+                metadata,
+                dest_image_pullspec,
+                reference_pullspec,
+                source_image_stream,
                 keep_manifest_list=False,
             )
             self._logger.info("Release image for %s %s has been built and pushed to %s", release_name, arch, dest_image_pullspec)
@@ -1213,7 +1324,11 @@ class PromotePipeline:
                 }
                 major, minor = isolate_major_minor_in_group(self.group)
                 go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
-                dest_image_info["references"]["metadata"] = {"annotations": {"release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"}}
+                dest_image_info["references"]["metadata"] = {
+                    "annotations": {
+                        "release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
+                    }
+                }
 
         if not tag_stable:
             self._logger.info("Release image %s will not appear on the release controller.", dest_image_pullspec)
@@ -1228,7 +1343,12 @@ class PromotePipeline:
         if ist:
             ist_digest = ist["image"]["dockerImageReference"].split("@")[-1]
             if ist_digest == dest_image_info["digest"]:
-                self._logger.info("ImageStreamTag %s already exists with digest %s matching release image %s.", namespace_image_stream_tag, ist_digest, dest_image_pullspec)
+                self._logger.info(
+                    "ImageStreamTag %s already exists with digest %s matching release image %s.",
+                    namespace_image_stream_tag,
+                    ist_digest,
+                    dest_image_pullspec,
+                )
                 return dest_image_info
             message = f"ImageStreamTag {namespace_image_stream_tag} already exists, but it has a different digest ({ist_digest}) from the expected release image {dest_image_pullspec} ({dest_image_info['digest']})."
             if not self.permit_overwrite:
@@ -1243,11 +1363,16 @@ class PromotePipeline:
         return dest_image_info
 
     async def _promote_heterogeneous_payload(
-        self, assembly_type: AssemblyTypes, release_name: str,
-        include_arches: List[str], previous_list: List[str], next_list: List[str],
-        metadata: Optional[Dict], tag_stable: bool,
+        self,
+        assembly_type: AssemblyTypes,
+        release_name: str,
+        include_arches: List[str],
+        previous_list: List[str],
+        next_list: List[str],
+        metadata: Optional[Dict],
+        tag_stable: bool,
     ):
-        """ Promote heterogeneous payload.
+        """Promote heterogeneous payload.
         The heterogeneous payload itself is a manifest list, which include references to arch-specific heterogeneous payloads.
         :param assembly_type: Assembly type
         :param release_name: Release name. e.g. 4.11.0-rc.6
@@ -1298,7 +1423,9 @@ class PromotePipeline:
             source_manifest_list = await self.get_image_info(multi_ist["from"]["name"], raise_if_not_found=True)
             if source_manifest_list["mediaType"] != "application/vnd.docker.distribution.manifest.list.v2+json":
                 raise ValueError(f'Pullspec {multi_ist["from"]["name"]} doesn\'t point to a valid manifest list.')
-            source_repo = multi_ist["from"]["name"].rsplit(':', 1)[0].rsplit('@', 1)[0]  # quay.io/openshift-release-dev/ocp-release@sha256:deadbeef -> quay.io/openshift-release-dev/ocp-release
+            source_repo = (
+                multi_ist["from"]["name"].rsplit(':', 1)[0].rsplit('@', 1)[0]
+            )  # quay.io/openshift-release-dev/ocp-release@sha256:deadbeef -> quay.io/openshift-release-dev/ocp-release
             # dest_manifest_list is the final top-level manifest-list
             dest_manifest_list = {
                 "image": dest_image_pullspec,
@@ -1315,21 +1442,29 @@ class PromotePipeline:
                 arch_payload_source = f"{source_repo}@{manifest['digest']}"
                 arch_payload_dest = f"{dest_image_pullspec}-{brew_arch}"
                 # Add an entry to the top-level manifest list
-                dest_manifest_list["manifests"].append({
-                    'image': arch_payload_dest,
-                    'platform': {
-                        'os': 'linux',
-                        'architecture': arch,
-                    },
-                })
+                dest_manifest_list["manifests"].append(
+                    {
+                        'image': arch_payload_dest,
+                        'platform': {
+                            'os': 'linux',
+                            'architecture': arch,
+                        },
+                    }
+                )
                 # Add task to build arch-specific heterogeneous payload
                 metadata = metadata.copy() if metadata else {}
                 metadata['release.openshift.io/architecture'] = 'multi'
                 build_tasks.append(
                     self.build_release_image(
-                        release_name, brew_arch, previous_list, next_list,
-                        metadata, arch_payload_dest, arch_payload_source,
-                        None, keep_manifest_list=True,
+                        release_name,
+                        brew_arch,
+                        previous_list,
+                        next_list,
+                        metadata,
+                        arch_payload_dest,
+                        arch_payload_source,
+                        None,
+                        keep_manifest_list=True,
                     ),
                 )
 
@@ -1398,7 +1533,12 @@ class PromotePipeline:
                 auth_opt = f"--docker-cfg={auth_file}"
 
         cmd = [
-            "manifest-tool", auth_opt, "push", "from-spec", "--", f"{dest_manifest_list_path}",
+            "manifest-tool",
+            auth_opt,
+            "push",
+            "from-spec",
+            "--",
+            f"{dest_manifest_list_path}",
         ]
 
         if self.runtime.dry_run:
@@ -1408,9 +1548,15 @@ class PromotePipeline:
         await exectools.cmd_assert_async(cmd, env=env, stdout=sys.stderr)
 
     async def build_release_image(
-        self, release_name: str, arch: str, previous_list: List[str], next_list: List[str],
-        metadata: Optional[Dict], dest_image_pullspec: str,
-        source_image_pullspec: Optional[str], source_image_stream: Optional[str],
+        self,
+        release_name: str,
+        arch: str,
+        previous_list: List[str],
+        next_list: List[str],
+        metadata: Optional[Dict],
+        dest_image_pullspec: str,
+        source_image_pullspec: Optional[str],
+        source_image_stream: Optional[str],
         keep_manifest_list: bool,
     ):
         if bool(source_image_pullspec) + bool(source_image_stream) != 1:
@@ -1449,7 +1595,9 @@ class PromotePipeline:
             reraise=True,
             stop=stop_after_attempt(10),  # retry 10 times
             wait=wait_fixed(30),  # wait for 30 seconds between retries
-        )(exectools.cmd_gather_async)(cmd, env=env)
+        )(
+            exectools.cmd_gather_async
+        )(cmd, env=env)
 
     @staticmethod
     async def get_image_stream(namespace: str, image_stream: str):
@@ -1505,7 +1653,8 @@ class PromotePipeline:
                         'architecture': manifest['config']['architecture'],
                         'os': manifest['config']['os'],
                     },
-                } for manifest in info
+                }
+                for manifest in info
             ],
         }
 
@@ -1585,14 +1734,20 @@ class PromotePipeline:
                 err = retry_state.outcome.exception()
                 self._logger.warning(
                     'Error communicating with %s release controller. Will check again in %s seconds. %s: %s',
-                    arch, retry_state.next_action.sleep, type(err).__name__, err,
+                    arch,
+                    retry_state.next_action.sleep,
+                    type(err).__name__,
+                    err,
                 )
             else:
                 self._logger.log(
                     logging.INFO if retry_state.attempt_number < 1 else logging.WARNING,
                     'Release payload for "%s" arch is in the "%s" phase. Will check again in %s seconds.',
-                    arch, retry_state.outcome.result(), retry_state.next_action.sleep,
+                    arch,
+                    retry_state.outcome.result(),
+                    retry_state.next_action.sleep,
                 )
+
         return await retry(
             stop=(stop_after_attempt(144)),  # wait for 10m * 144 = 1440m = 24 hours
             wait=wait_fixed(600),  # wait for 10 minutes between retries
@@ -1626,7 +1781,14 @@ class PromotePipeline:
     async def send_image_list_email(self, release_name: str, advisory: int, archive_dir: Path):
         content = await self.get_advisory_image_list(advisory)
         subject = f"OCP {release_name} Image List"
-        return await to_thread(self._mail.send_mail, self.runtime.config["email"]["promote_image_list_recipients"], subject, content, archive_dir=archive_dir, dry_run=self.runtime.dry_run)
+        return await to_thread(
+            self._mail.send_mail,
+            self.runtime.config["email"]["promote_image_list_recipients"],
+            subject,
+            content,
+            archive_dir=archive_dir,
+            dry_run=self.runtime.dry_run,
+        )
 
     def handle_qe_notification(self, release_jira: str, release_name: str, impetus_advisories: Dict[str, int]):
         """
@@ -1709,9 +1871,7 @@ class PromotePipeline:
         subject = f"OCP {release_name} advisories and nightlies"
         content = f"This is the current set of advisories for {release_name}:\n"
         for impetus, advisory in advisories.items():
-            content += (
-                f"- {impetus}: https://errata.devel.redhat.com/advisory/{advisory}\n"
-            )
+            content += f"- {impetus}: https://errata.devel.redhat.com/advisory/{advisory}\n"
         if 'microshift' in advisories.keys():
             content += (
                 "\n Note: Microshift advisory gets populated with build and bugs after the release payload has "
@@ -1722,8 +1882,10 @@ class PromotePipeline:
             "\nThe nightlies used as reference for this release can be found in openshift-eng/ocp-build-data "
             "releases.yml file (in the corresponding release branch)\n"
         )
-        content += f"Its definition is provided by the assembly found under key '{self.assembly}' in " \
-                   f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
+        content += (
+            f"Its definition is provided by the assembly found under key '{self.assembly}' in "
+            f"{constants.OCP_BUILD_DATA_URL}/blob/{self.group}/releases.yml\n"
+        )
         content += f"\nJIRA ticket: {jira_link}\n"
         content += f"\nAdvisory dashboard: https://art-dash.engineering.redhat.com/dashboard/release/{self.group} \n"
         content += "\nThanks.\n"
@@ -1732,21 +1894,20 @@ class PromotePipeline:
         mail = MailService.from_config(self.runtime.config)
         mail.send_mail(
             self.runtime.config["email"][f"qe_notification_recipients_ocp{release_version[0]}"],
-            subject, content, archive_dir=email_dir, dry_run=self.runtime.dry_run,
+            subject,
+            content,
+            archive_dir=email_dir,
+            dry_run=self.runtime.dry_run,
         )
 
     async def create_cincinnati_prs(self, assembly_type, release_info):
-        """ Create Cincinnati PRs for the release.
-        """
+        """Create Cincinnati PRs for the release."""
         candidate_pr_note = ""
         justifications = release_info["justifications"]
         if justifications:
             candidate_pr_note = "\n".join(justifications)
 
-        from_releases = [
-            arch_info["from_release"].split(":")[-1]
-            for arch_info in release_info["content"].values() if "from_release" in arch_info
-        ]
+        from_releases = [arch_info["from_release"].split(":")[-1] for arch_info in release_info["content"].values() if "from_release" in arch_info]
         advisory_id = 0
         if "advisory" in release_info and release_info["advisory"]:
             advisory_id = release_info["advisory"]
@@ -1757,7 +1918,10 @@ class PromotePipeline:
         extraSlackComment = ""
         if advisory_id != 0:
             internal_errata_url = f"https://errata.devel.redhat.com/advisory/{advisory_id}"
-            pr_messages = f"Please merge immediately. This PR does not need to wait for an advisory to ship, but the associated advisory is {internal_errata_url} ." + candidate_pr_note
+            pr_messages = (
+                f"Please merge immediately. This PR does not need to wait for an advisory to ship, but the associated advisory is {internal_errata_url} ."
+                + candidate_pr_note
+            )
             extraSlackComment = "automatically approved"
         elif assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
             pr_messages = "This is a release candidate. There is no advisory associated. \nPlease merge immediately." + candidate_pr_note
@@ -1804,11 +1968,13 @@ class PromotePipeline:
         :param version: Eg. 4.15.10
         """
         pipeline_name = "doomsday-pipeline"
-        cmd = f"tkn pipeline start {pipeline_name} " \
-              f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} " \
-              f"--param major={self.group.split('-')[-1]} " \
-              f"--param version={self.assembly} " \
-              "--pipeline-timeout 4h"
+        cmd = (
+            f"tkn pipeline start {pipeline_name} "
+            f"--kubeconfig {os.environ['ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG']} "
+            f"--param major={self.group.split('-')[-1]} "
+            f"--param version={self.assembly} "
+            "--pipeline-timeout 4h"
+        )
 
         env = os.environ.copy()
         rc, _, _ = await exectools.cmd_gather_async(cmd, env=env)
@@ -1821,47 +1987,61 @@ class PromotePipeline:
 
 @cli.command("promote")
 @click.option(
-    "-g", "--group", metavar='NAME', required=True,
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option(
-    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    "--assembly",
+    metavar="ASSEMBLY_NAME",
+    required=True,
     help="The name of an assembly. e.g. 4.9.1",
 )
 @click.option(
-    "--skip-blocker-bug-check", is_flag=True,
+    "--skip-blocker-bug-check",
+    is_flag=True,
     help="Skip blocker bug check. Note block bugs are never checked for CUSTOM and CANDIDATE releases.",
 )
 @click.option(
-    "--skip-attached-bug-check", is_flag=True,
+    "--skip-attached-bug-check",
+    is_flag=True,
     help="Skip attached bug check. Note attached bugs are never checked for CUSTOM and CANDIDATE releases.",
 )
 @click.option(
-    "--skip-image-list", is_flag=True,
+    "--skip-image-list",
+    is_flag=True,
     help="Do not gather an advisory image list for docs.",
 )
 @click.option(
-    "--skip-build-microshift", is_flag=True,
+    "--skip-build-microshift",
+    is_flag=True,
     help="Do not build microshift rpm",
 )
 @click.option(
-    "--skip-signing", is_flag=True,
+    "--skip-signing",
+    is_flag=True,
     help="Do not sign artifacts (legacy signing)",
 )
 @click.option(
-    "--skip-sigstore", is_flag=True,
+    "--skip-sigstore",
+    is_flag=True,
     help="Do not sign using the newer sigstore method.",
 )
 @click.option(
-    "--skip-cincinnati-prs", is_flag=True,
+    "--skip-cincinnati-prs",
+    is_flag=True,
     help="Do not create Cincinnati PRs",
 )
 @click.option(
-    "--skip-ota-notification", is_flag=True,
+    "--skip-ota-notification",
+    is_flag=True,
     help="Do not send OTA notification on slack",
 )
 @click.option(
-    "--permit-overwrite", is_flag=True,
+    "--permit-overwrite",
+    is_flag=True,
     help="DANGER! Allows the pipeline to overwrite an existing payload.",
 )
 @click.option("--no-multi", is_flag=True, help="Do not promote a multi-arch/heterogeneous payload.")
@@ -1869,28 +2049,48 @@ class PromotePipeline:
 @click.option("--skip-mirror-binaries", is_flag=True, help="Do not mirror client binaries to mirror")
 @click.option("--use-multi-hack", is_flag=True, help="Add '-multi' to heterogeneous payload name to workaround a Cincinnati issue")
 @click.option(
-    "--signing-env", type=click.Choice(("prod", "stage")),
+    "--signing-env",
+    type=click.Choice(("prod", "stage")),
     help="Signing server environment: prod or stage",
 )
 @pass_runtime
 @click_coroutine
 async def promote(
-    runtime: Runtime, group: str, assembly: str,
-    skip_blocker_bug_check: bool, skip_attached_bug_check: bool,
+    runtime: Runtime,
+    group: str,
+    assembly: str,
+    skip_blocker_bug_check: bool,
+    skip_attached_bug_check: bool,
     skip_image_list: bool,
     skip_build_microshift: bool,
     skip_signing: bool,
     skip_sigstore: bool,
     skip_cincinnati_prs: bool,
     skip_ota_notification: bool,
-    permit_overwrite: bool, no_multi: bool, multi_only: bool,
+    permit_overwrite: bool,
+    no_multi: bool,
+    multi_only: bool,
     skip_mirror_binaries: bool,
     use_multi_hack: bool,
     signing_env: Optional[str],
 ):
     pipeline = await PromotePipeline.create(
-        runtime, group, assembly, skip_blocker_bug_check, skip_attached_bug_check, skip_image_list,
-        skip_build_microshift, skip_signing, skip_sigstore, skip_cincinnati_prs, skip_ota_notification,
-        permit_overwrite, no_multi, multi_only, skip_mirror_binaries, use_multi_hack, signing_env,
+        runtime,
+        group,
+        assembly,
+        skip_blocker_bug_check,
+        skip_attached_bug_check,
+        skip_image_list,
+        skip_build_microshift,
+        skip_signing,
+        skip_sigstore,
+        skip_cincinnati_prs,
+        skip_ota_notification,
+        permit_overwrite,
+        no_multi,
+        multi_only,
+        skip_mirror_binaries,
+        use_multi_hack,
+        signing_env,
     )
     await pipeline.run()

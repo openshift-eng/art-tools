@@ -2,8 +2,8 @@ import asyncio
 import json
 
 import click
-
 from artcommonlib import exectools
+
 from pyartcd import util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
@@ -11,8 +11,11 @@ from pyartcd.runtime import Runtime
 
 class ImagesHealthPipeline:
     def __init__(
-        self, runtime: Runtime, version: str,
-        send_to_release_channel: bool, send_to_forum_ocp_art: bool,
+        self,
+        runtime: Runtime,
+        version: str,
+        send_to_release_channel: bool,
+        send_to_forum_ocp_art: bool,
     ):
         self.runtime = runtime
         self.doozer_working = self.runtime.working_dir / "doozer_working"
@@ -51,10 +54,7 @@ class ImagesHealthPipeline:
                 await slack_client.say(f':white_check_mark: [{engine}] All images are healthy for openshift-{self.version}')
             return
 
-        msg = (
-            f':alert: [{engine}] There are some issues to look into for openshift-{self.version}. '
-            f'{len(engine_report)} components have failed!'
-        )
+        msg = f':alert: [{engine}] There are some issues to look into for openshift-{self.version}. ' f'{len(engine_report)} components have failed!'
 
         report = ''
         for image_name, concern in engine_report.items():
@@ -75,11 +75,13 @@ class ImagesHealthPipeline:
 @cli.command('images-health')
 @click.option('--version', required=True, help='OCP version to scan')
 @click.option(
-    '--send-to-release-channel', is_flag=True,
+    '--send-to-release-channel',
+    is_flag=True,
     help='If true, send output to #art-release-4-<version>',
 )
 @click.option(
-    '--send-to-forum-ocp-art', is_flag=True,
+    '--send-to-forum-ocp-art',
+    is_flag=True,
     help='"If true, send notification to #forum-ocp-art',
 )
 @pass_runtime

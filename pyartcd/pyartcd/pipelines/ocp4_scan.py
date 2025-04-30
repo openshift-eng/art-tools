@@ -1,12 +1,11 @@
 import os
 from typing import Optional
-import yaml
 
 import click
-
+import yaml
 from artcommonlib import exectools
-from pyartcd import constants, util, locks
-from pyartcd import jenkins
+
+from pyartcd import constants, jenkins, locks, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
@@ -112,9 +111,11 @@ class Ocp4ScanPipeline:
         """
 
         # Run doozer scan-sources
-        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} ' \
-              f'--group=openshift-{self.version} ' \
-              f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]} --rebase-priv'
+        cmd = (
+            f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} '
+            f'--group=openshift-{self.version} '
+            f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]} --rebase-priv'
+        )
         if self.runtime.dry_run:
             cmd += ' --dry-run'
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
@@ -152,8 +153,7 @@ class Ocp4ScanPipeline:
 
         slack_client = self.runtime.new_slack_client()
         slack_client.bind_channel(self.version)
-        message = \
-            f':warning: @release-artists, some issues have arisen during scan-sources for *{self.version}* :warning:'
+        message = f':warning: @release-artists, some issues have arisen during scan-sources for *{self.version}* :warning:'
         slack_response = await slack_client.say(message)
 
         slack_thread = slack_response["message"]["ts"]
@@ -165,9 +165,11 @@ class Ocp4ScanPipeline:
         Check for RHCOS inconsistencies by calling doozer inspect:stream INCONSISTENT_RHCOS_RPMS
         """
 
-        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} ' \
-              f'--group openshift-{self.version} ' \
-              f'inspect:stream INCONSISTENT_RHCOS_RPMS --strict'
+        cmd = (
+            f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} '
+            f'--group openshift-{self.version} '
+            f'inspect:stream INCONSISTENT_RHCOS_RPMS --strict'
+        )
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
             self.logger.info(out)

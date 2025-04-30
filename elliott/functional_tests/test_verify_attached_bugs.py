@@ -1,5 +1,5 @@
-import unittest
 import subprocess
+import unittest
 
 from functional_tests import constants
 
@@ -134,8 +134,7 @@ class VerifyBugs(unittest.TestCase):
 
     def test_verify_attached_bugs_wrong(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
             capture_output=True,
             encoding='utf-8',
         )

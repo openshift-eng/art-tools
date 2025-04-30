@@ -2,13 +2,12 @@ import logging
 
 import click
 import yaml
+from artcommonlib import exectools
 
-from pyartcd import util, jenkins, locks
-from pyartcd import constants
-from pyartcd.cli import cli, pass_runtime, click_coroutine
+from pyartcd import constants, jenkins, locks, util
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
-from artcommonlib import exectools
 
 
 class Ocp4ScanPipeline:
@@ -98,10 +97,12 @@ class Ocp4ScanPipeline:
         ]
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
-        cmd.extend([
-            'beta:config:konflux:scan-sources',
-            '--yaml',
-        ])
+        cmd.extend(
+            [
+                'beta:config:konflux:scan-sources',
+                '--yaml',
+            ]
+        )
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
@@ -120,15 +121,20 @@ class Ocp4ScanPipeline:
 @click.option('--version', required=True, help='OCP version to scan')
 @click.option('--assembly', required=False, default='stream', help='Assembly to scan for')
 @click.option(
-    '--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
+    '--data-path',
+    required=False,
+    default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
 @click.option(
-    '--data-gitref', required=False, default='',
+    '--data-gitref',
+    required=False,
+    default='',
     help='Doozer data path git [branch / tag / sha] to use',
 )
 @click.option(
-    '--image-list', required=False,
+    '--image-list',
+    required=False,
     help='Comma/space-separated list to of images to scan, empty to scan all',
 )
 @pass_runtime

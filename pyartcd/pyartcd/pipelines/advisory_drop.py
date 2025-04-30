@@ -1,15 +1,19 @@
-import click
 import os
-from pyartcd.runtime import Runtime
+
+import click
 from artcommonlib import exectools
+
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.runtime import Runtime
 
 
 @cli.command('advisory-drop')
 @click.option('--group', required=True, help='OCP group')
 @click.option('--advisory', required=True, help='Advisory number')
 @click.option(
-    '--comment', required=False, default="This bug will be dropped from current advisory because the advisory will also be dropped and not going to be shipped.",
+    '--comment',
+    required=False,
+    default="This bug will be dropped from current advisory because the advisory will also be dropped and not going to be shipped.",
     help='Comment will add to the bug attached on the advisory to explain the reason',
 )
 @pass_runtime
@@ -18,20 +22,27 @@ async def advisory_drop(runtime: Runtime, group: str, advisory: str, comment: st
     # repair-bugs
     cmd = [
         'elliott',
-        '--group', group,
+        '--group',
+        group,
         'repair-bugs',
-        '--advisory', advisory,
+        '--advisory',
+        advisory,
         '--auto',
-        '--comment', comment,
+        '--comment',
+        comment,
         '--close-placeholder',
-        '--from', 'RELEASE_PENDING',
-        '--to', 'VERIFIED',
+        '--from',
+        'RELEASE_PENDING',
+        '--to',
+        'VERIFIED',
     ]
     await exectools.cmd_assert_async(cmd, env=os.environ.copy())
     # drop advisory
     cmd = [
         'elliott',
-        '--group', group,
-        'advisory-drop', advisory,
+        '--group',
+        group,
+        'advisory-drop',
+        advisory,
     ]
     await exectools.cmd_assert_async(cmd, env=os.environ.copy())

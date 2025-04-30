@@ -1,31 +1,33 @@
 import datetime
+import fnmatch
 import io
 import pathlib
 import re
-import fnmatch
 import sys
 import urllib.parse
-import dateutil.parser
-import requests
 from enum import Enum
 from typing import Dict, List, NamedTuple, Optional, Tuple, cast
-from defusedxml import ElementTree
-from dockerfile_parse import DockerfileParser
-from tenacity import (
-    retry, retry_if_exception_type, stop_after_attempt,
-    wait_fixed,
-)
 
+import dateutil.parser
+import doozerlib
+import requests
 from artcommonlib import exectools
 from artcommonlib.assembly import assembly_metadata_config
-from artcommonlib.pushd import Dir
-from artcommonlib.model import Model
-from artcommonlib.metadata import MetadataBase
-import doozerlib
 from artcommonlib.brew import BuildStates
+from artcommonlib.metadata import MetadataBase
+from artcommonlib.model import Model
+from artcommonlib.pushd import Dir
+from defusedxml import ElementTree
+from dockerfile_parse import DockerfileParser
 from doozerlib.distgit import DistGitRepo, ImageDistGitRepo, RPMDistGitRepo
 from doozerlib.source_resolver import SourceResolver
 from doozerlib.util import isolate_git_commit_in_release
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 
 class CgitAtomFeedEntry(NamedTuple):
@@ -74,7 +76,11 @@ class RebuildHint(NamedTuple):
 
 class Metadata(MetadataBase):
     def __init__(
-        self, meta_type: str, runtime: "doozerlib.Runtime", data_obj: Dict, commitish: Optional[str] = None,
+        self,
+        meta_type: str,
+        runtime: "doozerlib.Runtime",
+        data_obj: Dict,
+        commitish: Optional[str] = None,
         prevent_cloning: Optional[bool] = False,
     ):
         """
@@ -138,8 +144,7 @@ class Metadata(MetadataBase):
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
                     self.logger.info(
-                        'Pinning upstream source to commit of assembly selected build '
-                        f'({build_obj["id"]}) -> commit {self.commitish}',
+                        'Pinning upstream source to commit of assembly selected build ' f'({build_obj["id"]}) -> commit {self.commitish}',
                     )
                 else:
                     # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.
@@ -177,7 +182,7 @@ class Metadata(MetadataBase):
         return [self.candidate_brew_tag()]
 
     def hotfix_brew_tags(self):
-        """ Returns "hotfix" Brew tags for this component.
+        """Returns "hotfix" Brew tags for this component.
         "Hotfix" tags are used to prevent garbage collection.
         """
         return [self.hotfix_brew_tag()]
@@ -257,7 +262,7 @@ class Metadata(MetadataBase):
         return entry_list
 
     def cgit_file_url(self, filename: str, commit_hash: Optional[str] = None, branch: Optional[str] = None) -> str:
-        """ Construct a cgit URL to a given file associated with the commit hash pushed to distgit
+        """Construct a cgit URL to a given file associated with the commit hash pushed to distgit
         :param filename: a relative path
         :param commit_hash: commit hash; None implies the current HEAD
         :param branch: branch name; None implies the branch specified in ocp-build-data
@@ -279,7 +284,7 @@ class Metadata(MetadataBase):
         return ret
 
     def fetch_cgit_file(self, filename, commit_hash: Optional[str] = None, branch: Optional[str] = None):
-        """ Retrieve the content of a cgit URL to a given file associated with the commit hash pushed to distgit
+        """Retrieve the content of a cgit URL to a given file associated with the commit hash pushed to distgit
         :param filename: a relative path
         :param commit_hash: commit hash; None implies the current HEAD
         :param branch: branch name; None implies the branch specified in ocp-build-data
@@ -288,7 +293,8 @@ class Metadata(MetadataBase):
         url = self.cgit_file_url(filename, commit_hash=commit_hash, branch=branch)
         try:
             req = exectools.retry(
-                3, lambda: urllib.request.urlopen(url),
+                3,
+                lambda: urllib.request.urlopen(url),
                 check_f=lambda req: req.code == 200,
             )
         except Exception as e:
@@ -313,8 +319,7 @@ class Metadata(MetadataBase):
         """
         Check whether this component has source content
         """
-        return "git" in self.config.content.source or \
-               "alias" in self.config.content.source
+        return "git" in self.config.content.source or "alias" in self.config.content.source
 
     def needs_rebuild(self):
         if self.config.targets:
@@ -348,9 +353,7 @@ class Metadata(MetadataBase):
         if not latest_build:
             return RebuildHint(
                 code=RebuildHintCode.NO_LATEST_BUILD,
-                reason=f'Component {component_name} has no latest build '
-                       f'for assembly {self.runtime.assembly} '
-                       f'and target {el_target}',
+                reason=f'Component {component_name} has no latest build ' f'for assembly {self.runtime.assembly} ' f'and target {el_target}',
             )
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
@@ -369,7 +372,9 @@ class Metadata(MetadataBase):
             distgit_commitish = self.runtime.downstream_commitish_overrides.get(self.distgit_key, None)
             atom_entries = self.cgit_atom_feed(commit_hash=distgit_commitish, branch=self.branch())
             if not atom_entries:
-                raise IOError(f'No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?')
+                raise IOError(
+                    f'No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?'
+                )
 
             latest_entry = atom_entries[0]  # Most recent commit's information
             dg_commit = latest_entry.id
@@ -400,7 +405,9 @@ class Metadata(MetadataBase):
                 )
 
             last_failed_build_creation = dateutil.parser.parse(last_failed_build['creation_time'])
-            last_failed_build_creation = last_failed_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC
+            last_failed_build_creation = last_failed_build_creation.replace(
+                tzinfo=datetime.timezone.utc
+            )  # If time lacks timezone info, interpret as UTC
             if last_failed_build_creation + datetime.timedelta(hours=rebuild_interval) > now:
                 return RebuildHint(
                     code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
@@ -417,8 +424,14 @@ class Metadata(MetadataBase):
 
         use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
         if "git" in self.config.content.source:
-            _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(self.config.content.source.git, self.runtime.stage, use_source_fallback_branch)
-        elif self.config.content.source.alias and self.runtime.group_config.sources and self.config.content.source.alias in self.runtime.group_config.sources:
+            _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(
+                self.config.content.source.git, self.runtime.stage, use_source_fallback_branch
+            )
+        elif (
+            self.config.content.source.alias
+            and self.runtime.group_config.sources
+            and self.config.content.source.alias in self.runtime.group_config.sources
+        ):
             # This is a new style alias with url information in group config
             source_details = self.runtime.group_config.sources[self.config.content.source.alias]
             _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(source_details, self.runtime.stage, use_source_fallback_branch)
@@ -539,11 +552,15 @@ class Metadata(MetadataBase):
             source_full_sha = out
 
         use_path = None
-        path_4x = upstream_source_path.joinpath('openshift-hack/images/hyperkube/Dockerfile.rhel')  # for >= 4.6: https://github.com/openshift/kubernetes/blob/fcff70a54d3f0bde19e879062e8f1489ba5d0cb0/openshift-hack/images/hyperkube/Dockerfile.rhel#L16
+        path_4x = upstream_source_path.joinpath(
+            'openshift-hack/images/hyperkube/Dockerfile.rhel'
+        )  # for >= 4.6: https://github.com/openshift/kubernetes/blob/fcff70a54d3f0bde19e879062e8f1489ba5d0cb0/openshift-hack/images/hyperkube/Dockerfile.rhel#L16
         if path_4x.exists():
             use_path = path_4x
 
-        path_3_11 = upstream_source_path.joinpath('images/hyperkube/Dockerfile')  # for 3.11: https://github.com/openshift/ose/blob/enterprise-3.11/images/hyperkube/Dockerfile
+        path_3_11 = upstream_source_path.joinpath(
+            'images/hyperkube/Dockerfile'
+        )  # for 3.11: https://github.com/openshift/ose/blob/enterprise-3.11/images/hyperkube/Dockerfile
         if not use_path and path_3_11.exists():
             use_path = path_3_11
 
@@ -583,13 +600,15 @@ class Metadata(MetadataBase):
             envs['KUBE_GIT_COMMIT'] = kube_commit_hash
             envs['KUBE_GIT_TREE_STATE'] = 'clean'
         elif self.name in ('openshift-enterprise-hyperkube', 'openshift', 'atomic-openshift'):
-            self.logger.critical(f'Unable to acquire KUBE vars for {self.name}. This must be fixed or platform addons can break: https://bugzilla.redhat.com/show_bug.cgi?id=1861097')
+            self.logger.critical(
+                f'Unable to acquire KUBE vars for {self.name}. This must be fixed or platform addons can break: https://bugzilla.redhat.com/show_bug.cgi?id=1861097'
+            )
             raise IOError(f'Unable to determine KUBE vars for {self.name}')
 
         return envs
 
     def is_rpm_exempt(self, rpm_name) -> Tuple[bool, Optional[str]]:
-        """ Check if the given rpm is exempt from scan_sources
+        """Check if the given rpm is exempt from scan_sources
         Pattern matching is done using glob pattern and fnmatch module
         https://docs.python.org/3/library/fnmatch.html
         :param rpm_name: package name to check

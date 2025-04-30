@@ -1,20 +1,24 @@
 import click
-
-from elliottlib import Runtime
+from elliottlib import Runtime, errata
 from elliottlib.cli.common import cli, find_default_advisory
-from elliottlib import errata
 
 pass_runtime = click.make_pass_decorator(Runtime)
 
 
 @cli.command('advisory-images', short_help='List of images in a given advisory')
 @click.option(
-    '--advisory', '-a', 'advisory',
-    type=int, default=None, metavar='ADVISORY',
+    '--advisory',
+    '-a',
+    'advisory',
+    type=int,
+    default=None,
+    metavar='ADVISORY',
     help='Explicitly define image advisory ID to be used instead of the default',
 )
 @click.option(
-    '--raw', '-r', 'raw',
+    '--raw',
+    '-r',
+    'raw',
     is_flag=True,
     help='Output raw images',
 )

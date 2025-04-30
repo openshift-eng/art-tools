@@ -1,16 +1,17 @@
 """
 Test errata models/controllers
 """
-import datetime
-from unittest import mock
-import json
-from flexmock import flexmock
-import errata_tool
 
+import datetime
+import json
 import unittest
-from unittest.mock import patch, Mock
+from unittest import mock
+from unittest.mock import Mock, patch
+
+import errata_tool
+from elliottlib import brew, constants, errata, exceptions
+from flexmock import flexmock
 from tests import test_structures
-from elliottlib import errata, constants, brew, exceptions
 
 unshipped_builds = [
     Mock(product_version='OSE-4.7-RHEL-8', build='image1-container-123', nvr='image1-container-123', file_types=['tar']),
@@ -65,7 +66,11 @@ class TestAdvisory(unittest.TestCase):
 
         self.assertEqual(addBuilds.call_count, 2)
 
-        addBuilds.assert_any_call(buildlist=['image1-container-123', 'image2-container-456'], file_types={'image1-container-123': ['tar'], 'image2-container-456': ['tar']}, release='OSE-4.7-RHEL-8')
+        addBuilds.assert_any_call(
+            buildlist=['image1-container-123', 'image2-container-456'],
+            file_types={'image1-container-123': ['tar'], 'image2-container-456': ['tar']},
+            release='OSE-4.7-RHEL-8',
+        )
         addBuilds.assert_any_call(buildlist=['image3-container-789'], file_types={'image3-container-789': ['tar']}, release='ANOTHER_PV')
 
 
@@ -83,8 +88,11 @@ class TestErrata(unittest.TestCase):
         self.assertEqual([], errata.parse_exception_error_message('invalid format'))
 
         self.assertEqual(
-            [1685398, 1685399], errata.parse_exception_error_message('''Bug #1685398 The bug is filed already in RHBA-2019:1589.
-        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''),
+            [1685398, 1685399],
+            errata.parse_exception_error_message(
+                '''Bug #1685398 The bug is filed already in RHBA-2019:1589.
+        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''
+            ),
         )
 
     def test_get_advisories_for_bug(self):

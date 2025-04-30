@@ -7,10 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from urllib.error import URLError
 
 import yaml
-
 from artcommonlib.model import Model
-from doozerlib import rhcos
 from artcommonlib.rhcos import RhcosMissingContainerException
+from doozerlib import rhcos
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
 
@@ -250,8 +249,11 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
     @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     async def test_find_non_latest_rpms(
-        self, rhcos_build_meta_mock: Mock, cmd_assert_mock: Mock,
-        get_repodata_threadsafe: AsyncMock, get_os_metadata_rpm_list: Mock,
+        self,
+        rhcos_build_meta_mock: Mock,
+        cmd_assert_mock: Mock,
+        get_repodata_threadsafe: AsyncMock,
+        get_os_metadata_rpm_list: Mock,
     ):
         # mock out the things RHCOSBuildInspector calls in __init__
         rhcos_meta = {"buildid": "412.86.bogus"}
@@ -259,9 +261,11 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         rhcos_build_meta_mock.side_effect = [rhcos_meta, rhcos_commitmeta]
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
         pullspecs = {'machine-os-content': 'spam@eggs'}
-        self.runtime.group_config.rhcos = Model({
-            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
-        })
+        self.runtime.group_config.rhcos = Model(
+            {
+                "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
+            }
+        )
         repos = Repos(
             {
                 "rhel-8-baseos-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
@@ -272,9 +276,11 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         )
         runtime = MagicMock(
             repos=repos,
-            group_config=Model({
-                "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]},
-            }),
+            group_config=Model(
+                {
+                    "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]},
+                }
+            ),
         )
         runtime.get_major_minor_fields.return_value = 4, 12
         get_repodata_threadsafe.return_value = Repodata(

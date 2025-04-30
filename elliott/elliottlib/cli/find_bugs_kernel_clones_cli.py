@@ -1,21 +1,19 @@
+import logging
 import re
 import sys
-import logging
 from typing import Dict, List, Optional, Sequence, TextIO, Tuple, cast
 
 import click
 import koji
-from jira import JIRA, Issue
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_print
 from elliottlib import Runtime, early_kernel
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import cli
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import JIRABugTracker
-
+from jira import JIRA, Issue
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,8 +26,13 @@ LOGGER = logging.getLogger(__name__)
 
 class FindBugsKernelClonesCli:
     def __init__(
-        self, runtime: Runtime, trackers: Sequence[str], bugs: Sequence[str],
-        move: bool, update_tracker: bool, dry_run: bool,
+        self,
+        runtime: Runtime,
+        trackers: Sequence[str],
+        bugs: Sequence[str],
+        move: bool,
+        update_tracker: bool,
+        dry_run: bool,
     ):
         self._runtime = runtime
         self._logger = LOGGER
@@ -78,7 +81,8 @@ class FindBugsKernelClonesCli:
                 "key": bug.key,
                 "summary": bug.fields.summary,
                 "status": str(bug.fields.status.name),
-            } for bug in found_bugs
+            }
+            for bug in found_bugs
         ]
         self._print_report(report, sys.stdout)
 
@@ -110,7 +114,8 @@ class FindBugsKernelClonesCli:
     @staticmethod
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
     def _search_for_jira_bugs(
-        jira_client: JIRA, trackers: Optional[List[str]],
+        jira_client: JIRA,
+        trackers: Optional[List[str]],
         config: KernelBugSweepConfig,
     ):
         # search for jira bugs we created previously as clones of the original kernel bugs
@@ -142,7 +147,9 @@ class FindBugsKernelClonesCli:
             if not bug_id:
                 raise ValueError(f"Jira clone {bug.key} doesn't have the required `art:bz#N` label")
             # extract KMAINT tracker key from labels: ["art:kmaint:KMAINT-1"] -> KMAINT-1
-            tracker_key = next(map(lambda m: str(m[1]), filter(bool, map(lambda label: re.fullmatch(r"art:kmaint:(\S+)", label), bug.fields.labels))), None)
+            tracker_key = next(
+                map(lambda m: str(m[1]), filter(bool, map(lambda label: re.fullmatch(r"art:kmaint:(\S+)", label), bug.fields.labels))), None
+            )
             if not tracker_key:
                 raise ValueError(f"Jira clone {bug.key} doesn't have the required `art:kmaint:*` label")
             tracker = trackers.get(tracker_key)
@@ -195,7 +202,10 @@ class FindBugsKernelClonesCli:
                 self._process_candidate_bugs(logger, bug_keys, bugs, jira_client, nvrs, candidate)
                 if self.update_tracker:
                     early_kernel.comment_on_tracker(
-                        logger, self.dry_run, jira_client, tracker,
+                        logger,
+                        self.dry_run,
+                        jira_client,
+                        tracker,
                         [f"Build(s) {nvrs} was/were already tagged into {candidate}."],
                         # do not reword, see NOTE in method
                     )
@@ -211,11 +221,17 @@ class FindBugsKernelClonesCli:
 
 @cli.command("find-bugs:kernel-clones", short_help="Find kernel bugs")
 @click.option(
-    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
+    "--tracker",
+    "trackers",
+    metavar='JIRA_KEY',
+    multiple=True,
     help="Find by the specified KMAINT tracker JIRA_KEY",
 )
 @click.option(
-    "--issue", "issues", metavar='JIRA_KEY', multiple=True,
+    "--issue",
+    "issues",
+    metavar='JIRA_KEY',
+    multiple=True,
     help="Find by the specified Jira bug JIRA_KEY",
 )
 @click.option(
@@ -238,8 +254,12 @@ class FindBugsKernelClonesCli:
 )
 @click.pass_obj
 def find_bugs_kernel_clones_cli(
-        runtime: Runtime, trackers: Tuple[str, ...], issues: Tuple[str, ...],
-        move: bool, update_tracker: bool, dry_run: bool,
+    runtime: Runtime,
+    trackers: Tuple[str, ...],
+    issues: Tuple[str, ...],
+    move: bool,
+    update_tracker: bool,
+    dry_run: bool,
 ):
     """Find cloned kernel bugs in JIRA for weekly kernel release through OCP.
 

@@ -1,5 +1,5 @@
-from . import image_schema, rpm_schema, streams_schema, releases_schema, shipment_schema
 from .. import support
+from . import image_schema, releases_schema, rpm_schema, shipment_schema, streams_schema
 
 
 def ignore_validate(*args, **kwargs):
@@ -19,8 +19,4 @@ def validate(file, data):
 
 
 def err(*_):
-    return (
-        'Could not determine a schema\n'
-        'Supported schemas: image, rpm\n'
-        'Make sure the file is placed in either dir "images" or "rpms"'
-    )
+    return 'Could not determine a schema\n' 'Supported schemas: image, rpm\n' 'Make sure the file is placed in either dir "images" or "rpms"'

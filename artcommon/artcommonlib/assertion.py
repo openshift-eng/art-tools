@@ -5,8 +5,9 @@ the asserted condition is not met.
 The use of the FileNotFound exception makes this Python3 ready.
 Making them functions keeps the exception definition localized.
 """
-import os
+
 import errno
+import os
 
 
 def isdir(path, message):
@@ -22,7 +23,8 @@ def isdir(path, message):
     if not os.path.isdir(path):
         raise FileNotFoundError(
             errno.ENOENT,
-            "{}: {}".format(message, os.strerror(errno.ENOENT)), path,
+            "{}: {}".format(message, os.strerror(errno.ENOENT)),
+            path,
         )
 
 
@@ -39,7 +41,8 @@ def isfile(path, message):
     if not os.path.isfile(path):
         raise FileNotFoundError(
             errno.ENOENT,
-            "{}: {}".format(message, os.strerror(errno.ENOENT)), path,
+            "{}: {}".format(message, os.strerror(errno.ENOENT)),
+            path,
         )
 
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
-from typing import List, Dict, Tuple
+import json
+import urllib.request
+from ipaddress import ip_address, ip_network
+from typing import Dict, List, Tuple
 
 # THIS IS NOT PART OF THE LAMBDA EXECUTION. IT IS USED TO GENERATE DATA FOR
 # THE LAMBDA. COPY OUTPUT ARRAY INTO lambda_function.py.
@@ -48,9 +51,6 @@ from typing import List, Dict, Tuple
 # It may be worth re-running this script once in awhile to refresh the IP ranges in the
 # nodejs CloudFront Viewer request Lambda@Edge function.
 
-import urllib.request
-from ipaddress import ip_network, ip_address
-import json
 
 AWS_IP_RANGES_URL = "https://ip-ranges.amazonaws.com/ip-ranges.json"
 

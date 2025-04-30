@@ -40,17 +40,29 @@ class TestBasicRebase(DoozerRunnerTestCase):
         upstream_commit_ced = '0f7594616f7ea72e28f065ef2c172fa3d852abcf'
         upstream_commit_ced_short = upstream_commit_ced[:7]
         doozer_args = [
-            '--assembly', 'tester',  # This should only have an effect if assemblies=True
-            '--group', f'openshift-4.6@{target_ocp_build_data_commitish}',
-            '-i', 'openshift-enterprise-base',
-            '-i', 'cluster-etcd-operator',
-            '--lock-upstream', 'openshift-enterprise-base', upstream_commit_oeb,
-            '--lock-upstream', 'cluster-etcd-operator', upstream_commit_ced,
-            '--lock-runtime-uuid', uuid,
+            '--assembly',
+            'tester',  # This should only have an effect if assemblies=True
+            '--group',
+            f'openshift-4.6@{target_ocp_build_data_commitish}',
+            '-i',
+            'openshift-enterprise-base',
+            '-i',
+            'cluster-etcd-operator',
+            '--lock-upstream',
+            'openshift-enterprise-base',
+            upstream_commit_oeb,
+            '--lock-upstream',
+            'cluster-etcd-operator',
+            upstream_commit_ced,
+            '--lock-runtime-uuid',
+            uuid,
             'images:rebase',
-            '--version', target_version,
-            '--release', '999.p?',
-            '-m', 'test message',
+            '--version',
+            target_version,
+            '--release',
+            '999.p?',
+            '-m',
+            'test message',
         ]
 
         if assemblies:
@@ -88,7 +100,9 @@ class TestBasicRebase(DoozerRunnerTestCase):
         self.assertEqual(ced_dfp.envs['SOURCE_DATE_EPOCH'], '1603368883')
         self.assertEqual(ced_dfp.labels['io.openshift.build.commit.id'], upstream_commit_ced)
         self.assertEqual(ced_dfp.labels['io.openshift.build.source-location'], 'https://github.com/openshift/cluster-etcd-operator')
-        self.assertEqual(ced_dfp.labels['io.openshift.build.commit.url'], f'https://github.com/openshift/cluster-etcd-operator/commit/{upstream_commit_ced}')
+        self.assertEqual(
+            ced_dfp.labels['io.openshift.build.commit.url'], f'https://github.com/openshift/cluster-etcd-operator/commit/{upstream_commit_ced}'
+        )
         self.assertEqual(ced_dfp.labels['io.openshift.maintainer.product'], 'OpenShift Container Platform')
         self.assertEqual(ced_dfp.labels['io.openshift.maintainer.component'], 'Etcd')
         self.assertEqual(ced_dfp.labels['com.redhat.component'], 'cluster-etcd-operator-container')

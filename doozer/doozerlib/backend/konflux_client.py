@@ -1,24 +1,23 @@
-import os
 import asyncio
-import logging
 import datetime
+import logging
+import os
 import random
 import time
-from typing import Dict, List, Optional, Sequence, Union, cast
 import traceback
+from typing import Dict, List, Optional, Sequence, Union, cast
 
 import aiohttp
 import jinja2
+from artcommonlib import exectools
+from artcommonlib import util as art_util
 from async_lru import alru_cache
+from doozerlib import constants
+from doozerlib.image import ImageMetadata
 from kubernetes import config, watch
 from kubernetes.client import ApiClient, Configuration, CoreV1Api
 from kubernetes.dynamic import DynamicClient, exceptions, resource
 from ruamel.yaml import YAML
-
-from artcommonlib import exectools
-from artcommonlib import util as art_util
-from doozerlib import constants
-from doozerlib.image import ImageMetadata
 
 yaml = YAML(typ="safe")
 LOGGER = logging.getLogger(__name__)
@@ -37,6 +36,7 @@ class KonfluxClient:
     """
     KonfluxClient is a client for interacting with the Konflux API.
     """
+
     # https://konflux.pages.redhat.com/docs/users/getting-started/multi-platform-builds.html
     # The arch to Konflux VM name mapping. The specs for each of the VMs can be seen in the doc link shared above.
     SUPPORTED_ARCHES = {
@@ -63,8 +63,10 @@ class KonfluxClient:
             raise
 
     @staticmethod
-    def from_kubeconfig(default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER) -> "KonfluxClient":
-        """ Create a KonfluxClient from a kubeconfig file.
+    def from_kubeconfig(
+        default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER
+    ) -> "KonfluxClient":
+        """Create a KonfluxClient from a kubeconfig file.
 
         :param config_file: The path to the kubeconfig file.
         :param context: The context to use.
@@ -79,7 +81,7 @@ class KonfluxClient:
 
     @alru_cache
     async def _get_api(self, api_version: str, kind: str):
-        """ Get the API object for the given API version and kind.
+        """Get the API object for the given API version and kind.
 
         :param api_version: The API version.
         :param kind: The kind.
@@ -96,7 +98,7 @@ class KonfluxClient:
         return self.corev1_client
 
     def _extract_manifest_metadata(self, manifest: dict):
-        """ Extract the metadata from a manifest.
+        """Extract the metadata from a manifest.
 
         :param manifest: The manifest.
         :return: The API version, kind, name, and namespace.
@@ -108,10 +110,14 @@ class KonfluxClient:
         return api_version, kind, name, namespace
 
     async def _get(
-        self, api_version: str, kind: str, name: str,
-        namespace: Optional[str] = None, strict: bool = True,
+        self,
+        api_version: str,
+        kind: str,
+        name: str,
+        namespace: Optional[str] = None,
+        strict: bool = True,
     ):
-        """ Get a resource by name and namespace.
+        """Get a resource by name and namespace.
 
         :param api_version: The API version.
         :param kind: The kind.
@@ -131,10 +137,14 @@ class KonfluxClient:
 
     @alru_cache
     async def _get__caching(
-        self, api_version: str, kind: str, name: str,
-        namespace: Optional[str] = None, strict: bool = True,
+        self,
+        api_version: str,
+        kind: str,
+        name: str,
+        namespace: Optional[str] = None,
+        strict: bool = True,
     ):
-        """ Get a resource by name and namespace, with caching.
+        """Get a resource by name and namespace, with caching.
 
         :param api_version: The API version.
         :param kind: The kind.
@@ -146,7 +156,7 @@ class KonfluxClient:
         return await self._get(api_version, kind, name, namespace, strict)
 
     async def _create(self, manifest: dict, **kwargs):
-        """ Create a resource.
+        """Create a resource.
 
         :param manifest: The manifest.
         :param kwargs: Additional keyword arguments to pass to the API.
@@ -165,7 +175,7 @@ class KonfluxClient:
         return new
 
     async def _patch(self, manifest: dict):
-        """ Patch a resource.
+        """Patch a resource.
 
         :param manifest: The manifest.
         :return: The resource.
@@ -188,7 +198,7 @@ class KonfluxClient:
         return new
 
     async def _replace(self, manifest: dict):
-        """ Replace a resource.
+        """Replace a resource.
 
         :param manifest: The manifest.
         :return: The resource.
@@ -206,7 +216,7 @@ class KonfluxClient:
         return new
 
     async def _delete(self, api_version: str, kind: str, name: str, namespace: str):
-        """ Delete a resource.
+        """Delete a resource.
 
         :param api_version: The API version.
         :param kind: The kind.
@@ -222,7 +232,7 @@ class KonfluxClient:
         self._logger.info(f"Deleted {api_version}/{kind} {namespace}/{name}")
 
     async def _create_or_patch(self, manifest: dict):
-        """ Create or patch a resource.
+        """Create or patch a resource.
 
         :param manifest: The manifest.
         :return: The resource.
@@ -241,7 +251,7 @@ class KonfluxClient:
         return await self._patch(manifest)
 
     async def _create_or_replace(self, manifest: dict):
-        """ Create or replace a resource.
+        """Create or replace a resource.
 
         :param manifest: The manifest.
         :return: The resource.
@@ -284,8 +294,12 @@ class KonfluxClient:
 
     @staticmethod
     def _new_component(
-        name: str, application: str, component_name: str,
-        image_repo: Optional[str], source_url: Optional[str], revision: Optional[str],
+        name: str,
+        application: str,
+        component_name: str,
+        image_repo: Optional[str],
+        source_url: Optional[str],
+        revision: Optional[str],
     ) -> dict:
         obj = {
             "apiVersion": API_VERSION,
@@ -319,15 +333,20 @@ class KonfluxClient:
         return obj
 
     async def ensure_component(
-        self, name: str, application: str, component_name: str,
-        image_repo: Optional[str], source_url: Optional[str], revision: Optional[str],
+        self,
+        name: str,
+        application: str,
+        component_name: str,
+        image_repo: Optional[str],
+        source_url: Optional[str],
+        revision: Optional[str],
     ) -> resource.ResourceInstance:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
     @alru_cache
     async def _get_pipelinerun_template(self, template_url: str):
-        """ Get a PipelineRun template.
+        """Get a PipelineRun template.
 
         :param template_url: The URL to the template.
         :return: The template.
@@ -341,11 +360,23 @@ class KonfluxClient:
                 return template
 
     async def _new_pipelinerun_for_image_build(
-        self, metadata: ImageMetadata, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
-        git_url: str, commit_sha: str, target_branch: str, output_image: str,
-        build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
-        additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
-        hermetic: Optional[bool] = None, sast: Optional[bool] = False,
+        self,
+        metadata: ImageMetadata,
+        generate_name: str,
+        namespace: Optional[str],
+        application_name: str,
+        component_name: str,
+        git_url: str,
+        commit_sha: str,
+        target_branch: str,
+        output_image: str,
+        build_platforms: Sequence[str],
+        prefetch: Optional[list] = None,
+        git_auth_secret: str = "pipelines-as-code-secret",
+        additional_tags: Optional[Sequence[str]] = None,
+        skip_checks: bool = False,
+        hermetic: Optional[bool] = None,
+        sast: Optional[bool] = False,
         dockerfile: Optional[str] = None,
         pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
     ) -> dict:
@@ -354,13 +385,14 @@ class KonfluxClient:
         https_url = art_util.convert_remote_git_to_https(git_url)
 
         template = await self._get_pipelinerun_template(pipelinerun_template_url)
-        rendered = template.render({
-            "source_url": https_url,
-            "revision": commit_sha,
-            "target_branch": target_branch,
-            "git_auth_secret": git_auth_secret,
-
-        })
+        rendered = template.render(
+            {
+                "source_url": https_url,
+                "revision": commit_sha,
+                "target_branch": target_branch,
+                "git_auth_secret": git_auth_secret,
+            }
+        )
         obj = yaml.load(rendered)
         # Those fields in the template are specific to an image. They need to be removed.
         del obj["metadata"]["name"]
@@ -380,7 +412,7 @@ class KonfluxClient:
         obj["metadata"]["labels"]["appstudio.openshift.io/component"] = component_name
 
         def _modify_param(params: List, name: str, value: Union[str, bool, list[str]]):
-            """ Modify a parameter in the params list. If the parameter does not exist, it is added.
+            """Modify a parameter in the params list. If the parameter does not exist, it is added.
 
             :param params: The list of parameters.
             :param name: The name of the parameter.
@@ -447,32 +479,38 @@ class KonfluxClient:
         # ose-installer-artifacts fails with OOM with default values, hence bumping memory limit
         task_run_specs = []
         if has_build_images_task:
-            task_run_specs += [{
-                "pipelineTaskName": "build-images",
-                "stepSpecs": [{
-                    "name": "sbom-syft-generate",
+            task_run_specs += [
+                {
+                    "pipelineTaskName": "build-images",
+                    "stepSpecs": [
+                        {
+                            "name": "sbom-syft-generate",
+                            "computeResources": {
+                                "requests": {
+                                    "memory": "5Gi",
+                                },
+                                "limits": {
+                                    "memory": "10Gi",
+                                },
+                            },
+                        }
+                    ],
+                }
+            ]
+        if has_sast_task:
+            task_run_specs += [
+                {
+                    "pipelineTaskName": "sast-shell-check",
                     "computeResources": {
                         "requests": {
-                            "memory": "5Gi",
+                            "memory": "10Gi",
                         },
                         "limits": {
                             "memory": "10Gi",
                         },
                     },
-                }],
-            }]
-        if has_sast_task:
-            task_run_specs += [{
-                "pipelineTaskName": "sast-shell-check",
-                "computeResources": {
-                    "requests": {
-                        "memory": "10Gi",
-                    },
-                    "limits": {
-                        "memory": "10Gi",
-                    },
-                },
-            }]
+                }
+            ]
 
         obj["spec"]["taskRunSpecs"] = task_run_specs
 
@@ -529,7 +567,9 @@ class KonfluxClient:
             raise ValueError(f"Unsupported architectures: {unsupported_arches}")
 
         # If vm_override is not one and an override exists for a particular arch, use that. Otherwise, use the default
-        build_platforms = [vm_override[arch] if vm_override and arch in vm_override else random.choice(self.SUPPORTED_ARCHES[arch]) for arch in building_arches]
+        build_platforms = [
+            vm_override[arch] if vm_override and arch in vm_override else random.choice(self.SUPPORTED_ARCHES[arch]) for arch in building_arches
+        ]
 
         pipelinerun_manifest = await self._new_pipelinerun_for_image_build(
             metadata=metadata,
@@ -563,7 +603,7 @@ class KonfluxClient:
 
     @staticmethod
     def build_pipeline_url(pipelinerun):
-        """ Returns the URL to the Konflux UI for the given PipelineRun.
+        """Returns the URL to the Konflux UI for the given PipelineRun.
 
         :param pipelinerun: The PipelineRun.
         :return: The URL.
@@ -578,7 +618,9 @@ class KonfluxClient:
         )
 
     async def wait_for_pipelinerun(
-        self, pipelinerun_name: str, namespace: Optional[str] = None,
+        self,
+        pipelinerun_name: str,
+        namespace: Optional[str] = None,
         overall_timeout_timedelta: Optional[datetime.timedelta] = None,
         pending_timeout_timedelta: Optional[datetime.timedelta] = None,
     ) -> (resource.ResourceInstance, List[Dict]):
@@ -677,7 +719,12 @@ class KonfluxClient:
                                 age = current_time - creation_time
 
                                 if pod_phase == 'Pending' and age > pending_timeout_timedelta:
-                                    self._logger.error("PipelineRun %s pod %s pending beyond threshold %s; cancelling run", pipelinerun_name, pod_name, str(pending_timeout_timedelta))
+                                    self._logger.error(
+                                        "PipelineRun %s pod %s pending beyond threshold %s; cancelling run",
+                                        pipelinerun_name,
+                                        pod_name,
+                                        str(pending_timeout_timedelta),
+                                    )
                                     cancel_pipelinerun = True
 
                                 age_str = f"{age.days}d {age.seconds // 3600}h {(age.seconds // 60) % 60}m"
@@ -692,7 +739,16 @@ class KonfluxClient:
                             if pod.get('status', {}).get('phase') == 'Succeeded':
                                 successful_pods += 1
 
-                        self._logger.info("PipelineRun %s [status=%s][reason=%s]; pods[total=%d][successful=%d][extant=%d]\n%s", pipelinerun_name, succeeded_status, succeeded_reason, len(pod_history), successful_pods, len(pods.items), '\n'.join(pod_desc))
+                        self._logger.info(
+                            "PipelineRun %s [status=%s][reason=%s]; pods[total=%d][successful=%d][extant=%d]\n%s",
+                            pipelinerun_name,
+                            succeeded_status,
+                            succeeded_reason,
+                            len(pod_history),
+                            successful_pods,
+                            len(pods.items),
+                            '\n'.join(pod_desc),
+                        )
 
                         if succeeded_status not in ["Unknown", "Not Found"]:
                             time.sleep(5)  # allow final pods to update their status if they can
@@ -706,7 +762,9 @@ class KonfluxClient:
                                 pod_phase = pod_status.get('phase')
                                 pod_history[pod_name] = pod  # Update pod history with the final snapshot
                                 if pod_phase != 'Succeeded':
-                                    self._logger.warning(f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}')
+                                    self._logger.warning(
+                                        f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}'
+                                    )
 
                                     # Now iterate through containers and record logs for unexpected exit_code values
                                     container_statuses = pod_status.get("containerStatuses", [])
@@ -725,16 +783,22 @@ class KonfluxClient:
                                                 # stuff log information into the container_status, so that it can be
                                                 # included in the bigquery database.
                                                 container_status['log_output'] = log_response
-                                                self._logger.warning(f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n')
+                                                self._logger.warning(
+                                                    f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n'
+                                                )
                                             except:
                                                 e_str = traceback.format_exc()
-                                                self._logger.warning(f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}')
+                                                self._logger.warning(
+                                                    f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}'
+                                                )
 
                             watcher.stop()
                             return obj, list(pod_history.values())
 
                         if datetime.datetime.now() > timeout_datetime:
-                            self._logger.error("PipelineRun %s has run longer than timeout %s; cancelling run", pipelinerun_name, str(overall_timeout_timedelta))
+                            self._logger.error(
+                                "PipelineRun %s has run longer than timeout %s; cancelling run", pipelinerun_name, str(overall_timeout_timedelta)
+                            )
                             cancel_pipelinerun = True
 
                         if cancel_pipelinerun:
@@ -771,7 +835,9 @@ class KonfluxClient:
         return await exectools.to_thread(_inner)
 
     async def wait_for_release(
-        self, release_name: str, namespace: Optional[str] = None,
+        self,
+        release_name: str,
+        namespace: Optional[str] = None,
         overall_timeout_timedelta: Optional[datetime.timedelta] = None,
     ) -> resource.ResourceInstance:
         f"""

@@ -1,6 +1,8 @@
+import asyncio
 import copy
 import hashlib
 import io
+import json
 import logging
 import os
 import pathlib
@@ -8,23 +10,20 @@ import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, cast
-import asyncio
-import json
-import requests
 
 import bashlex
 import bashlex.errors
+import requests
 import yaml
 from artcommonlib import exectools, release_util
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, Engine
-from artcommonlib.model import ListModel, Missing, Model
-from dockerfile_parse import DockerfileParser
-
-from artcommonlib.util import deep_merge, is_cachito_enabled, detect_package_managers
 from artcommonlib.brew import BuildStates
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildRecord
+from artcommonlib.model import ListModel, Missing, Model
+from artcommonlib.util import deep_merge, detect_package_managers, is_cachito_enabled
+from dockerfile_parse import DockerfileParser
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
-from doozerlib.build_visibility import is_release_embargoed, get_visibility_suffix, BuildVisibility
+from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix, is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.repos import Repos
@@ -55,7 +54,7 @@ OIT_END = '##OIT_END'
 
 
 class KonfluxRebaser:
-    """ Rebase images to a new branch in the build source repository.
+    """Rebase images to a new branch in the build source repository.
 
     FIXME: Some features that are known to be missing:
     - Handling of alternate upstreams
@@ -68,7 +67,8 @@ class KonfluxRebaser:
         base_dir: Path,
         source_resolver: SourceResolver,
         repo_type: str,
-        upcycle: bool = False, force_private_bit: bool = False,
+        upcycle: bool = False,
+        force_private_bit: bool = False,
         record_logger: Optional[RecordLogger] = None,
         source_modifier_factory=SourceModifierFactory(),
         logger: Optional[logging.Logger] = None,
@@ -89,14 +89,14 @@ class KonfluxRebaser:
             self.konflux_db.bind(KonfluxBuildRecord)
 
     async def rebase_to(
-            self,
-            metadata: ImageMetadata,
-            version: str,
-            input_release: str,
-            force_yum_updates: bool,
-            image_repo: str,
-            commit_message: str,
-            push: bool,
+        self,
+        metadata: ImageMetadata,
+        version: str,
+        input_release: str,
+        force_yum_updates: bool,
+        image_repo: str,
+        commit_message: str,
+        push: bool,
     ) -> None:
         # If there is a konflux stanza in the image config, merge it with the main config
         if metadata.config.konflux is not Missing:
@@ -110,11 +110,13 @@ class KonfluxRebaser:
             else:
                 raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
 
-            dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
-                "group": self._runtime.group,
-                "assembly_name": self._runtime.assembly,
-                "distgit_key": metadata.distgit_key,
-            })
+            dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map(
+                {
+                    "group": self._runtime.group,
+                    "assembly_name": self._runtime.assembly,
+                    "distgit_key": metadata.distgit_key,
+                }
+            )
 
             self._logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
 
@@ -126,7 +128,9 @@ class KonfluxRebaser:
 
             # Rebase the image in the build repository
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
-            actual_version, actual_release, _ = await exectools.to_thread(self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo)
+            actual_version, actual_release, _ = await exectools.to_thread(
+                self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo
+            )
 
             # Commit changes
             await build_repo.commit(commit_message, allow_empty=True, force=True)
@@ -159,14 +163,14 @@ class KonfluxRebaser:
             metadata.rebase_event.set()
 
     def _rebase_dir(
-            self,
-            metadata: ImageMetadata,
-            source: Optional[SourceResolution],
-            build_repo: BuildRepo,
-            version: str,
-            input_release: str,
-            force_yum_updates: bool,
-            image_repo: str,
+        self,
+        metadata: ImageMetadata,
+        source: Optional[SourceResolution],
+        build_repo: BuildRepo,
+        version: str,
+        input_release: str,
+        force_yum_updates: bool,
+        image_repo: str,
     ):
         """
         Rebase the image in the build repository.
@@ -203,9 +207,11 @@ class KonfluxRebaser:
             if source and source_dir:
                 # If the private org branch commit doesn't exist in the public org,
                 # this image contains private fixes
-                if source.has_public_upstream \
-                        and not SourceResolver.is_branch_commit_hash(source.public_upstream_branch) \
-                        and not util.is_commit_in_public_upstream(source.commit_hash, source.public_upstream_branch, source_dir):
+                if (
+                    source.has_public_upstream
+                    and not SourceResolver.is_branch_commit_hash(source.public_upstream_branch)
+                    and not util.is_commit_in_public_upstream(source.commit_hash, source.public_upstream_branch, source_dir)
+                ):
                     private_fix = True
             else:
                 # If we don't have upstream source, we need to extract the private_fix_bit from the Dockerfile in the build repo
@@ -224,7 +230,9 @@ class KonfluxRebaser:
             parent_members = self._wait_for_parent_members(metadata)
             failed_parents = [parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status]
             if failed_parents:
-                raise IOError(f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}")
+                raise IOError(
+                    f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}"
+                )
             downstream_parents, parent_private_fix = self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
             # If any of the parent images are private, this image is private
             if parent_private_fix:
@@ -250,8 +258,15 @@ class KonfluxRebaser:
         # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p2.assembly.stream.gdeadbee.el9
         release = self._make_actual_release_string(metadata, input_release, private_fix, source)
         self._update_build_dir(
-            metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
-            image_repo, uuid_tag,
+            metadata,
+            dest_dir,
+            source,
+            version,
+            release,
+            downstream_parents,
+            force_yum_updates,
+            image_repo,
+            uuid_tag,
         )
         metadata.private_fix = private_fix
 
@@ -269,13 +284,15 @@ class KonfluxRebaser:
                 file.write("\n!/.oit/**\n")
 
     def _resolve_parents(self, metadata: ImageMetadata, dfp: DockerfileParser, image_repo: str, uuid_tag: str):
-        """ Resolve the parent images for the given image metadata."""
+        """Resolve the parent images for the given image metadata."""
         image_from = metadata.config.get('from', {})
         parents = image_from.get("builder", []).copy()
         parents.append(image_from)
 
         if len(parents) != len(dfp.parent_images):
-            raise ValueError(f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile")
+            raise ValueError(
+                f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile"
+            )
 
         mapped_images: List[Tuple[str, bool]] = []
         for parent, original_parent in zip(parents, dfp.parent_images):
@@ -293,7 +310,7 @@ class KonfluxRebaser:
         return downstream_parents, private_fix
 
     def _resolve_member_parent(self, member: str, original_parent: str, image_repo: str, uuid_tag: str):
-        """ Resolve the parent image for the given image metadata."""
+        """Resolve the parent image for the given image metadata."""
         parent_metadata: ImageMetadata = self._runtime.resolve_image(member, required=False)
         private_fix = False
         if parent_metadata is None:
@@ -319,8 +336,7 @@ class KonfluxRebaser:
         else:
             if parent_metadata.private_fix is None:
                 raise IOError(
-                    f"Parent image {member} doesn't have .p? flag determined. "
-                    "This indicates a bug in Doozer. Please report this issue.",
+                    f"Parent image {member} doesn't have .p? flag determined. " "This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
             return f"{image_repo}:{parent_metadata.image_name_short}-{uuid_tag}", private_fix
@@ -381,6 +397,7 @@ class KonfluxRebaser:
         Pulls source defined in content.source and overwrites most things in the distgit
         clone with content from that source.
         """
+
         class MergeSourceResult:
             pass
 
@@ -424,8 +441,10 @@ class KonfluxRebaser:
             # be directed to the target file). So unlink explicitly.
             df_path.unlink()
 
-        with open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile, \
-                open(str(df_path), mode='w+', encoding='utf-8') as distgit_dockerfile:
+        with (
+            open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile,
+            open(str(df_path), mode='w+', encoding='utf-8') as distgit_dockerfile,
+        ):
             # The source Dockerfile could be named virtually anything (e.g. Dockerfile.rhel) or
             # be a symlink. Ultimately, we don't care - we just need its content in distgit
             # as /Dockerfile (which OSBS requires). Read in the content and write it back out
@@ -559,8 +578,7 @@ class KonfluxRebaser:
             dockerfile_data = df.read()
 
         self._logger.debug(
-            "About to start modifying Dockerfile [%s]:\n%s\n" %
-            (metadata.distgit_key, dockerfile_data),
+            "About to start modifying Dockerfile [%s]:\n%s\n" % (metadata.distgit_key, dockerfile_data),
         )
 
         # add build data modifications dir to path; we *could* add more
@@ -597,10 +615,16 @@ class KonfluxRebaser:
                 df.write(new_dockerfile_data)
 
     def _update_build_dir(
-        self, metadata: ImageMetadata, dest_dir: Path,
+        self,
+        metadata: ImageMetadata,
+        dest_dir: Path,
         source: Optional[SourceResolution],
-        version: str, release: str, downstream_parents: Optional[List[str]],
-        force_yum_updates: bool, image_repo: str, uuid_tag: str,
+        version: str,
+        release: str,
+        downstream_parents: Optional[List[str]],
+        force_yum_updates: bool,
+        image_repo: str,
+        uuid_tag: str,
     ):
         with exectools.Dir(dest_dir):
             self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
@@ -613,8 +637,15 @@ class KonfluxRebaser:
 
             df_path = dest_dir.joinpath('Dockerfile')
             self._update_dockerfile(
-                metadata, source, df_path, version, release, downstream_parents,
-                force_yum_updates, uuid_tag, dest_dir,
+                metadata,
+                source,
+                df_path,
+                version,
+                release,
+                downstream_parents,
+                force_yum_updates,
+                uuid_tag,
+                dest_dir,
             )
 
             self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
@@ -622,7 +653,7 @@ class KonfluxRebaser:
             return version, release
 
     def _make_actual_release_string(self, metadata: ImageMetadata, input_release: str, private_fix: bool, source: Optional[SourceResolution]) -> str:
-        """ Given a input_release string (may contain .p?), make an actual release string.
+        """Given a input_release string (may contain .p?), make an actual release string.
 
         e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p0.assembly.stream.gdeadbee.el9
         """
@@ -683,12 +714,18 @@ class KonfluxRebaser:
         return df_stages
 
     def _update_dockerfile(
-        self, metadata: ImageMetadata, source: Optional[SourceResolution],
-        df_path: Path, version: str, release: str, downstream_parents: Optional[List[str]],
-        force_yum_updates: bool, uuid_tag: str, dest_dir: Path,
+        self,
+        metadata: ImageMetadata,
+        source: Optional[SourceResolution],
+        df_path: Path,
+        version: str,
+        release: str,
+        downstream_parents: Optional[List[str]],
+        force_yum_updates: bool,
+        uuid_tag: str,
+        dest_dir: Path,
     ):
-        """ Update the Dockerfile in the build repo with the correct labels and version information.
-        """
+        """Update the Dockerfile in the build repo with the correct labels and version information."""
         dfp = DockerfileParser(str(df_path))
         self._clean_repos(dfp)
 
@@ -782,11 +819,13 @@ class KonfluxRebaser:
         # ART-8476 assert rhel version equivalence
         if self.should_match_upstream:
             el_version = metadata.branch_el_target()
-            df_lines.extend([
-                '',
-                '# RHEL version in final image must match the one in ART\'s config',
-                f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
-            ])
+            df_lines.extend(
+                [
+                    '',
+                    '# RHEL version in final image must match the one in ART\'s config',
+                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
+                ]
+            )
 
         df_content = "\n".join(df_lines)
 
@@ -1061,7 +1100,10 @@ class KonfluxRebaser:
             if 'echo "need yarn at ${CACHED_YARN}"' in line:
                 # For nmstate-console-plugin and networking-console-plugin the build will error out if it doesn't see a yarn installation at that exact place
                 # So follow the pattern as other images do, and download yarn for now
-                line = line.replace('echo "need yarn at ${CACHED_YARN}"', "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz")
+                line = line.replace(
+                    'echo "need yarn at ${CACHED_YARN}"',
+                    "npm install -g https://github.com/yarnpkg/yarn/releases/download/${YARN_VERSION}/yarn-${YARN_VERSION}.tar.gz",
+                )
                 updated_lines.append(line)
                 yarn_line_updated = True
                 self._logger.info("yarn line overridden. Adding line to download from yarnpkg")
@@ -1084,7 +1126,9 @@ class KonfluxRebaser:
                 # Comment lines containing 'REMOTE_SOURCES' or 'REMOTE_SOURCES_DIR' based on cachito mode.
                 updated_lines.append(f"#{line.strip()}\n")
                 line_commented = True
-                self._logger.info("Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux")
+                self._logger.info(
+                    "Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux"
+                )
             else:
                 if line_commented:
                     # Sometimes there will be '&& yarn install ...' command. So replace the leading && with RUN, since
@@ -1179,7 +1223,8 @@ class KonfluxRebaser:
     def _mangle_pkgmgr(cmd):
         # alter the arg by splicing its content
         def splice(pos, replacement):
-            return cmd[:pos[0]] + replacement + cmd[pos[1]:]
+            return cmd[: pos[0]] + replacement + cmd[pos[1] :]
+
         changed = False  # were there changes aside from whitespace?
 
         # build a list of nodes we may want to alter from the AST
@@ -1304,8 +1349,12 @@ class KonfluxRebaser:
 
         if cachito_enabled:
             if config_overrides.get("go", {}).get("modules"):
-                raise ValueError(f"Cachito integration is enabled for image {metadata.name}. Specifying `go.modules` in `container.yaml` is not allowed.")
-            pkg_managers = []  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
+                raise ValueError(
+                    f"Cachito integration is enabled for image {metadata.name}. Specifying `go.modules` in `container.yaml` is not allowed."
+                )
+            pkg_managers = (
+                []
+            )  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
             if isinstance(metadata.config.content.source.pkg_managers, ListModel):
                 # Use specified package managers
                 pkg_managers = metadata.config.content.source.pkg_managers.primitive()
@@ -1313,7 +1362,9 @@ class KonfluxRebaser:
                 # Auto-detect package managers
                 pkg_managers = detect_package_managers(metadata, dest_dir)
             else:
-                raise ValueError(f"Invalid content.source.pkg_managers config for image {metadata.name}: {metadata.config.content.source.pkg_managers}")
+                raise ValueError(
+                    f"Invalid content.source.pkg_managers config for image {metadata.name}: {metadata.config.content.source.pkg_managers}"
+                )
             # Configure Cachito flags
             # https://github.com/containerbuildsystem/cachito#flags
             flags = []
@@ -1342,14 +1393,16 @@ class KonfluxRebaser:
                 remote_source['packages'] = metadata.config.cachito.packages.primitive()
             elif metadata.config.content.source.path:  # source is in subdirectory
                 remote_source['packages'] = {pkg_manager: [{"path": metadata.config.content.source.path}] for pkg_manager in pkg_managers}
-            config_overrides.update({
-                'remote_sources': [
-                    {
-                        'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
-                        'remote_source': remote_source,
-                    },
-                ],
-            })
+            config_overrides.update(
+                {
+                    'remote_sources': [
+                        {
+                            'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
+                            'remote_source': remote_source,
+                        },
+                    ],
+                }
+            )
 
         if metadata.image_build_method is not Missing and metadata.image_build_method != "osbs2":
             config_overrides['image_build_method'] = metadata.image_build_method
@@ -1422,7 +1475,7 @@ class KonfluxRebaser:
         return config
 
     def _update_yum_update_commands(self, metadata: ImageMetadata, force_yum_updates: bool, df_fileobj: io.TextIOBase) -> io.StringIO:
-        """ If force_yum_updates is True, inject "yum updates -y" in the final build stage; Otherwise, remove the lines we injected.
+        """If force_yum_updates is True, inject "yum updates -y" in the final build stage; Otherwise, remove the lines we injected.
         Returns an in-memory text stream for the new Dockerfile content
         """
         if force_yum_updates and not metadata.config.get('enabled_repos'):
@@ -1543,8 +1596,11 @@ class KonfluxRebaser:
         return None
 
     def _update_environment_variables(
-        self, metadata: ImageMetadata, source: Optional[SourceResolution],
-        df_path: Path, build_update_envs: Dict[str, str],
+        self,
+        metadata: ImageMetadata,
+        source: Optional[SourceResolution],
+        df_path: Path,
+        build_update_envs: Dict[str, str],
         metadata_envs: Dict[str, str],
     ):
         """
@@ -1700,8 +1756,11 @@ class KonfluxRebaser:
                 additional_labels = {}
 
                 for override_label in [
-                    "io.k8s.description", "io.k8s.display-name", "io.openshift.tags",
-                    "description", "summary",
+                    "io.k8s.description",
+                    "io.k8s.display-name",
+                    "io.openshift.tags",
+                    "description",
+                    "summary",
                 ]:
                     if override_label not in labels:
                         additional_labels[override_label] = "Empty"
@@ -1723,10 +1782,7 @@ class KonfluxRebaser:
         bundle_dir = csv_config.get('bundle-dir', f'{gvars["MAJOR"]}.{gvars["MINOR"]}')
         bundle_manifests_dir = os.path.join(manifests_dir, bundle_dir)
 
-        ref_candidates = [
-            repo_dir.joinpath(dirpath, 'image-references')
-            for dirpath in [bundle_manifests_dir, manifests_dir, bundle_dir]
-        ]
+        ref_candidates = [repo_dir.joinpath(dirpath, 'image-references') for dirpath in [bundle_manifests_dir, manifests_dir, bundle_dir]]
         refs = next((cand for cand in ref_candidates if cand.is_file()), None)
         if not refs:
             raise FileNotFoundError('{}: image-references file not found in any location: {}'.format(metadata.distgit_key, ref_candidates))
@@ -1741,7 +1797,11 @@ class KonfluxRebaser:
         if len(csvs) < 1:
             raise FileNotFoundError('{}: did not find a *.clusterserviceversion.yaml file @ {}'.format(metadata.distgit_key, bundle_manifests_dir))
         elif len(csvs) > 1:
-            raise IOError('{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(metadata.distgit_key, bundle_manifests_dir))
+            raise IOError(
+                '{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(
+                    metadata.distgit_key, bundle_manifests_dir
+                )
+            )
         return str(csvs[0]), image_refs
 
     def _update_csv(self, metadata: ImageMetadata, dest_dir: Path, version: str, release: str, image_repo: str, uuid_tag: str):
@@ -1877,9 +1937,11 @@ class KonfluxRebaser:
             olm_version = csv_obj['spec']['version']  # "4.11.0-202205301910"
 
             if not olm_name.endswith(olm_version):
-                raise IOError(f'Expected {metadata.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.')
+                raise IOError(
+                    f'Expected {metadata.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.'
+                )
 
-            olm_name_prefix = olm_name[:-1 * len(olm_version)]  # "nfd."
+            olm_name_prefix = olm_name[: -1 * len(olm_version)]  # "nfd."
 
             # Inject the skips..
             csv_obj['spec']['skips'] = [f'{olm_name_prefix}{old_version}' for old_version in previous_build_versions]
@@ -1898,7 +1960,9 @@ class KonfluxRebaser:
             package_info = koji_api.getPackage(component_name)  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
             if not package_info:
                 raise IOError(f'No brew package is defined for {component_name}')
-            package_id = package_info['id']  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
+            package_id = package_info[
+                'id'
+            ]  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
             pattern_prefix = f'{component_name}-v{metadata.branch_major_minor()}.'
             builds = koji_api.listBuilds(
                 packageID=package_id,
@@ -1910,7 +1974,7 @@ class KonfluxRebaser:
             # We need to convert these into versions like "4.11.0-202205250107"
             versions: Set[str] = set()
             for nvr in nvrs:
-                without_component = nvr[len(f'{component_name}-v'):]  # e.g. "4.10.0-202211280957.p0.ga42b581.assembly.stream"
+                without_component = nvr[len(f'{component_name}-v') :]  # e.g. "4.10.0-202211280957.p0.ga42b581.assembly.stream"
                 version_components = without_component.split('.')[0:3]  # e.g. ['4', '10', '0-202211280957']
                 version = '.'.join(version_components)
                 versions.add(version)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-import unittest
-from flexmock import flexmock
 import logging
+import unittest
 
-from artcommonlib import logutil, exectools
+from artcommonlib import exectools, logutil
 from artcommonlib.model import Model
 from doozerlib import runtime
+from flexmock import flexmock
 
 
 def stub_runtime():

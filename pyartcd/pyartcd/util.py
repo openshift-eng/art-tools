@@ -1,24 +1,22 @@
+import json
 import logging
 import os
 import re
 import shutil
 import sys
 import tempfile
-import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional, Union, Iterable, List, cast
 from tempfile import TemporaryDirectory
-
-import yaml
+from typing import Dict, Iterable, List, Optional, Union, cast
 
 import artcommonlib
+import yaml
 from artcommonlib import exectools
 from artcommonlib.arch_util import go_suffix_for_arch
-from artcommonlib.release_util import isolate_assembly_in_release
 from artcommonlib.assembly import assembly_type
-from artcommonlib.model import Model, Missing
-from artcommonlib.release_util import SoftwareLifecyclePhase
+from artcommonlib.model import Missing, Model
+from artcommonlib.release_util import SoftwareLifecyclePhase, isolate_assembly_in_release
 from doozerlib import util as doozerutil
 from errata_tool import ErrataConnector
 
@@ -62,7 +60,9 @@ def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
     Return False, If there are failed test on advisory
     """
     logger.info(f"Check failed greenwave tests on {advisory_id}")
-    result = ErrataConnector()._get(f'/api/v1/external_tests?filter[test_type]=greenwave_cvp&filter[status]=FAILED&filter[active]=true&page[size]=1000&filter[errata_id]={advisory_id}')
+    result = ErrataConnector()._get(
+        f'/api/v1/external_tests?filter[test_type]=greenwave_cvp&filter[status]=FAILED&filter[active]=true&page[size]=1000&filter[errata_id]={advisory_id}'
+    )
     if result.get('data', []):
         logger.warning(f"Some greenwave tests on {advisory_id} failed with {result}")
         return False
@@ -70,7 +70,9 @@ def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
 
 
 async def load_group_config(
-    group: str, assembly: str, env=None,
+    group: str,
+    assembly: str,
+    env=None,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
     doozer_data_gitref: str = '',
 ) -> Dict:
@@ -79,8 +81,10 @@ async def load_group_config(
     cmd = [
         "doozer",
         f"--data-path={doozer_data_path}",
-        "--group", group,
-        "--assembly", assembly,
+        "--group",
+        group,
+        "--assembly",
+        assembly,
         "config:read-group",
         "--yaml",
     ]
@@ -120,7 +124,9 @@ async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_
 
 
 async def load_assembly(
-    group: str, assembly: str, key: str = '',
+    group: str,
+    assembly: str,
+    key: str = '',
     data_path: str = constants.OCP_BUILD_DATA_URL,
 ) -> Optional[Dict]:
     cmd = [
@@ -152,7 +158,10 @@ def get_assembly_basis(releases_config: Dict, assembly_name: str):
 
 def get_assembly_promotion_permits(releases_config: Dict, assembly_name: str):
     return artcommonlib.assembly.assembly_config_struct(
-        Model(releases_config), assembly_name, 'promotion_permits', [],
+        Model(releases_config),
+        assembly_name,
+        'promotion_permits',
+        [],
     )
 
 
@@ -245,8 +254,10 @@ def get_changes(yaml_data: dict) -> dict:
 
 
 async def get_freeze_automation(
-    version: str, doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-    doozer_working: str = '', doozer_data_gitref: str = '',
+    version: str,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = '',
+    doozer_data_gitref: str = '',
 ) -> str:
     """
     Returns freeze_automation flag for a specific group
@@ -298,8 +309,10 @@ def get_weekday() -> str:
 
 
 async def is_build_permitted(
-    version: str, data_path: str = constants.OCP_BUILD_DATA_URL,
-    doozer_working: str = '', doozer_data_gitref: str = '',
+    version: str,
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = '',
+    doozer_data_gitref: str = '',
 ) -> bool:
     """
     Check whether the group should be built right now.
@@ -327,8 +340,7 @@ async def is_build_permitted(
     # Check for frozen scheduled automation
     if freeze_automation == "scheduled" and not is_manual_build():
         logger.info(
-            'Only manual runs are permitted according to freeze_automation in group.yml '
-            'and this run appears to be non-manual.',
+            'Only manual runs are permitted according to freeze_automation in group.yml ' 'and this run appears to be non-manual.',
         )
         return False
 
@@ -489,8 +501,7 @@ def notify_bz_info_missing(version: str, doozer_working: str, mail_client: MailS
 
         public_upstream_url = bz_notify['public_upstream_url']
         distgit = bz_notify['distgit']
-        email_subject = f'[ACTION REQUIRED] Bugzilla component information ' \
-                        f'missing for image {distgit} in OCP v{version}'
+        email_subject = f'[ACTION REQUIRED] Bugzilla component information ' f'missing for image {distgit} in OCP v{version}'
         explanation_body = f"""
 Why am I receiving this?
 ------------------------
@@ -562,21 +573,19 @@ def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_cli
 --------------------------------------------------------------------------
 The following logs are just the container build portion of the OSBS build:
 --------------------------------------------------------------------------\n"""
-        container_log_file = f'{doozer_working}/brew-logs/{failure["distgit"]}/' \
-                             f'noarch-{failure["task_id"]}/container-build-x86_64.log'
+        container_log_file = f'{doozer_working}/brew-logs/{failure["distgit"]}/' f'noarch-{failure["task_id"]}/container-build-x86_64.log'
 
         try:
             with open(container_log_file) as f:
                 container_log += f.read()
 
         except:
-            container_log = "Unfortunately there were no container build logs; " \
-                            "something else about the build failed."
+            container_log = "Unfortunately there were no container build logs; " "something else about the build failed."
             logger.warning(
-                'No container build log for failed %s build\n'
-                '(task url %s)\n'
-                'at path %s',
-                failure['distgit'], failure['task_url'], container_log,
+                'No container build log for failed %s build\n' '(task url %s)\n' 'at path %s',
+                failure['distgit'],
+                failure['task_url'],
+                container_log,
             )
 
         explanation_body = f"ART's brew/OSBS build of OCP image {failure['image']}:{failure['version']} has failed.\n\n"
@@ -585,20 +594,16 @@ The following logs are just the container build portion of the OSBS build:
         else:
             explanation_body += 'There is no owner listed for this build (you may want to add one).'
         explanation_body += '\n\n'
-        explanation_body += "Builds may fail for many reasons, some under owner control, some under ART's control, " \
-                            "and some in the domain of other groups. This message is only sent when the build fails " \
-                            "consistently, so it is unlikely this failure will resolve itself without intervention.\n\n"
-        explanation_body += f'The brew build task {failure["task_url"]} failed with error message:\n' \
-                            f'{failure["message"]}\n' \
-                            f'{container_log}'
+        explanation_body += (
+            "Builds may fail for many reasons, some under owner control, some under ART's control, "
+            "and some in the domain of other groups. This message is only sent when the build fails "
+            "consistently, so it is unlikely this failure will resolve itself without intervention.\n\n"
+        )
+        explanation_body += f'The brew build task {failure["task_url"]} failed with error message:\n' f'{failure["message"]}\n' f'{container_log}'
 
         # Send email to owners of failed image builds
         # If art is the only owner of image (example for our ci golang builder images) send instead to our default automation email
-        owner = (
-            failure['owners']
-            if (failure['owners'] and failure['owners'] != ["aos-team-art@redhat.com"])
-            else default_owner
-        )
+        owner = failure['owners'] if (failure['owners'] and failure['owners'] != ["aos-team-art@redhat.com"]) else default_owner
         mail_client.send_mail(
             to=['aos-art-automation+failed-ocp-build@redhat.com', owner],
             subject=f'Failed OCP build of {failure["image"]}:{failure["version"]}',
@@ -630,7 +635,9 @@ async def mirror_to_s3(source: Union[str, Path], dest: str, exclude: Optional[st
     await exectools.cmd_assert_async(cmd + paths, env=os.environ.copy(), stdout=sys.stderr)
 
     # Mirror to Cloudflare as well
-    await exectools.cmd_assert_async(cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]] + paths, env=os.environ.copy(), stdout=sys.stderr)
+    await exectools.cmd_assert_async(
+        cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]] + paths, env=os.environ.copy(), stdout=sys.stderr
+    )
 
 
 async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=False):
@@ -646,8 +653,11 @@ async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=Fa
 
 
 async def get_signing_mode(
-    group: str = None, assembly: str = None, group_config: dict = None,
-    doozer_data_path: str = constants.OCP_BUILD_DATA_URL, doozer_data_gitref: str = '',
+    group: str = None,
+    assembly: str = None,
+    group_config: dict = None,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
 ) -> str:
     """
     If any arch is GA, use signed mode for everything
@@ -658,7 +668,9 @@ async def get_signing_mode(
     if not group_config:
         assert group, 'Group must be specified in order to load group config'
         assert assembly, 'Assembly must be specified in order to load group config'
-        group_config = await load_group_config(group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref)
+        group_config = await load_group_config(
+            group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref
+        )
 
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])
     return 'signed' if phase >= SoftwareLifecyclePhase.SIGNING else 'unsigned'
@@ -689,11 +701,15 @@ def nightlies_with_pullspecs(nightly_tags: Iterable[str]) -> Dict[str, str]:
 async def get_microshift_builds(group, assembly, env):
     cmd = [
         "elliott",
-        "--group", group,
-        "--assembly", assembly,
-        "-r", "microshift",
+        "--group",
+        group,
+        "--assembly",
+        assembly,
+        "-r",
+        "microshift",
         "find-builds",
-        "-k", "rpm",
+        "-k",
+        "rpm",
         "--member-only",
         "--include-shipped",
     ]

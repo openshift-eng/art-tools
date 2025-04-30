@@ -1,21 +1,20 @@
 import asyncio
 import gzip
-import lzma
 import io
 import logging
+import lzma
 import xml.etree.ElementTree
-import defusedxml.ElementTree as ET
 from dataclasses import dataclass, field
 from logging import Logger
 from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib import parse
 
 import aiohttp
+import defusedxml.ElementTree as ET
+from artcommonlib import logutil
+from artcommonlib.rpm_utils import label_compare, parse_nvr
 from ruamel.yaml import YAML
 from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
-
-from artcommonlib import logutil
-from artcommonlib.rpm_utils import parse_nvr, label_compare
 
 LOGGER = logutil.get_logger(__name__)
 NAMESPACES = {
@@ -202,10 +201,12 @@ class RepodataLoader:
                 modules_url = parse.urljoin(repo_url, modules_location.attrib['href'])
 
             @retry(
-                reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
+                reraise=True,
+                stop=stop_after_attempt(5),
+                wait=wait_exponential(multiplier=1, min=1, max=10),
                 retry=(
                     retry_if_exception_type(
-                    (aiohttp.ServerDisconnectedError, aiohttp.ClientResponseError, aiohttp.ClientPayloadError, aiohttp.ClientConnectionError),
+                        (aiohttp.ServerDisconnectedError, aiohttp.ClientResponseError, aiohttp.ClientPayloadError, aiohttp.ClientConnectionError),
                     )
                 ),
                 before_sleep=before_sleep_log(LOGGER, logging.WARNING),
@@ -231,8 +232,7 @@ class OutdatedRPMFinder:
 
     @staticmethod
     def _find_candidate_modular_rpms(all_modules, enabled_streams):
-        """ Finds all candidate modular rpms in enabled module streams
-        """
+        """Finds all candidate modular rpms in enabled module streams"""
         # Find the latest module versions for each enabled streams
         latest_modules: Dict[str, Dict[str, Tuple[str, RpmModule]]] = {}  # module_stream => context => (repo_name, RpmModule)
         for module_stream, allowed_contexts in enabled_streams.items():
@@ -259,7 +259,7 @@ class OutdatedRPMFinder:
 
     @staticmethod
     def _find_candidate_non_modular_rpms(all_non_modular_rpms):
-        """ Finds all candidate non-modular rpms.
+        """Finds all candidate non-modular rpms.
         For each non-modular rpm, if there is another candidate modular rpm with the same package name,
         the non-modular rpm will be exempt.
         """
@@ -271,7 +271,9 @@ class OutdatedRPMFinder:
                 candidate_non_modular_rpms[rpm.name] = (repo, rpm)
         return candidate_non_modular_rpms
 
-    def find_non_latest_rpms(self, rpms_to_check: List[Dict], repodatas: List[Repodata], logger: Optional[Logger] = None) -> List[Tuple[str, str, str]]:
+    def find_non_latest_rpms(
+        self, rpms_to_check: List[Dict], repodatas: List[Repodata], logger: Optional[Logger] = None
+    ) -> List[Tuple[str, str, str]]:
         """
         Finds non-latest rpms.
 

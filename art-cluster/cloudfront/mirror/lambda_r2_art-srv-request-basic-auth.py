@@ -1,14 +1,13 @@
 import base64
 import hmac
-import os.path
 import ipaddress
-
-from botocore.exceptions import ClientError
+import os.path
 from typing import Dict, List, Optional
 from urllib.parse import quote, unquote
 
 import boto3
-from lambda_r2_lib import get_r2_s3_client, get_secrets_manager_secret_dict, S3_BUCKET_NAME
+from botocore.exceptions import ClientError
+from lambda_r2_lib import S3_BUCKET_NAME, get_r2_s3_client, get_secrets_manager_secret_dict
 
 # Dicts of usernames and passwords which will be populated from SecretsManager
 ENTERPRISE_SERVICE_ACCOUNTS = None
@@ -20,10 +19,12 @@ def unauthorized():
         'status': 401,
         'statusDescription': 'Unauthorized',
         'headers': {
-            'www-authenticate': [{
-                'key': 'WWW-Authenticate',
-                'value': 'Basic',
-            }],
+            'www-authenticate': [
+                {
+                    'key': 'WWW-Authenticate',
+                    'value': 'Basic',
+                }
+            ],
         },
     }
 
@@ -33,10 +34,12 @@ def redirect(uri: str, code: int = 302, description="Found"):
         'status': code,
         'statusDescription': description,
         'headers': {
-            "location": [{
-                'key': 'Location',
-                "value": str(uri),
-            }],
+            "location": [
+                {
+                    'key': 'Location',
+                    "value": str(uri),
+                }
+            ],
         },
     }
 
@@ -64,8 +67,7 @@ def not_found(description="File Not Found"):
 
 
 class KeyifyList(object):
-    """ bisect does not support key= until 3.10. Eliminate this when Lambda supports 3.10.
-    """
+    """bisect does not support key= until 3.10. Eliminate this when Lambda supports 3.10."""
 
     def __init__(self, inner, key):
         self.inner = inner
@@ -101,7 +103,7 @@ def lambda_handler(event: Dict, context: Dict):
     }
     for prefix, link in links.items():
         if uri.startswith(prefix):
-            uri = link + uri[len(prefix):]
+            uri = link + uri[len(prefix) :]
             break
 
     if not uri.startswith('/pub') and uri != '/favicon.ico' and uri != '/robots.txt' and uri != '/404.html':

@@ -1,25 +1,22 @@
 import os
-from datetime import datetime, timezone
-
-import click
 import sys
 import traceback
-
-import dateutil.parser
-import koji
+from datetime import datetime, timezone
+from typing import Optional, Tuple
 from urllib.parse import urlparse
 
-from dockerfile_parse import DockerfileParser
-
+import click
+import dateutil.parser
+import koji
 from artcommonlib import exectools, logutil
-from artcommonlib.git_helper import gather_git
-from artcommonlib.konflux.konflux_build_record import (KonfluxBuildOutcome, Engine, KonfluxBundleBuildRecord)
-from artcommonlib.model import Missing
 from artcommonlib.constants import BREW_HUB
+from artcommonlib.git_helper import gather_git
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBundleBuildRecord
+from artcommonlib.model import Missing
 from artcommonlib.util import convert_remote_git_to_https
+from dockerfile_parse import DockerfileParser
 from doozerlib import Runtime, brew
 from doozerlib.cli import cli, pass_runtime
-from typing import Optional, Tuple
 from doozerlib.olm.bundle import OLMBundle
 
 LOGGER = logutil.get_logger(__name__)
@@ -40,13 +37,16 @@ def list_olm_operators(runtime: Runtime):
 
 
 @cli.command(
-    "olm-bundle:print", short_help="Print data for each operator",
+    "olm-bundle:print",
+    short_help="Print data for each operator",
     context_settings=dict(
         ignore_unknown_options=True,  # permit patterns starting with dash; allows printing yaml lists
     ),
 )
 @click.option(
-    '--skip-missing', default=False, is_flag=True,
+    '--skip-missing',
+    default=False,
+    is_flag=True,
     help='If no build has been performed, skip printing pattern that would require it',
 )
 @click.argument("pattern", default="{component}", nargs=1)
@@ -113,7 +113,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
                     paired_bundle_nvr = 'None'  # Doesn't exist
                     paired_pullspec = 'None'
                 else:
-                    paired_version_release = paired_bundle_nvr[len(olm_bundle.bundle_brew_component) + 1:]
+                    paired_version_release = paired_bundle_nvr[len(olm_bundle.bundle_brew_component) + 1 :]
                     paired_pullspec = runtime.resolve_brew_image_url(f'{bundle_image_name}:{paired_version_release}')
                 s = s.replace('{paired_bundle_nvr}', paired_bundle_nvr)
                 s = s.replace('{paired_bundle_pullspec}', paired_pullspec)
@@ -126,7 +126,7 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
                     bundle_pullspec = 'None'
                 else:
                     bundle_nvr = build
-                    version_release = bundle_nvr[len(olm_bundle.bundle_brew_component) + 1:]
+                    version_release = bundle_nvr[len(olm_bundle.bundle_brew_component) + 1 :]
                     # Build pullspec like: registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-clusterresourceoverride-operator-bundle:v4.7.0.202012082225.p0-1
                     bundle_pullspec = runtime.resolve_brew_image_url(f'{bundle_image_name}:{version_release}')
 
@@ -142,11 +142,16 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
 @cli.command('olm-bundle:rebase-and-build', short_help='Rebase and build the bundle image for a given operator image')
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @click.option(
-    "-f", "--force", required=False, is_flag=True,
+    "-f",
+    "--force",
+    required=False,
+    is_flag=True,
     help="Perform a build even if previous bundles for given NVRs already exist",
 )
 @click.option(
-    '--dry-run', default=False, is_flag=True,
+    '--dry-run',
+    default=False,
+    is_flag=True,
     help='Do not push to distgit or build anything, but print what would be done.',
 )
 @pass_runtime
@@ -194,10 +199,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
         # Since no operator nvs are explicitly given
         # fetch all latest operator builds from Brew
         # This will respect --images if specified
-        operator_metas = [
-            meta for meta in runtime.ordered_image_metas() if
-            meta.enabled and meta.config['update-csv'] is not Missing
-        ]
+        operator_metas = [meta for meta in runtime.ordered_image_metas() if meta.enabled and meta.config['update-csv'] is not Missing]
         results = exectools.parallel_exec(lambda meta, _: meta.get_latest_brew_build(), operator_metas)
         operator_builds = results.get()
 
@@ -276,18 +278,20 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
             if record['status'] == 0:
                 image_pullspec = build_info['extra']['image']['index']['pull'][0]
 
-                build_record_params.update({
-                    'version': build_info['version'],
-                    'release': build_info['release'],
-                    'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
-                    'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
-                    'image_pullspec': image_pullspec,
-                    'image_tag': build_info['extra']['image']['index']['tags'][0],
-                    'operand_nvrs': [v for _, v in olm_bundle.found_image_references.items()],
-                    'build_id': str(build_info['id']),
-                    'outcome': KonfluxBuildOutcome.SUCCESS,
-                    'nvr': record['bundle_nvr'],
-                })
+                build_record_params.update(
+                    {
+                        'version': build_info['version'],
+                        'release': build_info['release'],
+                        'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                        'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                        'image_pullspec': image_pullspec,
+                        'image_tag': build_info['extra']['image']['index']['tags'][0],
+                        'operand_nvrs': [v for _, v in olm_bundle.found_image_references.items()],
+                        'build_id': str(build_info['id']),
+                        'outcome': KonfluxBuildOutcome.SUCCESS,
+                        'nvr': record['bundle_nvr'],
+                    }
+                )
 
             else:
                 with runtime.shared_koji_client_session() as api:
@@ -296,12 +300,14 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                 task_end_time = task_info['completion_time']
                 task_start_time = task_info['create_time']
 
-                build_record_params.update({
-                    'outcome': KonfluxBuildOutcome.FAILURE,
-                    'start_time': dateutil.parser.parse(task_start_time).replace(tzinfo=timezone.utc),
-                    'end_time': dateutil.parser.parse(task_end_time).replace(tzinfo=timezone.utc),
-                    'nvr': 'n/a',
-                })
+                build_record_params.update(
+                    {
+                        'outcome': KonfluxBuildOutcome.FAILURE,
+                        'start_time': dateutil.parser.parse(task_start_time).replace(tzinfo=timezone.utc),
+                        'end_time': dateutil.parser.parse(task_end_time).replace(tzinfo=timezone.utc),
+                        'nvr': 'n/a',
+                    }
+                )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)
             runtime.konflux_db.add_build(build_record)

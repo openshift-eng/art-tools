@@ -1,47 +1,42 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
 import hashlib
-import traceback
-import sys
-import os
 import json
+import os
+import sys
+import traceback
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, NamedTuple, Iterable, Set, Any, Callable, cast
+from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple, cast
 from unittest.mock import MagicMock
 
 import aiofiles
 import click
-from tenacity import retry, stop_after_attempt, wait_fixed
-
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, go_arch_for_brew_arch
-from artcommonlib.assembly import AssemblyTypes, AssemblyIssueCode, AssemblyIssue, assembly_basis
+import openshift_client as oc
+import yaml
+from artcommonlib import exectools, rhcos
+from artcommonlib.arch_util import brew_arch_for_go_arch, go_arch_for_brew_arch, go_suffix_for_arch
+from artcommonlib.assembly import AssemblyIssue, AssemblyIssueCode, AssemblyTypes, assembly_basis
 from artcommonlib.exectools import manifest_tool
 from artcommonlib.format_util import red_print
 from artcommonlib.konflux.package_rpm_finder import PackageRpmFinder
 from artcommonlib.model import Model
-from artcommonlib.rpm_utils import parse_nvr
-import yaml
-from artcommonlib import rhcos, exectools
 from artcommonlib.rhcos import RhcosMissingContainerException
-import openshift_client as oc
-from opentelemetry import trace
-from enum import Enum
-
-
-from doozerlib.brew import KojiWrapperMetaReturn
-from doozerlib.rhcos import RHCOSBuildInspector
-from doozerlib.cli import cli, pass_runtime, click_coroutine
-from doozerlib.image import ImageMetadata
-from doozerlib.build_info import BuildRecordInspector, ImageInspector
-from doozerlib.assembly_inspector import AssemblyInspector
-from doozerlib.runtime import Runtime
+from artcommonlib.rpm_utils import parse_nvr
 from artcommonlib.telemetry import start_as_current_span_async
-from doozerlib.util import isolate_nightly_name_components, extract_version_fields, what_is_in_master
 from artcommonlib.util import convert_remote_git_to_https
-from elliottlib.util import chunk
+from doozerlib.assembly_inspector import AssemblyInspector
+from doozerlib.brew import KojiWrapperMetaReturn
+from doozerlib.build_info import BuildRecordInspector, ImageInspector
+from doozerlib.cli import cli, click_coroutine, pass_runtime
 from doozerlib.exceptions import DoozerFatalError
-from doozerlib.util import find_manifest_list_sha
-
+from doozerlib.image import ImageMetadata
+from doozerlib.rhcos import RHCOSBuildInspector
+from doozerlib.runtime import Runtime
+from doozerlib.util import extract_version_fields, find_manifest_list_sha, isolate_nightly_name_components, what_is_in_master
+from elliottlib.util import chunk
+from opentelemetry import trace
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 TRACER = trace.get_tracer(__name__)
 
@@ -53,69 +48,113 @@ class RepositoryType(Enum):
 
 @cli.command("release:gen-payload", short_help="Mirror release images to quay and release-controller")
 @click.option(
-    "--is-name", metavar="NAME", required=False,
+    "--is-name",
+    metavar="NAME",
+    required=False,
     help="ImageStream .metadata.name value. For example '4.2-art-latest'",
 )
 @click.option(
-    "--is-namespace", metavar="NAMESPACE", required=False,
+    "--is-namespace",
+    metavar="NAMESPACE",
+    required=False,
     help="ImageStream .metadata.namespace value. For example 'ocp'",
 )
 @click.option(
-    "--organization", metavar="ORGANIZATION", required=False, default="openshift-release-dev",
+    "--organization",
+    metavar="ORGANIZATION",
+    required=False,
+    default="openshift-release-dev",
     help="Quay ORGANIZATION to mirror into.\ndefault=openshift-release-dev",
 )
 @click.option(
-    "--repository", metavar="REPO", required=False, default="ocp-v4.0-art-dev",
+    "--repository",
+    metavar="REPO",
+    required=False,
+    default="ocp-v4.0-art-dev",
     help="Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev",
 )
 @click.option(
-    "--private-repository", metavar="REPO", required=False, default="ocp-v4.0-art-dev-priv",
+    "--private-repository",
+    metavar="REPO",
+    required=False,
+    default="ocp-v4.0-art-dev-priv",
     help="Private Quay REPOSITORY in ORGANIZATION to mirror into.\ndefault=ocp-v4.0-art-dev-priv",
 )
 @click.option(
-    "--release-repository", metavar="REPO", required=False, default="ocp-release-nightly",
-    help="Quay REPOSITORY in ORGANIZATION to push release payloads (used for multi-arch)\n"
-         "default=ocp-release-nightly",
+    "--release-repository",
+    metavar="REPO",
+    required=False,
+    default="ocp-release-nightly",
+    help="Quay REPOSITORY in ORGANIZATION to push release payloads (used for multi-arch)\n" "default=ocp-release-nightly",
 )
 @click.option(
-    "--output-dir", metavar="DIR", required=False, default=".",
+    "--output-dir",
+    metavar="DIR",
+    required=False,
+    default=".",
     help="Directory into which the mirroring/imagestream artifacts should be written",
 )
 @click.option(
-    "--skip-gc-tagging", default=False, is_flag=True,
+    "--skip-gc-tagging",
+    default=False,
+    is_flag=True,
     help="By default, for a named assembly, images will be tagged to prevent garbage collection",
 )
 @click.option(
-    "--exclude-arch", metavar="ARCH", required=False, multiple=True,
+    "--exclude-arch",
+    metavar="ARCH",
+    required=False,
+    multiple=True,
     help="Architecture (brew nomenclature) to exclude from payload generation",
 )
 @click.option(
-    "--emergency-ignore-issues", default=False, is_flag=True,
+    "--emergency-ignore-issues",
+    default=False,
+    is_flag=True,
     help="If you must get this command to permit an assembly despite issues. Only supported for type: stream. Do not use without approval.",
 )
 @click.option(
-    "--apply", default=False, is_flag=True,
+    "--apply",
+    default=False,
+    is_flag=True,
     help="Perform mirroring and imagestream updates.",
 )
 @click.option(
-    "--apply-multi-arch", default=False, is_flag=True,
+    "--apply-multi-arch",
+    default=False,
+    is_flag=True,
     help="Also create a release payload for multi-arch/heterogeneous clusters.",
 )
 @click.option(
-    "--moist-run", default=False, is_flag=True,
+    "--moist-run",
+    default=False,
+    is_flag=True,
     help="Mirror and determine tags but do not actually update imagestreams.",
 )
 @click.option(
-    "--embargo-permit-ack", default=False, is_flag=True,
+    "--embargo-permit-ack",
+    default=False,
+    is_flag=True,
     help="Allow embargoed builds to sync publicly in named assemblies",
 )
 @click_coroutine
 @pass_runtime
 async def release_gen_payload(
-    runtime: Runtime, is_name: str, is_namespace: str, organization: str,
-    repository: str, private_repository: str, release_repository: str, output_dir: str,
-    exclude_arch: Tuple[str, ...], skip_gc_tagging: bool, emergency_ignore_issues: bool,
-    apply: bool, apply_multi_arch: bool, moist_run: bool, embargo_permit_ack: bool,
+    runtime: Runtime,
+    is_name: str,
+    is_namespace: str,
+    organization: str,
+    repository: str,
+    private_repository: str,
+    release_repository: str,
+    output_dir: str,
+    exclude_arch: Tuple[str, ...],
+    skip_gc_tagging: bool,
+    emergency_ignore_issues: bool,
+    apply: bool,
+    apply_multi_arch: bool,
+    moist_run: bool,
+    embargo_permit_ack: bool,
 ):
     """
 Computes a set of imagestream tags which can be assembled into an OpenShift release for this
@@ -173,11 +212,18 @@ read and propagate/expose this annotation in its display of the release image.
         runtime,
         is_name or assembly_imagestream_base_name(runtime),
         is_namespace or default_imagestream_namespace_base_name(),
-        organization, repository, private_repository, release_repository,
+        organization,
+        repository,
+        private_repository,
+        release_repository,
         output_dir,
         exclude_arch,
-        skip_gc_tagging, emergency_ignore_issues,
-        apply, apply_multi_arch, moist_run, embargo_permit_ack,
+        skip_gc_tagging,
+        emergency_ignore_issues,
+        apply,
+        apply_multi_arch,
+        moist_run,
+        embargo_permit_ack,
     ).run()
 
 
@@ -209,8 +255,10 @@ def default_imagestream_namespace_base_name() -> str:
 
 
 def payload_imagestream_namespace_and_name(
-    base_namespace: str, base_imagestream_name: str,
-    brew_arch: str, private: bool,
+    base_namespace: str,
+    base_imagestream_name: str,
+    brew_arch: str,
+    private: bool,
 ) -> Tuple[str, str]:
     """
     :return: Returns the imagestream name and namespace to which images
@@ -225,8 +273,10 @@ def payload_imagestream_namespace_and_name(
 
 
 async def modify_and_replace_api_object(
-    api_obj: oc.APIObject, modifier_func: Callable[[oc.APIObject], Any],
-    backup_file_path: Path, dry_run: bool,
+    api_obj: oc.APIObject,
+    modifier_func: Callable[[oc.APIObject], Any],
+    backup_file_path: Path,
+    dry_run: bool,
 ):
     """
     Receives an APIObject, archives the current state of that object, runs a modifying method on it,
@@ -317,11 +367,21 @@ class GenPayloadCli:
     def __init__(
         self,
         # leave these all optional to make testing easier
-        runtime: Runtime = None, is_name: str = None, is_namespace: str = None, organization: str = None,
-        repository: str = None, private_repository: str = None, release_repository: str = None,
-        output_dir: str = None, exclude_arch: Tuple[str] = None, skip_gc_tagging: bool = False,
-        emergency_ignore_issues: bool = False, apply: bool = False, apply_multi_arch: bool = False,
-        moist_run: bool = False, embargo_permit_ack: bool = False,
+        runtime: Runtime = None,
+        is_name: str = None,
+        is_namespace: str = None,
+        organization: str = None,
+        repository: str = None,
+        private_repository: str = None,
+        release_repository: str = None,
+        output_dir: str = None,
+        exclude_arch: Tuple[str] = None,
+        skip_gc_tagging: bool = False,
+        emergency_ignore_issues: bool = False,
+        apply: bool = False,
+        apply_multi_arch: bool = False,
+        moist_run: bool = False,
+        embargo_permit_ack: bool = False,
     ):
 
         self.runtime = runtime
@@ -365,13 +425,15 @@ class GenPayloadCli:
         """
         rt = self.runtime
         span = trace.get_current_span()
-        span.set_attributes({
-            "doozer.group": rt.group,
-            "doozer.assembly": str(rt.assembly) if rt.assembly else "",
-            "doozer.assembly_type": str(rt.assembly_type),
-            "doozer.brew_event": int(rt.brew_event) if rt.brew_event else 0,
-            "doozer.arches": sorted(rt.arches),
-        })
+        span.set_attributes(
+            {
+                "doozer.group": rt.group,
+                "doozer.assembly": str(rt.assembly) if rt.assembly else "",
+                "doozer.assembly_type": str(rt.assembly_type),
+                "doozer.brew_event": int(rt.brew_event) if rt.brew_event else 0,
+                "doozer.arches": sorted(rt.arches),
+            }
+        )
 
         self.validate_parameters()
         self.logger.info(f"Collecting latest information associated with the assembly: {rt.assembly}")
@@ -437,8 +499,7 @@ class GenPayloadCli:
             non_release_images=[image_meta.distgit_key for image_meta in rt.get_non_release_image_metas()],
             release_images=[image_meta.distgit_key for image_meta in rt.get_for_release_image_metas()],
             missing_image_builds=[
-                dgk for (dgk, ii) in assembly_inspector.get_group_release_images().items()
-                if ii is None
+                dgk for (dgk, ii) in assembly_inspector.get_group_release_images().items() if ii is None
             ],  # A list of metas where the assembly did not find a build
         )
         report["viable"], report["assembly_issues"] = await self.generate_assembly_issues_report(assembly_inspector)
@@ -517,9 +578,7 @@ class GenPayloadCli:
         """
 
         return [  # (build_id, desired non-GC tag)
-            (bbii.get_build_id(), bbii.get_image_meta().hotfix_brew_tag())
-            for bbii in assembly_inspector.get_group_release_images().values()
-            if bbii
+            (bbii.get_build_id(), bbii.get_image_meta().hotfix_brew_tag()) for bbii in assembly_inspector.get_group_release_images().values() if bbii
         ]
 
     @TRACER.start_as_current_span("GenPayloadCli.collect_assembly_build_ids")
@@ -550,11 +609,13 @@ class GenPayloadCli:
                     # not processed yet, query the assembly for this rhel version now.
                     rhel_version_seen.add(el_ver)
                     hotfix_tag = self.runtime.get_default_hotfix_brew_tag(el_target=el_ver)
-                    id_tags.extend([
-                        (rpm_build_dict["id"], hotfix_tag)
-                        for rpm_build_dict in assembly_inspector.get_group_rpm_build_dicts(el_ver=el_ver).values()
-                        if rpm_build_dict
-                    ])
+                    id_tags.extend(
+                        [
+                            (rpm_build_dict["id"], hotfix_tag)
+                            for rpm_build_dict in assembly_inspector.get_group_rpm_build_dicts(el_ver=el_ver).values()
+                            if rpm_build_dict
+                        ]
+                    )
 
         # Tag builds for custom assemblies unless we have been told not to from the command line.
         if self.runtime.assembly_type != AssemblyTypes.STREAM and not self.skip_gc_tagging:
@@ -588,7 +649,9 @@ class GenPayloadCli:
                     if desired_tag not in current_tags:
                         # The hotfix tag is missing, so apply it.
                         self.logger.info(
-                            'Adding tag %s to build: %s to prevent garbage collection.', desired_tag, build_id,
+                            'Adding tag %s to build: %s to prevent garbage collection.',
+                            desired_tag,
+                            build_id,
                         )
                         m.tagBuild(desired_tag, build_id)
 
@@ -618,14 +681,16 @@ class GenPayloadCli:
                         if is_exempt:
                             self.logger.warning(
                                 "%s is exempt from rpm change detection by '%s'",
-                                installed_nevra, pattern,
+                                installed_nevra,
+                                pattern,
                             )
                             continue
                         self.assembly_issues.append(
                             AssemblyIssue(
                                 f"Found outdated RPM ({installed_nevra}) installed in {build_inspector.get_nvr()} ({arch})"
                                 f" when {newest_nevra} was available in repo {repo}",
-                                component=dgk, code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD,
+                                component=dgk,
+                                code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD,
                             ),
                         )
 
@@ -641,7 +706,8 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(
                     assembly_inspector.check_group_image_consistency(
-                    bbii, self.package_rpm_finder,
+                        bbii,
+                        self.package_rpm_finder,
                     ),
                 )
 
@@ -655,7 +721,9 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(
                     assembly_inspector.check_installed_rpms_in_image(
-                    dg_key, bbii, self.package_rpm_finder,
+                        dg_key,
+                        bbii,
+                        self.package_rpm_finder,
                     ),
                 )
 
@@ -720,15 +788,18 @@ class GenPayloadCli:
                         raise IOError(f'Unable to find last public build for {v.image_meta.distgit_key}')
 
                     public_bbi = BuildRecordInspector.get_build_record_inspector(
-                        runtime=self.runtime, build_obj=public_build,
+                        runtime=self.runtime,
+                        build_obj=public_build,
                     )
                     public_image_inspector = public_bbi.get_image_inspector(arch)
 
                     dest_pullspec = self.payload_generator.get_mirroring_destination(
-                        public_image_inspector.get_digest(), public_repo,
+                        public_image_inspector.get_digest(),
+                        public_repo,
                     )
                     dest_manifest_list_pullspec = self.payload_generator.get_mirroring_destination(
-                        public_image_inspector.get_manifest_list_digest(), public_repo,
+                        public_image_inspector.get_manifest_list_digest(),
+                        public_repo,
                     )
                     public_entry = PayloadEntry(
                         image_meta=v.image_meta,
@@ -739,7 +810,9 @@ class GenPayloadCli:
                         issues=list(),
                     )
 
-                    self.logger.info(f'Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream')
+                    self.logger.info(
+                        f'Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream'
+                    )
                     public_entries[k] = public_entry
                     # It's an embargoed build. Filter it out if its stream
                     continue
@@ -755,7 +828,9 @@ class GenPayloadCli:
             self.assembly_issues.extend(embargo_issues)
 
             private_entries, private_payload_issues = self.payload_generator.find_payload_entries(
-                assembly_inspector, arch, self.full_component_repo(repo_type=RepositoryType.PRIVATE),
+                assembly_inspector,
+                arch,
+                self.full_component_repo(repo_type=RepositoryType.PRIVATE),
             )
             private_entries_for_arch[arch] = private_entries
 
@@ -779,16 +854,12 @@ class GenPayloadCli:
         if not cross_payload_requirements:
             self.runtime.logger.debug("No cross-payload consistency requirements defined in group.yml")
         # Structure to record rhcos builds we use so that they can be analyzed for inconsistencies
-        targeted_rhcos_builds: Dict[bool, List[RHCOSBuildInspector]] = \
-            {False: [], True: []}  # privacy mode: list of BuildInspector
+        targeted_rhcos_builds: Dict[bool, List[RHCOSBuildInspector]] = {False: [], True: []}  # privacy mode: list of BuildInspector
         for arch, entries in self.payload_entries_for_arch.items():
             for tag, payload_entry in entries.items():
                 if payload_entry.image_meta:
                     # Record the issues previously found for this image in corresponding payload_entry
-                    payload_entry.issues.extend(
-                        ai for ai in self.assembly_issues
-                        if ai.component == payload_entry.image_meta.distgit_key
-                    )
+                    payload_entry.issues.extend(ai for ai in self.assembly_issues if ai.component == payload_entry.image_meta.distgit_key)
                 elif payload_entry.rhcos_build:
                     if tag != primary_container_name:
                         continue  # RHCOS is one build, only analyze once (for primary container)
@@ -832,14 +903,13 @@ class GenPayloadCli:
 
         for privacy_mode in self.privacy_modes:  # only for relevant modes
             rhcos_builds = targeted_rhcos_builds[privacy_mode]
-            rhcos_inconsistencies: Dict[str, List[str]] = \
-                self.payload_generator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
+            rhcos_inconsistencies: Dict[str, List[str]] = self.payload_generator.find_rhcos_build_rpm_inconsistencies(rhcos_builds)
             if rhcos_inconsistencies:
                 self.assembly_issues.append(
                     AssemblyIssue(
-                        f"Found RHCOS inconsistencies in builds {rhcos_builds} "
-                        f"(private={privacy_mode}): {rhcos_inconsistencies}",
-                        component="rhcos", code=AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS,
+                        f"Found RHCOS inconsistencies in builds {rhcos_builds} " f"(private={privacy_mode}): {rhcos_inconsistencies}",
+                        component="rhcos",
+                        code=AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS,
                     ),
                 )
 
@@ -851,9 +921,9 @@ class GenPayloadCli:
                 if inconsistencies:
                     self.assembly_issues.append(
                         AssemblyIssue(
-                            f"Found kernel inconsistencies in RHCOS build {rhcos_build} "
-                            f"(private={privacy_mode}): {inconsistencies}",
-                            component="rhcos", code=AssemblyIssueCode.FAILED_CROSS_RPM_VERSIONS_REQUIREMENT,
+                            f"Found kernel inconsistencies in RHCOS build {rhcos_build} " f"(private={privacy_mode}): {inconsistencies}",
+                            component="rhcos",
+                            code=AssemblyIssueCode.FAILED_CROSS_RPM_VERSIONS_REQUIREMENT,
                         ),
                     )
 
@@ -908,12 +978,14 @@ class GenPayloadCli:
                 self.apply_multi_arch = False
 
         span = trace.get_current_span()
-        span.set_attributes({
-            "doozer.param.emergency_ignore_issues": self.emergency_ignore_issues,
-            "doozer.result.viability": self.payload_permitted,
-            "doozer.result.apply": self.apply,
-            "doozer.result.apply_multi_arch": self.apply_multi_arch,
-        })
+        span.set_attributes(
+            {
+                "doozer.param.emergency_ignore_issues": self.emergency_ignore_issues,
+                "doozer.result.viability": self.payload_permitted,
+                "doozer.result.apply": self.apply,
+                "doozer.result.apply_multi_arch": self.apply_multi_arch,
+            }
+        )
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.sync_payloads")
     async def sync_payloads(self):
@@ -946,13 +1018,19 @@ class GenPayloadCli:
         await asyncio.sleep(120)
 
         # Updating public and private image streams
-        for private_mode, payload_entries_for_each_arch_iter in [(False, self.payload_entries_for_arch), (True, self.private_payload_entries_for_arch)]:
+        for private_mode, payload_entries_for_each_arch_iter in [
+            (False, self.payload_entries_for_arch),
+            (True, self.private_payload_entries_for_arch),
+        ]:
             tasks = []
             for arch, payload_entries in payload_entries_for_each_arch_iter.items():
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
                 tasks.append(
                     self.generate_specific_payload_imagestreams(
-                    arch, private_mode, payload_entries, multi_specs,
+                        arch,
+                        private_mode,
+                        payload_entries,
+                        multi_specs,
                     ),
                 )
             await asyncio.gather(*tasks)
@@ -962,12 +1040,13 @@ class GenPayloadCli:
                 await self.sync_heterogeneous_payloads(multi_specs)
             else:
                 self.logger.info(
-                    "--apply-multi-arch is enabled but the group config / assembly does "
-                    "not have group.multi_arch.enabled==true",
+                    "--apply-multi-arch is enabled but the group config / assembly does " "not have group.multi_arch.enabled==true",
                 )
 
     async def mirror_payload_content(
-        self, arch: str, payload_entries: Dict[str, PayloadEntry],
+        self,
+        arch: str,
+        payload_entries: Dict[str, PayloadEntry],
         private: bool = False,
     ):
         """
@@ -980,7 +1059,11 @@ class GenPayloadCli:
         # Login to the konflux registry
         if self.runtime.build_system == 'konflux':
             cmd = [
-                'oc', 'registry', 'login', '--registry', 'quay.io/redhat-user-workloads',
+                'oc',
+                'registry',
+                'login',
+                '--registry',
+                'quay.io/redhat-user-workloads',
                 f'--auth-basic={os.environ["KONFLUX_ART_IMAGES_USERNAME"]}:{os.environ["KONFLUX_ART_IMAGES_PASSWORD"]}',
             ]
             await exectools.cmd_assert_async(cmd)
@@ -993,8 +1076,7 @@ class GenPayloadCli:
                 # For heterogeneous release payloads, if a component builds for all arches
                 # (without using -alt images), we can use the manifest list for the images directly from OSBS.
                 # This saves a significant amount of time compared to building the manifest list again.
-                mirror_src_for_dest[payload_entry.dest_manifest_list_pullspec] = \
-                    payload_entry.build_record_inspector.get_build_pullspec()
+                mirror_src_for_dest[payload_entry.dest_manifest_list_pullspec] = payload_entry.build_record_inspector.get_build_pullspec()
 
         @exectools.limit_concurrency(500)
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
@@ -1018,7 +1100,9 @@ class GenPayloadCli:
             i += 1
 
     async def generate_specific_payload_imagestreams(
-        self, arch: str, private_mode: bool,
+        self,
+        arch: str,
+        private_mode: bool,
         payload_entries: Dict[str, PayloadEntry],
         # Map [is_private] -> [tag_name] -> [arch] -> PayloadEntry
         multi_specs: Dict[bool, Dict[str, Dict[str, PayloadEntry]]],
@@ -1044,7 +1128,8 @@ class GenPayloadCli:
             multi_specs[private_mode].setdefault(payload_tag_name, dict())
 
             if (
-                private_mode is False and payload_entry.build_record_inspector
+                private_mode is False
+                and payload_entry.build_record_inspector
                 and payload_entry.build_record_inspector.is_under_embargo()
                 and self.runtime.assembly_type == AssemblyTypes.STREAM
             ):
@@ -1058,38 +1143,53 @@ class GenPayloadCli:
             multi_specs[private_mode][payload_tag_name][arch] = payload_entry
 
         imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
-            *self.base_imagestream, arch, private_mode,
+            *self.base_imagestream,
+            arch,
+            private_mode,
         )
 
         await self.write_imagestream_artifact_file(
-            imagestream_namespace, imagestream_name, istags, incomplete_payload_update,
+            imagestream_namespace,
+            imagestream_name,
+            istags,
+            incomplete_payload_update,
         )
         if self.apply:
             await self.apply_arch_imagestream(
-                imagestream_namespace, imagestream_name, istags, incomplete_payload_update,
+                imagestream_namespace,
+                imagestream_name,
+                istags,
+                incomplete_payload_update,
             )
 
     async def write_imagestream_artifact_file(
-        self, imagestream_namespace: str, imagestream_name: str,
-        istags: List[Dict], incomplete_payload_update,
+        self,
+        imagestream_namespace: str,
+        imagestream_name: str,
+        istags: List[Dict],
+        incomplete_payload_update,
     ):
         """
         Write out an artifact showing the entries we expect to add/update in the target
         integration imagestream.
         """
 
-        filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}" \
-                   f"{'-partial' if incomplete_payload_update else ''}.yaml"
+        filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}" f"{'-partial' if incomplete_payload_update else ''}.yaml"
         async with aiofiles.open(self.output_path.joinpath(filename), mode="w+", encoding="utf-8") as out_file:
             istream_spec = self.payload_generator.build_payload_imagestream(
-                imagestream_name, imagestream_namespace,
-                istags, self.assembly_issues,
+                imagestream_name,
+                imagestream_namespace,
+                istags,
+                self.assembly_issues,
             )
             await out_file.write(yaml.safe_dump(istream_spec, indent=2, default_flow_style=False))
 
     async def apply_arch_imagestream(
-        self, imagestream_namespace: str, imagestream_name: str,
-        istags: List[Dict], incomplete_payload_update: bool,
+        self,
+        imagestream_namespace: str,
+        imagestream_name: str,
+        istags: List[Dict],
+        incomplete_payload_update: bool,
     ):
         """
         Orchestrate the update and tag removal for one arch imagestream in the OCP cluster.
@@ -1103,14 +1203,17 @@ class GenPayloadCli:
                 return
 
             pruning_tags, adding_tags = await self.apply_imagestream_update(
-                istream_apiobj, istags, incomplete_payload_update,
+                istream_apiobj,
+                istags,
+                incomplete_payload_update,
             )
 
             if pruning_tags:
                 self.logger.warning(
-                    'The following tag names are no longer part of the release '
-                    'and will be pruned in %s:%s: %s',
-                    imagestream_namespace, imagestream_name, pruning_tags,
+                    'The following tag names are no longer part of the release ' 'and will be pruned in %s:%s: %s',
+                    imagestream_namespace,
+                    imagestream_name,
+                    pruning_tags,
                 )
 
                 if not self.moist_run:
@@ -1125,13 +1228,18 @@ class GenPayloadCli:
                             # displayed on the release controller page.
                             self.logger.error(
                                 'Unable to delete %s tag fully from %s imagestream in %s:\n%s',
-                                old_tag, imagestream_name, imagestream_namespace, traceback.format_exc(),
+                                old_tag,
+                                imagestream_name,
+                                imagestream_namespace,
+                                traceback.format_exc(),
                             )
 
             if adding_tags:
                 self.logger.warning(
                     'The following tag names are net new to %s:%s: %s',
-                    imagestream_namespace, imagestream_name, adding_tags,
+                    imagestream_namespace,
+                    imagestream_name,
+                    adding_tags,
                 )
 
     @staticmethod
@@ -1145,13 +1253,15 @@ class GenPayloadCli:
             return istream_apiobj
 
         # The imagestream has not been bootstrapped; create it.
-        oc.create({
-            "apiVersion": "image.openshift.io/v1",
-            "kind": "ImageStream",
-            "metadata": {
-                "name": imagestream_name,
-            },
-        })
+        oc.create(
+            {
+                "apiVersion": "image.openshift.io/v1",
+                "kind": "ImageStream",
+                "metadata": {
+                    "name": imagestream_name,
+                },
+            }
+        )
         return oc.selector(f"imagestream/{imagestream_name}").object()
 
     @staticmethod
@@ -1166,7 +1276,9 @@ class GenPayloadCli:
         return imagestream_mode == 'locked'
 
     async def apply_imagestream_update(
-        self, istream_apiobj, istags: List[Dict],
+        self,
+        istream_apiobj,
+        istags: List[Dict],
         incomplete_payload_update: bool,
     ) -> Tuple[Set[str], Set[str]]:
         """
@@ -1217,17 +1329,25 @@ class GenPayloadCli:
                     reverted_to_image = existing_istag['from'].name
                     if revereted_tag_name not in incoming_tag_lookup:
                         if not incomplete_payload_update:
-                            self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.')
+                            self.logger.warning(
+                                f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.'
+                            )
                     else:
                         target_image = incoming_tag_lookup[revereted_tag_name]['from'].name
-                        self.logger.warning(f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.')
+                        self.logger.warning(
+                            f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.'
+                        )
                         if target_image == reverted_from_image:
-                            self.logger.warning(f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}')
+                            self.logger.warning(
+                                f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}'
+                            )
                             incoming_tag_lookup[revereted_tag_name]['from'].name = reverted_to_image
                             # We must also preserve the annotation to persist the revert for the next update
                             incoming_tag_lookup[revereted_tag_name]['annotations'] = existing_istag.annotations.primitive()
                         else:
-                            self.logger.warning(f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}')
+                            self.logger.warning(
+                                f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}'
+                            )
 
             new_istags = list(istags)  # copy, don't update/embed list parameter
             if incomplete_payload_update:
@@ -1284,13 +1404,14 @@ class GenPayloadCli:
                 # private quay repository into which we could push embargoed release heterogeneous
                 # release payloads.
                 red_print(
-                    "PRIVATE MODE MULTI PAYLOADS ARE CURRENTLY DISABLED. "
-                    "WE NEED A PRIVATE QUAY REPO FOR PRIVATE MULTI RELEASE PAYLOADS",
+                    "PRIVATE MODE MULTI PAYLOADS ARE CURRENTLY DISABLED. " "WE NEED A PRIVATE QUAY REPO FOR PRIVATE MULTI RELEASE PAYLOADS",
                 )
                 continue
 
             imagestream_namespace, imagestream_name = payload_imagestream_namespace_and_name(
-                *self.base_imagestream, "multi", private_mode,
+                *self.base_imagestream,
+                "multi",
+                private_mode,
             )
 
             multi_release_istag: str  # The tag to record the multi release payload image
@@ -1306,7 +1427,9 @@ class GenPayloadCli:
             # run oc adm release new on this set of tags -- once for each arch - to create the arch
             # specific release payloads.
             multi_release_is = self.payload_generator.build_payload_imagestream(
-                imagestream_name, imagestream_namespace, multi_istags,
+                imagestream_name,
+                imagestream_namespace,
+                multi_istags,
                 assembly_wide_inconsistencies=self.assembly_issues,
             )
 
@@ -1314,8 +1437,12 @@ class GenPayloadCli:
             # manifest list.
             multi_release_dest: str = f"quay.io/{'/'.join(self.release_repo)}:{multi_release_manifest_list_tag}"
             final_multi_pullspec: str = await self.create_multi_release_image(
-                imagestream_name, multi_release_is, multi_release_dest, multi_release_istag,
-                multi_specs, private_mode,
+                imagestream_name,
+                multi_release_is,
+                multi_release_dest,
+                multi_release_istag,
+                multi_specs,
+                private_mode,
             )
             self.logger.info(f"The final pull_spec for the multi release payload is: {final_multi_pullspec}")
 
@@ -1334,8 +1461,7 @@ class GenPayloadCli:
             # We are publicizing a nightly. Unlike single-arch payloads, the release controller does
             # not react to 4.x-art-latest updates and create a timestamp-based name. We create the
             # nightly name in doozer.
-            multi_release_istag = f"{self.runtime.get_minor_version()}.0-0.nightly" \
-                                  f"{go_suffix_for_arch('multi', private_mode)}-{multi_ts}"
+            multi_release_istag = f"{self.runtime.get_minor_version()}.0-0.nightly" f"{go_suffix_for_arch('multi', private_mode)}-{multi_ts}"
             # Tag the release image with same name as release displayed in the release controller
             multi_release_manifest_list_tag = multi_release_istag
         else:
@@ -1343,9 +1469,11 @@ class GenPayloadCli:
             # collected. It will not show up in the release controller. The only purpose of this
             # image is to provide inputs to the promotion job, which looks at the imagestream
             # and not for this tag.
-            multi_release_manifest_list_tag = f"{self.runtime.get_minor_version()}.0-0.art-assembly-" \
-                                              f"{self.runtime.assembly}{go_suffix_for_arch('multi', private_mode)}-" \
-                                              f"{multi_ts}"
+            multi_release_manifest_list_tag = (
+                f"{self.runtime.get_minor_version()}.0-0.art-assembly-"
+                f"{self.runtime.assembly}{go_suffix_for_arch('multi', private_mode)}-"
+                f"{multi_ts}"
+            )
             # This will be the singular tag we create in an imagestream on app.ci. The actual name
             # does not matter, because it will not be visible in the release controller and will not
             # be the ultimate name used to promote the release. It must be unique, however, because
@@ -1354,7 +1482,9 @@ class GenPayloadCli:
         return multi_release_istag, multi_release_manifest_list_tag
 
     async def build_multi_istag(
-        self, tag_name: str, arch_to_payload_entry: Dict[str, PayloadEntry],
+        self,
+        tag_name: str,
+        arch_to_payload_entry: Dict[str, PayloadEntry],
         imagestream_namespace: str,
     ) -> Dict:
         """
@@ -1379,23 +1509,21 @@ class GenPayloadCli:
             self.logger.info(f"Reusing brew manifest-list {output_digest_pullspec} for component {tag_name}")
         else:
             # Flow 2: Build a new manifest list and push it to quay.
-            output_digest_pullspec = \
-                await self.create_multi_manifest_list(tag_name, arch_to_payload_entry, imagestream_namespace)
+            output_digest_pullspec = await self.create_multi_manifest_list(tag_name, arch_to_payload_entry, imagestream_namespace)
 
-        issues = list(
-            issue  # collect issues from each payload entry.
-            for payload_entry in entries
-            for issue in payload_entry.issues or []
-        )
+        issues = list(issue for payload_entry in entries for issue in payload_entry.issues or [])  # collect issues from each payload entry.
         return self.payload_generator.build_payload_istag(
-            tag_name, PayloadEntry(
+            tag_name,
+            PayloadEntry(
                 dest_pullspec=output_digest_pullspec,
                 issues=issues,
             ),
         )
 
     async def create_multi_manifest_list(
-        self, tag_name: str, arch_to_payload_entry: Dict[str, PayloadEntry],
+        self,
+        tag_name: str,
+        arch_to_payload_entry: Dict[str, PayloadEntry],
         imagestream_namespace: str,
     ) -> str:
         """
@@ -1407,8 +1535,7 @@ class GenPayloadCli:
         # directly on fedora. The format for input is https://github.com/estesp/manifest-tool
         # Let's create some yaml input files.
         component_manifest_path: Path = self.output_path.joinpath(
-            f"{imagestream_namespace}."
-            f"{tag_name}.manifest-list.yaml",
+            f"{imagestream_namespace}." f"{tag_name}.manifest-list.yaml",
         )
         self.logger.info(f"Stitching {component_manifest_path} manifest-list spec for component {tag_name}")
         manifests: List[Dict] = []
@@ -1418,13 +1545,15 @@ class GenPayloadCli:
         # to the same tag will cause the original to lose the tag and be garbage collected.
         manifest_list_hash = hashlib.sha256(self.runtime.uuid.encode("utf-8"))
         for arch, payload_entry in arch_to_payload_entry.items():
-            manifests.append({
-                "image": payload_entry.dest_pullspec,
-                "platform": {
-                    "os": "linux",
-                    "architecture": go_arch_for_brew_arch(arch),
-                },
-            })
+            manifests.append(
+                {
+                    "image": payload_entry.dest_pullspec,
+                    "platform": {
+                        "os": "linux",
+                        "architecture": go_arch_for_brew_arch(arch),
+                    },
+                }
+            )
             manifest_list_hash.update(payload_entry.dest_pullspec.encode("utf-8"))
 
         # We need a unique tag for the manifest list image so that it does not get garbage collected.
@@ -1442,7 +1571,10 @@ class GenPayloadCli:
         return exchange_pullspec_tag_for_shasum(output_pullspec, sha)
 
     async def create_multi_release_image(
-        self, imagestream_name: str, multi_release_is: Dict, multi_release_dest: str,
+        self,
+        imagestream_name: str,
+        multi_release_is: Dict,
+        multi_release_dest: str,
         multi_release_name: str,
         multi_specs: Dict[bool, Dict[str, Dict[str, PayloadEntry]]],
         private_mode: bool,
@@ -1462,16 +1594,22 @@ class GenPayloadCli:
 
         @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(60))
         async def _run(to_image, to_image_base):
-            return await exectools.cmd_assert_async([
-                "oc", "adm", "release", "new",
-                f"--name={multi_release_name}",
-                "--reference-mode=source",
-                "--keep-manifest-list",
-                f"--from-image-stream-file={str(multi_release_is_path)}",
-                f"--to-image-base={to_image_base}",
-                f"--to-image={to_image}",
-                "--metadata", json.dumps({"release.openshift.io/architecture": "multi"}),
-            ])
+            return await exectools.cmd_assert_async(
+                [
+                    "oc",
+                    "adm",
+                    "release",
+                    "new",
+                    f"--name={multi_release_name}",
+                    "--reference-mode=source",
+                    "--keep-manifest-list",
+                    f"--from-image-stream-file={str(multi_release_is_path)}",
+                    f"--to-image-base={to_image_base}",
+                    f"--to-image={to_image}",
+                    "--metadata",
+                    json.dumps({"release.openshift.io/architecture": "multi"}),
+                ]
+            )
 
         # This will map arch names to a release payload pullspec we create for that arch
         # (i.e. based on the arch's CVO image)
@@ -1487,7 +1625,9 @@ class GenPayloadCli:
         return await self.create_multi_release_manifest_list(arch_release_dests, imagestream_name, multi_release_dest)
 
     async def create_multi_release_manifest_list(
-        self, arch_release_dests: Dict[str, str], imagestream_name: str,
+        self,
+        arch_release_dests: Dict[str, str],
+        imagestream_name: str,
         multi_release_dest: str,
     ) -> str:
         """
@@ -1504,7 +1644,8 @@ class GenPayloadCli:
                         "os": "linux",
                         "architecture": go_arch_for_brew_arch(arch),
                     },
-                } for arch, arch_release_payload in arch_release_dests.items()
+                }
+                for arch, arch_release_payload in arch_release_dests.items()
             ],
         }
 
@@ -1519,7 +1660,9 @@ class GenPayloadCli:
         return exchange_pullspec_tag_for_shasum(multi_release_dest, sha)
 
     async def apply_multi_imagestream_update(
-        self, final_multi_pullspec: str, imagestream_name: str,
+        self,
+        final_multi_pullspec: str,
+        imagestream_name: str,
         multi_release_istag: str,
     ):
         """
@@ -1572,7 +1715,9 @@ class GenPayloadCli:
                 if len(latest_accepted) < 2:
                     remaining_tags = release_tags[:-5]
                     remaining_accepted = list(filter(is_accepted, remaining_tags))
-                    new_release_tags = remaining_accepted[-2:] + new_release_tags  # Keep the newest accepted of the payloads we were going to otherwise prune
+                    new_release_tags = (
+                        remaining_accepted[-2:] + new_release_tags
+                    )  # Keep the newest accepted of the payloads we were going to otherwise prune
 
                 if release_tags:
                     last_nightly_tagname = release_tags[-1].get('name', None)
@@ -1592,7 +1737,9 @@ class GenPayloadCli:
                             next_nightly_delay = timedelta(hours=6)
 
                         if current_time < last_nightly_time + next_nightly_delay:
-                            self.logger.info(f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update')
+                            self.logger.info(
+                                f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update'
+                            )
                             return
 
                 obj_model.spec["tags"] = new_release_tags
@@ -1607,30 +1754,36 @@ class GenPayloadCli:
                 obj_model.metadata.annotations = pipeline_metadata_annotations
 
             # Now append a tag for our new nightly.
-            obj_model.spec["tags"].append({
-                "from": {
-                    "kind": "DockerImage",
-                    "name": final_multi_pullspec,
-                },
-                "referencePolicy": {
-                    "type": "Source",
-                },
-                "importPolicy": {
-                    "importMode": "PreserveOriginal",
-                },
-                "name": multi_release_istag,
-                "annotations": dict(
-                    **{
-                        # Prevents the release controller from trying to create a local registry release payload
-                        # with oc adm release new.
-                        "release.openshift.io/rewrite": "false",
-                    }, **pipeline_metadata_annotations,
-                ),
-            })
+            obj_model.spec["tags"].append(
+                {
+                    "from": {
+                        "kind": "DockerImage",
+                        "name": final_multi_pullspec,
+                    },
+                    "referencePolicy": {
+                        "type": "Source",
+                    },
+                    "importPolicy": {
+                        "importMode": "PreserveOriginal",
+                    },
+                    "name": multi_release_istag,
+                    "annotations": dict(
+                        **{
+                            # Prevents the release controller from trying to create a local registry release payload
+                            # with oc adm release new.
+                            "release.openshift.io/rewrite": "false",
+                        },
+                        **pipeline_metadata_annotations,
+                    ),
+                }
+            )
             return True
 
         await modify_and_replace_api_object(
-            multi_art_latest_is, add_multi_nightly_release, self.output_path, self.moist_run,
+            multi_art_latest_is,
+            add_multi_nightly_release,
+            self.output_path,
+            self.moist_run,
         )
 
 
@@ -1640,8 +1793,9 @@ class PayloadGenerator:
         self.package_rpm_finder = package_rpm_finder
 
     @staticmethod
-    def find_mismatched_siblings(build_record_inspectors: Iterable[Optional[BuildRecordInspector]]) -> \
-            List[Tuple[BuildRecordInspector, BuildRecordInspector]]:
+    def find_mismatched_siblings(
+        build_record_inspectors: Iterable[Optional[BuildRecordInspector]],
+    ) -> List[Tuple[BuildRecordInspector, BuildRecordInspector]]:
         """
         Sibling images are those built from the same repository. We need to throw an error
         if there are sibling built from different commits.
@@ -1687,12 +1841,14 @@ class PayloadGenerator:
                     red_print(
                         "The following NVRs are siblings but built from different commits: "
                         f"{potential_conflict.build_record_inspector.get_nvr()} and "
-                        f"{build_record_inspector.get_nvr()}", file=sys.stderr,
+                        f"{build_record_inspector.get_nvr()}",
+                        file=sys.stderr,
                     )
             else:
                 # No conflict, so this is our first encounter for this repo; add it to our tracking dict.
                 repo_builds[source_url] = RepoBuildRecord(
-                    build_record_inspector=build_record_inspector, source_git_commit=source_git_commit,
+                    build_record_inspector=build_record_inspector,
+                    source_git_commit=source_git_commit,
                 )
 
         return mismatched_siblings
@@ -1756,14 +1912,17 @@ class PayloadGenerator:
                 if kernel_r != kernel_rt_r:
                     inconsistency = True
             if inconsistency:
-                inconsistencies.append({
-                    "kernel-core": _to_nvr(rpms_dict["kernel-core"]),
-                    "kernel-rt-core": _to_nvr(rpms_dict["kernel-rt-core"]),
-                })
+                inconsistencies.append(
+                    {
+                        "kernel-core": _to_nvr(rpms_dict["kernel-core"]),
+                        "kernel-rt-core": _to_nvr(rpms_dict["kernel-rt-core"]),
+                    }
+                )
         return inconsistencies
 
     def find_rhcos_payload_rpm_inconsistencies(
-        self, primary_rhcos_build: RHCOSBuildInspector,
+        self,
+        primary_rhcos_build: RHCOSBuildInspector,
         payload_bri: Dict[str, BuildRecordInspector],
         # payload tag -> [pkg_name1, ...]
         payload_consistency_config: Dict[str, List[str]],
@@ -1796,8 +1955,9 @@ class PayloadGenerator:
             if not bbii:
                 issues.append(
                     AssemblyIssue(
-                    f"RHCOS consistency configuration specifies a payload tag '{payload_tag}'"
-                    " that does not exist", payload_tag, AssemblyIssueCode.IMPERMISSIBLE,
+                        f"RHCOS consistency configuration specifies a payload tag '{payload_tag}'" " that does not exist",
+                        payload_tag,
+                        AssemblyIssueCode.IMPERMISSIBLE,
                     ),
                 )
                 continue
@@ -1806,16 +1966,24 @@ class PayloadGenerator:
             for pkg in consistent_pkgs:
                 issues.append(
                     self.validate_pkg_consistency_req(
-                    payload_tag, pkg, bbii, rhcos_rpm_vrs,
-                    str(primary_rhcos_build), package_rpm_finder,
+                        payload_tag,
+                        pkg,
+                        bbii,
+                        rhcos_rpm_vrs,
+                        str(primary_rhcos_build),
+                        package_rpm_finder,
                     ),
                 )
 
         return [issue for issue in issues if issue]
 
     def validate_pkg_consistency_req(
-        self, payload_tag: str, pkg: str, bri: BuildRecordInspector,
-        rhcos_rpm_vrs: Dict[str, str], rhcos_build_id: str,
+        self,
+        payload_tag: str,
+        pkg: str,
+        bri: BuildRecordInspector,
+        rhcos_rpm_vrs: Dict[str, str],
+        rhcos_build_id: str,
         package_rpm_finder=None,
     ) -> Optional[AssemblyIssue]:
         """check that the specified package in the member is consistent with the RHCOS build"""
@@ -1827,9 +1995,9 @@ class PayloadGenerator:
             build = member_nvrs[pkg]
         except KeyError:
             return AssemblyIssue(
-                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' "
-                f"should install package '{pkg}', but it does not",
-                payload_tag, AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' " f"should install package '{pkg}', but it does not",
+                payload_tag,
+                AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
             )
 
         # get names of all the actual RPMs included in this package build, because that's what we
@@ -1852,7 +2020,8 @@ class PayloadGenerator:
                     f"RHCOS and '{payload_tag}' should use the same build of "
                     f"package '{pkg}', but {rhcos_build_id} has {name}-{vr} and "
                     f"{payload_tag_nvr} has {build['nvr']}",
-                    payload_tag, AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
+                    payload_tag,
+                    AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
                 )
                 # no need to check other RPMs from this package build, one is enough
 
@@ -1872,8 +2041,10 @@ class PayloadGenerator:
         return f"{dest_repo}:{tag}"
 
     def find_payload_entries(
-        self, assembly_inspector: AssemblyInspector,
-        arch: str, dest_repo: str,
+        self,
+        assembly_inspector: AssemblyInspector,
+        arch: str,
+        dest_repo: str,
     ) -> (Dict[str, PayloadEntry], List[AssemblyIssue]):
         """
         Returns a list of images which should be included in the architecture specific release payload.
@@ -1891,14 +2062,15 @@ class PayloadGenerator:
         return members, issues
 
     def _find_initial_payload_entries(
-        self, assembly_inspector: AssemblyInspector,
-        arch: str, dest_repo: str,
+        self,
+        assembly_inspector: AssemblyInspector,
+        arch: str,
+        dest_repo: str,
     ) -> Dict[str, PayloadEntry]:
 
         # Maps release payload tag name to the PayloadEntry for the image.
         members: Dict[str, Optional[PayloadEntry]] = dict()
-        for payload_tag, image_inspector in \
-                self.get_group_payload_tag_mapping(assembly_inspector, arch).items():
+        for payload_tag, image_inspector in self.get_group_payload_tag_mapping(assembly_inspector, arch).items():
 
             if not image_inspector:
                 # There is no build for this payload tag for this CPU arch. This
@@ -1911,10 +2083,12 @@ class PayloadGenerator:
                 build_record_inspector=image_inspector.get_build_inspector(),
                 image_inspector=image_inspector,
                 dest_pullspec=PayloadGenerator.get_mirroring_destination(
-                    image_inspector.get_digest(), dest_repo,
+                    image_inspector.get_digest(),
+                    dest_repo,
                 ),
                 dest_manifest_list_pullspec=PayloadGenerator.get_mirroring_destination(
-                    image_inspector.get_manifest_list_digest(), dest_repo,
+                    image_inspector.get_manifest_list_digest(),
+                    dest_repo,
                 ),
                 issues=list(),
             )
@@ -1936,10 +2110,7 @@ class PayloadGenerator:
         if not pod_entry:
             raise IOError(f"Unable to find 'pod' image archive for architecture: {arch}; unable to construct payload")
 
-        return {
-            tag_name: entry or pod_entry
-            for tag_name, entry in members.items()
-        }
+        return {tag_name: entry or pod_entry for tag_name, entry in members.items()}
 
     @staticmethod
     @TRACER.start_as_current_span("PayloadGenerator._find_rhcos_payload_entries")
@@ -1948,9 +2119,11 @@ class PayloadGenerator:
         arch: str,
     ) -> Tuple[Dict[str, PayloadEntry], List[AssemblyIssue]]:
         span = trace.get_current_span()
-        span.set_attributes({
-            "doozer.param.arch": arch,
-        })
+        span.set_attributes(
+            {
+                "doozer.param.arch": arch,
+            }
+        )
         members: Dict[str, PayloadEntry] = dict()
         issues: List[AssemblyIssue] = list()
         rhcos_build: RHCOSBuildInspector = assembly_inspector.get_rhcos_build(arch)
@@ -1966,16 +2139,16 @@ class PayloadGenerator:
                     # Impermissible, need to be sure of having the primary container in the payload
                     issues.append(
                         AssemblyIssue(
-                            f"RHCOS build {rhcos_build} metadata lacks entry for primary container "
-                            f"{container_config.name}: {ex}", component=container_config.name,
+                            f"RHCOS build {rhcos_build} metadata lacks entry for primary container " f"{container_config.name}: {ex}",
+                            component=container_config.name,
                         ),
                     )
 
                 else:
                     issues.append(
                         AssemblyIssue(
-                            f"RHCOS build {rhcos_build} metadata lacks entry for non-primary container "
-                            f"{container_config.name}: {ex}", component=container_config.name,
+                            f"RHCOS build {rhcos_build} metadata lacks entry for non-primary container " f"{container_config.name}: {ex}",
+                            component=container_config.name,
                             code=AssemblyIssueCode.MISSING_RHCOS_CONTAINER,
                         ),
                     )
@@ -2003,7 +2176,9 @@ class PayloadGenerator:
         }
 
     def build_payload_imagestream(
-        self, imagestream_name: str, imagestream_namespace: str,
+        self,
+        imagestream_name: str,
+        imagestream_namespace: str,
         payload_istags: Iterable[Dict],
         assembly_wide_inconsistencies: Iterable[AssemblyIssue],
     ) -> Dict:
@@ -2078,10 +2253,10 @@ class PayloadGenerator:
         return annotations
 
     def get_group_payload_tag_mapping(
-        self, assembly_inspector: AssemblyInspector,
+        self,
+        assembly_inspector: AssemblyInspector,
         arch: str,
     ) -> Dict[str, Optional[ImageInspector]]:
-
         """
         Each payload tag name used to map exactly to one release imagemeta. With the advent of '-alt' images,
         we need some logic to determine which images map to which payload tags for a given architecture.
@@ -2092,9 +2267,8 @@ class PayloadGenerator:
 
         brew_arch = brew_arch_for_go_arch(arch)  # Make certain this is brew arch nomenclature
         members: Dict[
-            str, Optional[
-            ImageInspector
-            ],
+            str,
+            Optional[ImageInspector],
         ] = dict()  # Maps release payload tag name to the archive which should populate it
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
 
@@ -2150,8 +2324,10 @@ class PayloadGenerator:
         return members
 
     async def _check_nightly_consistency(
-        self, assembly_inspector: AssemblyInspector,
-        nightly: str, arch: str,
+        self,
+        assembly_inspector: AssemblyInspector,
+        nightly: str,
+        arch: str,
     ) -> List[AssemblyIssue]:
 
         runtime = assembly_inspector.runtime
@@ -2196,8 +2372,7 @@ class PayloadGenerator:
             if "@" not in payload_tag_pullspec:
                 # This speaks to an invalid nightly, so raise and exception
                 raise IOError(
-                    f"Expected pullspec in {nightly}:{payload_tag_name} to be sha digest "
-                    f"but found invalid: {payload_tag_pullspec}",
+                    f"Expected pullspec in {nightly}:{payload_tag_name} to be sha digest " f"but found invalid: {payload_tag_pullspec}",
                 )
 
             pullspec_sha = payload_tag_pullspec.rsplit("@", 1)[-1]
@@ -2214,7 +2389,8 @@ class PayloadGenerator:
                         AssemblyIssue(
                             f"{nightly} contains {payload_tag_name} sha {pullspec_sha} but assembly computed archive: "
                             f"{entry.image_inspector.get_archive_id()} and "
-                            f"{entry.image_inspector.get_pullspec()}", component="reference-releases",
+                            f"{entry.image_inspector.get_pullspec()}",
+                            component="reference-releases",
                         ),
                     )
 
@@ -2226,7 +2402,8 @@ class PayloadGenerator:
                     issues.append(
                         AssemblyIssue(
                             f'{nightly} contains {payload_tag_name} sha {pullspec_sha} but assembly computed rhcos:'
-                            f' {entry.rhcos_build} and {actual_digest}', component='reference-releases',
+                            f' {entry.rhcos_build} and {actual_digest}',
+                            component='reference-releases',
                         ),
                     )
             else:

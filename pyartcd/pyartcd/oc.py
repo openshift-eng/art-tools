@@ -1,13 +1,13 @@
 import json
-import os
 import logging
-import openshift_client as octool
+import os
 from typing import List, Optional
+
+import openshift_client as octool
+from artcommonlib import exectools
 from tenacity import retry, stop_after_attempt
 
-from artcommonlib import exectools
 from pyartcd.runtime import Runtime
-
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +132,16 @@ def extract_baremetal_installer(release_pullspec: str, path: str, arch: str, cmd
     cmd_os = f'linux/{arch}'
     # oc adm release extract --command=openshift-baremetal-install -n=ocp --to <path> <pullspec>
     args = [
-        'release', 'extract', f'--command={cmd}', '-n=ocp', '--from',
-        release_pullspec, '--filter-by-os', cmd_os, '--command-os', cmd_os,
+        'release',
+        'extract',
+        f'--command={cmd}',
+        '-n=ocp',
+        '--from',
+        release_pullspec,
+        '--filter-by-os',
+        cmd_os,
+        '--command-os',
+        cmd_os,
         f'--to={path}',
     ]
     return common_oc_wrapper(

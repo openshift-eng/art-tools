@@ -1,19 +1,18 @@
-from datetime import datetime, timezone
 import logging
 import os
 import shutil
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from multiprocessing import Lock
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, cast
 
-from artcommonlib import assertion, exectools, constants
+from artcommonlib import assertion, constants, exectools
 from artcommonlib import util as art_util
 from artcommonlib.git_helper import git_clone
 from artcommonlib.lock import get_named_semaphore
 from artcommonlib.model import ListModel, Missing, Model
-
 from doozerlib.record_logger import RecordLogger
 
 if TYPE_CHECKING:
@@ -24,7 +23,8 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class SourceResolution:
-    """ A dataclass for caching the result of SourceResolver.resolve_source."""
+    """A dataclass for caching the result of SourceResolver.resolve_source."""
+
     source_path: str
     """ The local path to the source code repository. """
     url: str
@@ -38,7 +38,7 @@ class SourceResolution:
 
     @property
     def commit_hash_short(self):
-        """ The short commit hash of the current HEAD. """
+        """The short commit hash of the current HEAD."""
         return self.commit_hash[:7]
 
     committer_date: datetime
@@ -54,15 +54,20 @@ class SourceResolution:
 
 
 class SourceResolver:
-    """ A class for resolving source code repositories.
-    """
+    """A class for resolving source code repositories."""
 
     def __init__(
-        self, sources_base_dir: str, cache_dir: Optional[str], group_config: Model,
-        local=False, upcycle=False, stage=False,
-        record_logger: Optional[RecordLogger] = None, state_holder: Optional[Dict[str, Any]] = None,
+        self,
+        sources_base_dir: str,
+        cache_dir: Optional[str],
+        group_config: Model,
+        local=False,
+        upcycle=False,
+        stage=False,
+        record_logger: Optional[RecordLogger] = None,
+        state_holder: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """ Initialize a new SourceResolver instance.
+        """Initialize a new SourceResolver instance.
         :param sources_base_dir: The base directory where source code repositories will be cloned.
         :param cache_dir: The base directory where source code repositories will be cached.
         :param group_config: The group configuration.
@@ -85,7 +90,7 @@ class SourceResolver:
         self._state_holder = state_holder
 
     def resolve_source(self, meta: 'Metadata', no_clone: bool = False) -> SourceResolution:
-        """ Resolve the source code repository for the specified metadata.
+        """Resolve the source code repository for the specified metadata.
         :param meta: The metadata to resolve the source code repository for.
         :param no_clone: If True, the source code repository will not be cloned. Only the source resolution object will be returned.
         :return: A SourceResolution instance containing the information of the resolved source code repository.
@@ -164,7 +169,9 @@ class SourceResolver:
             url = str(source_details["url"])
             has_public_upstream = False
             if self._group_config.public_upstreams:
-                meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
+                meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(
+                    url, self._group_config.public_upstreams
+                )
 
             if no_clone:
                 https_url = art_util.convert_remote_git_to_https(url)
@@ -223,7 +230,7 @@ class SourceResolver:
         stage: bool,
         use_source_fallback_branch: str = "yes",
     ) -> Tuple[str, str]:
-        """ Find a configured source branch that exists, or raise DoozerFatalError.
+        """Find a configured source branch that exists, or raise DoozerFatalError.
 
         :param source_details: The source details from the metadata config.
         :param stage: If True, the stage branch will be used instead of the target branch.
@@ -281,7 +288,7 @@ class SourceResolver:
         """
         if len(branch) >= 7:  # The hash must be sufficiently unique
             try:
-                int(branch, 16)   # A hash must be a valid hex number
+                int(branch, 16)  # A hash must be a valid hex number
                 return True
             except ValueError:
                 pass
@@ -355,7 +362,9 @@ class SourceResolver:
             public_upstream_branch = branch
             if branch != 'HEAD' and self._group_config.public_upstreams:
                 # If branch == HEAD, our source is a detached HEAD.
-                public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
+                public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(
+                    url, self._group_config.public_upstreams
+                )
                 if public_upstream_branch_override:
                     public_upstream_branch = public_upstream_branch_override
 
@@ -444,7 +453,8 @@ class SourceResolver:
         else:
             exectools.cmd_assert(["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url])
         exectools.cmd_assert(
-            ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch], retries=3,
+            ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch],
+            retries=3,
             set_env=constants.GIT_NO_PROMPTS,
         )
 

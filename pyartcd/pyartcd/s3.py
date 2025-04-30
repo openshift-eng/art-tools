@@ -1,6 +1,7 @@
 import os
 import sys
 from typing import Optional
+
 from artcommonlib import exectools
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -22,8 +23,12 @@ async def sync_repo_to_s3_mirror(local_dir: str, s3_path: str, dry_run: bool = F
 
 
 async def sync_dir_to_s3_mirror(
-    local_dir: str, s3_path: str, exclude: Optional[str] = None, include_only: Optional[str] = None,
-    dry_run: bool = False, remove_old: bool = True,
+    local_dir: str,
+    s3_path: str,
+    exclude: Optional[str] = None,
+    include_only: Optional[str] = None,
+    dry_run: bool = False,
+    remove_old: bool = True,
 ):
     """
     Sync a directory to an s3 bucket.
@@ -35,11 +40,13 @@ async def sync_dir_to_s3_mirror(
     :param dry_run: Print what would happen, but don't actually do it.
     :param remove_old: Remove old files with --delete
     """
-    if not s3_path.startswith('/') or \
-            s3_path.startswith('/pub/openshift-v4/clients') or \
-            s3_path.startswith('/pub/openshift-v4/amd64') or \
-            s3_path.startswith('/pub/openshift-v4/arm64') or \
-            s3_path.startswith('/pub/openshift-v4/dependencies'):
+    if (
+        not s3_path.startswith('/')
+        or s3_path.startswith('/pub/openshift-v4/clients')
+        or s3_path.startswith('/pub/openshift-v4/amd64')
+        or s3_path.startswith('/pub/openshift-v4/arm64')
+        or s3_path.startswith('/pub/openshift-v4/dependencies')
+    ):
         raise Exception(
             f'Invalid location on s3 ({s3_path}); these are virtual/read-only locations on the s3 '
             'backed mirror. Qualify your path with /pub/openshift-v4/<brew_arch_name>/ instead.',
@@ -62,7 +69,9 @@ async def sync_dir_to_s3_mirror(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True,
-    )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)
+    )(
+        exectools.cmd_assert_async
+    )(full_command, env=env, stdout=sys.stderr)
 
     full_command = base_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']] + options + [local_dir, full_s3_path]
     # Sync temporarily to Cloudflare as well
@@ -70,4 +79,6 @@ async def sync_dir_to_s3_mirror(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True,
-    )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)
+    )(
+        exectools.cmd_assert_async
+    )(full_command, env=env, stdout=sys.stderr)

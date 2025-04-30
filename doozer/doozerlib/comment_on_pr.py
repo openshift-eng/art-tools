@@ -1,12 +1,11 @@
 import os
 from datetime import datetime, timezone
 
-from dockerfile_parse import DockerfileParser
-from ghapi.all import GhApi
-
 from artcommonlib import logutil
 from artcommonlib.pushd import Dir
+from dockerfile_parse import DockerfileParser
 from doozerlib.constants import BREWWEB_URL, GITHUB_TOKEN
+from ghapi.all import GhApi
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -50,12 +49,14 @@ class CommentOnPr:
         # https://docs.github.com/rest/reference/issues#create-an-issue-comment
 
         # Message to be posted to the comment
-        comment = "**[ART PR BUILD NOTIFIER]**\n\n" + \
-                  f"Distgit: {self.distgit_name}\n" + \
-                  "This PR has been included in build " + \
-                  f"[{self.nvr}]({BREWWEB_URL}/buildinfo" + \
-                  f"?buildID={self.build_id}).\n" + \
-                  "All builds following this will include this PR."
+        comment = (
+            "**[ART PR BUILD NOTIFIER]**\n\n"
+            + f"Distgit: {self.distgit_name}\n"
+            + "This PR has been included in build "
+            + f"[{self.nvr}]({BREWWEB_URL}/buildinfo"
+            + f"?buildID={self.build_id}).\n"
+            + "All builds following this will include this PR."
+        )
 
         self.gh_client.issues.create_comment(issue_number=self.pr["number"], body=comment)
         LOGGER.info(f"[{self.distgit_name}] Successful commented on PR: https://github.com/{self.owner}/{self.repo}/pull/{self.pr['number']}")

@@ -1,22 +1,21 @@
+import logging
 import re
 import sys
-import logging
 from typing import Any, Dict, List, Optional, Sequence, TextIO, Tuple, cast
 
 import click
 import koji
-from bugzilla import Bugzilla
-from bugzilla.bug import Bug
-from jira import JIRA, Issue
-from tenacity import retry, stop_after_attempt
-
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.format_util import green_print
+from bugzilla import Bugzilla
+from bugzilla.bug import Bug
 from elliottlib import Runtime, constants, early_kernel
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.config_model import KernelBugSweepConfig
 from elliottlib.exceptions import ElliottFatalError
-from elliottlib.bzutil import JIRABugTracker
+from jira import JIRA, Issue
+from tenacity import retry, stop_after_attempt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,8 +27,13 @@ def _search_issues(jira_client, *args, **kwargs):
 
 class FindBugsKernelCli:
     def __init__(
-        self, runtime: Runtime, trackers: Sequence[str],
-        clone: bool, reconcile: bool, update_tracker: bool, dry_run: bool,
+        self,
+        runtime: Runtime,
+        trackers: Sequence[str],
+        clone: bool,
+        reconcile: bool,
+        update_tracker: bool,
+        dry_run: bool,
     ):
         self._runtime = runtime
         self._logger = LOGGER
@@ -85,12 +89,14 @@ class FindBugsKernelCli:
                     raise ValueError(f"Bug {bug_id} is linked in multiple KMAINT trackers: {tracker.key} {self._tracker_map[bug_id].key}")
                 self._id_bugs[bug_id] = bug
                 self._tracker_map[bug_id] = tracker
-                report["kernel_bugs"].append({
-                    "id": bug_id,
-                    "status": bug.status,
-                    "summary": bug.summary,
-                    "tracker": tracker,
-                })
+                report["kernel_bugs"].append(
+                    {
+                        "id": bug_id,
+                        "status": bug.status,
+                        "summary": bug.summary,
+                        "tracker": tracker,
+                    }
+                )
             if self.update_tracker:
                 self._update_tracker(jira_client, tracker, koji_api, config.target_jira)
 
@@ -137,8 +143,7 @@ class FindBugsKernelCli:
         return filtered_bugs
 
     def _get_and_filter_bugs(self, bz_client: Bugzilla, bug_ids: List[int], bz_target_releases: Sequence[str]):
-        """ Get specified bugs from Bugzilla, then return those bugs that match the defined target release.
-        """
+        """Get specified bugs from Bugzilla, then return those bugs that match the defined target release."""
         logger = self._logger
         filtered_bugs: List[Bug] = []
         logger.info("Getting bugs %s from Bugzilla...", bug_ids)
@@ -209,7 +214,10 @@ class FindBugsKernelCli:
             print_func(text, file=out)
 
     def _update_tracker(
-        self, jira_client: JIRA, tracker: Issue, koji_api: koji.ClientSession,
+        self,
+        jira_client: JIRA,
+        tracker: Issue,
+        koji_api: koji.ClientSession,
         conf: KernelBugSweepConfig.TargetJiraConfig,
     ):
         logger = LOGGER
@@ -221,7 +229,10 @@ class FindBugsKernelCli:
             early_kernel.process_shipped_tracker(logger, self.dry_run, jira_client, tracker, nvrs, shipped)
         elif candidate:
             early_kernel.comment_on_tracker(
-                logger, self.dry_run, jira_client, tracker,
+                logger,
+                self.dry_run,
+                jira_client,
+                tracker,
                 [f"Build(s) {nvrs} was/were already tagged into {candidate}."],
                 # do not reword, see NOTE in method
             )
@@ -251,10 +262,12 @@ class FindBugsKernelCli:
             "summary": summary,
             "description": bug.description,
             "issuetype": {"name": "Bug"},
-            "versions": [{"name": ocp_target_version[:ocp_target_version.rindex(".")]}],
-            f"{JIRABugTracker.field_target_version}": [{
-                "name": ocp_target_version,
-            }],
+            "versions": [{"name": ocp_target_version[: ocp_target_version.rindex(".")]}],
+            f"{JIRABugTracker.field_target_version}": [
+                {
+                    "name": ocp_target_version,
+                }
+            ],
             "labels": ["art:cloned-kernel-bug", f"art:bz#{bug.id}"],
         }
         if kmaint_tracker:
@@ -281,7 +294,9 @@ class FindBugsKernelCli:
             # labels |= {f"flaw:bz#{flaw.id}" for flaw in cve_flaws}
             # fields["labels"] += sorted(labels)
 
-            hint += "Please note that this bug is cloned as a non-CVE bug intentionally due to limitations in interoperability in internal processes.\n"
+            hint += (
+                "Please note that this bug is cloned as a non-CVE bug intentionally due to limitations in interoperability in internal processes.\n"
+            )
 
         fields["description"] = f"{hint}\n----\n{bug.description}"
         return fields
@@ -289,7 +304,10 @@ class FindBugsKernelCli:
 
 @cli.command("find-bugs:kernel", short_help="Find kernel bugs")
 @click.option(
-    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
+    "--tracker",
+    "trackers",
+    metavar='JIRA_KEY',
+    multiple=True,
     help="Find by the specified KMAINT tracker JIRA_KEY",
 )
 @click.option(
@@ -319,8 +337,12 @@ class FindBugsKernelCli:
 @click.pass_obj
 @click_coroutine
 async def find_bugs_kernel_cli(
-        runtime: Runtime, trackers: Tuple[str, ...], clone: bool,
-        reconcile: bool, update_tracker: bool, dry_run: bool,
+    runtime: Runtime,
+    trackers: Tuple[str, ...],
+    clone: bool,
+    reconcile: bool,
+    update_tracker: bool,
+    dry_run: bool,
 ):
     """Find kernel bugs in Bugzilla for weekly kernel release through OCP.
 

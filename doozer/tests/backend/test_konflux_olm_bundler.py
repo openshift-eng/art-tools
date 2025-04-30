@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBundleBuildRecord,
+    KonfluxBuildOutcome,
+    KonfluxBundleBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import Engine
-
 from doozerlib import constants
 from doozerlib.backend.konflux_olm_bundler import (
     KonfluxOlmBundleBuilder,
@@ -118,7 +118,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(new_content.strip(), expected_new_content.strip())
         self.assertIn('image', found_images)
         self.assertEqual(
-            found_images['image'], (
+            found_images['image'],
+            (
                 'registry.example.com/namespace/image:tag',
                 'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
                 'test-component-1.0-1',
@@ -283,7 +284,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
 
             self.assertEqual(mock_bundle_df.content, 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata')
             self.assertEqual(
-                mock_bundle_df.labels, {
+                mock_bundle_df.labels,
+                {
                     'com.redhat.component': 'test-component',
                     'com.redhat.delivery.appregistry': False,
                     'name': 'test-image',
@@ -314,7 +316,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertIn('\n', written_lines)
         yaml_content = yaml.safe_load(written_lines[2])
         self.assertEqual(
-            yaml_content, {
+            yaml_content,
+            {
                 'platforms': {'only': ['x86_64']},
                 'operator_manifests': {'manifests_dir': 'manifests'},
             },
@@ -330,8 +333,15 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_container_yaml")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_oit_files")
     async def test_rebase_dir(
-        self, mock_create_oit_files, mock_create_container_yaml, mock_create_dockerfile,
-        mock_replace_image_references, mock_dockerfile_parser, mock_glob, mock_mkdir, mock_open,
+        self,
+        mock_create_oit_files,
+        mock_create_container_yaml,
+        mock_create_dockerfile,
+        mock_replace_image_references,
+        mock_dockerfile_parser,
+        mock_glob,
+        mock_mkdir,
+        mock_open,
         mock_iterdir,
     ):
         metadata = MagicMock()
@@ -358,10 +368,12 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
 
         mock_glob.return_value = ["/path/to/operator/dir/manifests/package.yaml"]
         mock_file = mock_open.return_value.__aenter__.return_value
-        mock_file.read.return_value = yaml.safe_dump({
-            'packageName': 'test-package',
-            'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}],
-        })
+        mock_file.read.return_value = yaml.safe_dump(
+            {
+                'packageName': 'test-package',
+                'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}],
+            }
+        )
 
         new_content = """
 apiVersion: operators.coreos.com/v1alpha1
@@ -374,7 +386,8 @@ spec:
   displayName: Test Operator
         """
         mock_replace_image_references.return_value = (
-            new_content, {
+            new_content,
+            {
                 'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
             },
         )
@@ -396,19 +409,26 @@ spec:
         mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/test.clusterserviceversion.yaml"), 'w')
         mock_open.assert_any_call(Path("/path/to/bundle/dir/metadata/annotations.yaml"), 'w')
         mock_create_dockerfile.assert_called_once_with(
-            metadata, operator_dir, bundle_dir, {
+            metadata,
+            operator_dir,
+            bundle_dir,
+            {
                 'operators.operatorframework.io.bundle.channel.default.v1': 'test-channel',
                 'operators.operatorframework.io.bundle.channels.v1': 'test-channel',
                 'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
                 'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
                 'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
                 'operators.operatorframework.io.bundle.package.v1': 'test-package',
-            }, input_release,
+            },
+            input_release,
         )
         mock_create_container_yaml.assert_called_once_with(Path("/path/to/bundle/dir/container.yaml"))
         mock_create_oit_files.assert_called_once_with(
-            'test-package', 'test-operator.v1.0.0',
-            bundle_dir, 'test-distgit-key-1.0-1', {
+            'test-package',
+            'test-operator.v1.0.0',
+            bundle_dir,
+            'test-distgit-key-1.0-1',
+            {
                 'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
             },
         )
@@ -580,7 +600,9 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.konflux_client.start_pipeline_run_for_image_build.return_value = pipelinerun
         self.konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipelinerun")
 
-        pipelinerun, url = await self.builder._start_build(metadata, bundle_build_repo, f"{self.image_repo}:test-component-1.0-1", self.konflux_namespace, self.skip_checks, additional_tags)
+        pipelinerun, url = await self.builder._start_build(
+            metadata, bundle_build_repo, f"{self.image_repo}:test-component-1.0-1", self.konflux_namespace, self.skip_checks, additional_tags
+        )
 
         self.konflux_client.ensure_application.assert_called_once_with(name="test-group", display_name="test-group")
         self.konflux_client.ensure_component.assert_called_once_with(
@@ -657,17 +679,25 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
-        mock_file.read.return_value = yaml.safe_dump({
-            'operator': {'nvr': 'test-operator-1.0-1'},
-            'operands': {
-                'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'},
-            },
-        })
+        mock_file.read.return_value = yaml.safe_dump(
+            {
+                'operator': {'nvr': 'test-operator-1.0-1'},
+                'operands': {
+                    'operand1': {'nvr': 'operand1-1.0-1'},
+                    'operand2': {'nvr': 'operand2-1.0-1'},
+                },
+            }
+        )
 
         await self.builder._update_konflux_db(
-            metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
-            'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+            metadata,
+            build_repo,
+            'test-operator',
+            'test-operator-1.0',
+            pipelinerun,
+            KonfluxBuildOutcome.SUCCESS,
+            'test-operator-1.0-1',
+            ["operand1-1.0-1", "operand2-1.0-1"],
         )
 
         self.db.add_build.assert_called_once()
@@ -689,7 +719,10 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(build_record.build_pipeline_url, "https://example.com/pipelinerun")
         self.assertEqual(build_record.operator_nvr, "test-operator-1.0-1")
         self.assertEqual(build_record.operand_nvrs, ["operand1-1.0-1", "operand2-1.0-1"])
-        self.assertEqual(build_record.image_pullspec, "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test@sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807")
+        self.assertEqual(
+            build_record.image_pullspec,
+            "quay.io/openshift-release-dev/ocp-v4.0-art-dev-test@sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807",
+        )
         self.assertEqual(build_record.image_tag, "test-image")
         self.assertEqual(build_record.start_time, datetime(2023, 10, 1, 12, 0, 0, tzinfo=timezone.utc))
         self.assertEqual(build_record.end_time, datetime(2023, 10, 1, 12, 30, 0, tzinfo=timezone.utc))
@@ -727,17 +760,25 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
-        mock_file.read.return_value = yaml.safe_dump({
-            'operator': {'nvr': 'test-operator-1.0-1'},
-            'operands': {
-                'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'},
-            },
-        })
+        mock_file.read.return_value = yaml.safe_dump(
+            {
+                'operator': {'nvr': 'test-operator-1.0-1'},
+                'operands': {
+                    'operand1': {'nvr': 'operand1-1.0-1'},
+                    'operand2': {'nvr': 'operand2-1.0-1'},
+                },
+            }
+        )
 
         await self.builder._update_konflux_db(
-            metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.FAILURE,
-            'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+            metadata,
+            build_repo,
+            'test-operator',
+            'test-operator-1.0',
+            pipelinerun,
+            KonfluxBuildOutcome.FAILURE,
+            'test-operator-1.0-1',
+            ["operand1-1.0-1", "operand2-1.0-1"],
         )
 
         self.db.add_build.assert_called_once()
@@ -799,20 +840,28 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
-        mock_file.read.return_value = yaml.safe_dump({
-            'operator': {'nvr': 'test-operator-1.0-1'},
-            'operands': {
-                'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'},
-            },
-        })
+        mock_file.read.return_value = yaml.safe_dump(
+            {
+                'operator': {'nvr': 'test-operator-1.0-1'},
+                'operands': {
+                    'operand1': {'nvr': 'operand1-1.0-1'},
+                    'operand2': {'nvr': 'operand2-1.0-1'},
+                },
+            }
+        )
 
         self.builder._db = None
 
         with self.assertLogs(self.builder._logger, level='WARNING') as cm:
             await self.builder._update_konflux_db(
-                metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
-                'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+                metadata,
+                build_repo,
+                'test-operator',
+                'test-operator-1.0',
+                pipelinerun,
+                KonfluxBuildOutcome.SUCCESS,
+                'test-operator-1.0-1',
+                ["operand1-1.0-1", "operand2-1.0-1"],
             )
             self.assertIn('Konflux DB connection is not initialized, not writing build record to the Konflux DB.', cm.output[0])
 
@@ -853,19 +902,27 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         mock_dockerfile_parser.return_value = mock_dockerfile
 
         mock_file = mock_open.return_value.__aenter__.return_value
-        mock_file.read.return_value = yaml.safe_dump({
-            'operator': {'nvr': 'test-operator-1.0-1'},
-            'operands': {
-                'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'},
-            },
-        })
+        mock_file.read.return_value = yaml.safe_dump(
+            {
+                'operator': {'nvr': 'test-operator-1.0-1'},
+                'operands': {
+                    'operand1': {'nvr': 'operand1-1.0-1'},
+                    'operand2': {'nvr': 'operand2-1.0-1'},
+                },
+            }
+        )
 
         self.db.add_build.side_effect = Exception("Test exception")
 
         with self.assertLogs(self.builder._logger, level='ERROR') as cm:
             await self.builder._update_konflux_db(
-                metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
-                'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+                metadata,
+                build_repo,
+                'test-operator',
+                'test-operator-1.0',
+                pipelinerun,
+                KonfluxBuildOutcome.SUCCESS,
+                'test-operator-1.0-1',
+                ["operand1-1.0-1", "operand2-1.0-1"],
             )
             self.assertIn('Failed writing record to the konflux DB: Test exception', cm.output[0])

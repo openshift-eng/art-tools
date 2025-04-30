@@ -4,9 +4,8 @@ import traceback
 import warnings
 from abc import ABC, abstractmethod
 
-from artcommonlib import logutil, constants
+from artcommonlib import constants, logutil
 from artcommonlib.konflux.konflux_db import KonfluxDb
-
 
 # an abstract class intended to be used by anything looking for config specific to a single
 # ocp-build-data group.
@@ -70,7 +69,7 @@ class GroupRuntime(ABC):
 
     @property
     def logger(self):
-        """ Get the runtime logger.
+        """Get the runtime logger.
         Your module should generally use `logging.getLogger(__name__)` instead of using this one.
         """
 

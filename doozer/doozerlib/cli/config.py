@@ -1,34 +1,33 @@
 import base64
-import click
-import os
-import yaml
-import sys
 import io
+import os
 import pathlib
+import sys
 from typing import Dict
-from ghapi.core import GhApi
 
+import click
+import yaml
 from artcommonlib import gitdata
-from artcommonlib.format_util import red_print, green_print, yellow_print, color_print
+from artcommonlib.format_util import color_print, green_print, red_print, yellow_print
 from artcommonlib.metadata import CONFIG_MODES
-from doozerlib import metadata, Runtime
+from doozerlib import Runtime, metadata
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.config import MetaDataConfig as mdc
+from doozerlib.exceptions import DoozerFatalError
 from doozerlib.rhcos import RHCOSBuildInspector
 from doozerlib.util import dict_get
-from doozerlib.exceptions import DoozerFatalError
-
+from ghapi.core import GhApi
 
 # config:* commands are a special beast and
 # requires the same non-standard runtime options
 CONFIG_RUNTIME_OPTS = {
-    'mode': 'both',           # config wants it all
+    'mode': 'both',  # config wants it all
     'clone_distgits': False,  # no need, just doing config
-    'clone_source': False,    # no need, just doing config
-    'disabled': True,         # show all, including disabled/wip
+    'clone_source': False,  # no need, just doing config
+    'disabled': True,  # show all, including disabled/wip
     'prevent_cloning': True,  # raise exception is somehow we try to clone
-    'config_only': True,      # only initialize config and nothing else
-    'group_only': False,       # only initialize group, logging and nothing else
+    'config_only': True,  # only initialize config and nothing else
+    'group_only': False,  # only initialize group, logging and nothing else
 }
 
 option_config_commit_msg = click.option("--message", "-m", metavar='MSG', help="Commit message for config change.", default=None)
@@ -50,7 +49,9 @@ def _fix_runtime_mode(runtime):
 @cli.command("config:commit", help="Commit pending changes from config:new")
 @option_config_commit_msg
 @click.option(
-    '--push/--no-push', default=False, is_flag=True,
+    '--push/--no-push',
+    default=False,
+    is_flag=True,
     help='Push changes back to config repo. --no-push is default',
 )
 @pass_runtime
@@ -298,7 +299,9 @@ def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
 @cli.command("config:update-mode", short_help="Update config(s) mode. enabled|disabled|wip")
 @click.argument("mode", nargs=1, metavar="MODE", type=click.Choice(CONFIG_MODES))  # new mode value
 @click.option(
-    '--push/--no-push', default=False, is_flag=True,
+    '--push/--no-push',
+    default=False,
+    is_flag=True,
     help='Push changes back to config repo. --no-push is default',
 )
 @option_config_commit_msg
@@ -342,7 +345,10 @@ def config_mode(runtime, mode, push, message):
 
 @cli.command("config:print", short_help="View config for given images / rpms")
 @click.option(
-    "-n", "--name-only", default=False, is_flag=True,
+    "-n",
+    "--name-only",
+    default=False,
+    is_flag=True,
     help="Just print name of matched configs. Overrides --key",
 )
 @click.option("--key", help="Specific key in config to print", default=None)
@@ -384,7 +390,8 @@ def config_print(runtime, key, name_only, as_yaml):
 
 @cli.command("config:gen-csv", short_help="Generate .csv file for given images/rpms")
 @click.option(
-    "--keys", help="Specific key in config to print, separated by commas: --keys key,name,owners",
+    "--keys",
+    help="Specific key in config to print, separated by commas: --keys key,name,owners",
     default=None,
 )
 @click.option("--type", "as_type", default=None, help='Write content type: image or rpm')
@@ -422,10 +429,12 @@ def config_gencsv(runtime, keys, as_type, output):
 @click.option("-o", "--output", metavar="DIR", help="Output directory to sync to", required=True)
 @click.option("--brew-root", metavar="DIR", default='/mnt/redhat/brewroot', help="Brewroot directory from which to source RPMs.", required=True)
 @click.option(
-    "-a", "--arch",
+    "-a",
+    "--arch",
     metavar='ARCH',
     help="Arch for which the repo should be generated (if not specified, use all runtime arches).",
-    default=None, required=False,
+    default=None,
+    required=False,
 )
 @pass_runtime
 def config_rhcos_src(runtime: Runtime, version, output, brew_root, arch):
@@ -495,7 +504,7 @@ def config_update_required(runtime, image_list):
         name = img.image_name
         slash = img.image_name.find('/')
         if slash >= 0:
-            name = name[slash + 1:]
+            name = name[slash + 1 :]
         found = False
         for i in image_list:
             if i == name or i == name.replace('ose-', ''):

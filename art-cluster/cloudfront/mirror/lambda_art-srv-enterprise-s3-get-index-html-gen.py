@@ -1,8 +1,9 @@
-import boto3
 import os
-from urllib.parse import quote, parse_qs, unquote
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote
+
+import boto3
 
 VERBOSE = False
 
@@ -10,12 +11,12 @@ DEFAULT_OUTPUT_FILE = 'index.html'
 
 # bytes pretty-printing
 UNITS_MAPPING = [
-    (1024 ** 5, ' PB'),
-    (1024 ** 4, ' TB'),
-    (1024 ** 3, ' GB'),
-    (1024 ** 2, ' MB'),
-    (1024 ** 1, ' KB'),
-    (1024 ** 0, (' byte', ' bytes')),
+    (1024**5, ' PB'),
+    (1024**4, ' TB'),
+    (1024**3, ' GB'),
+    (1024**2, ' MB'),
+    (1024**1, ' KB'),
+    (1024**0, (' byte', ' bytes')),
 ]
 
 
@@ -119,7 +120,8 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
         print(f'Traversing dir {str(path_top_dir)}')
 
     index_file = StringIO()
-    body_top = """<!DOCTYPE html>
+    body_top = (
+        """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -363,7 +365,9 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
     </defs>
     </svg>
 <header>
-    <h1>""" f'{path_top_dir.name}' """</h1>
+    <h1>"""
+        f'{path_top_dir.name}'
+        """</h1>
              </header>
                  <main>
                  <div class="listing">
@@ -389,6 +393,7 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
                              <td class="hideable"></td>
                          </tr>
     """
+    )
 
     # sort dirs first
 
@@ -448,7 +453,8 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
         else:
             entry_type = 'file'
 
-        index_file.write(f"""
+        index_file.write(
+            f"""
         <tr class="file">
             <td></td>
             <td>
@@ -461,18 +467,21 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
             <td class="hideable"><time datetime="{last_modified_iso}">{last_modified_human_readable}</time></td>
             <td class="hideable"></td>
         </tr>
-""")
+"""
+        )
         if index_file.tell() > 1000000:
             body_top += f'<tr><td></td><td><b>Listing truncated...</b> <a href="?entry={entry_count + 1}">Next Page</a></td><td></td><td></td><td></td></tr>\n'
             break
 
-    index_file.write("""
+    index_file.write(
+        """
             </tbody>
         </table>
     </div>
 </main>
 </body>
-</html>""")
+</html>"""
+    )
     return body_top + index_file.getvalue(), entry_count
 
 

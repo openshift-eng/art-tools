@@ -2,7 +2,6 @@ import unittest
 from unittest import mock
 
 from artcommonlib.model import Model
-
 from doozerlib.cli.fbc import FbcImportCli
 from doozerlib.runtime import Runtime
 from doozerlib.source_resolver import SourceResolver
@@ -19,9 +18,14 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
         self.runtime.upcycle = False
         self.runtime.source_resolver = mock.Mock(spec=SourceResolver)
         self.fbc_import_cli = FbcImportCli(
-            runtime=self.runtime, index_image="example.com/test/test-index-image:latest",
-            keep_templates=False, push=True, fbc_repo="https://example.com/test/fbc.git", message="Test commit",
-            dest_dir="/tmp/fbc", registry_auth="/path/to/auth/file.json",
+            runtime=self.runtime,
+            index_image="example.com/test/test-index-image:latest",
+            keep_templates=False,
+            push=True,
+            fbc_repo="https://example.com/test/fbc.git",
+            message="Test commit",
+            dest_dir="/tmp/fbc",
+            registry_auth="/path/to/auth/file.json",
         )
 
     @mock.patch("doozerlib.cli.fbc.opm.verify_opm")
@@ -32,7 +36,9 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
             mock.MagicMock(is_olm_operator=True, distgit_key="bar", **{"get_olm_bundle_short_name.return_value": "bar-bundle"}),
         ]
         await self.fbc_import_cli.run()
-        mock_import_from_index_image.assert_has_calls([
-            mock.call(self.runtime.ordered_image_metas()[0], "example.com/test/test-index-image:latest"),
-            mock.call(self.runtime.ordered_image_metas()[1], "example.com/test/test-index-image:latest"),
-        ])
+        mock_import_from_index_image.assert_has_calls(
+            [
+                mock.call(self.runtime.ordered_image_metas()[0], "example.com/test/test-index-image:latest"),
+                mock.call(self.runtime.ordered_image_metas()[1], "example.com/test/test-index-image:latest"),
+            ]
+        )

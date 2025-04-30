@@ -1,7 +1,8 @@
+import json
 import unittest
 from unittest import mock
-import json
-from elliottlib import rpmdiff, constants
+
+from elliottlib import constants, rpmdiff
 
 
 class TestRPMDiffClient(unittest.TestCase):

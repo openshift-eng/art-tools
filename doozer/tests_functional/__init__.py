@@ -1,9 +1,9 @@
-import unittest
-import os
-import sys
-import shutil
-import pathlib
 import logging
+import os
+import pathlib
+import shutil
+import sys
+import unittest
 
 from artcommonlib import exectools
 
@@ -36,8 +36,10 @@ class DoozerRunnerTestCase(unittest.TestCase):
         cmd = [
             *DOOZER_CMD,
             *user_arg,
-            '--cache-dir', self.dz_cache_dir,
-            '--working-dir', self.dz_working_dir,
+            '--cache-dir',
+            self.dz_cache_dir,
+            '--working-dir',
+            self.dz_working_dir,
             *args,
         ]
 

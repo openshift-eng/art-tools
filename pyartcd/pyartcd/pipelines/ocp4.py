@@ -5,20 +5,15 @@ import traceback
 
 import click
 import yaml
+from artcommonlib import exectools, redis
 
-from pyartcd import locks
-from pyartcd import util
-from pyartcd import plashets
-from artcommonlib import exectools
-from pyartcd import constants
-from pyartcd import jenkins
+from pyartcd import constants, jenkins, locks, oc, plashets
 from pyartcd import record as record_util
-from pyartcd import oc
-from pyartcd.cli import cli, pass_runtime, click_coroutine
+from pyartcd import util
+from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import Lock
 from pyartcd.runtime import Runtime
 from pyartcd.s3 import sync_repo_to_s3_mirror
-from artcommonlib import redis
 from pyartcd.util import mass_rebuild_score
 
 
@@ -61,9 +56,20 @@ class RpmMirror:
 
 class Ocp4Pipeline:
     def __init__(
-        self, runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-        build_rpms: str, rpm_list: str, build_images: str, image_list: str,
-        skip_plashets: bool, mail_list_failure: str, comment_on_pr: bool, copy_links: bool = False,
+        self,
+        runtime: Runtime,
+        version: str,
+        assembly: str,
+        data_path: str,
+        data_gitref: str,
+        build_rpms: str,
+        rpm_list: str,
+        build_images: str,
+        image_list: str,
+        skip_plashets: bool,
+        mail_list_failure: str,
+        comment_on_pr: bool,
+        copy_links: bool = False,
         lock_identifier: str = None,
     ):
 
@@ -119,7 +125,8 @@ class Ocp4Pipeline:
         assemblies_enabled = out.strip() == 'True'
         self.runtime.logger.info(
             'Assemblies %s enabled for %s',
-            'NOT' if not assemblies_enabled else '', self.version.stream,
+            'NOT' if not assemblies_enabled else '',
+            self.version.stream,
         )
 
         if self.assembly != 'stream' and not assemblies_enabled:
@@ -173,8 +180,7 @@ class Ocp4Pipeline:
             self.build_plan.build_rpms = False
 
         elif self.build_rpms.lower() == 'all':
-            assert not self.rpm_list, \
-                'Aborting because a list of RPMs was specified; you probably want to specify only/except.'
+            assert not self.rpm_list, 'Aborting because a list of RPMs was specified; you probably want to specify only/except.'
 
         elif self.build_rpms.lower() == 'only':
             assert self.rpm_list, 'A list of RPMs must be specified when "only" is selected'
@@ -191,8 +197,7 @@ class Ocp4Pipeline:
             self.build_plan.build_images = False
 
         elif self.build_images.lower() == 'all':
-            assert not self.image_list, \
-                'Aborting because a list of RPMs was specified; you probably want to specify only/except.'
+            assert not self.image_list, 'Aborting because a list of RPMs was specified; you probably want to specify only/except.'
 
         elif self.build_images.lower() == 'only':
             assert self.image_list, 'A list of images must be specified when "only" is selected'
@@ -211,10 +216,11 @@ class Ocp4Pipeline:
         # If build plan includes more than half or excludes less than half or rebuilds everything, it's a mass rebuild
         include_count = len(self.build_plan.images_included)
         exclude_count = len(self.build_plan.images_excluded)
-        self.mass_rebuild = \
-            (include_count and self.build_plan.active_image_count < include_count * 2) or \
-            (exclude_count and self.build_plan.active_image_count > exclude_count * 2) or \
-            (not include_count and not exclude_count)
+        self.mass_rebuild = (
+            (include_count and self.build_plan.active_image_count < include_count * 2)
+            or (exclude_count and self.build_plan.active_image_count > exclude_count * 2)
+            or (not include_count and not exclude_count)
+        )
 
     async def _is_build_permitted(self):
         # For assembly != 'stream' always permit ocp4 builds
@@ -351,11 +357,13 @@ class Ocp4Pipeline:
 
         cmd = self._doozer_base_command.copy()
         cmd.extend(self._include_exclude('rpms', self.build_plan.rpms_included, self.build_plan.rpms_excluded))
-        cmd.extend([
-            'rpms:rebase-and-build',
-            f'--version={self.version.stream}',
-            f'--release={self.version.release}',
-        ])
+        cmd.extend(
+            [
+                'rpms:rebase-and-build',
+                f'--version={self.version.stream}',
+                f'--release={self.version.release}',
+            ]
+        )
 
         if self.runtime.dry_run:
             self.runtime.logger.info('Would have run: %s', ' '.join(cmd))
@@ -486,11 +494,16 @@ class Ocp4Pipeline:
 
         cmd = self._doozer_base_command.copy()
         cmd.extend(self._include_exclude('images', self.build_plan.images_included, self.build_plan.images_excluded))
-        cmd.extend([
-            'images:rebase', f'--version=v{self.version.stream}', f'--release={self.version.release}',
-            f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
-            '--push', f"--message='{os.environ['BUILD_URL']}'",
-        ])
+        cmd.extend(
+            [
+                'images:rebase',
+                f'--version=v{self.version.stream}',
+                f'--release={self.version.release}',
+                f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
+                '--push',
+                f"--message='{os.environ['BUILD_URL']}'",
+            ]
+        )
 
         if self.runtime.dry_run:
             self.runtime.logger.info('Would have run: %s', ' '.join(cmd))
@@ -558,11 +571,11 @@ class Ocp4Pipeline:
             for i in range(len(failed_images)):
                 failed_messages += f"{failed_images[i]}:{failed_map[failed_images[i]]['task_url']}\n"
 
-        if (ratio['total'] > 10 and ratio['ratio'] > 0.25) or \
-                (ratio['ratio'] > 1 and ratio['failed'] == ratio['total']):
+        if (ratio['total'] > 10 and ratio['ratio'] > 0.25) or (ratio['ratio'] > 1 and ratio['failed'] == ratio['total']):
             self.runtime.logger.warning(
-                "%s of %s image builds failed; probably not the owners' fault, "
-                "will not spam", {ratio['failed']}, {ratio['total']},
+                "%s of %s image builds failed; probably not the owners' fault, " "will not spam",
+                {ratio['failed']},
+                {ratio['total']},
             )
 
         else:
@@ -738,13 +751,12 @@ class Ocp4Pipeline:
             )
 
         except ChildProcessError as e:
-            error_msg = f'Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3: {e}',
+            error_msg = (f'Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3: {e}',)
             self.runtime.logger.error(error_msg)
             self.runtime.logger.error(traceback.format_exc())
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(
-                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to "
-                f"art-srv-enterprise S3",
+                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to " f"art-srv-enterprise S3",
             )
             raise
 
@@ -784,7 +796,8 @@ class Ocp4Pipeline:
 
         cmd = [
             'elliott',
-            '--assembly', 'stream',
+            '--assembly',
+            'stream',
             f'--group=openshift-{self.version.stream}',
             "find-bugs:golang",
             "--analyze",
@@ -814,9 +827,11 @@ class Ocp4Pipeline:
         if not metrics:
             timing_report = 'No images actually built.'
         else:
-            timing_report = f'Images built: {metrics[0]["task_count"]}\n' \
-                            f'Elapsed image build time: {metrics[0]["elapsed_total_minutes"]} minutes\n' \
-                            f'Time spent waiting for OSBS capacity: {metrics[0]["elapsed_wait_minutes"]} minutes'
+            timing_report = (
+                f'Images built: {metrics[0]["task_count"]}\n'
+                f'Elapsed image build time: {metrics[0]["elapsed_total_minutes"]} minutes\n'
+                f'Time spent waiting for OSBS capacity: {metrics[0]["elapsed_wait_minutes"]} minutes'
+            )
 
         jenkins.update_description(f'<hr />Build results:<br/><br/>{timing_report}<br/>')
 
@@ -894,63 +909,90 @@ class Ocp4Pipeline:
 @cli.command(
     "ocp4",
     help="Build OCP 4.y components incrementally. In typical usage, scans for changes that could affect "
-         "package or image builds and rebuilds the affected components. Creates new plashets if the "
-         "automation is not frozen or if there are RPMs that are built in this run, and runs other jobs to "
-         "sync builds to nightlies, create operator metadata, and sets MODIFIED bugs to ON_QA",
+    "package or image builds and rebuilds the affected components. Creates new plashets if the "
+    "automation is not frozen or if there are RPMs that are built in this run, and runs other jobs to "
+    "sync builds to nightlies, create operator metadata, and sets MODIFIED bugs to ON_QA",
 )
 @click.option('--version', required=True, help='OCP version to scan, e.g. 4.14')
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
 @click.option(
-    '--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
+    '--data-path',
+    required=False,
+    default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
 @click.option(
-    '--data-gitref', required=False, default='',
+    '--data-gitref',
+    required=False,
+    default='',
     help='Doozer data path git [branch / tag / sha] to use',
 )
 @click.option(
-    '--build-rpms', required=True,
+    '--build-rpms',
+    required=True,
     type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
     help='Which RPMs are candidates for building? "only/except" refer to --rpm-list param',
 )
 @click.option(
-    '--rpm-list', required=False, default='',
-    help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS '
-         '(e.g. openshift,openshift-kuryr)',
+    '--rpm-list',
+    required=False,
+    default='',
+    help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS ' '(e.g. openshift,openshift-kuryr)',
 )
 @click.option(
-    '--build-images', required=True,
+    '--build-images',
+    required=True,
     type=click.Choice(['all', 'only', 'except', 'none'], case_sensitive=False),
     help='Which images are candidates for building? "only/except" refer to --image-list param',
 )
 @click.option(
-    '--image-list', required=False, default='',
-    help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES '
-         '(e.g. logging-kibana5,openshift-jenkins-2)',
+    '--image-list',
+    required=False,
+    default='',
+    help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES ' '(e.g. logging-kibana5,openshift-jenkins-2)',
 )
 @click.option(
-    '--skip-plashets', is_flag=True, default=False,
+    '--skip-plashets',
+    is_flag=True,
+    default=False,
     help='Do not build plashets (for example to save time when running multiple builds against test assembly)',
 )
 @click.option(
-    '--mail-list-failure', required=False, default='aos-art-automation+failed-ocp4-build@redhat.com',
+    '--mail-list-failure',
+    required=False,
+    default='aos-art-automation+failed-ocp4-build@redhat.com',
     help='Failure Mailing List',
 )
 @click.option(
-    '--ignore-locks', is_flag=True, default=False,
+    '--ignore-locks',
+    is_flag=True,
+    default=False,
     help='Do not wait for other builds in this version to complete (use only if you know they will not conflict)',
 )
 @click.option('--comment-on-pr', is_flag=True, default=False, help='Comment on source PR after successful build')
 @click.option(
-    '--copy-links', is_flag=True, default=False,
+    '--copy-links',
+    is_flag=True,
+    default=False,
     help='Call rsync with --copy-links instead of --links',
 )
 @pass_runtime
 @click_coroutine
 async def ocp4(
-    runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-    build_rpms: str, rpm_list: str, build_images: str, image_list: str, skip_plashets: bool,
-    mail_list_failure: str, ignore_locks: bool, comment_on_pr: bool, copy_links: bool,
+    runtime: Runtime,
+    version: str,
+    assembly: str,
+    data_path: str,
+    data_gitref: str,
+    build_rpms: str,
+    rpm_list: str,
+    build_images: str,
+    image_list: str,
+    skip_plashets: bool,
+    mail_list_failure: str,
+    ignore_locks: bool,
+    comment_on_pr: bool,
+    copy_links: bool,
 ):
 
     lock_identifier = jenkins.get_build_path()

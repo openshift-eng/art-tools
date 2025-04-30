@@ -3,12 +3,11 @@ from unittest import TestCase
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import koji
-from jira import JIRA, Issue
+from elliottlib import early_kernel
+from elliottlib.config_model import KernelBugSweepConfig
 from errata_tool import Erratum
 from errata_tool.build import Build
-
-from elliottlib.config_model import KernelBugSweepConfig
-from elliottlib import early_kernel
+from jira import JIRA, Issue
 
 
 class TestEarlyKernel(TestCase):
@@ -18,11 +17,15 @@ class TestEarlyKernel(TestCase):
         conf = KernelBugSweepConfig.TargetJiraConfig(
             project="TARGET-PROJECT",
             component="Target Component",
-            version="4.14", target_release="4.14.z",
-            candidate_brew_tag="fake-candidate", prod_brew_tag="fake-prod",
+            version="4.14",
+            target_release="4.14.z",
+            candidate_brew_tag="fake-candidate",
+            prod_brew_tag="fake-prod",
         )
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             ),
@@ -43,13 +46,18 @@ class TestEarlyKernel(TestCase):
     @patch("elliottlib.early_kernel.comment_on_tracker")
     @patch("elliottlib.early_kernel.move_jira")
     def test_process_shipped_tracker(
-        self, move_jira: Mock, comment_on_tracker: Mock,
-        _link_tracker_advisories: Mock, _advisories_for_builds: Mock,
+        self,
+        move_jira: Mock,
+        comment_on_tracker: Mock,
+        _link_tracker_advisories: Mock,
+        _advisories_for_builds: Mock,
     ):
         logger = MagicMock()
         jira_client = MagicMock(spec=JIRA)
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
                 status=Mock(),  # need to set "name" but can't in a mock - set later
@@ -93,7 +101,12 @@ class TestEarlyKernel(TestCase):
         # test adding an existing link does not happen
         advisory.url.return_value = "http://example.com"
         msgs = early_kernel._link_tracker_advisories(
-            MagicMock(), False, jira_client, [advisory], ["nvrs"], tracker,
+            MagicMock(),
+            False,
+            jira_client,
+            [advisory],
+            ["nvrs"],
+            tracker,
         )
         jira_client.add_simple_link.assert_not_called()
         self.assertEqual([], msgs)
@@ -101,7 +114,12 @@ class TestEarlyKernel(TestCase):
         # test adding a new link does happen
         advisory.url.return_value = "http://different.example.com"
         msgs = early_kernel._link_tracker_advisories(
-            MagicMock(), False, jira_client, [advisory], ["nvrs"], tracker,
+            MagicMock(),
+            False,
+            jira_client,
+            [advisory],
+            ["nvrs"],
+            tracker,
         )
         jira_client.add_simple_link.assert_called_once_with(tracker, ANY)
         self.assertEqual(1, len(msgs))
@@ -110,8 +128,10 @@ class TestEarlyKernel(TestCase):
         jira_client = MagicMock(spec=JIRA)
         comment = "Test message"
         issue = MagicMock(
-            spec=Issue, **{
-                "key": "FOO-1", "fields": MagicMock(),
+            spec=Issue,
+            **{
+                "key": "FOO-1",
+                "fields": MagicMock(),
                 "fields.labels": ["art:bz#1", "art:kmaint:KMAINT-1"],
                 "fields.status.name": "New",
             },
@@ -125,7 +145,9 @@ class TestEarlyKernel(TestCase):
         logger = MagicMock()
         jira_client = MagicMock(spec=JIRA)
         tracker = MagicMock(
-            spec=Issue, key="TRACKER-1", fields=MagicMock(
+            spec=Issue,
+            key="TRACKER-1",
+            fields=MagicMock(
                 summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
             ),

@@ -1,18 +1,18 @@
+import asyncio
 import re
+from enum import Enum
+from typing import Optional
+
 import click
 import koji
-import asyncio
 import requests
 import yaml
-from enum import Enum
-
 from artcommonlib import exectools
 from artcommonlib.format_util import cprint
 from doozerlib.cli import cli, click_coroutine, pass_runtime
-from doozerlib.runtime import Runtime
 from doozerlib.image import ImageMetadata
 from doozerlib.rpmcfg import RPMMetadata
-from typing import Optional
+from doozerlib.runtime import Runtime
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
 
@@ -48,8 +48,13 @@ class JiraStatus(Enum):
 
 class ScanOshCli:
     def __init__(
-        self, runtime: Runtime, last_brew_event: int, dry_run: bool, check_triggered: Optional[bool],
-        all_builds: Optional[bool], create_jira_tickets: Optional[bool],
+        self,
+        runtime: Runtime,
+        last_brew_event: int,
+        dry_run: bool,
+        check_triggered: Optional[bool],
+        all_builds: Optional[bool],
+        create_jira_tickets: Optional[bool],
     ):
         self.tag_rhel_mapping = {}
         self.runtime = runtime
@@ -141,12 +146,13 @@ class ScanOshCli:
 
     def get_brew_distgit_mapping(self, kind: BuildType = BuildType.IMAGE):
         # By default lets assume its image
-        cmd = f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} images:print --show-base --show-non-release " \
-              f"--short '{{component}}: {{name}}'"
+        cmd = (
+            f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} images:print --show-base --show-non-release "
+            f"--short '{{component}}: {{name}}'"
+        )
 
         if kind == BuildType.RPM:
-            cmd = f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} rpms:print " \
-                  f"--short '{{component}}: {{name}}'"
+            cmd = f"doozer --load-disabled --disable-gssapi -g {self.runtime.group} rpms:print " f"--short '{{component}}: {{name}}'"
 
         _, output, _ = exectools.cmd_gather(cmd)
         result = []
@@ -189,11 +195,11 @@ class ScanOshCli:
 
     def get_distgit_name_from_brew(self, kind: BuildType, brew_package_name: str) -> str:
         """
-            Returns the distgit name from the brew nvr
+        Returns the distgit name from the brew nvr
 
-            :param kind: Metadata kind
-            :param brew_package_name: Name of the brew package
-            """
+        :param kind: Metadata kind
+        :param brew_package_name: Name of the brew package
+        """
         if kind == BuildType.IMAGE:
             return self.brew_distgit_mapping.get(brew_package_name)
 
@@ -243,8 +249,7 @@ class ScanOshCli:
         else:
             condition = "not in"
 
-        query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " \
-                f"status {condition} ('New', 'Assigned') order by created ASC"
+        query = f"project={self.jira_project} AND ( summary ~ '{summary}' ) AND " f"status {condition} ('New', 'Assigned') order by created ASC"
         return [i for i in self.search_issues(query) if i.fields.summary == summary]
 
     def get_non_art_upstream_repo_and_jira_component(self, brew_info):
@@ -324,7 +329,10 @@ class ScanOshCli:
         return False
 
     def is_latest_scan_different_from_previous(
-        self, latest_scan_id, latest_scan_nvr, previous_scan_id,
+        self,
+        latest_scan_id,
+        latest_scan_nvr,
+        previous_scan_id,
         previous_scan_nvr,
     ):
         # If this is the first scan, then there won't be a previous one
@@ -338,8 +346,7 @@ class ScanOshCli:
         for defect in latest_scan_defects:
             if defect not in previous_scan_defects:
                 self.runtime.logger.info(
-                    "Detected that the scan of the latest build has new issues, "
-                    "compared to the previous one",
+                    "Detected that the scan of the latest build has new issues, " "compared to the previous one",
                 )
                 return True
 
@@ -507,8 +514,7 @@ class ScanOshCli:
                     _: Issue = self.jira_client.create_issue(fields)
                 else:
                     self.runtime.logger.info(
-                        f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
-                        f"JIRA project with fields {fields}",
+                        f"[DRY RUN]: Would have created a new bug in {self.jira_project} " f"JIRA project with fields {fields}",
                     )
                     return
 
@@ -528,8 +534,7 @@ class ScanOshCli:
             # Not the same NVR
             # Pass the description from the previous NVR to be processed
             self.runtime.logger.info(
-                "Retrieving OSH task ID and NVR, from the previous ticket: "
-                f"{previous_ticket.key}",
+                "Retrieving OSH task ID and NVR, from the previous ticket: " f"{previous_ticket.key}",
             )
             previous_task_id, previous_nvr = self.get_scan_details_from_ticket(
                 description=previous_ticket.fields.description,
@@ -569,8 +574,7 @@ class ScanOshCli:
                 self.runtime.logger.info(f"Linked {previous_ticket.key} to {issue.key}")
             else:
                 self.runtime.logger.info(
-                    f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
-                    f"JIRA project with fields {fields}",
+                    f"[DRY RUN]: Would have created a new bug in {self.jira_project} " f"JIRA project with fields {fields}",
                 )
                 if previous_ticket:
                     self.runtime.logger.info(f"Would have linked {previous_ticket.key} to the issue")
@@ -597,8 +601,7 @@ class ScanOshCli:
                     # We do not want to update the ticket with an older build, even if its of a later OCP version
                     # A higher build ID will mean a newer build
                     self.runtime.logger.info(
-                        f"Ticket {issue.key} has the newer build, "
-                        f"compared to {build['nvr']}",
+                        f"Ticket {issue.key} has the newer build, " f"compared to {build['nvr']}",
                     )
                     return
 
@@ -609,8 +612,7 @@ class ScanOshCli:
                 self.runtime.logger.info(f"The fields of {issue.key} has been updated to {fields}")
             else:
                 self.runtime.logger.info(
-                    f"[DRY RUN]: Would have updated {issue.key} with new description: "
-                    f"{fields['description']}",
+                    f"[DRY RUN]: Would have updated {issue.key} with new description: " f"{fields['description']}",
                 )
 
         else:
@@ -643,8 +645,7 @@ class ScanOshCli:
                 #         self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
                 for open_issue in open_issues:
                     self.runtime.logger.info(
-                        f"Would have closed issue: {open_issue.key}, "
-                        f"since no issues found in OSH task {osh_task_id}",
+                        f"Would have closed issue: {open_issue.key}, " f"since no issues found in OSH task {osh_task_id}",
                     )
 
         for c in components_with_issues:
@@ -829,8 +830,7 @@ class ScanOshCli:
                 # Exclude components that are disabled in component metadata yml
                 if self.is_jira_workflow_component_disabled(metadata):
                     self.runtime.logger.info(
-                        f"Skipping OCPBUGS creation for distgit {distgit_name} "
-                        f"since disabled in component metadata",
+                        f"Skipping OCPBUGS creation for distgit {distgit_name} " f"since disabled in component metadata",
                     )
                     continue
 
@@ -893,22 +893,34 @@ class ScanOshCli:
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
 @click.option("--since", required=False, help="Builds after this brew event. If empty, latest builds will retrieved")
 @click.option(
-    "--dry-run", default=False, is_flag=True,
+    "--dry-run",
+    default=False,
+    is_flag=True,
     help="Do not trigger anything, but only print build operations.",
 )
 @click.option(
-    "--check-triggered", required=False, is_flag=True, default=False,
+    "--check-triggered",
+    required=False,
+    is_flag=True,
+    default=False,
     help="Triggers scans for NVRs only after checking if they haven't already",
 )
 @click.option("--all-builds", required=False, is_flag=True, default=False, help="Check all builds in candidate tags")
 @click.option(
-    "--create-jira-tickets", required=False, is_flag=True, default=False,
+    "--create-jira-tickets",
+    required=False,
+    is_flag=True,
+    default=False,
     help="Create OCPBUGS ticket for a package if scan issues exist",
 )
 @pass_runtime
 @click_coroutine
 async def scan_osh(
-    runtime: Runtime, since: str, dry_run: bool, check_triggered: bool, all_builds: bool,
+    runtime: Runtime,
+    since: str,
+    dry_run: bool,
+    check_triggered: bool,
+    all_builds: bool,
     create_jira_tickets: bool,
 ):
     cli_pipeline = ScanOshCli(

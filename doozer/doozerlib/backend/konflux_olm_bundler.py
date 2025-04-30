@@ -11,15 +11,16 @@ from typing import Dict, Optional, Sequence, Tuple, cast
 import aiofiles
 import yaml
 from artcommonlib import exectools
+from artcommonlib import util as artlib_util
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord,
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+    KonfluxBundleBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
-from artcommonlib import util as artlib_util
 from dockerfile_parse import DockerfileParser
-
 from doozerlib import constants, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient, resource
@@ -57,7 +58,7 @@ class KonfluxOlmBundleRebaser:
         self._logger = logger
 
     async def rebase(self, metadata: ImageMetadata, operator_build: KonfluxBuildRecord, input_release: str):
-        """ Rebase an operator with Konflux.
+        """Rebase an operator with Konflux.
 
         :param metadata: The metadata of the operator to rebase.
         :param operator_build_record: The build record of the operator to rebase. If not provided, the latest build record will be used.
@@ -84,11 +85,13 @@ class KonfluxOlmBundleRebaser:
 
         logger.info("Cloning bundle repository...")
         bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
-        bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map({
-            "group": self.group,
-            "assembly_name": self.assembly,
-            "distgit_key": metadata.distgit_key,
-        })
+        bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map(
+            {
+                "group": self.group,
+                "assembly_name": self.assembly,
+                "distgit_key": metadata.distgit_key,
+            }
+        )
         bundle_build_repo = BuildRepo(url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger)
         await bundle_build_repo.ensure_source(upcycle=self.upcycle)
         logger.info("Bundle repository cloned to %s", bundle_dir)
@@ -104,7 +107,7 @@ class KonfluxOlmBundleRebaser:
             await bundle_build_repo.push()
 
     async def _rebase_dir(self, metadata: ImageMetadata, operator_dir: Path, bundle_dir: Path, input_release: str):
-        """ Rebase an operator directory with Konflux. """
+        """Rebase an operator directory with Konflux."""
         csv_config = metadata.config.get('update-csv')
         if not csv_config:
             raise ValueError(f"[{metadata.distgit_key}] No update-csv config found in the operator's metadata")
@@ -180,7 +183,9 @@ class KonfluxOlmBundleRebaser:
                 image_references[entry["name"]] = entry
         # Warn if the number of images found in the bundle doesn't match the image-references file
         if len(all_found_operands) != len(image_references):
-            logger.warning(f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} in the operator's image-references file")
+            logger.warning(
+                f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} in the operator's image-references file"
+            )
 
         # Generate bundle's operator-framework tags
         operator_framework_tags = self._get_operator_framework_tags(channel_name, package_name)
@@ -203,10 +208,14 @@ class KonfluxOlmBundleRebaser:
         await self._create_oit_files(package_name, csv_name, bundle_dir, operator_nvr, all_found_operands)
 
     async def _create_oit_files(
-            self, package_name: str, csv_name: str,
-            bundle_dir: Path, operator_nvr: str, operands: Dict[str, Tuple[str, str, str]],
+        self,
+        package_name: str,
+        csv_name: str,
+        bundle_dir: Path,
+        operator_nvr: str,
+        operands: Dict[str, Tuple[str, str, str]],
     ):
-        """ Create .oit files
+        """Create .oit files
 
         :param bundle_dir: The directory where the bundle is located.
         :param all_found_operands: A map of all found operands in the bundle, in format of {image_name: (old_pullspec, new_pullspec, nvr)}
@@ -214,28 +223,30 @@ class KonfluxOlmBundleRebaser:
         # Create a .oit/olm_bundle_info.yaml file to store additional information about the bundle
         oit_dir = bundle_dir / '.oit'
         oit_dir.mkdir(exist_ok=True)
-        content = yaml.safe_dump({
-            "package_name": package_name,
-            "csv_name": csv_name,
-            "operator": {
-                "nvr": operator_nvr,
-            },
-            "operands": {
-                name: {
-                    "nvr": nvr,
-                    "internal_pullspec": old_pullspec,
-                    "public_pullspec": new_pullspec,
-                } for name, (old_pullspec, new_pullspec, nvr) in operands.items()
-            },
-        })
+        content = yaml.safe_dump(
+            {
+                "package_name": package_name,
+                "csv_name": csv_name,
+                "operator": {
+                    "nvr": operator_nvr,
+                },
+                "operands": {
+                    name: {
+                        "nvr": nvr,
+                        "internal_pullspec": old_pullspec,
+                        "public_pullspec": new_pullspec,
+                    }
+                    for name, (old_pullspec, new_pullspec, nvr) in operands.items()
+                },
+            }
+        )
         async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
             await f.write(content)
 
     @lru_cache
     @staticmethod
     def _get_image_reference_pattern(registry: str):
-        """ Get a compiled regex pattern to match image references in the format of `registry/namespace/image:tag`.
-        """
+        """Get a compiled regex pattern to match image references in the format of `registry/namespace/image:tag`."""
         pattern = r'{}\/([^:]+):([^\'"\\\s]+)'.format(re.escape(registry))
         return re.compile(pattern)
 
@@ -261,11 +272,11 @@ class KonfluxOlmBundleRebaser:
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
             image_info_tasks.append(
                 asyncio.create_task(
-                util.oc_image_info_for_arch_async__caching(
-                    build_pullspec,
-                    registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
-                    registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
-                ),
+                    util.oc_image_info_for_arch_async__caching(
+                        build_pullspec,
+                        registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+                        registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                    ),
                 ),
             )
         image_infos = await asyncio.gather(*image_info_tasks)
@@ -340,8 +351,12 @@ class KonfluxOlmBundleRebaser:
         return tags
 
     def _create_dockerfile(
-        self, metadata: ImageMetadata, operator_dir: Path, bundle_dir: Path,
-        operator_framework_tags: Dict[str, str], input_release: str,
+        self,
+        metadata: ImageMetadata,
+        operator_dir: Path,
+        bundle_dir: Path,
+        operator_framework_tags: Dict[str, str],
+        input_release: str,
     ):
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
         bundle_df = DockerfileParser(str(bundle_dir.joinpath('Dockerfile')))
@@ -367,14 +382,18 @@ class KonfluxOlmBundleRebaser:
         This is only required for Brew/OSBS builds, as Konflux doesn't support container.yaml.
         """
         async with aiofiles.open(path, 'w') as writer:
-            await writer.writelines([
-                '# metadata containers are not functional and do not need to be multiarch\n',
-                '\n',
-                yaml.dump({
-                    'platforms': {'only': ['x86_64']},
-                    'operator_manifests': {'manifests_dir': 'manifests'},
-                }),
-            ])
+            await writer.writelines(
+                [
+                    '# metadata containers are not functional and do not need to be multiarch\n',
+                    '\n',
+                    yaml.dump(
+                        {
+                            'platforms': {'only': ['x86_64']},
+                            'operator_manifests': {'manifests_dir': 'manifests'},
+                        }
+                    ),
+                ]
+            )
 
 
 class KonfluxOlmBundleBuildError(Exception):
@@ -416,10 +435,12 @@ class KonfluxOlmBundleBuilder:
         self.dry_run = dry_run
         self._record_logger = record_logger
         self._logger = logger
-        self._konflux_client = KonfluxClient.from_kubeconfig(self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run)
+        self._konflux_client = KonfluxClient.from_kubeconfig(
+            self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run
+        )
 
     async def build(self, metadata: ImageMetadata):
-        """ Build a bundle with Konflux. """
+        """Build a bundle with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         konflux_client = self._konflux_client
         bundle_dir = self.base_dir.joinpath(metadata.get_olm_bundle_short_name())
@@ -449,11 +470,13 @@ class KonfluxOlmBundleBuilder:
                 else:
                     raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
                 # Clone the build source repository
-                bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map({
-                    "group": self.group,
-                    "assembly_name": self.assembly,
-                    "distgit_key": metadata.distgit_key,
-                })
+                bundle_build_branch = "art-{group}-assembly-{assembly_name}-bundle-{distgit_key}".format_map(
+                    {
+                        "group": self.group,
+                        "assembly_name": self.assembly,
+                        "distgit_key": metadata.distgit_key,
+                    }
+                )
                 logger.info("Cloning bundle repository...")
                 bundle_build_repo = BuildRepo(url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger)
                 await bundle_build_repo.ensure_source()
@@ -496,7 +519,9 @@ class KonfluxOlmBundleBuilder:
                 # Update the Konflux DB with status PENDING
                 outcome = KonfluxBuildOutcome.PENDING
                 if not self.dry_run:
-                    await self._update_konflux_db(metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs)
+                    await self._update_konflux_db(
+                        metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs
+                    )
                 else:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
 
@@ -509,7 +534,9 @@ class KonfluxOlmBundleBuilder:
 
                 # Update the Konflux DB with the final outcome
                 if not self.dry_run:
-                    await self._update_konflux_db(metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs)
+                    await self._update_konflux_db(
+                        metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs
+                    )
                 else:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
@@ -530,10 +557,15 @@ class KonfluxOlmBundleBuilder:
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def _start_build(
-        self, metadata: ImageMetadata, bundle_build_repo: BuildRepo, output_image: str, namespace: str,
-        skip_checks: bool = False, additional_tags: Optional[Sequence[str]] = None,
+        self,
+        metadata: ImageMetadata,
+        bundle_build_repo: BuildRepo,
+        output_image: str,
+        namespace: str,
+        skip_checks: bool = False,
+        additional_tags: Optional[Sequence[str]] = None,
     ):
-        """ Start a build with Konflux. """
+        """Start a build with Konflux."""
         if not bundle_build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
         konflux_client = self._konflux_client
@@ -583,10 +615,15 @@ class KonfluxOlmBundleBuilder:
         return pipelinerun, url
 
     async def _update_konflux_db(
-        self, metadata: ImageMetadata, build_repo: BuildRepo,
-        bundle_package_name: str, bundle_csv_name: str,
-        pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
-        operator_nvr: str, operand_nvrs: list[str],
+        self,
+        metadata: ImageMetadata,
+        build_repo: BuildRepo,
+        bundle_package_name: str,
+        bundle_csv_name: str,
+        pipelinerun: resource.ResourceInstance,
+        outcome: KonfluxBuildOutcome,
+        operator_nvr: str,
+        operand_nvrs: list[str],
     ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
@@ -648,26 +685,29 @@ class KonfluxOlmBundleBuilder:
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
-                            f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                            f"pipelinerun {pipelinerun_name}",
+                            f"[{metadata.distgit_key}] Could not find expected results in konflux " f"pipelinerun {pipelinerun_name}",
                         )
 
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime
 
-                    build_record_params.update({
-                        'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'image_tag': image_pullspec.split(':')[-1],
-                    })
+                    build_record_params.update(
+                        {
+                            'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
+                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            'image_tag': image_pullspec.split(':')[-1],
+                        }
+                    )
                 case KonfluxBuildOutcome.FAILURE:
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime
-                    build_record_params.update({
-                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                    })
+                    build_record_params.update(
+                        {
+                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        }
+                    )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)
             db.add_build(build_record)

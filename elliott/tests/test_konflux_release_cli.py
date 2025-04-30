@@ -1,14 +1,21 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_APPLICATION, KIND_RELEASE_PLAN
-from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
-from elliottlib.cli.konflux_release_cli import CreateReleaseCli
-from elliottlib.shipment_model import (
-    ShipmentConfig, Shipment, ShipmentEnv, Environments, Metadata, Snapshot, Spec,
-    Data, ReleaseNotes,
-)
 from artcommonlib.model import Model
+from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_RELEASE, KIND_RELEASE_PLAN
+from elliottlib.cli.konflux_release_cli import CreateReleaseCli
+from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
+from elliottlib.shipment_model import (
+    Data,
+    Environments,
+    Metadata,
+    ReleaseNotes,
+    Shipment,
+    ShipmentConfig,
+    ShipmentEnv,
+    Snapshot,
+    Spec,
+)
 
 
 class TestWatchReleaseCli(IsolatedAsyncioTestCase):
@@ -474,6 +481,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await cli.run()
 
         self.assertIn(
-            "snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} "
-            "extra={'test-nvr-3'}", str(context.exception),
+            "snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} " "extra={'test-nvr-3'}",
+            str(context.exception),
         )

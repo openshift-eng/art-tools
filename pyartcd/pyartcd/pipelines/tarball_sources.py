@@ -4,8 +4,8 @@ from typing import Iterable, Tuple
 from urllib.parse import quote, urljoin, urlparse
 
 import click
-
 from artcommonlib import exectools
+
 from pyartcd import constants, util
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
@@ -66,7 +66,16 @@ class TarballSourcesPipeline:
         print(f"Created JIRA ticket: {new_issue_url}")
 
     async def _create_tarball_sources(self, advisories: Iterable[int], source_directory: str):
-        cmd = ["elliott", "--debug", f"--group={self.group}", f"--assembly={self.assembly}", "tarball-sources", "create", "--force", f"--out-dir={source_directory}"]
+        cmd = [
+            "elliott",
+            "--debug",
+            f"--group={self.group}",
+            f"--assembly={self.assembly}",
+            "tarball-sources",
+            "create",
+            "--force",
+            f"--out-dir={source_directory}",
+        ]
         for c in self.components:
             cmd.append(f"--component={c}")
         for ad in advisories:
@@ -105,15 +114,25 @@ Attaching source tarballs to be published on ftp.redhat.com as in https://projec
 
 @cli.command("tarball-sources")
 @click.option(
-    "-g", "--group", metavar='NAME', required=True,
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option(
-    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    "--assembly",
+    metavar="ASSEMBLY_NAME",
+    required=True,
     help="The name of an assembly. e.g. 4.9.1",
 )
 @click.option(
-    "--advisory", "-a", "advisories", metavar="ADVISORY", type=int, multiple=True,
+    "--advisory",
+    "-a",
+    "advisories",
+    metavar="ADVISORY",
+    type=int,
+    multiple=True,
     help="Advisory number. If unspecified, use the advisory number from ocp-build-data.",
 )
 @pass_runtime

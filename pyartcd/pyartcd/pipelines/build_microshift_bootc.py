@@ -1,40 +1,41 @@
-from pathlib import Path
-import tempfile
-import click
+import asyncio
 import json
 import logging
 import os
-import requests
-import asyncio
+import tempfile
 import traceback
+from pathlib import Path
 from typing import Optional, cast
 
-from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, Engine, ArtifactType, KonfluxBuildRecord
-from artcommonlib.konflux.konflux_db import KonfluxDb
-from artcommonlib.arch_util import brew_arch_for_go_arch
+import click
+import requests
 from artcommonlib import exectools
+from artcommonlib.arch_util import brew_arch_for_go_arch
+from artcommonlib.assembly import AssemblyTypes
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.konflux.konflux_db import KonfluxDb
+from artcommonlib.util import get_ocp_version_from_group, isolate_major_minor_in_group, new_roundtrip_yaml_handler
+from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
+
 from pyartcd import constants, oc
 from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
+    default_release_suffix,
     get_assembly_type,
+    get_microshift_builds,
+    get_release_name_for_assembly,
     isolate_el_version_in_release,
     load_group_config,
     load_releases_config,
-    default_release_suffix,
-    get_release_name_for_assembly,
-    get_microshift_builds,
 )
-from pyartcd.plashets import build_plashets, plashet_config_for_major_minor
-from doozerlib.constants import ART_PROD_IMAGE_REPO, ART_PROD_PRIV_IMAGE_REPO, KONFLUX_DEFAULT_IMAGE_REPO
 
 yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftBootcPipeline:
-    """ Rebase and build MicroShift for an assembly """
+    """Rebase and build MicroShift for an assembly"""
 
     def __init__(
         self,
@@ -91,7 +92,11 @@ class BuildMicroShiftBootcPipeline:
 
         # Login to Konflux registry
         cmd = [
-            'oc', 'registry', 'login', '--registry', 'quay.io/redhat-user-workloads',
+            'oc',
+            'registry',
+            'login',
+            '--registry',
+            'quay.io/redhat-user-workloads',
             f'--auth-basic={os.environ["KONFLUX_ART_IMAGES_USERNAME"]}:{os.environ["KONFLUX_ART_IMAGES_PASSWORD"]}',
         ]
         await exectools.cmd_assert_async(cmd)
@@ -147,11 +152,15 @@ class BuildMicroShiftBootcPipeline:
 
         async def _run_for(local_path, s3_path):
             cmd = [
-                "aws", "s3", "sync",
+                "aws",
+                "s3",
+                "sync",
                 "--no-progress",
                 "--exact-timestamps",
-                "--exclude", "*",
-                "--include", "bootc-pullspec.txt",
+                "--exclude",
+                "*",
+                "--include",
+                "bootc-pullspec.txt",
                 str(local_path),
                 f"s3://art-srv-enterprise{s3_path}",
             ]
@@ -163,9 +172,12 @@ class BuildMicroShiftBootcPipeline:
                 exectools.cmd_assert_async(cmd),
                 # Sync to Cloudflare as well
                 exectools.cmd_assert_async(
-                    cmd + [
-                        "--profile", "cloudflare",
-                        "--endpoint-url", cloudflare_endpoint_url,
+                    cmd
+                    + [
+                        "--profile",
+                        "cloudflare",
+                        "--endpoint-url",
+                        cloudflare_endpoint_url,
                     ],
                 ),
             )
@@ -221,15 +233,12 @@ class BuildMicroShiftBootcPipeline:
                 return True
             else:
                 actual_nvr = next(
-                    (
-                        p["nvr"] for p in plashet_yaml["assemble"]["packages"]
-                        if p["package_name"] == "microshift"
-                    ), None,
+                    (p["nvr"] for p in plashet_yaml["assemble"]["packages"] if p["package_name"] == "microshift"),
+                    None,
                 )
                 if not actual_nvr:
                     raise ValueError(
-                        f"Expected to find microshift package in plashet.yml at"
-                        f" {url}, but could not find it. Use --force to rebuild plashet.",
+                        f"Expected to find microshift package in plashet.yml at" f" {url}, but could not find it. Use --force to rebuild plashet.",
                     )
 
                 microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)
@@ -239,7 +248,9 @@ class BuildMicroShiftBootcPipeline:
                     self._logger.info(message)
                     raise ValueError(message)
                 if actual_nvr != expected_microshift_nvr:
-                    self._logger.info(f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed.")
+                    self._logger.info(
+                        f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed."
+                    )
                     return True
                 self._logger.info(f"Plashet has the expected microshift nvr {expected_microshift_nvr}")
                 return False
@@ -293,17 +304,25 @@ class BuildMicroShiftBootcPipeline:
         release = default_release_suffix()
         rebase_cmd = [
             "doozer",
-            "--group", self.group,
-            "--assembly", self.assembly,
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
             "--latest-parent-version",
-            "-i", bootc_image_name,
+            "-i",
+            bootc_image_name,
             # regardless of assembly cutoff time lock to HEAD in release branch
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
-            "--lock-upstream", bootc_image_name, "HEAD",
+            "--lock-upstream",
+            bootc_image_name,
+            "HEAD",
             "beta:images:konflux:rebase",
-            "--version", version,
-            "--release", release,
-            "--message", f"Updating Dockerfile version and release {version}-{release}",
+            "--version",
+            version,
+            "--release",
+            release,
+            "--message",
+            f"Updating Dockerfile version and release {version}-{release}",
         ]
         if not self.runtime.dry_run:
             rebase_cmd.append("--push")
@@ -311,17 +330,25 @@ class BuildMicroShiftBootcPipeline:
 
         build_cmd = [
             "doozer",
-            "--group", self.group,
-            "--assembly", self.assembly,
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
             "--latest-parent-version",
-            "-i", bootc_image_name,
+            "-i",
+            bootc_image_name,
             # regardless of assembly cutoff time lock to HEAD in release branch
             # also not passing this breaks the command since we try to use brew to find the appropriate commit
-            "--lock-upstream", bootc_image_name, "HEAD",
+            "--lock-upstream",
+            bootc_image_name,
+            "HEAD",
             "beta:images:konflux:build",
-            "--image-repo", KONFLUX_DEFAULT_IMAGE_REPO,
-            "--konflux-kubeconfig", kubeconfig,
-            "--konflux-namespace", "ocp-art-tenant",
+            "--image-repo",
+            KONFLUX_DEFAULT_IMAGE_REPO,
+            "--konflux-kubeconfig",
+            kubeconfig,
+            "--konflux-namespace",
+            "ocp-art-tenant",
         ]
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")
@@ -336,29 +363,42 @@ class BuildMicroShiftBootcPipeline:
 
 @cli.command("build-microshift-bootc")
 @click.option(
-    "--data-path", metavar='BUILD_DATA', default=None,
+    "--data-path",
+    metavar='BUILD_DATA',
+    default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
-    "-g", "--group", metavar='NAME', required=True,
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option(
-    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    "--assembly",
+    metavar="ASSEMBLY_NAME",
+    required=True,
     help="The name of an assembly to rebase & build for. e.g. 4.9.1",
 )
 @click.option(
-    "--force", is_flag=True,
+    "--force",
+    is_flag=True,
     help="Rebuild even if a build already exists",
 )
 @click.option(
-    "--force-plashet-sync", is_flag=True,
+    "--force-plashet-sync",
+    is_flag=True,
     help="Force plashet sync even if it is not needed",
 )
 @pass_runtime
 @click_coroutine
 async def build_microshift_bootc(
-    runtime: Runtime, data_path: str, group: str, assembly: str, force: bool,
+    runtime: Runtime,
+    data_path: str,
+    group: str,
+    assembly: str,
+    force: bool,
     force_plashet_sync: bool,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
@@ -366,8 +406,11 @@ async def build_microshift_bootc(
     slack_client.bind_channel(group)
     try:
         pipeline = BuildMicroShiftBootcPipeline(
-            runtime=runtime, group=group, assembly=assembly,
-            force=force, force_plashet_sync=force_plashet_sync,
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            force=force,
+            force_plashet_sync=force_plashet_sync,
             data_path=data_path,
             slack_client=slack_client,
         )

@@ -1,19 +1,18 @@
-from functools import lru_cache
-import logging
-from typing import OrderedDict, Optional, Tuple, Iterable, List, Union, Dict
-from datetime import datetime, timezone, timedelta, date
-import re
 import asyncio
+import logging
+import re
+from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
 
 import aiohttp
 import requests
-from pathlib import Path
-from semver import VersionInfo
-from tenacity import retry, wait_fixed, stop_after_attempt
-from ruamel.yaml import YAML
 from artcommonlib.constants import RELEASE_SCHEDULES
 from artcommonlib.model import ListModel, Missing
-
+from ruamel.yaml import YAML
+from semver import VersionInfo
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ def get_utc_now_formatted_str():
 
 def remove_prefix(s: str, prefix: str) -> str:
     if s.startswith(prefix):
-        return s[len(prefix):]
+        return s[len(prefix) :]
     else:
         return s[:]
 
@@ -38,7 +37,7 @@ def remove_prefixes(s: str, *args) -> str:
 def remove_suffix(s: str, suffix: str) -> str:
     # suffix='' should not call self[:-0].
     if suffix and s.endswith(suffix):
-        return s[:-len(suffix)]
+        return s[: -len(suffix)]
     else:
         return s[:]
 
@@ -145,7 +144,7 @@ async def download_file_from_github(repository, branch, path, token: str, destin
 
 
 def merge_objects(a, b):
-    """ Merges two, potentially deep, objects into a new one and returns the result.
+    """Merges two, potentially deep, objects into a new one and returns the result.
     'a' is layered over 'b' and is dominant when necessary. The output is 'c'.
     """
     if not isinstance(a, dict) or not isinstance(b, dict):
@@ -229,7 +228,9 @@ def get_inflight(assembly, group):
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    release_schedules = requests.get(
+        f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+    )
     for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:
@@ -353,7 +354,8 @@ async def _limit_concurrency(tasks: List, limit: int):
             return
 
         done, pending = await asyncio.wait(
-            pending, return_when=asyncio.FIRST_COMPLETED,
+            pending,
+            return_when=asyncio.FIRST_COMPLETED,
         )
         while done:
             yield done.pop()
@@ -405,8 +407,7 @@ def is_cachito_enabled(metadata, group_config, logger):
             logger.info("cachito/cachi2 enabled from group config")
         elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
             logger.warning(
-                f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in "
-                "image metadata or group config.",
+                f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in " "image metadata or group config.",
             )
     if cachito_enabled and not metadata.has_source():
         logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)
@@ -415,7 +416,7 @@ def is_cachito_enabled(metadata, group_config, logger):
 
 
 def detect_package_managers(metadata, dest_dir: Path):
-    """ Detect and return package managers used by the source
+    """Detect and return package managers used by the source
     :return: a list of package managers
     """
     if not dest_dir or not dest_dir.is_dir():

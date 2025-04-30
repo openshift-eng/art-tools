@@ -5,4 +5,5 @@ avoid circular imports
 
 class DoozerFatalError(Exception):
     """A broad exception for errors during Brew CRUD operations"""
+
     pass

@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from elliottlib.bzutil import BugzillaBug
 from elliottlib import constants
+from elliottlib.bzutil import BugzillaBug
 from elliottlib.cli import attach_cve_flaws_cli
 from elliottlib.errata_async import AsyncErrataAPI
 
@@ -77,8 +77,13 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             },
         )
         errata_api.get_builds_flattened.return_value = [
-            "a-1.0.0-1.el8", "b-1.0.0-1.el8", "c-1.0.0-1.el8", "d-1.0.0-1.el8",
-            "a-1.0.0-1.el7", "e-1.0.0-1.el7", "f-1.0.0-1.el7",
+            "a-1.0.0-1.el8",
+            "b-1.0.0-1.el8",
+            "c-1.0.0-1.el8",
+            "d-1.0.0-1.el8",
+            "a-1.0.0-1.el7",
+            "e-1.0.0-1.el7",
+            "f-1.0.0-1.el7",
         ]
         tracker_flaws = {
             1: [101, 103],
@@ -101,11 +106,20 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         }
         flaw_bugs = list(flaw_id_bugs.values())
         actual = await attach_cve_flaws_cli.associate_builds_with_cves(
-            errata_api, advisory, flaw_bugs, attached_tracker_bugs, tracker_flaws, dry_run=False,
+            errata_api,
+            advisory,
+            flaw_bugs,
+            attached_tracker_bugs,
+            tracker_flaws,
+            dry_run=False,
         )
         expected_builds = [
-            'a-1.0.0-1.el8', 'b-1.0.0-1.el8', 'c-1.0.0-1.el8',
-            'd-1.0.0-1.el8', 'a-1.0.0-1.el7', 'e-1.0.0-1.el7',
+            'a-1.0.0-1.el8',
+            'b-1.0.0-1.el8',
+            'c-1.0.0-1.el8',
+            'd-1.0.0-1.el8',
+            'a-1.0.0-1.el7',
+            'e-1.0.0-1.el7',
             'f-1.0.0-1.el7',
         ]
         expected_cve_component_mapping = {
@@ -114,7 +128,10 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             'CVE-2099-2': {'c', 'e'},
         }
         fake_urls_associate_builds_with_cves.assert_awaited_once_with(
-            errata_api, 12345, expected_builds, expected_cve_component_mapping,
+            errata_api,
+            12345,
+            expected_builds,
+            expected_cve_component_mapping,
             dry_run=False,
         )
         self.assertEqual(actual, None)

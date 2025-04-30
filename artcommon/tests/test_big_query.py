@@ -2,10 +2,9 @@ import os
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
-from sqlalchemy import Column, String
-
 from artcommonlib import constants
 from artcommonlib.bigquery import BigQueryClient
+from sqlalchemy import Column, String
 
 
 class TestBigQuery(IsolatedAsyncioTestCase):

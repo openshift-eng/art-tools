@@ -1,11 +1,11 @@
-import yaml
 import io
+
+import yaml
 
 GLOBAL_OPT_DEFAULTS = {
     'distgit_threads': 20,
     'rhpkg_clone_timeout': 900,
     'rhpkg_push_timeout': 1200,
-
     # 0 for unlimited. At present, distgit doesn't support shallow push. So leave this unlimited for now.
     'rhpkg_clone_depth': 0,
 }
@@ -73,4 +73,4 @@ CLI_CONFIG_TEMPLATE = '\n'.join(['#{}\n{}:{}\n'.format(v['help'], k, v['default'
 def config_is_empty(path):
     with io.open(path, 'r', encoding="utf-8") as f:
         cfg = f.read()
-        return (cfg == CLI_CONFIG_TEMPLATE)
+        return cfg == CLI_CONFIG_TEMPLATE

@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import logging
@@ -11,17 +10,19 @@ from aiohttp.client_exceptions import (
     ClientResponseError,
     ServerDisconnectedError,
 )
-from tenacity import (
-    before_sleep_log, retry, retry_if_exception_type,
-    stop_after_attempt, wait_exponential,
-)
-
 from artcommonlib.arch_util import brew_arch_for_go_arch
-from artcommonlib.exectools import limit_concurrency
 from artcommonlib.constants import BREW_DOWNLOAD_URL
+from artcommonlib.exectools import limit_concurrency
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.resultsdb import ResultsDBAPI
 from elliottlib.util import all_same, parse_nvr
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 
 class CVPInspector:
@@ -29,7 +30,9 @@ class CVPInspector:
     CVP_TEST_CASE_SANITY = "cvp.rhproduct.default.sanity"
 
     def __init__(
-        self, group_config: Dict, image_metas: Iterable[ImageMetadata],
+        self,
+        group_config: Dict,
+        image_metas: Iterable[ImageMetadata],
         logger: Optional[logging.Logger] = None,
     ) -> None:
         self._resultsdb_api = ResultsDBAPI()
@@ -48,8 +51,7 @@ class CVPInspector:
         await self._resultsdb_api.close()
 
     async def latest_sanity_test_results(self, nvrs: Iterable[str]) -> Dict[str, Optional[Dict]]:
-        """ Get latest CVP test results for specified build NVRs
-        """
+        """Get latest CVP test results for specified build NVRs"""
         nvr_results = {}
         nvrs = set(nvrs)
         results = await self._resultsdb_api.get_latest_results((self.CVP_TEST_CASE_SANITY,), nvrs)
@@ -63,7 +65,7 @@ class CVPInspector:
         return nvr_results
 
     def categorize_test_results(self, nvr_results: Dict[str, Optional[Dict]]):
-        """ Categorize CVP sanity test results
+        """Categorize CVP sanity test results
         :return: (passed, failed, missing)
         """
         missing = {}
@@ -87,7 +89,9 @@ class CVPInspector:
 
     async def get_sanity_test_optional_results(self, test_results: Iterable[Dict]):
         @retry(
-            reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
+            reraise=True,
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
             retry=(retry_if_exception_type((ServerDisconnectedError, ClientResponseError))),
             before_sleep=before_sleep_log(self._logger, logging.WARNING),
         )
@@ -112,7 +116,7 @@ class CVPInspector:
         return optional_results
 
     def categorize_sanity_test_optional_results(self, nvr_results: Dict[str, Optional[Dict]], included_checks: Set[str] = set()):
-        """ Categorize CVP sanity test optional results
+        """Categorize CVP sanity test optional results
         :return: (passed, failed, missing)
         """
         missing = {}
@@ -122,7 +126,9 @@ class CVPInspector:
             if not result:
                 missing[nvr] = result
                 continue
-            failed_checks = [check["name"] for check in result["checks"] if (not included_checks or check["name"] in included_checks) and not check["ok"]]
+            failed_checks = [
+                check["name"] for check in result["checks"] if (not included_checks or check["name"] in included_checks) and not check["ok"]
+            ]
             if failed_checks:
                 failed[nvr] = result
             else:
@@ -232,7 +238,9 @@ class CVPInspector:
                 self._logger.info("Processing build log...")
                 # looking for lines in brew logs like
                 # `2020-07-18 10:52:00,888 - atomic_reactor.plugins.imagebuilder - INFO -  java-11-openjdk      i686   1:11.0.8.10-0.el7_8 rhel-server-rpms-x86_64  215 k`
-                pattern = re.compile(r"atomic_reactor\.(?:plugins\.imagebuilder|tasks\.binary_container_build) - INFO -\s+(?P<name>[\w.-]+)\s+(?P<arch>\w+)\s+(?P<VRE>[\w.:-]+)\s+(?P<repo>[\w.-]+)\s+(?P<size>[\d.]+\s+\w)")
+                pattern = re.compile(
+                    r"atomic_reactor\.(?:plugins\.imagebuilder|tasks\.binary_container_build) - INFO -\s+(?P<name>[\w.-]+)\s+(?P<arch>\w+)\s+(?P<VRE>[\w.:-]+)\s+(?P<repo>[\w.-]+)\s+(?P<size>[\d.]+\s+\w)"
+                )
                 self._build_log_cache[(nvr, arch)] = build_log = [line for line in orig_build_log.splitlines() if line and pattern.search(line)]
             return build_log
 
@@ -255,29 +263,37 @@ class CVPInspector:
                 if all_same(used_repos.values()):
                     t = next(iter(used_repos.values()))
                     if t:
-                        prescription.append({
-                            "action": "add_non_shipping_repos",
-                            "value": sorted(t),
-                        })
+                        prescription.append(
+                            {
+                                "action": "add_non_shipping_repos",
+                                "value": sorted(t),
+                            }
+                        )
                 else:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Inconsistent used repos among arches",
-                        "value": {k: sorted(used_repos[k]) for k in sorted(used_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Inconsistent used repos among arches",
+                            "value": {k: sorted(used_repos[k]) for k in sorted(used_repos)},
+                        }
+                    )
                 if all_same(unused_repos.values()):
                     t = next(iter(unused_repos.values()))
                     if t:
-                        prescription.append({
-                            "action": "remove_repos",
-                            "value": sorted(t),
-                        })
+                        prescription.append(
+                            {
+                                "action": "remove_repos",
+                                "value": sorted(t),
+                            }
+                        )
                 else:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Inconsistent unused repos among arches",
-                        "value": {k: sorted(unused_repos[k]) for k in sorted(unused_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Inconsistent unused repos among arches",
+                            "value": {k: sorted(unused_repos[k]) for k in sorted(unused_repos)},
+                        }
+                    )
 
             elif test_name == "not_covered_rpms":
                 missing_repos: Dict[str, Set[str]] = {}
@@ -309,29 +325,37 @@ class CVPInspector:
                 if all_same(missing_repos.values()):
                     t = next(iter(missing_repos.values()))
                     if t:
-                        prescription.append({
-                            "action": "add_repos",
-                            "value": sorted(t),
-                        })
+                        prescription.append(
+                            {
+                                "action": "add_repos",
+                                "value": sorted(t),
+                            }
+                        )
                 else:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Inconsistent missing repos among arches",
-                        "value": {k: sorted(missing_repos[k]) for k in sorted(missing_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Inconsistent missing repos among arches",
+                            "value": {k: sorted(missing_repos[k]) for k in sorted(missing_repos)},
+                        }
+                    )
                 if unknown_repos:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Repos used in build are unknown to ocp-build-data",
-                        "value": {k: sorted(unknown_repos[k]) for k in sorted(unknown_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Repos used in build are unknown to ocp-build-data",
+                            "value": {k: sorted(unknown_repos[k]) for k in sorted(unknown_repos)},
+                        }
+                    )
                 if any(map(lambda arch: rpms_not_found[arch], rpms_not_found)):
                     t = next(iter(rpms_not_found.values()))
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Didn't find rpms in build logs. CVP bug?",
-                        "value": {k: sorted(rpms_not_found[k]) for k in sorted(rpms_not_found)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Didn't find rpms in build logs. CVP bug?",
+                            "value": {k: sorted(rpms_not_found[k]) for k in sorted(rpms_not_found)},
+                        }
+                    )
 
             elif test_name == "not_covered_parent_image_rpms":
                 parent_builds = self._get_parent_builds(build)
@@ -340,10 +364,12 @@ class CVPInspector:
                     dg_key = self.component_distgit_keys.get(nvre["name"])
                     if dg_key:
                         b["dg_key"] = dg_key
-                prescription.append({
-                    "action": "see_parent_builds",
-                    "value": parent_builds,
-                })
+                prescription.append(
+                    {
+                        "action": "see_parent_builds",
+                        "value": parent_builds,
+                    }
+                )
 
         return report
 

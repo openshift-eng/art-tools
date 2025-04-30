@@ -14,19 +14,19 @@ def stringify(val):
 
 def red_prefix(msg, file=None):
     """Print out a message prefix in bold red letters, like for "Error: "
-messages"""
+    messages"""
     click.secho(stringify(msg), nl=False, bold=True, fg='red', file=file)
 
 
 def red_print(msg, file=None):
     """Print out a message in red text"
-messages"""
+    messages"""
     click.secho(stringify(msg), nl=True, bold=False, fg='red', file=file)
 
 
 def green_prefix(msg, file=None):
     """Print out a message prefix in bold green letters, like for "Success: "
-messages"""
+    messages"""
     click.secho(stringify(msg), nl=False, bold=True, fg='green', file=file)
 
 
@@ -37,7 +37,7 @@ def green_print(msg, file=None):
 
 def yellow_prefix(msg, file=None):
     """Print out a message prefix in bold yellow letters, like for "Success: "
-messages"""
+    messages"""
     click.secho(stringify(msg), nl=False, bold=True, fg='yellow', file=file)
 
 

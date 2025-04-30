@@ -27,9 +27,12 @@ from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
 from pyartcd.util import (
-    default_release_suffix, get_assembly_type,
-    get_microshift_builds, get_release_name_for_assembly,
-    isolate_el_version_in_release, load_group_config,
+    default_release_suffix,
+    get_assembly_type,
+    get_microshift_builds,
+    get_release_name_for_assembly,
+    isolate_el_version_in_release,
+    load_group_config,
     load_releases_config,
 )
 
@@ -37,13 +40,21 @@ yaml = new_roundtrip_yaml_handler()
 
 
 class BuildMicroShiftPipeline:
-    """ Rebase and build MicroShift for an assembly """
+    """Rebase and build MicroShift for an assembly"""
 
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
     def __init__(
-        self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
-        force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None,
+        self,
+        runtime: Runtime,
+        group: str,
+        assembly: str,
+        payloads: Tuple[str, ...],
+        no_rebase: bool,
+        force: bool,
+        data_path: str,
+        slack_client,
+        logger: Optional[logging.Logger] = None,
     ):
         self.runtime = runtime
         self.group = group
@@ -85,8 +96,7 @@ class BuildMicroShiftPipeline:
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         if self.assembly_type not in self.SUPPORTED_ASSEMBLY_TYPES:
             raise ValueError(
-                f"Building MicroShift for assembly type {self.assembly_type.value} is not currently "
-                "supported.",
+                f"Building MicroShift for assembly type {self.assembly_type.value} is not currently " "supported.",
             )
 
         if self.assembly_type is AssemblyTypes.STREAM:
@@ -109,7 +119,8 @@ class BuildMicroShiftPipeline:
             "elliott",
             f"--working-dir={self._elliott_env_vars['ELLIOTT_WORKING_DIR']}",
             f"--group={self.group}",
-            "--assembly", self.assembly,
+            "--assembly",
+            self.assembly,
             "create",
             f"--type={advisory_type}",
             "--art-advisory-key=microshift",
@@ -124,7 +135,8 @@ class BuildMicroShiftPipeline:
             create_cmd.append("--yes")
         _, out, _ = await exectools.cmd_gather_async(create_cmd, env=self._elliott_env_vars, stderr=None)
         match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", out,
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)",
+            out,
         )
         assert match is not None
         advisory_num = int(match[1])
@@ -189,10 +201,7 @@ class BuildMicroShiftPipeline:
         if not self.force:
             pinned_nvrs = util.get_rpm_if_pinned_directly(self.releases_config, self.assembly, 'microshift')
             if pinned_nvrs:
-                message = (
-                    f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to "
-                    "rebuild."
-                )
+                message = f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to " "rebuild."
                 self._logger.info(message)
                 await self.slack_client.say_in_thread(message)
                 nvrs = list(pinned_nvrs.values())
@@ -224,13 +233,17 @@ class BuildMicroShiftPipeline:
         version = f'{major}.{minor}'
         try:
             jenkins.start_microshift_sync(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
-            message = f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n" \
-                      f"This will publish the microshift build to mirror"
+            message = (
+                f"microshift_sync for version {version} and assembly {self.assembly} has been triggered\n"
+                f"This will publish the microshift build to mirror"
+            )
             await self.slack_client.say_in_thread(message)
         except Exception as err:
             self._logger.error("Failed to trigger microshift_sync job: %s", err)
-            message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
-                      "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
+            message = (
+                f"@release-artists Please start <{constants.JENKINS_UI_URL}"
+                "/job/aos-cd-builds/job/build%252Fmicroshift_sync|microshift sync> manually."
+            )
             await self.slack_client.say_in_thread(message)
 
     async def _trigger_build_microshift_bootc(self):
@@ -245,13 +258,17 @@ class BuildMicroShiftPipeline:
         version = f'{major}.{minor}'
         try:
             jenkins.start_build_microshift_bootc(version=version, assembly=self.assembly, dry_run=self.runtime.dry_run)
-            message = f"build_microshift_bootc for version {version} and assembly {self.assembly} has been triggered\n" \
-                      f"This will build microshift-bootc and publish it's pullspec to mirror"
+            message = (
+                f"build_microshift_bootc for version {version} and assembly {self.assembly} has been triggered\n"
+                f"This will build microshift-bootc and publish it's pullspec to mirror"
+            )
             await self.slack_client.say_in_thread(message)
         except Exception as err:
             self._logger.error("Failed to trigger build-microshift-bootc job: %s", err)
-            message = f"@release-artists Please start <{constants.JENKINS_UI_URL}" \
-                      "/job/aos-cd-builds/job/build%252Fbuild-microshift-bootc|build-microshift-bootc> manually."
+            message = (
+                f"@release-artists Please start <{constants.JENKINS_UI_URL}"
+                "/job/aos-cd-builds/job/build%252Fbuild-microshift-bootc|build-microshift-bootc> manually."
+            )
             await self.slack_client.say_in_thread(message)
 
     async def _prepare_advisory(self, microshift_advisory_id):
@@ -264,58 +281,67 @@ class BuildMicroShiftPipeline:
         await self.slack_client.say_in_thread("Completed preparing microshift advisory.")
 
     async def _attach_builds(self):
-        """ attach the microshift builds to advisory
-        """
+        """attach the microshift builds to advisory"""
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
-            "--rpms", "microshift",
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
+            "--rpms",
+            "microshift",
             "find-builds",
-            "-k", "rpm",
+            "-k",
+            "rpm",
             "--member-only",
-            "--use-default-advisory", "microshift",
+            "--use-default-advisory",
+            "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _sweep_bugs(self):
-        """ sweep the microshift bugs to advisory
-        """
+        """sweep the microshift bugs to advisory"""
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
             "find-bugs:sweep",
             "--permissive",  # this is so we don't error out on non-microshift bugs
-            "--use-default-advisory", "microshift",
+            "--use-default-advisory",
+            "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _attach_cve_flaws(self):
-        """ attach CVE flaws to advisory
-        """
+        """attach CVE flaws to advisory"""
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
             "attach-cve-flaws",
-            "--use-default-advisory", "microshift",
+            "--use-default-advisory",
+            "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _verify_microshift_bugs(self, advisory_id):
-        """ verify attached bugs on microshift advisory
-        """
+        """verify attached bugs on microshift advisory"""
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
             "verify-attached-bugs",
             "--verify-flaws",
             str(advisory_id),
@@ -326,8 +352,7 @@ class BuildMicroShiftPipeline:
             self._logger.warning("Error verifying attached bugs: %s", err)
             if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                 await self.slack_client.say_in_thread(
-                    "Attached bugs have some issues. Permitting since "
-                    f"assembly is of type {self.assembly_type}",
+                    "Attached bugs have some issues. Permitting since " f"assembly is of type {self.assembly_type}",
                 )
                 await self.slack_client.say_in_thread(str(err))
             else:
@@ -336,16 +361,20 @@ class BuildMicroShiftPipeline:
     # Advisory can have several pending checks, so retry it a few times
     @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_fixed(1200))
     async def _change_advisory_status(self):
-        """ move advisory status to QE
-        """
+        """move advisory status to QE"""
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", self.assembly,
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
             "change-state",
-            "-s", "QE",
-            "--from", "NEW_FILES",
-            "--use-default-advisory", "microshift",
+            "-s",
+            "QE",
+            "--from",
+            "NEW_FILES",
+            "--use-default-advisory",
+            "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -379,7 +408,7 @@ class BuildMicroShiftPipeline:
 
     @staticmethod
     def generate_microshift_version_release(ocp_version: str):
-        """ Generate version and release strings for microshift builds
+        """Generate version and release strings for microshift builds
         Example version-releases:
         - 4.12.42-202210011234
         - 4.13.0~rc.4-202210011234
@@ -392,18 +421,23 @@ class BuildMicroShiftPipeline:
         return version, release
 
     async def _rebase_and_build_rpm(self, version, release: str, custom_payloads: Optional[Dict[str, str]]) -> List[str]:
-        """ Rebase and build RPM
+        """Rebase and build RPM
         :param release: release field for rebase
         :return: NVRs
         """
         cmd = [
             "doozer",
-            "--group", self.group,
-            "--assembly", self.assembly,
-            "-r", "microshift",
+            "--group",
+            self.group,
+            "--assembly",
+            self.assembly,
+            "-r",
+            "microshift",
             "rpms:rebase-and-build",
-            "--version", version,
-            "--release", release,
+            "--version",
+            version,
+            "--release",
+            release,
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -424,7 +458,7 @@ class BuildMicroShiftPipeline:
             return record_log["build_rpm"][-1]["nvrs"].split(",")
 
     def _pin_nvrs(self, nvrs: List[str], releases_config) -> Dict:
-        """ Update releases.yml to pin the specified NVRs.
+        """Update releases.yml to pin the specified NVRs.
         Example:
             releases:
                 4.11.7:
@@ -444,7 +478,9 @@ class BuildMicroShiftPipeline:
             is_entry[f"el{el_version}"] = nvr
 
         if self.advisory_num:
-            releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault("advisories", {}).setdefault("microshift", self.advisory_num)
+            releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault("advisories", {}).setdefault(
+                "microshift", self.advisory_num
+            )
         rpms_entry = releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("members", {}).setdefault("rpms", [])
         microshift_entry = next(filter(lambda rpm: rpm.get("distgit_key") == dg_key, rpms_entry), None)
         if microshift_entry is None:
@@ -521,42 +557,65 @@ class BuildMicroShiftPipeline:
 
 @cli.command("build-microshift")
 @click.option(
-    "--data-path", metavar='BUILD_DATA', default=None,
+    "--data-path",
+    metavar='BUILD_DATA',
+    default=None,
     help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
 )
 @click.option(
-    "-g", "--group", metavar='NAME', required=True,
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
     help="The group of components on which to operate. e.g. openshift-4.9",
 )
 @click.option(
-    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    "--assembly",
+    metavar="ASSEMBLY_NAME",
+    required=True,
     help="The name of an assembly to rebase & build for. e.g. 4.9.1",
 )
 @click.option(
-    "--payload", "payloads", metavar="PULLSPEC", multiple=True,
+    "--payload",
+    "payloads",
+    metavar="PULLSPEC",
+    multiple=True,
     help="[Multiple] Release payload to rebase against; Can be a nightly name or full pullspec",
 )
 @click.option(
-    "--no-rebase", is_flag=True,
+    "--no-rebase",
+    is_flag=True,
     help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose",
 )
 @click.option(
-    "--force", is_flag=True,
+    "--force",
+    is_flag=True,
     help="(For named assemblies) Rebuild even if a build already exists",
 )
 @pass_runtime
 @click_coroutine
 async def build_microshift(
-    runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
-    no_rebase: bool, force: bool,
+    runtime: Runtime,
+    data_path: str,
+    group: str,
+    assembly: str,
+    payloads: Tuple[str, ...],
+    no_rebase: bool,
+    force: bool,
 ):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     try:
         pipeline = BuildMicroShiftPipeline(
-            runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-            no_rebase=no_rebase, force=force, data_path=data_path, slack_client=slack_client,
+            runtime=runtime,
+            group=group,
+            assembly=assembly,
+            payloads=payloads,
+            no_rebase=no_rebase,
+            force=force,
+            data_path=data_path,
+            slack_client=slack_client,
         )
         await pipeline.run()
     except Exception as err:

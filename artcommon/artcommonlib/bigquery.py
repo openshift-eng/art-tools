@@ -1,15 +1,13 @@
 import asyncio
 import logging
 import os
-
 import typing
 
+from artcommonlib import constants
 from google.cloud import bigquery
 from google.cloud.bigquery.table import RowIterator
 from sqlalchemy import BinaryExpression, UnaryExpression
 from sqlalchemy.dialects import mysql
-
-from artcommonlib import constants
 
 
 class BigQueryClient:
@@ -17,7 +15,9 @@ class BigQueryClient:
         try:
             self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
         except:
-            raise EnvironmentError(f'Unable to access {constants.GOOGLE_CLOUD_PROJECT}. Initialize default application context or set GOOGLE_APPLICATION_CREDENTIALS')
+            raise EnvironmentError(
+                f'Unable to access {constants.GOOGLE_CLOUD_PROJECT}. Initialize default application context or set GOOGLE_APPLICATION_CREDENTIALS'
+            )
 
         self._table_ref = None
         self.logger = logging.getLogger(__name__)
@@ -87,7 +87,8 @@ class BigQueryClient:
         self.query(query)
 
     async def select(
-        self, where_clauses: typing.List[BinaryExpression] = None,
+        self,
+        where_clauses: typing.List[BinaryExpression] = None,
         order_by_clause: typing.Optional[UnaryExpression] = None,
         limit=None,
     ) -> RowIterator:
@@ -106,10 +107,7 @@ class BigQueryClient:
 
         if where_clauses:
             where_conditions = " AND ".join(
-                [
-                    str(where_clause.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True}))
-                    for where_clause in where_clauses
-                ],
+                [str(where_clause.compile(dialect=mysql.dialect(), compile_kwargs={"literal_binds": True})) for where_clause in where_clauses],
             )
             query += f' WHERE {where_conditions}'
 

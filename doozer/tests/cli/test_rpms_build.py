@@ -34,7 +34,9 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         rpms = []
 
         data_obj = gitdata.DataObj(
-            "foo", "/path/to/ocp-build-data/rpms/foo.yml", {
+            "foo",
+            "/path/to/ocp-build-data/rpms/foo.yml",
+            {
                 "name": "foo",
                 "content": {
                     "source": {
@@ -53,7 +55,9 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         rpms.append(rpm)
 
         data_obj = gitdata.DataObj(
-            "bar", "/path/to/ocp-build-data/rpms/bar.yml", {
+            "bar",
+            "/path/to/ocp-build-data/rpms/bar.yml",
+            {
                 "name": "bar",
                 "content": {
                     "source": {
@@ -70,7 +74,11 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
 
         runtime.rpm_metas.return_value = rpms
         builder = MockedRPMBuilder.return_value = AsyncMock()
-        builder.build.return_value = ([10001, 10002], ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"], ["foo-1.2.3-1.el8", "foo-1.2.3-1.el7"])
+        builder.build.return_value = (
+            [10001, 10002],
+            ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"],
+            ["foo-1.2.3-1.el8", "foo-1.2.3-1.el7"],
+        )
 
         result = await _rpms_rebase_and_build(runtime, version, release, embargoed, scratch, dry_run)
 
@@ -87,7 +95,9 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         rpms = []
 
         data_obj = gitdata.DataObj(
-            "foo", "/path/to/ocp-build-data/rpms/foo.yml", {
+            "foo",
+            "/path/to/ocp-build-data/rpms/foo.yml",
+            {
                 "name": "foo",
                 "content": {
                     "source": {
@@ -106,7 +116,9 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
         rpms.append(rpm)
 
         data_obj = gitdata.DataObj(
-            "bar", "/path/to/ocp-build-data/rpms/bar.yml", {
+            "bar",
+            "/path/to/ocp-build-data/rpms/bar.yml",
+            {
                 "name": "bar",
                 "content": {
                     "source": {
@@ -123,7 +135,10 @@ class TestRPMsBuildCli(IsolatedAsyncioTestCase):
 
         runtime.rpm_metas.return_value = rpms
         builder = MockedRPMBuilder.return_value = AsyncMock()
-        builder.side_effect = RetryException("Retry error", ([10001, 10002], ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"]))
+        builder.side_effect = RetryException(
+            "Retry error",
+            ([10001, 10002], ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"]),
+        )
 
         result = await _rpms_rebase_and_build(runtime, version, release, embargoed, scratch, dry_run)
 

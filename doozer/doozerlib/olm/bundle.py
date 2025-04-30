@@ -1,8 +1,8 @@
 import glob
 import io
+import json
 import os
 import re
-import json
 import shutil
 import threading
 from pathlib import Path
@@ -10,14 +10,13 @@ from typing import Optional, Tuple, Union
 from urllib.parse import urlparse
 
 import yaml
-from dockerfile_parse import DockerfileParser
-from koji import ClientSession
-from tenacity import retry, stop_after_attempt, wait_fixed
-
-from artcommonlib import pushd, exectools
+from artcommonlib import exectools, pushd
 from artcommonlib.brew import BuildStates
+from dockerfile_parse import DockerfileParser
 from doozerlib import brew, util
 from doozerlib.runtime import Runtime
+from koji import ClientSession
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 
 class OLMBundle(object):
@@ -32,7 +31,8 @@ class OLMBundle(object):
     """
 
     def __init__(
-        self, runtime: Runtime,
+        self,
+        runtime: Runtime,
         operator_nvr_or_dict: Union[str, dict],
         dry_run: Optional[bool] = False,
         brew_session: Optional[ClientSession] = None,
@@ -76,8 +76,11 @@ class OLMBundle(object):
         prefix = f"{self.bundle_brew_component}-{self.operator_dict['version']}.{self.operator_dict['release']}-"
         bundle_package_id = self.brew_session.getPackageID(self.bundle_brew_component, strict=True)
         builds = self.brew_session.listBuilds(
-            packageID=bundle_package_id, pattern=prefix + "*", state=BuildStates.COMPLETE.value,
-            queryOpts={'limit': 1, 'order': '-creation_event_id'}, completeBefore=None,
+            packageID=bundle_package_id,
+            pattern=prefix + "*",
+            state=BuildStates.COMPLETE.value,
+            queryOpts={'limit': 1, 'order': '-creation_event_id'},
+            completeBefore=None,
         )
         if not builds:
             return None
@@ -141,8 +144,7 @@ class OLMBundle(object):
         return f'openshift/{prefix}{self.bundle_name}'
 
     def clone_operator(self):
-        """Clone operator distgit repository to doozer working dir
-        """
+        """Clone operator distgit repository to doozer working dir"""
         dg_dir = Path(self.operator_clone_path)
         tag = f'{self.operator_dict["version"]}-{self.operator_dict["release"]}'
         if dg_dir.exists():
@@ -156,13 +158,16 @@ class OLMBundle(object):
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert(
             'rhpkg {} clone --depth 1 --branch {} {} {}'.format(
-                self.rhpkg_opts, tag, self.operator_repo_name, self.operator_clone_path,
-            ), retries=3,
+                self.rhpkg_opts,
+                tag,
+                self.operator_repo_name,
+                self.operator_clone_path,
+            ),
+            retries=3,
         )
 
     def checkout_operator_to_build_commit(self):
-        """Checkout clone of operator repository to specific commit used to build given operator NVR
-        """
+        """Checkout clone of operator repository to specific commit used to build given operator NVR"""
         with pushd.Dir(self.operator_clone_path):
             exectools.cmd_assert('git checkout {}'.format(self.operator_build_commit))
 
@@ -179,8 +184,7 @@ class OLMBundle(object):
             raise
 
     def clone_bundle(self, retries: int = 3):
-        """Clone corresponding bundle distgit repository of given operator NVR
-        """
+        """Clone corresponding bundle distgit repository of given operator NVR"""
         dg_dir = Path(self.bundle_clone_path)
         if dg_dir.exists():
             self.runtime.logger.info("Distgit directory already exists; skipping clone: %s", dg_dir)
@@ -193,8 +197,12 @@ class OLMBundle(object):
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert(
             'rhpkg {} clone --depth 1 --branch {} {} {}'.format(
-                self.rhpkg_opts, self.branch, self.bundle_repo_name, self.bundle_clone_path,
-            ), retries=retries,
+                self.rhpkg_opts,
+                self.branch,
+                self.bundle_repo_name,
+                self.bundle_clone_path,
+            ),
+            retries=retries,
         )
 
     def clean_bundle_contents(self):
@@ -295,20 +303,21 @@ class OLMBundle(object):
             **self.redhat_delivery_tags,
             **self.operator_framework_tags,
         }
-        del (bundle_df.labels['release'])
+        del bundle_df.labels['release']
 
     def create_container_yaml(self):
-        """Use container.yaml to disable unnecessary multiarch
-        """
+        """Use container.yaml to disable unnecessary multiarch"""
         filename = '{}/container.yaml'.format(self.bundle_clone_path)
         with io.open(filename, 'w', encoding='utf-8') as writer:
             writer.write('# metadata containers are not functional and do not need to be multiarch')
             writer.write('\n\n')
             writer.write(
-                yaml.dump({
-                    'platforms': {'only': ['x86_64']},
-                    'operator_manifests': {'manifests_dir': 'manifests'},
-                }),
+                yaml.dump(
+                    {
+                        'platforms': {'only': ['x86_64']},
+                        'operator_manifests': {'manifests_dir': 'manifests'},
+                    }
+                ),
             )
 
     @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
@@ -473,10 +482,7 @@ class OLMBundle(object):
         if not images:
             return contents
 
-        related_images = [
-            '    - name: {}\n      image: {}'.format(name, image)
-            for name, image in images.items()
-        ]
+        related_images = ['    - name: {}\n      image: {}'.format(name, image) for name, image in images.items()]
         related_images.sort()
 
         return re.sub(

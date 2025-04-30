@@ -1,9 +1,10 @@
-import unittest
 import traceback
-from click.testing import CliRunner
+import unittest
+
 import elliottlib.cli.find_bugs_blocker_cli
-from elliottlib.cli.common import cli, Runtime
+from click.testing import CliRunner
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
 from flexmock import flexmock
 
 
@@ -20,15 +21,21 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
 
         bz_bug = flexmock(
-            id=1, created_days_ago=lambda: 33,
-            cf_pm_score='score', component='OLM',
-            status='ON_DEV', summary='summary',
+            id=1,
+            created_days_ago=lambda: 33,
+            cf_pm_score='score',
+            component='OLM',
+            status='ON_DEV',
+            summary='summary',
         )
 
         jira_bug = flexmock(
-            id='OCPBUGS-1', created_days_ago=lambda: 34,
-            cf_pm_score='score', component='OLM',
-            status='ON_QA', summary='summary',
+            id='OCPBUGS-1',
+            created_days_ago=lambda: 34,
+            cf_pm_score='score',
+            component='OLM',
+            status='ON_QA',
+            summary='summary',
         )
 
         flexmock(JIRABugTracker).should_receive("blocker_search").and_return([jira_bug])

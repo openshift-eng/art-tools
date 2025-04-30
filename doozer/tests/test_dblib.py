@@ -1,11 +1,12 @@
-import unittest
-from doozerlib.dblib import DB, Record
-from multiprocessing import RLock, Lock, Semaphore
-import logging
 import datetime
+import logging
 import pathlib
-import traceback
 import sys
+import traceback
+import unittest
+from multiprocessing import Lock, RLock, Semaphore
+
+from doozerlib.dblib import DB, Record
 
 
 class FakeMetaData(object):
@@ -18,7 +19,6 @@ class FakeMetaData(object):
 
 
 class FakeRuntime(object):
-
     """This is a fake runtime class to inject into dblib running tests."""
 
     mutex = RLock()

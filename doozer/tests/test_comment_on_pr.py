@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+
 from doozerlib.comment_on_pr import CommentOnPr
 
 
@@ -11,9 +12,11 @@ class TestCommentOnPr(unittest.TestCase):
         self.nvr = "nvr"
         self.build_id = "build_id"
         self.distgit_name = "distgit_name"
-        self.comment = '**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build ' \
-                       '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n' \
-                       'All builds following this will include this PR.'
+        self.comment = (
+            '**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build '
+            '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n'
+            'All builds following this will include this PR.'
+        )
 
     def test_list_comments(self):
         pr_no = 1

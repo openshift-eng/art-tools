@@ -1,17 +1,16 @@
-from collections import OrderedDict
 import hashlib
 import json
-from multiprocessing import Event
-from typing import (Any, Dict, List, Optional, Set, Tuple)
+from collections import OrderedDict
 from copy import copy
+from multiprocessing import Event
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import doozerlib
 from artcommonlib.model import Missing, Model
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import parse_nvr, to_nevra
 from artcommonlib.util import deep_merge
-from doozerlib import util
-from doozerlib import brew, coverity
+from doozerlib import brew, coverity, util
 from doozerlib.build_info import BrewBuildRecordInspector
 from doozerlib.distgit import pull_image
 from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
@@ -19,7 +18,14 @@ from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 
 class ImageMetadata(Metadata):
 
-    def __init__(self, runtime: "doozerlib.Runtime", data_obj: Dict, commitish: Optional[str] = None, clone_source: Optional[bool] = False, prevent_cloning: Optional[bool] = False):
+    def __init__(
+        self,
+        runtime: "doozerlib.Runtime",
+        data_obj: Dict,
+        commitish: Optional[str] = None,
+        clone_source: Optional[bool] = False,
+        prevent_cloning: Optional[bool] = False,
+    ):
         super(ImageMetadata, self).__init__('image', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
         self.required = self.config.get('required', False)
         self.parent = None
@@ -53,11 +59,11 @@ class ImageMetadata(Metadata):
 
     @property
     def is_olm_operator(self):
-        """ Returns whether this image is an OLM operator. """
+        """Returns whether this image is an OLM operator."""
         return self.config['update-csv'] is not Missing
 
     def get_olm_bundle_brew_component_name(self):
-        """ Returns the Brew component name of the OLM bundle for this OLM operator.
+        """Returns the Brew component name of the OLM bundle for this OLM operator.
 
         :return: The Brew component name.
         :raises IOError: If the image is not an OLM operator.
@@ -67,7 +73,7 @@ class ImageMetadata(Metadata):
         return str(self.config.distgit.bundle_component or self.get_component_name().replace('-container', '-metadata-container'))
 
     def get_olm_bundle_short_name(self):
-        """ Returns the short name of the OLM bundle for this OLM operator.
+        """Returns the short name of the OLM bundle for this OLM operator.
 
         :return: The short name of the OLM bundle for this OLM operator.
         :raises IOError: If the image is not an OLM operator.
@@ -77,7 +83,7 @@ class ImageMetadata(Metadata):
         return f"{self.distgit_key}-bundle"
 
     def get_olm_bundle_image_name(self):
-        """ Returns the image name of the OLM bundle for this OLM operator.
+        """Returns the image name of the OLM bundle for this OLM operator.
         This is to be used in the "name" label of the OLM bundle.
 
         :return: The image name of the OLM bundle for this OLM operator.
@@ -210,7 +216,9 @@ class ImageMetadata(Metadata):
         if payload_name:
             return payload_name, True
         else:
-            payload_name = self.image_name_short[4:] if self.image_name_short.startswith("ose-") else self.image_name_short   # it _should_ but... to be safe
+            payload_name = (
+                self.image_name_short[4:] if self.image_name_short.startswith("ose-") else self.image_name_short
+            )  # it _should_ but... to be safe
             return payload_name, False
 
     def get_brew_image_name_short(self):
@@ -230,7 +238,9 @@ class ImageMetadata(Metadata):
             name = self.config.name
 
         return "{host}/{name}:{version}-{release}".format(
-            host=self.runtime.group_config.urls.brew_image_host, name=name, version=version,
+            host=self.runtime.group_config.urls.brew_image_host,
+            name=name,
+            version=version,
             release=release,
         )
 
@@ -290,7 +300,7 @@ class ImageMetadata(Metadata):
             default_registries = self.runtime.group_config.push.registries.primitive()
 
         for registry in default_registries:
-            registry = registry.rstrip("/")   # Remove any trailing slash to avoid mistaking it for a namespace
+            registry = registry.rstrip("/")  # Remove any trailing slash to avoid mistaking it for a namespace
             for repo in default_repos:
                 namespace, repo_name = repo.split('/')
                 if '/' in registry:  # If registry overrides namespace
@@ -318,7 +328,7 @@ class ImageMetadata(Metadata):
         default_repos = self.get_default_repos()  # Get a list of [ ns/repo, ns/repo, ...]
 
         for registry in additional_registries:
-            registry = registry.rstrip("/")   # Remove any trailing slash to avoid mistaking it for a namespace
+            registry = registry.rstrip("/")  # Remove any trailing slash to avoid mistaking it for a namespace
             for repo in default_repos:
                 namespace, repo_name = repo.split('/')
                 if '/' in registry:  # If registry overrides namespace
@@ -332,7 +342,9 @@ class ImageMetadata(Metadata):
     # Mapping of brew pullspec => most recent brew build dict.
     builder_image_builds = dict()
 
-    async def does_image_need_change(self, changing_rpm_packages=None, buildroot_tag=None, newest_image_event_ts=None, oldest_image_event_ts=None) -> Tuple[Metadata, RebuildHint]:
+    async def does_image_need_change(
+        self, changing_rpm_packages=None, buildroot_tag=None, newest_image_event_ts=None, oldest_image_event_ts=None
+    ) -> Tuple[Metadata, RebuildHint]:
         """
         Answers the question of whether the latest built image needs to be rebuilt based on
         the packages (and therefore RPMs) it is dependent on might have changed in tags
@@ -373,7 +385,9 @@ class ImageMetadata(Metadata):
                     extra_package_name = package_details.name
                     extra_package_brew_tag = package_details.tag
                     # Example of queryHistory: https://gist.github.com/jupierce/943b845c07defe784522fd9fd76f4ab0
-                    extra_latest_tagging_infos = koji_api.queryHistory(table='tag_listing', tag=extra_package_brew_tag, package=extra_package_name, active=True)['tag_listing']
+                    extra_latest_tagging_infos = koji_api.queryHistory(
+                        table='tag_listing', tag=extra_package_brew_tag, package=extra_package_name, active=True
+                    )['tag_listing']
 
                     if extra_latest_tagging_infos:
                         extra_latest_tagging_infos.sort(key=lambda event: event['create_event'])
@@ -381,11 +395,18 @@ class ImageMetadata(Metadata):
                         # relevant tag. Why the tagging event and not the build time? Well, the build could have been
                         # made long ago, but only tagged into the relevant tag recently.
                         extra_latest_tagging_event = extra_latest_tagging_infos[-1]['create_event']
-                        self.logger.debug(f'Checking image creation time against extra_packages {extra_package_name} in tag {extra_package_brew_tag} @ tagging event {extra_latest_tagging_event}')
+                        self.logger.debug(
+                            f'Checking image creation time against extra_packages {extra_package_name} in tag {extra_package_brew_tag} @ tagging event {extra_latest_tagging_event}'
+                        )
                         if extra_latest_tagging_event > image_build_event_id:
-                            return self, RebuildHint(RebuildHintCode.PACKAGE_CHANGE, f'Image {dgk} is sensitive to extra_packages {extra_package_name} which changed at event {extra_latest_tagging_event}')
+                            return self, RebuildHint(
+                                RebuildHintCode.PACKAGE_CHANGE,
+                                f'Image {dgk} is sensitive to extra_packages {extra_package_name} which changed at event {extra_latest_tagging_event}',
+                            )
                     else:
-                        self.logger.warning(f'{dgk} unable to find tagging event for for extra_packages {extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error.')
+                        self.logger.warning(
+                            f'{dgk} unable to find tagging event for for extra_packages {extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error.'
+                        )
 
             # Collect build times from any parent/builder images used to create this image
             builders = list(self.config['from'].builder) or []
@@ -426,7 +447,9 @@ class ImageMetadata(Metadata):
 
                 if image_build_event_id < builder_brew_build['creation_event_id']:
                     self.logger.info(f'will be rebuilt because a builder or parent image changed: {builder_image_name}')
-                    return self, RebuildHint(RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built')
+                    return self, RebuildHint(
+                        RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built'
+                    )
 
             self.logger.info("Getting RPMs contained in %s", image_nvr)
             bbii = BrewBuildRecordInspector(self.runtime, image_build)
@@ -436,7 +459,9 @@ class ImageMetadata(Metadata):
             target_arches = set(self.get_arches())
             if target_arches != build_arches:
                 # The latest brew build does not exactly match the required arches as specified in group.yml
-                return self, RebuildHint(RebuildHintCode.ARCHES_CHANGE, f'Arches of {image_nvr}: ({build_arches}) does not match target arches {target_arches}')
+                return self, RebuildHint(
+                    RebuildHintCode.ARCHES_CHANGE, f'Arches of {image_nvr}: ({build_arches}) does not match target arches {target_arches}'
+                )
 
             # Build up a map of RPMs built by this group. It is the 'latest' builds of these RPMs
             # relative to the current assembly that matter in the forthcoming search -- not
@@ -470,7 +495,9 @@ class ImageMetadata(Metadata):
                     if latest_assembly_build_nvr and latest_assembly_build_nvr == build['nvr']:
                         # The latest RPM build for this assembly is already installed and we know the RPM
                         # is not about to change. Ignore the installed package.
-                        self.logger.debug(f'Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur')
+                        self.logger.debug(
+                            f'Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur'
+                        )
                         continue
                     # Add this rpm_entry to arch_rpms in order to chech whether it is latest in repos
                     if arch not in arch_rpms:
@@ -482,7 +509,8 @@ class ImageMetadata(Metadata):
             non_latest_rpms = await bbii.find_non_latest_rpms(arch_rpms)
             rebuild_hints = [
                 f"Outdated RPM {installed_rpm} installed in {image_nvr} ({arch}) when {latest_rpm} was available in repo {repo}"
-                for arch, non_latest in non_latest_rpms.items() for installed_rpm, latest_rpm, repo in non_latest
+                for arch, non_latest in non_latest_rpms.items()
+                for installed_rpm, latest_rpm, repo in non_latest
             ]
             if rebuild_hints:
                 return self, RebuildHint(
@@ -504,8 +532,12 @@ class ImageMetadata(Metadata):
 
     def calculate_config_digest(self, group_config, streams):
         ignore_keys = [
-            "owners", "scan_sources", "content.source.ci_alignment",
-            "content.source.git", "external_scanners", "delivery",
+            "owners",
+            "scan_sources",
+            "content.source.ci_alignment",
+            "content.source.git",
+            "external_scanners",
+            "delivery",
         ]  # list of keys that shouldn't be involved in config digest calculation
         image_config = copy(self.config)
         # If there is a konflux stanza in the image config, merge it with the main config
@@ -554,7 +586,7 @@ class ImageMetadata(Metadata):
 
     @property
     def canonical_builders_enabled(self) -> bool:
-        """ Returns whether canonical_builders is enabled for this image."""
+        """Returns whether canonical_builders is enabled for this image."""
         # canonical_builders_from_upstream can be overridden by every single image; if it's not, use the global one
         if self.config.canonical_builders_from_upstream is not Missing:
             canonical_builders_from_upstream = self.config.canonical_builders_from_upstream
@@ -562,13 +594,14 @@ class ImageMetadata(Metadata):
             canonical_builders_from_upstream = self.runtime.group_config.canonical_builders_from_upstream
 
         if not isinstance(canonical_builders_from_upstream, bool):
-            self.logger.warning('Invalid value provided for "canonical_builders_from_upstream": %s, defaulting to False', canonical_builders_from_upstream)
+            self.logger.warning(
+                'Invalid value provided for "canonical_builders_from_upstream": %s, defaulting to False', canonical_builders_from_upstream
+            )
             return False
         return canonical_builders_from_upstream
 
     def _default_brew_target(self):
-        """ Returns derived brew target name from the distgit branch name
-        """
+        """Returns derived brew target name from the distgit branch name"""
         return f"{self.branch()}-containers-candidate"
 
     @property
@@ -576,7 +609,7 @@ class ImageMetadata(Metadata):
         return self.config.image_build_method or self.runtime.group_config.default_image_build_method or "osbs2"
 
     def get_parent_members(self) -> "OrderedDict[str, Optional[ImageMetadata]]":
-        """ Get the dict of parent members for the given image metadata.
+        """Get the dict of parent members for the given image metadata.
         If a parent is not loaded, its value will be None.
         """
         parent_members = OrderedDict()

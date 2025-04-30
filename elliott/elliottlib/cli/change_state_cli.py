@@ -1,21 +1,28 @@
-from artcommonlib.format_util import green_prefix
-from elliottlib.cli.common import cli, use_default_advisory_option, find_default_advisory
-from errata_tool import Erratum, ErrataException
 import click
+from artcommonlib.format_util import green_prefix
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
+from errata_tool import ErrataException, Erratum
 
 
 @cli.command("change-state", short_help="Change ADVISORY state")
 @click.option(
-    "--state", '-s', required=True,
+    "--state",
+    '-s',
+    required=True,
     type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
     help="New state for the Advisory. NEW_FILES, QE, REL_PREP",
 )
 @click.option(
-    "--from", "from_state", type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
+    "--from",
+    "from_state",
+    type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
     help="(Optional) Only change state if the advisory is in this state",
 )
 @click.option(
-    "--advisory", "-a", metavar='ADVISORY', type=int,
+    "--advisory",
+    "-a",
+    metavar='ADVISORY',
+    type=int,
     help="Change state of ADVISORY",
 )
 @click.option(
@@ -25,7 +32,8 @@ import click
 )
 @use_default_advisory_option
 @click.option(
-    "--noop", "--dry-run",
+    "--noop",
+    "--dry-run",
     is_flag=True,
     default=False,
     help="Do not actually change anything",
@@ -33,35 +41,35 @@ import click
 @click.pass_obj
 def change_state_cli(runtime, state, from_state, advisory, default_advisories, default_advisory_type, noop):
     """Change the state of an ADVISORY. Additional permissions may be
-required to change an advisory to certain states.
+    required to change an advisory to certain states.
 
-An advisory may not move between some states until all criteria have
-been met. For example, an advisory can not move from NEW_FILES to QE
-unless Bugzilla Bugs or JIRA Issues have been attached.
+    An advisory may not move between some states until all criteria have
+    been met. For example, an advisory can not move from NEW_FILES to QE
+    unless Bugzilla Bugs or JIRA Issues have been attached.
 
-    NOTE: The two advisory options are mutually exclusive and can not
-    be used together.
+        NOTE: The two advisory options are mutually exclusive and can not
+        be used together.
 
-    Move assembly release advisories to QE
+        Move assembly release advisories to QE
 
-    $ elliott -g openshift-4.10 --assembly 4.10.4 change-state -s QE
+        $ elliott -g openshift-4.10 --assembly 4.10.4 change-state -s QE
 
-    Move the advisory 123456 to QE:
+        Move the advisory 123456 to QE:
 
-    $ elliott change-state --state QE --advisory 123456
+        $ elliott change-state --state QE --advisory 123456
 
-    Move the advisory 123456 back to NEW_FILES (short option flag):
+        Move the advisory 123456 back to NEW_FILES (short option flag):
 
-    $ elliott change-state -s NEW_FILES -a 123456
+        $ elliott change-state -s NEW_FILES -a 123456
 
-    Do not actually change state, just check the command could run
+        Do not actually change state, just check the command could run
 
-    $ elliott change-state -s NEW_FILES -a 123456 --noop
+        $ elliott change-state -s NEW_FILES -a 123456 --noop
 
-    Only move to QE if the advisory is in NEW_FILES state
+        Only move to QE if the advisory is in NEW_FILES state
 
-    $ elliott change-state -s QE -a 123456 --from NEW_FILES
-"""
+        $ elliott change-state -s QE -a 123456 --from NEW_FILES
+    """
     count_flags = sum(map(bool, [advisory, default_advisory_type, default_advisories]))
     if count_flags > 1:
         raise click.BadParameter("Use only one of --use-default-advisory or --advisory or --default-advisories")

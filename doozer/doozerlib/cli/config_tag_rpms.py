@@ -4,7 +4,6 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, Union, cast
 
 import click
 import koji
-
 from artcommonlib import exectools
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.release_util import split_el_suffix_in_release
@@ -31,7 +30,7 @@ class TagRPMsCli:
         latest: int = 0,
         inherit: bool = False,
     ) -> List[List[Dict]]:
-        """ Get tagged builds as of the given event
+        """Get tagged builds as of the given event
 
         In each list for a component, builds are ordered from newest tagged to oldest tagged:
         https://pagure.io/koji/blob/3fed02c8adb93cde614af9f61abd12bbccdd6682/f/hub/kojihub.py#_1392
@@ -44,12 +43,14 @@ class TagRPMsCli:
         :param inherit: True to include builds inherited from parent tags
         :return: a list of lists of Koji/Brew build dicts
         """
+
         def _func():
             tasks = []
             with session.multicall(strict=True) as m:
                 for tag, component_name in tag_component_tuples:
                     tasks.append(m.listTagged(tag, package=component_name, event=event, type=build_type, latest=latest, inherit=inherit))
             return [task.result for task in tasks]
+
         return cast(List[List[Dict]], await exectools.to_thread(_func))
 
     @staticmethod
@@ -60,6 +61,7 @@ class TagRPMsCli:
                 for tag, build in tag_build_tuples:
                     tasks.append(m.untagBuild(tag, build, strict=False))  # strict=False: Don't raise TagError when the build is not in the tag.
             return [task.result for task in tasks]
+
         return await exectools.to_thread(_func)
 
     @staticmethod
@@ -70,6 +72,7 @@ class TagRPMsCli:
                 for tag, build in tag_build_tuples:
                     tasks.append(m.tagBuild(tag, build))
             return [task.result for task in tasks]
+
         task_ids = cast(List[int], await exectools.to_thread(_func))
         if task_ids:
             TASK_URL = f'{BREWWEB_URL}/taskinfo?taskID='
@@ -79,10 +82,7 @@ class TagRPMsCli:
             failed_tasks = {task_id for task_id, error in errors.items() if error and "already tagged" not in error}
             if failed_tasks:
                 # if "already tagged" in errors[task_id]:
-                message = "; ".join(
-                    f"Task {TASK_URL}{task_id} failed: {errors[task_id]}"
-                    for task_id in failed_tasks
-                )
+                message = "; ".join(f"Task {TASK_URL}{task_id} failed: {errors[task_id]}" for task_id in failed_tasks)
                 raise DoozerFatalError(message)
 
     async def run(self):
@@ -137,13 +137,19 @@ class TagRPMsCli:
             # We assume in each rhel version, there are only a few hundreds of builds in the rhel candidate tag.
             # It should be fine to get all builds in one single Brew API call.
             logger.info("Getting latest tagged builds in rhel tag %s...", entry.rhel_tag)
-            builds_in_rhel_tag = await self.get_tagged_builds(
-                koji_api,
-                [(entry.rhel_tag, pkg) for pkg in entry.packages],
-                build_type="rpm",
-                latest=0,
-            ) if entry.rhel_tag else [[] for _ in entry.packages]
-            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag):
+            builds_in_rhel_tag = (
+                await self.get_tagged_builds(
+                    koji_api,
+                    [(entry.rhel_tag, pkg) for pkg in entry.packages],
+                    build_type="rpm",
+                    latest=0,
+                )
+                if entry.rhel_tag
+                else [[] for _ in entry.packages]
+            )
+            for package, rhel_builds, candidate_builds, stop_ship_builds in zip(
+                entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag
+            ):
                 stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
                 rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
                 logger.info("Found %s build(s) of package %s in stop-ship tag %s", len(stop_ship_nvrs), package, entry.stop_ship_tag)
@@ -203,10 +209,7 @@ class TagRPMsCli:
 
                     # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
                     kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
-                    kernel_rt_version = (
-                        f"{kernel_rt_build['version']}-"
-                        f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
-                    )
+                    kernel_rt_version = f"{kernel_rt_build['version']}-" f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
                     if kernel_version not in kernel_rt_version:
                         raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
                     else:

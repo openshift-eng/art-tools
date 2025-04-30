@@ -22,6 +22,7 @@ class RhcosMissingContainerException(Exception):
     Thrown when group.yml configuration expects an RHCOS container but it is
     not available as specified in the RHCOS metadata.
     """
+
     pass
 
 

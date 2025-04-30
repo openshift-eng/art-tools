@@ -1,9 +1,8 @@
 import unittest
-
-from flexmock import flexmock
 from unittest.mock import MagicMock
 
 from doozerlib.olm.bundle import OLMBundle
+from flexmock import flexmock
 
 
 class TestOLMBundle(unittest.TestCase):
@@ -12,11 +11,12 @@ class TestOLMBundle(unittest.TestCase):
         name = 'foo-operator'
         olm = flexmock(
             OLMBundle(
-                runtime=None, operator_nvr_or_dict={
+                runtime=None,
+                operator_nvr_or_dict={
                     'nvr': f'{name}-1.0.0-1',
-                    'source': f'https://pkgs.devel.redhat.com/git/containers/{name}'
-                              '#d37b219bb1227aed06e32a995f74595f845bb981',
-                }, brew_session=MagicMock(),
+                    'source': f'https://pkgs.devel.redhat.com/git/containers/{name}' '#d37b219bb1227aed06e32a995f74595f845bb981',
+                },
+                brew_session=MagicMock(),
             ),
         )
         self.assertEqual(olm.bundle_image_name, 'openshift/ose-foo-operator-bundle')
@@ -25,11 +25,12 @@ class TestOLMBundle(unittest.TestCase):
         name = 'ose-foo-operator'
         olm = flexmock(
             OLMBundle(
-                runtime=None, operator_nvr_or_dict={
+                runtime=None,
+                operator_nvr_or_dict={
                     'nvr': f'{name}-1.0.0-1',
-                    'source': f'https://pkgs.devel.redhat.com/git/containers/{name}'
-                              '#d37b219bb1227aed06e32a995f74595f845bb981',
-                }, brew_session=MagicMock(),
+                    'source': f'https://pkgs.devel.redhat.com/git/containers/{name}' '#d37b219bb1227aed06e32a995f74595f845bb981',
+                },
+                brew_session=MagicMock(),
             ),
         )
         self.assertEqual(olm.bundle_image_name, 'openshift/ose-foo-operator-bundle')

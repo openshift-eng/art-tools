@@ -1,8 +1,8 @@
 # pyartcd Git helpers
 
+import os
 from logging import getLogger
 from pathlib import Path
-import os
 from typing import Union
 
 from artcommonlib import exectools
@@ -16,8 +16,7 @@ class GitRepository:
         self._dry_run = dry_run
 
     async def setup(self, remote_url, upstream_remote_url=None):
-        """ Initialize a git repository with specified remote URL and an optional upstream remote URL.
-        """
+        """Initialize a git repository with specified remote URL and an optional upstream remote URL."""
         # Ensure local repo directory exists
         self._directory.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
@@ -40,7 +39,7 @@ class GitRepository:
             await exectools.cmd_assert_async(["git", "-C", repo_dir, "remote", "remove", "upstream"], env=env)
 
     async def fetch_switch_branch(self, branch, upstream_ref=None):
-        """ Fetch `upstream_ref` from the remote repo, create the `branch` and start it at `upstream_ref`.
+        """Fetch `upstream_ref` from the remote repo, create the `branch` and start it at `upstream_ref`.
         If `branch` already exists, then reset it to `upstream_ref`.
         """
         env = os.environ.copy()
@@ -60,7 +59,7 @@ class GitRepository:
         await exectools.cmd_assert_async(["git", "-C", repo_dir, "clean", "-fdx"], env=env)
 
     async def commit_push(self, commit_message: str):
-        """ Create a commit that includes all file changes in the working tree and push the commit to the remote repository.
+        """Create a commit that includes all file changes in the working tree and push the commit to the remote repository.
         If there are no changes in thw working tree, do nothing.
         """
         env = os.environ.copy()

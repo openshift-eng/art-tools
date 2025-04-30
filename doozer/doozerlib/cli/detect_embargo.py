@@ -6,10 +6,9 @@ from urllib.parse import urlparse
 
 import click
 import yaml
-
+from artcommonlib import exectools, rhcos
 from artcommonlib.format_util import green_print
 from doozerlib import Runtime, brew
-from artcommonlib import rhcos, exectools
 from doozerlib import build_status_detector as bs_detector
 from doozerlib.cli import cli, pass_runtime
 from doozerlib.exceptions import DoozerFatalError
@@ -25,17 +24,21 @@ cli.add_command(detect_embargo)
 
 @detect_embargo.command("nvr", short_help="Detect embargoed fixes in given builds")
 @click.option(
-    "--yaml", "as_yaml", is_flag=True,
+    "--yaml",
+    "as_yaml",
+    is_flag=True,
     help="Print out the result as YAML format.",
 )
 @click.option(
-    "--json", "as_json", is_flag=True,
+    "--json",
+    "as_json",
+    is_flag=True,
     help="Print out the result as JSON format.",
 )
 @click.argument("nvrs", metavar="NVRS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_nvr(runtime: Runtime, nvrs, as_yaml, as_json):
-    """ Check whether one or more Brew builds have embargoed fixes.
+    """Check whether one or more Brew builds have embargoed fixes.
 
     If neither --yaml nor --json is given, this program will exit with status 0 if true, or with status 2 if not.
     Errors are signaled by a non-zero status that is not 2.
@@ -53,29 +56,43 @@ def detect_in_nvr(runtime: Runtime, nvrs, as_yaml, as_json):
 
 @detect_embargo.command("tag", short_help="Detect embargoed fixes in builds with given Koji tags")
 @click.option(
-    "--kind", "kind", default="all", metavar="KIND", type=click.Choice(["rpm", "image", "all"]),
+    "--kind",
+    "kind",
+    default="all",
+    metavar="KIND",
+    type=click.Choice(["rpm", "image", "all"]),
     help="Only detect the specified kind of builds. [rpm, image, all] (Default to all)",
 )
 @click.option(
-    "--exclude", "excluded_tags", metavar="TAG", multiple=True,
+    "--exclude",
+    "excluded_tags",
+    metavar="TAG",
+    multiple=True,
     help="Koji tag name that the build must not have [multiple]",
 )
 @click.option(
-    "--event-id", metavar='NUM', required=False, type=int,
+    "--event-id",
+    metavar='NUM',
+    required=False,
+    type=int,
     help="A Brew event ID. If specified, the last NVRs as of the given Brew event will be chosen instead of latest",
 )
 @click.option(
-    "--yaml", "as_yaml", is_flag=True,
+    "--yaml",
+    "as_yaml",
+    is_flag=True,
     help="Print out the result as YAML format.",
 )
 @click.option(
-    "--json", "as_json", is_flag=True,
+    "--json",
+    "as_json",
+    is_flag=True,
     help="Print out the result as JSON format.",
 )
 @click.argument("tags", metavar="TAGS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_tag(runtime: Runtime, kind, tags, excluded_tags, event_id, as_yaml, as_json):
-    """ Check whether one or more Brew tags have builds that include embargoed fixes.
+    """Check whether one or more Brew tags have builds that include embargoed fixes.
 
     If neither --yaml nor --json is given, this program will exit with status 0 if true, or with status 2 if not.
     Errors are signaled by a non-zero status that is not 2.
@@ -92,17 +109,21 @@ def detect_in_tag(runtime: Runtime, kind, tags, excluded_tags, event_id, as_yaml
 
 @detect_embargo.command("pullspec", short_help="Check whether one or more arbitrary brew images (referred by pullspecs) has embargoed fixes.")
 @click.option(
-    "--yaml", "as_yaml", is_flag=True,
+    "--yaml",
+    "as_yaml",
+    is_flag=True,
     help="Print out the result as YAML format.",
 )
 @click.option(
-    "--json", "as_json", is_flag=True,
+    "--json",
+    "as_json",
+    is_flag=True,
     help="Print out the result as JSON format.",
 )
 @click.argument("pullspecs", metavar="PULLSPECS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_pullspec(runtime, pullspecs, as_yaml, as_json):
-    """ Check whether one or more arbitrary container images (referred by pullspecs) have embargoed fixes.
+    """Check whether one or more arbitrary container images (referred by pullspecs) have embargoed fixes.
 
     If neither --yaml nor --json is given, this program will exit with status 0 if true, or with status 2 if not.
     Errors are signaled by a non-zero status that is not 2.
@@ -120,17 +141,21 @@ def detect_in_pullspec(runtime, pullspecs, as_yaml, as_json):
 
 @detect_embargo.command("release", short_help="Check whether one or more release payloads has embargoed fixes.")
 @click.option(
-    "--yaml", "as_yaml", is_flag=True,
+    "--yaml",
+    "as_yaml",
+    is_flag=True,
     help="Print out the result as YAML format.",
 )
 @click.option(
-    "--json", "as_json", is_flag=True,
+    "--json",
+    "as_json",
+    is_flag=True,
     help="Print out the result as JSON format.",
 )
 @click.argument("pullspecs", metavar="PULLSPECS...", nargs=-1, required=True)
 @pass_runtime
 def detect_in_release(runtime, pullspecs, as_yaml, as_json):
-    """ Check whether one or more release payloads have images with embargoed fixes.
+    """Check whether one or more release payloads have images with embargoed fixes.
 
     If neither --yaml nor --json is given, this program will exit with status 0 if true, or with status 2 if not.
     Errors are signaled by a non-zero status that is not 2.
@@ -147,7 +172,7 @@ def detect_in_release(runtime, pullspecs, as_yaml, as_json):
 
 
 def detect_embargoes_in_nvrs(runtime: Runtime, nvrs: List[str]):
-    """ Finds embargoes in given NVRs
+    """Finds embargoes in given NVRs
     :param runtime: the runtime
     :param nvrs: list of build NVRs
     :return: list of Brew build dicts that have embargoed fixes
@@ -166,7 +191,7 @@ def detect_embargoes_in_nvrs(runtime: Runtime, nvrs: List[str]):
 
 
 def detect_embargoes_in_tags(runtime: Runtime, kind: str, included_tags: List[str], excluded_tags: List[str], event_id: Optional[int]):
-    """ Finds embargoes in builds with given tags
+    """Finds embargoes in builds with given tags
     :param runtime: the runtime
     :param included_tags: list of koji tags that the returned builds must have
     :param excluded_tags: list of koji tags that the returned builds must not have
@@ -195,14 +220,15 @@ def detect_embargoes_in_tags(runtime: Runtime, kind: str, included_tags: List[st
 
 
 def detect_embargoes_in_pullspecs(runtime: Runtime, pullspecs: List[str]):
-    """ Finds embargoes in given image pullspecs
+    """Finds embargoes in given image pullspecs
     :param runtime: the runtime
     :param nvrs: list of image pullspecs
     :return: list of Brew build dicts that have embargoed fixes
     """
     runtime.logger.info(f"Fetching manifests for {len(pullspecs)} pullspecs...")
     jobs = exectools.parallel_exec(
-        lambda pullspec, _: get_nvr_by_pullspec(pullspec), pullspecs,
+        lambda pullspec, _: get_nvr_by_pullspec(pullspec),
+        pullspecs,
         min(len(pullspecs), multiprocessing.cpu_count() * 4, 32),
     )
     nvrs = jobs.get()
@@ -223,7 +249,7 @@ def detect_embargoes_in_pullspecs(runtime: Runtime, pullspecs: List[str]):
 
 
 def detect_embargoes_in_releases(runtime: Runtime, pullspecs: List[str]):
-    """ Finds embargoes in given release payloads
+    """Finds embargoes in given release payloads
     :param runtime: the runtime
     :param nvrs: list of release pullspecs
     :return: list of Brew build dicts that have embargoed fixes
@@ -249,7 +275,7 @@ def detect_embargoes_in_releases(runtime: Runtime, pullspecs: List[str]):
 
 
 def print_result_and_exit(embargoed_builds, embargoed_pullspecs, embargoed_releases, as_yaml, as_json):
-    """ Prints embargo detection result and exit
+    """Prints embargo detection result and exit
     :param embargoed_builds: list of dicts of embargoed builds
     :embargoed_pullspecs: list of embargoed image pullspecs
     :embargoed_releases: list of pullspecs of embargoed release payloads
@@ -288,7 +314,7 @@ def print_result_and_exit(embargoed_builds, embargoed_pullspecs, embargoed_relea
 
 
 def get_nvr_by_pullspec(pullspec: str) -> Tuple[str, str, str]:
-    """ Retrieves (name, version, release) of the image referenced by a pullspec
+    """Retrieves (name, version, release) of the image referenced by a pullspec
     :param pullspec: image pullspec
     :return: a (name, version, release) tuple
     """
@@ -302,7 +328,7 @@ def get_nvr_by_pullspec(pullspec: str) -> Tuple[str, str, str]:
 
 
 def get_image_pullspecs_from_release_payload(payload_pullspec: str, ignore=set()) -> Iterable[str]:
-    """ Retrieves pullspecs of images in a release payload.
+    """Retrieves pullspecs of images in a release payload.
     :param payload_pullspec: release payload pullspec
     :param ignore: a set of image names that we want to exclude from the return value (e.g. machine-os-content)
     :return: an iterator over pullspecs of component images

@@ -1,15 +1,14 @@
-
 import os
 import pathlib
 import shutil
 import tempfile
 import unittest
-
 from unittest import mock
-import yaml.scanner
 
+import yaml.scanner
 from doozerlib.source_modifications import (
-    AddModifier, RemoveModifier,
+    AddModifier,
+    RemoveModifier,
     SourceModifierFactory,
 )
 
@@ -105,7 +104,8 @@ class TestRemoveModifier(unittest.TestCase):
         }
         with mock.patch.object(pathlib.Path, "rglob") as rglob, mock.patch.object(pathlib.Path, "unlink") as unlink:
             rglob.return_value = map(
-                lambda path: distgit_path.joinpath(path), [
+                lambda path: distgit_path.joinpath(path),
+                [
                     "1.txt",
                     "a/2.txt",
                     "b/c/d/e/3.txt",
@@ -125,7 +125,8 @@ class TestRemoveModifier(unittest.TestCase):
         }
         with mock.patch.object(pathlib.Path, "rglob") as rglob:
             rglob.return_value = map(
-                lambda path: pathlib.Path("/some/other/path").joinpath(path), [
+                lambda path: pathlib.Path("/some/other/path").joinpath(path),
+                [
                     "1.txt",
                     "a/2.txt",
                     "b/c/d/e/3.txt",

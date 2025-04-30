@@ -1,7 +1,7 @@
-import unittest
 import subprocess
+import unittest
 
-from doozerlib.backend.konflux_client import KIND_SNAPSHOT, API_VERSION
+from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from functional_tests import constants
 
 
@@ -10,7 +10,8 @@ class ReleaseTestCases(unittest.TestCase):
         cmd = constants.ELLIOTT_CMD + ["release", "watch", "ose-4-18-202503131641"]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(
-            result.returncode, 1,
+            result.returncode,
+            1,
             msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}",
         )
         self.assertRegex(result.stdout.decode(), "Release failed!")
@@ -19,7 +20,8 @@ class ReleaseTestCases(unittest.TestCase):
         cmd = constants.ELLIOTT_CMD + ["release", "watch", "ose-4-18-prod-202503171852", "--timeout=5"]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(
-            result.returncode, 0,
+            result.returncode,
+            0,
             msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}",
         )
         self.assertRegex(result.stdout.decode(), "Release successful!")

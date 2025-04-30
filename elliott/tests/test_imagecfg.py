@@ -4,9 +4,8 @@ Test the ImageMetadata class
 """
 import unittest
 
-from flexmock import flexmock
-
 from elliottlib import imagecfg
+from flexmock import flexmock
 
 
 class TestImageMetadata(unittest.TestCase):

@@ -2,10 +2,10 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase
-
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+
 from pyartcd import constants
-from pyartcd.pipelines.rebuild import (PlashetBuildResult, RebuildPipeline, RebuildType)
+from pyartcd.pipelines.rebuild import PlashetBuildResult, RebuildPipeline, RebuildType
 
 
 class TestRebuildPipeline(IsolatedAsyncioTestCase):
@@ -14,8 +14,13 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
         runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, dry_run=False)
         fork_url = 'https://fork.com/ocp-build-data-fork.git'
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url=fork_url,
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url=fork_url,
         )
         actual = pipeline._doozer_env_vars["DOOZER_DATA_PATH"]
         expected = fork_url
@@ -26,10 +31,19 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     @patch("shutil.rmtree")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_plashet_from_tags(self, cmd_assert_async: AsyncMock, rmtree: Mock, path_exists: Mock, path_mkdir: Mock):
-        runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, working_dir=Path("/path/to/working"), dry_run=False)
+        runtime = MagicMock(
+            config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}},
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url='',
         )
         tag_pvs = [("fake-tag-candidate", "FAKE-PRODUCT-VERSION")]
         embargoed_tags = ["fake-tag-embargoed"]
@@ -46,10 +60,19 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     @patch("shutil.rmtree")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_plashet_for_assembly_rhcos(self, cmd_assert_async: AsyncMock, rmtree: Mock, path_exists: Mock, path_mkdir: Mock):
-        runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, working_dir=Path("/path/to/working"), dry_run=False)
+        runtime = MagicMock(
+            config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}},
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url='',
         )
         actual = await pipeline._build_plashet_for_assembly("plashet1234", "plashet1234", 8, ["x86_64", "s390x"], 12345)
         expected_local_dir = runtime.working_dir / "plashets/el8/art0001/plashet1234"
@@ -64,10 +87,19 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     @patch("shutil.rmtree")
     @patch("artcommonlib.exectools.cmd_assert_async")
     async def test_build_plashet_for_assembly_image(self, cmd_assert_async: AsyncMock, rmtree: Mock, path_exists: Mock, path_mkdir: Mock):
-        runtime = MagicMock(config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}}, working_dir=Path("/path/to/working"), dry_run=False)
+        runtime = MagicMock(
+            config={"build_config": {"ocp_build_data_url": "https://example.com/ocp-build-data.git"}},
+            working_dir=Path("/path/to/working"),
+            dry_run=False,
+        )
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         actual = await pipeline._build_plashet_for_assembly("plashet1234", "plashet1234", 8, ["x86_64", "s390x"], 12345)
         expected_local_dir = runtime.working_dir / "plashets/el8/art0001/plashet1234"
@@ -81,28 +113,54 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
     async def test_copy_plashet_out_to_remote(self, cmd_assert_async: AsyncMock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url='',
         )
         local_plashet_dir = "/path/to/local/plashets/el8/plashet1234"
         await pipeline._copy_plashet_out_to_remote(8, local_plashet_dir, "building")
         cmd_assert_async.assert_any_await(
             [
-                'ssh', 'ocp-artifacts', '--', 'ln', '-sfn', '--', 'plashet1234',
+                'ssh',
+                'ocp-artifacts',
+                '--',
+                'ln',
+                '-sfn',
+                '--',
+                'plashet1234',
                 '/mnt/data/pub/RHOCP/plashets/4.9-el8/art0001/building',
             ],
         )
         cmd_assert_async.assert_any_await(
             [
-                "rsync", "-av", "--links", "--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
-                "--perms", "--", "/path/to/local/plashets/el8/plashet1234",
+                "rsync",
+                "-av",
+                "--links",
+                "--progress",
+                "-h",
+                "--no-g",
+                "--omit-dir-times",
+                "--chmod=Dug=rwX,ugo+r",
+                "--perms",
+                "--",
+                "/path/to/local/plashets/el8/plashet1234",
                 f"{constants.PLASHET_REMOTES[0]['host']}:{constants.PLASHET_REMOTE_BASE_DIR}/4.9-el8/art0001",
             ],
         )
         cmd_assert_async.assert_any_await(
             [
-                "ssh", constants.PLASHET_REMOTES[0]['host'], "--", "ln", "-sfn", "--",
-                "plashet1234", f"{constants.PLASHET_REMOTE_BASE_DIR}/4.9-el8/art0001/building",
+                "ssh",
+                constants.PLASHET_REMOTES[0]['host'],
+                "--",
+                "ln",
+                "-sfn",
+                "--",
+                "plashet1234",
+                f"{constants.PLASHET_REMOTE_BASE_DIR}/4.9-el8/art0001/building",
             ],
         )
 
@@ -115,15 +173,36 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             "signing_advisory": 12345,
         }
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url='',
         )
         _build_plashet_from_tags.return_value = PlashetBuildResult("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1")
         _build_plashet_for_assembly.return_value = PlashetBuildResult("plashet2", Path("/path/to/local/dir2"), "https://example.com/dir2")
         actual = await pipeline._build_plashets("202107160000", 8, group_config, None)
-        _build_plashet_from_tags.assert_awaited_once_with('plashet-rebuild-basis', 'art0001-202107160000-rhcos-basis', 8, group_config["arches"], (('rhaos-4.9-rhel-8-candidate', 'OSE-4.9-RHEL-8'),), ['rhaos-4.9-rhel-8-embargoed'], group_config["signing_advisory"])
-        _build_plashet_for_assembly.assert_awaited_once_with('plashet-rebuild-overrides', 'art0001-202107160000-rhcos-overrides', 8, group_config["arches"], group_config["signing_advisory"])
-        self.assertEqual(actual, [("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"), ("plashet2", Path("/path/to/local/dir2"), "https://example.com/dir2")])
+        _build_plashet_from_tags.assert_awaited_once_with(
+            'plashet-rebuild-basis',
+            'art0001-202107160000-rhcos-basis',
+            8,
+            group_config["arches"],
+            (('rhaos-4.9-rhel-8-candidate', 'OSE-4.9-RHEL-8'),),
+            ['rhaos-4.9-rhel-8-embargoed'],
+            group_config["signing_advisory"],
+        )
+        _build_plashet_for_assembly.assert_awaited_once_with(
+            'plashet-rebuild-overrides', 'art0001-202107160000-rhcos-overrides', 8, group_config["arches"], group_config["signing_advisory"]
+        )
+        self.assertEqual(
+            actual,
+            [
+                ("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"),
+                ("plashet2", Path("/path/to/local/dir2"), "https://example.com/dir2"),
+            ],
+        )
 
     @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashet_for_assembly")
     @patch("pyartcd.pipelines.rebuild.RebuildPipeline._build_plashet_from_tags")
@@ -134,24 +213,59 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             "signing_advisory": 12345,
         }
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         _build_plashet_from_tags.return_value = PlashetBuildResult("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1")
         _build_plashet_for_assembly.return_value = PlashetBuildResult("plashet2", Path("/path/to/local/dir2"), "https://example.com/dir2")
         image_config = {"enabled_repos": ["rhel-8-server-ose-rpms-embargoed", "rhel-8-server-ironic-rpms"]}
         actual = await pipeline._build_plashets("202107160000", 8, group_config, image_config)
-        _build_plashet_from_tags.assert_any_await('rhel-8-server-ose-rpms-embargoed', 'art0001-202107160000-image-foo-basis', 8, group_config["arches"], (('rhaos-4.9-rhel-8-candidate', 'OSE-4.9-RHEL-8'),), ['rhaos-4.9-rhel-8-embargoed'], group_config["signing_advisory"])
-        _build_plashet_from_tags.assert_any_await('rhel-8-server-ironic-rpms', 'art0001-202107160000-image-foo-ironic', 8, group_config["arches"], (('rhaos-4.9-ironic-rhel-8-candidate', 'OSE-IRONIC-4.9-RHEL-8'),), ['rhaos-4.9-rhel-8-embargoed'], group_config["signing_advisory"])
-        _build_plashet_for_assembly.assert_awaited_once_with('plashet-rebuild-overrides', 'art0001-202107160000-image-foo-overrides', 8, group_config["arches"], group_config["signing_advisory"])
-        self.assertEqual(actual, [("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"), ("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"), ("plashet2", Path("/path/to/local/dir2"), "https://example.com/dir2")])
+        _build_plashet_from_tags.assert_any_await(
+            'rhel-8-server-ose-rpms-embargoed',
+            'art0001-202107160000-image-foo-basis',
+            8,
+            group_config["arches"],
+            (('rhaos-4.9-rhel-8-candidate', 'OSE-4.9-RHEL-8'),),
+            ['rhaos-4.9-rhel-8-embargoed'],
+            group_config["signing_advisory"],
+        )
+        _build_plashet_from_tags.assert_any_await(
+            'rhel-8-server-ironic-rpms',
+            'art0001-202107160000-image-foo-ironic',
+            8,
+            group_config["arches"],
+            (('rhaos-4.9-ironic-rhel-8-candidate', 'OSE-IRONIC-4.9-RHEL-8'),),
+            ['rhaos-4.9-rhel-8-embargoed'],
+            group_config["signing_advisory"],
+        )
+        _build_plashet_for_assembly.assert_awaited_once_with(
+            'plashet-rebuild-overrides', 'art0001-202107160000-image-foo-overrides', 8, group_config["arches"], group_config["signing_advisory"]
+        )
+        self.assertEqual(
+            actual,
+            [
+                ("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"),
+                ("plashet1", Path("/path/to/local/dir1"), "https://example.com/dir1"),
+                ("plashet2", Path("/path/to/local/dir2"), "https://example.com/dir2"),
+            ],
+        )
 
     @patch("pathlib.Path.read_text")
     def test_generate_repo_file_for_image(self, read_text: Mock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         plashets = [
             PlashetBuildResult("rhel-8-server-ose", "fake-basis", "https://example.com/plashets/4.9-el8/art0001/fake-basis"),
@@ -217,8 +331,13 @@ priority = 1
     def test_generate_repo_file_for_rhcos(self):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url='',
         )
         out_file = StringIO()
         plashets = [
@@ -249,15 +368,22 @@ priority = 1
     async def test_get_meta_config(self, cmd_gather_async: Mock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         cmd_gather_async.return_value = (
-            0, """
+            0,
+            """
 images:
   foo:
     some_key: some_value
-        """.strip(), "",
+        """.strip(),
+            "",
         )
         actual = await pipeline._get_meta_config()
         self.assertEqual(actual, {"some_key": "some_value"})
@@ -266,8 +392,13 @@ images:
     async def test_rebase_image(self, cmd_assert_async: Mock):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         await pipeline._rebase_image("202107160000.p?")
 
@@ -280,8 +411,13 @@ images:
     async def test_build_image(self, cmd_assert_async: Mock, open: Mock):
         runtime = MagicMock(dry_run=False, working_dir=Path("/path/to/working"))
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         repo_url = "http://example.com/plashets/4.9-el8/art0001/art0001-image-foo-overrides/rebuild.repo"
         open.return_value.__enter__.return_value = StringIO("build|nvrs=foo-container-v1.2.3-1.p0.assembly.art0001|")
@@ -299,11 +435,18 @@ images:
     async def test_rebase_and_build_rpm(self, cmd_assert_async: Mock, open: Mock):
         runtime = MagicMock(dry_run=False, working_dir=Path("/path/to/working"))
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RPM, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RPM,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         release = "202107160000.p?"
-        open.return_value.__enter__.return_value = StringIO("build_rpm|nvrs=foo-v1.2.3-202107160000.p0.assembly.art0001.el8,foo-v1.2.3-202107160000.p0.assembly.art0001.el7|")
+        open.return_value.__enter__.return_value = StringIO(
+            "build_rpm|nvrs=foo-v1.2.3-202107160000.p0.assembly.art0001.el8,foo-v1.2.3-202107160000.p0.assembly.art0001.el7|"
+        )
         nvrs = await pipeline._rebase_and_build_rpm(release)
         self.assertEqual(nvrs, ["foo-v1.2.3-202107160000.p0.assembly.art0001.el8", "foo-v1.2.3-202107160000.p0.assembly.art0001.el7"])
         open.assert_called_once_with(runtime.working_dir / "doozer-working/record.log", "r")
@@ -316,8 +459,13 @@ images:
     def test_generate_example_schema_rpm(self):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RPM, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RPM,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         actual = pipeline._generate_example_schema(["foo-v1.2.3-1.el8", "foo-v1.2.3-1.el7"])
         expected = {
@@ -325,15 +473,17 @@ images:
                 "art0001": {
                     "assembly": {
                         "members": {
-                            "rpms": [{
-                                "distgit_key": "foo",
-                                "metadata": {
-                                    "is": {
-                                        "el8": "foo-v1.2.3-1.el8",
-                                        "el7": "foo-v1.2.3-1.el7",
+                            "rpms": [
+                                {
+                                    "distgit_key": "foo",
+                                    "metadata": {
+                                        "is": {
+                                            "el8": "foo-v1.2.3-1.el8",
+                                            "el7": "foo-v1.2.3-1.el7",
+                                        },
                                     },
-                                },
-                            }],
+                                }
+                            ],
                         },
                     },
                 },
@@ -344,8 +494,13 @@ images:
     def test_generate_example_schema_image(self):
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         actual = pipeline._generate_example_schema(["foo-container-v1.2.3-1"])
         expected = {
@@ -353,14 +508,16 @@ images:
                 "art0001": {
                     "assembly": {
                         "members": {
-                            "images": [{
-                                "distgit_key": "foo",
-                                "metadata": {
-                                    "is": {
-                                        "nvr": "foo-container-v1.2.3-1",
+                            "images": [
+                                {
+                                    "distgit_key": "foo",
+                                    "metadata": {
+                                        "is": {
+                                            "nvr": "foo-container-v1.2.3-1",
+                                        },
                                     },
-                                },
-                            }],
+                                }
+                            ],
                         },
                     },
                 },
@@ -373,7 +530,14 @@ images:
     @patch("pyartcd.pipelines.rebuild.datetime")
     @patch("pyartcd.pipelines.rebuild.load_releases_config")
     @patch("pyartcd.pipelines.rebuild.load_group_config")
-    async def test_run_rpm(self, load_group_config: AsyncMock, load_releases_config: AsyncMock, mock_datetime: Mock, _rebase_and_build_rpm: Mock, _generate_example_schema: Mock):
+    async def test_run_rpm(
+        self,
+        load_group_config: AsyncMock,
+        load_releases_config: AsyncMock,
+        mock_datetime: Mock,
+        _rebase_and_build_rpm: Mock,
+        _generate_example_schema: Mock,
+    ):
         mock_datetime.utcnow.return_value = datetime(2021, 7, 16, 0, 0, 0, 0, tzinfo=timezone.utc)
         runtime = MagicMock(dry_run=False)
         load_group_config.return_value = {}
@@ -387,8 +551,13 @@ images:
             },
         }
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RPM, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RPM,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         _rebase_and_build_rpm.return_value = ["foo-v1.2.3-1.el8", "foo-v1.2.3-1.el7"]
         _generate_example_schema.return_value = {"some_key": "some_value"}
@@ -409,16 +578,30 @@ images:
     @patch("builtins.open")
     @patch("pyartcd.pipelines.rebuild.datetime")
     async def test_run_image(
-        self, mock_datetime: Mock, open: Mock, load_group_config: AsyncMock, load_releases_config: AsyncMock,
-        _get_meta_config: AsyncMock, _build_plashets: AsyncMock, _rebase_image: AsyncMock,
-        _generate_repo_file_for_image: Mock, _copy_plashet_out_to_remote: AsyncMock, _build_image: AsyncMock, _generate_example_schema: Mock,
+        self,
+        mock_datetime: Mock,
+        open: Mock,
+        load_group_config: AsyncMock,
+        load_releases_config: AsyncMock,
+        _get_meta_config: AsyncMock,
+        _build_plashets: AsyncMock,
+        _rebase_image: AsyncMock,
+        _generate_repo_file_for_image: Mock,
+        _copy_plashet_out_to_remote: AsyncMock,
+        _build_image: AsyncMock,
+        _generate_example_schema: Mock,
     ):
         mock_datetime.utcnow.return_value = datetime(2021, 7, 16, 0, 0, 0, 0, tzinfo=timezone.utc)
         timestamp = mock_datetime.utcnow.return_value.strftime("%Y%m%d%H%M")
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.IMAGE, dg_key="foo", ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.IMAGE,
+            dg_key="foo",
+            ocp_build_data_url='',
         )
         group_config = load_group_config.return_value = {
             "arches": ["x86_64", "s390x"],
@@ -462,15 +645,26 @@ images:
     @patch("builtins.open")
     @patch("pyartcd.pipelines.rebuild.datetime")
     async def test_run_rhcos(
-        self, mock_datetime: Mock, open: Mock, load_group_config: AsyncMock, load_releases_config: AsyncMock,
-        _build_plashets: AsyncMock, _generate_repo_file_for_rhcos: Mock, _copy_plashet_out_to_remote: AsyncMock,
+        self,
+        mock_datetime: Mock,
+        open: Mock,
+        load_group_config: AsyncMock,
+        load_releases_config: AsyncMock,
+        _build_plashets: AsyncMock,
+        _generate_repo_file_for_rhcos: Mock,
+        _copy_plashet_out_to_remote: AsyncMock,
     ):
         mock_datetime.utcnow.return_value = datetime(2021, 7, 16, 0, 0, 0, 0, tzinfo=timezone.utc)
         timestamp = mock_datetime.utcnow.return_value.strftime("%Y%m%d%H%M")
         runtime = MagicMock(dry_run=False)
         pipeline = RebuildPipeline(
-            runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
-            type=RebuildType.RHCOS, dg_key=None, ocp_build_data_url='',
+            runtime,
+            group="openshift-4.9",
+            assembly="art0001",
+            plashet_remote=constants.PLASHET_REMOTES[0],
+            type=RebuildType.RHCOS,
+            dg_key=None,
+            ocp_build_data_url='',
         )
         group_config = load_group_config.return_value = {
             "arches": ["x86_64", "s390x"],

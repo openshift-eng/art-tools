@@ -3,8 +3,11 @@ import sys
 from functools import wraps
 from typing import Any, Awaitable, Callable, Optional, Sequence
 
+from artcommonlib import constants
+from doozerlib import __version__
 from opentelemetry import context, metrics, trace
 from opentelemetry.context import Context
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
     ConsoleMetricExporter,
@@ -14,20 +17,16 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
-    ConsoleSpanExporter, SpanExporter,
+    ConsoleSpanExporter,
+    SpanExporter,
 )
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.semconv.resource import ResourceAttributes
-from opentelemetry.trace.propagation.tracecontext import \
-    TraceContextTextMapPropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import Attributes
-
-from doozerlib import __version__
-from artcommonlib import constants
 
 
 def new_tracker_provider(resource: Resource, exporter: SpanExporter):
-    """ Creates and initialize a TracerProvider for Doozer.
+    """Creates and initialize a TracerProvider for Doozer.
     Currently we only export traces to stderr for development purpose.
     """
     processor = BatchSpanProcessor(exporter)

@@ -6,19 +6,18 @@ import urllib.parse
 import ruamel.yaml
 import ruamel.yaml.util
 import yaml
-
-from future.utils import as_native_str
-
 from artcommonlib import exectools
 from artcommonlib.constants import GIT_NO_PROMPTS
 from artcommonlib.logutil import get_logger
 from artcommonlib.pushd import Dir
+from future.utils import as_native_str
 
 SCHEMES = ['ssh', 'ssh+git', "http", "https"]
 
 
 class GitDataException(Exception):
     """A broad exception for errors during GitData operations"""
+
     pass
 
 
@@ -53,7 +52,8 @@ class DataObj(object):
         with open(self.path, 'r') as f:
             # Reload with ruamel.yaml and guess the indent.
             self.data, self.indent, self.block_seq_indent = ruamel.yaml.util.load_yaml_guess_indent(
-                f, preserve_quotes=True,
+                f,
+                preserve_quotes=True,
             )
 
     def save(self):
@@ -65,8 +65,14 @@ class DataObj(object):
 
 class GitData(object):
     def __init__(
-        self, data_path=None, clone_dir='./', commitish='master',
-        sub_dir=None, exts=['yaml', 'yml', 'json'], reclone=False, logger=None,
+        self,
+        data_path=None,
+        clone_dir='./',
+        commitish='master',
+        sub_dir=None,
+        exts=['yaml', 'yml', 'json'],
+        reclone=False,
+        logger=None,
     ):
         """
         Load structured data from a git source.
@@ -122,7 +128,7 @@ class GitData(object):
                         raise GitDataException('Error getting data repo status: {}'.format(err))
 
                     lines = out.strip().split('\n')
-                    synced = ('ahead' not in lines[0] and 'behind' not in lines[0] and len(lines) == 1)
+                    synced = 'ahead' not in lines[0] and 'behind' not in lines[0] and len(lines) == 1
 
                     # check if there are unpushed
                     # verify local branch
@@ -176,8 +182,7 @@ class GitData(object):
             self.data_path = os.path.abspath(self.data_path)  # just in case relative path was given
         else:
             raise ValueError(
-                'Invalid data_path: {} - invalid scheme: {}'
-                .format(self.data_path, data_url.scheme),
+                'Invalid data_path: {} - invalid scheme: {}'.format(self.data_path, data_url.scheme),
             )
 
         if self.sub_dir:

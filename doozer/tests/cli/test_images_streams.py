@@ -1,7 +1,7 @@
 from unittest import TestCase
-from flexmock import flexmock
 
 from doozerlib.cli import images_streams
+from flexmock import flexmock
 
 
 class TestScanSourcesCli(TestCase):

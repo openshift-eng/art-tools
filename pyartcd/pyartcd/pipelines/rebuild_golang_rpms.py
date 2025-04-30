@@ -1,24 +1,25 @@
-import click
-import koji
+import asyncio
 import datetime
 import logging
 import os
-import asyncio
 from typing import List
-from ghapi.all import GhApi
 
+import click
+import koji
+from artcommonlib import exectools
 from artcommonlib.constants import BREW_HUB
 from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib import exectools
+from elliottlib import util as elliottutil
+from ghapi.all import GhApi
+
 from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
-from pyartcd.runtime import Runtime
-from elliottlib import util as elliottutil
 from pyartcd.pipelines.update_golang import (
-    is_latest_and_available,
     extract_and_validate_golang_nvrs,
+    is_latest_and_available,
     move_golang_bugs,
 )
+from pyartcd.runtime import Runtime
 
 try:
     from specfile import Specfile  # Linux only
@@ -30,8 +31,14 @@ _LOGGER = logging.getLogger(__name__)
 
 class RebuildGolangRPMsPipeline:
     def __init__(
-        self, runtime: Runtime, ocp_version: str, art_jira: str, cves: List[str],
-        go_nvrs: List[str], force: bool = False, rpms: List[str] = None,
+        self,
+        runtime: Runtime,
+        ocp_version: str,
+        art_jira: str,
+        cves: List[str],
+        go_nvrs: List[str],
+        force: bool = False,
+        rpms: List[str] = None,
     ):
         if "Specfile" not in globals():
             raise RuntimeError("This pipeline requires the 'specfile' module, which is only available on Linux")
@@ -125,11 +132,8 @@ class RebuildGolangRPMsPipeline:
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
 
         results = await asyncio.gather(
-            *[
-                self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-                for el_v, rpms in non_art_rpms_for_rebuild.items()
-                for rpm in rpms
-            ], return_exceptions=True,
+            *[self.bump_and_rebuild_rpm(rpm, el_v, author, email) for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms],
+            return_exceptions=True,
         )
         list_of_rpms = [rpm for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
         failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
@@ -277,14 +281,24 @@ class RebuildGolangRPMsPipeline:
 @pass_runtime
 @click_coroutine
 async def rebuild_golang_rpms(
-    runtime: Runtime, ocp_version: str, art_jira: str, cves: str,
-    force: bool, rpms: str, go_nvrs: List[str],
+    runtime: Runtime,
+    ocp_version: str,
+    art_jira: str,
+    cves: str,
+    force: bool,
+    rpms: str,
+    go_nvrs: List[str],
 ):
     if rpms:
         rpms = rpms.split(',')
     if cves:
         cves = cves.split(',')
     await RebuildGolangRPMsPipeline(
-        runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves,
-        force=force, rpms=rpms, go_nvrs=go_nvrs,
+        runtime,
+        ocp_version=ocp_version,
+        art_jira=art_jira,
+        cves=cves,
+        force=force,
+        rpms=rpms,
+        go_nvrs=go_nvrs,
     ).run()

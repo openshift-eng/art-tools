@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime, timezone
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -14,9 +14,16 @@ from pyartcd.runtime import Runtime
 
 class FbcImportPipeline:
     def __init__(
-        self, runtime: Runtime,
-        version: str, assembly: str, data_path: str, data_gitref: str,
-        only: str, exclude: str, from_operator_index: str, into_fbc_repo: str,
+        self,
+        runtime: Runtime,
+        version: str,
+        assembly: str,
+        data_path: str,
+        data_gitref: str,
+        only: str,
+        exclude: str,
+        from_operator_index: str,
+        into_fbc_repo: str,
     ):
         self.runtime = runtime
         self.version = version
@@ -65,8 +72,7 @@ class FbcImportPipeline:
         auth_file = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
         if not auth_file:
             self._logger.warning(
-                'KONFLUX_OPERATOR_INDEX_AUTH_FILE is not set. '
-                'This may cause issues with operator index authentication.',
+                'KONFLUX_OPERATOR_INDEX_AUTH_FILE is not set. ' 'This may cause issues with operator index authentication.',
             )
         else:
             cmd.extend(['--registry-auth', auth_file])
@@ -81,35 +87,49 @@ class FbcImportPipeline:
 @click.option('--version', required=True, help='OCP version')
 @click.option('--assembly', required=True, help='Assembly name')
 @click.option(
-    '--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
+    '--data-path',
+    required=False,
+    default=constants.OCP_BUILD_DATA_URL,
     help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
 )
 @click.option(
-    '--data-gitref', required=False,
+    '--data-gitref',
+    required=False,
     help='(Optional) Doozer data path git [branch / tag / sha] to use',
 )
 @click.option(
-    '--only', required=False,
+    '--only',
+    required=False,
     help='(Optional) List **only** the operators you want to build, everything else gets ignored.\n'
-         'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-         'Leave empty to build all (except EXCLUDE, if defined)',
+    'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
+    'Leave empty to build all (except EXCLUDE, if defined)',
 )
 @click.option(
-    '--exclude', required=False,
+    '--exclude',
+    required=False,
     help='(Optional) List the operators you **don\'t** want to build, everything else gets built.\n'
-         'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
-         'Leave empty to build all (or ONLY, if defined)',
+    'Format: Comma and/or space separated list of brew packages (e.g.: cluster-nfd-operator-container)\n'
+    'Leave empty to build all (or ONLY, if defined)',
 )
 @click.option("--from-operator-index", required=False, help="Path to the operator index file to import from")
 @click.option(
-    '--into-fbc-repo', required=False, default='',
+    '--into-fbc-repo',
+    required=False,
+    default='',
     help='(Optional) Path to the FBC repository to import the operator bundles into',
 )
 @pass_runtime
 @click_coroutine
 async def fbc_import_from_index(
-        runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref: str,
-        only: str, exclude: str, from_operator_index: str, into_fbc_repo: str,
+    runtime: Runtime,
+    version: str,
+    assembly: str,
+    data_path: str,
+    data_gitref: str,
+    only: str,
+    exclude: str,
+    from_operator_index: str,
+    into_fbc_repo: str,
 ):
     pipeline = FbcImportPipeline(
         runtime=runtime,

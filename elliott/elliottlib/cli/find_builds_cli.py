@@ -9,20 +9,20 @@ from typing import Dict, List, Set, Union
 import click
 import koji
 import requests
-from errata_tool import ErrataException
-
-from artcommonlib import logutil, exectools
+from artcommonlib import exectools, logutil
 from artcommonlib.arch_util import BREW_ARCHES
-from artcommonlib.assembly import assembly_rhcos_config, assembly_metadata_config
-from artcommonlib.format_util import red_print, green_prefix, green_print, yellow_print
-from artcommonlib.rhcos import get_container_configs, get_build_id_from_rhcos_pullspec
+from artcommonlib.assembly import assembly_metadata_config, assembly_rhcos_config
+from artcommonlib.format_util import green_prefix, green_print, red_print, yellow_print
 from artcommonlib.release_util import isolate_el_version_in_release
+from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_container_configs
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import Runtime, brew, errata
 from elliottlib.build_finder import BuildFinder
 from elliottlib.cli.common import (
-    cli, find_default_advisory,
-    use_default_advisory_option, click_coroutine,
+    cli,
+    click_coroutine,
+    find_default_advisory,
+    use_default_advisory_option,
 )
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
@@ -30,8 +30,11 @@ from elliottlib.util import (
     ensure_erratatool_auth,
     get_release_version,
     isolate_el_version_in_brew_tag,
-    parallel_results_with_progress, pbar_header, progress_func,
+    parallel_results_with_progress,
+    pbar_header,
+    progress_func,
 )
+from errata_tool import ErrataException
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -40,56 +43,81 @@ pass_runtime = click.make_pass_decorator(Runtime)
 
 @cli.command('find-builds', short_help='Find or attach builds to ADVISORY')
 @click.option(
-    '--attach', '-a', 'advisory_id',
-    type=int, metavar='ADVISORY',
+    '--attach',
+    '-a',
+    'advisory_id',
+    type=int,
+    metavar='ADVISORY',
     help='Attach the builds to ADVISORY (by default only a list of builds are displayed)',
 )
 @use_default_advisory_option
 @click.option(
-    "--builds-file", "-f", "builds_file",
+    "--builds-file",
+    "-f",
+    "builds_file",
     help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
 )
 @click.option(
-    '--build', '-b', 'builds',
-    multiple=True, metavar='NVR_OR_ID',
+    '--build',
+    '-b',
+    'builds',
+    multiple=True,
+    metavar='NVR_OR_ID',
     help='Add build NVR_OR_ID to ADVISORY [MULTIPLE]',
 )
 @click.option(
-    '--kind', '-k', metavar='KIND', required=True,
+    '--kind',
+    '-k',
+    metavar='KIND',
+    required=True,
     type=click.Choice(['rpm', 'image']),
     help='Find builds of the given KIND [rpm, image]',
 )
 @click.option(
-    '--json', 'as_json', metavar='FILE_NAME',
+    '--json',
+    'as_json',
+    metavar='FILE_NAME',
     help='Dump new builds as JSON array to a file (or "-" for stdout)',
 )
 @click.option(
-    '--no-cdn-repos', required=False, is_flag=True,
+    '--no-cdn-repos',
+    required=False,
+    is_flag=True,
     help='Do not configure CDN repos after attaching images (default to False)',
 )
 @click.option(
-    '--payload', required=False, is_flag=True,
+    '--payload',
+    required=False,
+    is_flag=True,
     help='Only attach payload images',
 )
 @click.option(
-    '--non-payload', required=False, is_flag=True,
+    '--non-payload',
+    required=False,
+    is_flag=True,
     help='Only attach non-payload images',
 )
 @click.option(
-    '--include-shipped', required=False, is_flag=True,
+    '--include-shipped',
+    required=False,
+    is_flag=True,
     help='Do not filter out shipped builds',
 )
 @click.option(
-    '--member-only', is_flag=True,
+    '--member-only',
+    is_flag=True,
     help='(For rpms) Only sweep member rpms',
 )
 @click.option(
-    '--clean', is_flag=True,
+    '--clean',
+    is_flag=True,
     help='Remove builds from advisory that were not found in build sweep. Cannot be used with -b or -f',
 )
 @click.option(
-    '--dry-run', '--noop', is_flag=True,
+    '--dry-run',
+    '--noop',
+    is_flag=True,
     help='Do not attach/remove builds from advisory, only show what would be done',
 )
 @click_coroutine
@@ -97,46 +125,58 @@ pass_runtime = click.make_pass_decorator(Runtime)
 # # # NOTE: if you change the method signature, be aware that verify_attached_operators_cli.py # # #
 # # # invokes find_builds_cli so please avoid breaking it.                                     # # #
 async def find_builds_cli(
-    runtime: Runtime, advisory_id, default_advisory_type, builds_file, builds, kind, as_json,
-    no_cdn_repos, payload, non_payload, include_shipped, member_only: bool, clean: bool, dry_run: bool,
+    runtime: Runtime,
+    advisory_id,
+    default_advisory_type,
+    builds_file,
+    builds,
+    kind,
+    as_json,
+    no_cdn_repos,
+    payload,
+    non_payload,
+    include_shipped,
+    member_only: bool,
+    clean: bool,
+    dry_run: bool,
 ):
     """Automatically or manually find or attach viable rpm or image builds
-to ADVISORY. Default behavior searches Brew for viable builds in the
-given group. Provide builds manually by giving one or more --build
-(-b) options. Manually provided builds are verified against the Errata
-Tool API.
+    to ADVISORY. Default behavior searches Brew for viable builds in the
+    given group. Provide builds manually by giving one or more --build
+    (-b) options. Manually provided builds are verified against the Errata
+    Tool API.
 
-\b
-  * Attach the builds to ADVISORY by giving --attach
-  * Specify the build type using --kind KIND
+    \b
+      * Attach the builds to ADVISORY by giving --attach
+      * Specify the build type using --kind KIND
 
-Example: Assuming --group=openshift-3.7, then a build is a VIABLE
-BUILD IFF it meets ALL of the following criteria:
+    Example: Assuming --group=openshift-3.7, then a build is a VIABLE
+    BUILD IFF it meets ALL of the following criteria:
 
-\b
-  * HAS the tag in brew: rhaos-3.7-rhel7-candidate
-  * DOES NOT have the tag in brew: rhaos-3.7-rhel7
-  * IS NOT attached to ANY existing RHBA, RHSA, or RHEA
+    \b
+      * HAS the tag in brew: rhaos-3.7-rhel7-candidate
+      * DOES NOT have the tag in brew: rhaos-3.7-rhel7
+      * IS NOT attached to ANY existing RHBA, RHSA, or RHEA
 
-That is to say, a viable build is tagged as a "candidate", has NOT
-received the "shipped" tag yet, and is NOT attached to any PAST or
-PRESENT advisory. Here are some examples:
+    That is to say, a viable build is tagged as a "candidate", has NOT
+    received the "shipped" tag yet, and is NOT attached to any PAST or
+    PRESENT advisory. Here are some examples:
 
-    SHOW the latest OSE 3.6 image builds that would be attached to a
-    3.6 advisory:
+        SHOW the latest OSE 3.6 image builds that would be attached to a
+        3.6 advisory:
 
-    $ elliott --group openshift-3.6 find-builds -k image
+        $ elliott --group openshift-3.6 find-builds -k image
 
-    ATTACH the latest OSE 3.6 rpm builds to advisory 123456:
+        ATTACH the latest OSE 3.6 rpm builds to advisory 123456:
 
-\b
-    $ elliott --group openshift-3.6 find-builds -k rpm --attach 123456
+    \b
+        $ elliott --group openshift-3.6 find-builds -k rpm --attach 123456
 
-    VERIFY (no --attach) that the manually provided RPM NVR and build
-    ID are viable builds:
+        VERIFY (no --attach) that the manually provided RPM NVR and build
+        ID are viable builds:
 
-    $ elliott --group openshift-3.6 find-builds -k rpm -b megafrobber-1.0.1-2.el7 -a 93170
-"""
+        $ elliott --group openshift-3.6 find-builds -k rpm -b megafrobber-1.0.1-2.el7 -a 93170
+    """
 
     if advisory_id and default_advisory_type:
         raise click.BadParameter('Use only one of --use-default-advisory or --attach')
@@ -172,19 +212,27 @@ PRESENT advisory. Here are some examples:
     if builds:
         LOGGER.info("Fetching builds from Brew")
         nvrps = _fetch_nvrps_by_nvr_or_id(
-            builds, tag_pv_map, include_shipped=include_shipped,
+            builds,
+            tag_pv_map,
+            include_shipped=include_shipped,
             brew_session=brew_session,
         )
     else:
         if kind == 'image':
             nvrps = await _fetch_builds_by_kind_image(
-                runtime, tag_pv_map, brew_session, payload,
-                non_payload, include_shipped,
+                runtime,
+                tag_pv_map,
+                brew_session,
+                payload,
+                non_payload,
+                include_shipped,
             )
             if payload:
                 rhcos_nvrs = get_rhcos_nvrs_from_assembly(runtime, brew_session)
                 rhcos_nvrps = _fetch_nvrps_by_nvr_or_id(
-                    rhcos_nvrs, tag_pv_map, include_shipped=include_shipped,
+                    rhcos_nvrs,
+                    tag_pv_map,
+                    include_shipped=include_shipped,
                     brew_session=brew_session,
                 )
                 nvrps.extend(rhcos_nvrps)
@@ -196,7 +244,8 @@ PRESENT advisory. Here are some examples:
         nvrps,
         lambda nvrp: errata.get_brew_build(
             f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
-            nvrp[3], session=requests.Session(),
+            nvrp[3],
+            session=requests.Session(),
         ),
     )
 
@@ -359,15 +408,17 @@ def ensure_rhcos_file_meta(advisory_id):
 
 
 def _fetch_nvrps_by_nvr_or_id(
-    ids_or_nvrs, tag_pv_map, include_shipped=False, ignore_product_version=False,
+    ids_or_nvrs,
+    tag_pv_map,
+    include_shipped=False,
+    ignore_product_version=False,
     brew_session: koji.ClientSession = None,
 ):
     builds = brew.get_build_objects(ids_or_nvrs, brew_session)
     nonexistent_builds = list(filter(lambda b: b[1] is None, zip(ids_or_nvrs, builds)))
     if nonexistent_builds:
         raise ValueError(
-            "The following builds are not found in Brew: "
-            f"{' '.join(map(lambda b: b[0], nonexistent_builds))}",
+            "The following builds are not found in Brew: " f"{' '.join(map(lambda b: b[0], nonexistent_builds))}",
         )
 
     _ensure_accepted_tags(builds, brew_session, tag_pv_map)
@@ -395,7 +446,7 @@ def _fetch_nvrps_by_nvr_or_id(
 
 
 def _gen_nvrp_tuples(builds: List[Dict], tag_pv_map: Dict[str, str]):
-    """Returns a list of (name, version, release, product_version) tuples of each build """
+    """Returns a list of (name, version, release, product_version) tuples of each build"""
     nvrps = [(b['name'], b['version'], b['release'], tag_pv_map[b['tag_name']]) for b in builds]
     return nvrps
 
@@ -417,7 +468,7 @@ def _json_dump(as_json, unshipped_builds, kind, tag_pv_map):
 
 
 def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.ClientSession) -> Set[Union[str, int]]:
-    """ Finds shipped builds
+    """Finds shipped builds
     :param builds: list of Brew build IDs or NVRs
     :param brew_session: Brew session
     :return: a set of shipped Brew build IDs or NVRs
@@ -434,8 +485,12 @@ def _find_shipped_builds(build_ids: List[Union[str, int]], brew_session: koji.Cl
 
 
 async def _fetch_builds_by_kind_image(
-    runtime: Runtime, tag_pv_map: Dict[str, str],
-    brew_session: koji.ClientSession, payload_only: bool, non_payload_only: bool, include_shipped: bool,
+    runtime: Runtime,
+    tag_pv_map: Dict[str, str],
+    brew_session: koji.ClientSession,
+    payload_only: bool,
+    non_payload_only: bool,
+    include_shipped: bool,
 ):
     image_metas: List[ImageMetadata] = []
     for image in runtime.image_metas():
@@ -489,7 +544,9 @@ def _ensure_accepted_tags(builds: List[Dict], brew_session: koji.ClientSession, 
         build["tag_name"] = accepted_tag
 
 
-async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str], brew_session: koji.ClientSession, include_shipped: bool, member_only: bool):
+async def _fetch_builds_by_kind_rpm(
+    runtime: Runtime, tag_pv_map: Dict[str, str], brew_session: koji.ClientSession, include_shipped: bool, member_only: bool
+):
     assembly = runtime.assembly
     if runtime.assembly_basis_event:
         LOGGER.info(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
@@ -498,12 +555,19 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
         assembly = 'stream'
 
         # ensures the runtime assembly doesn't include any image member specific or rhcos specific dependencies
-        image_configs = [assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, 'image', image.distgit_key, image.config) for _, image in runtime.image_map.items()]
+        image_configs = [
+            assembly_metadata_config(runtime.get_releases_config(), runtime.assembly, 'image', image.distgit_key, image.config)
+            for _, image in runtime.image_map.items()
+        ]
         if any(nvr for image_config in image_configs for dep in image_config.dependencies.rpms for _, nvr in dep.items()):
-            raise ElliottFatalError(f"Assembly {runtime.assembly} is not appliable for build sweep because it contains image member specific dependencies for a custom release.")
+            raise ElliottFatalError(
+                f"Assembly {runtime.assembly} is not appliable for build sweep because it contains image member specific dependencies for a custom release."
+            )
         rhcos_config = assembly_rhcos_config(runtime.get_releases_config(), runtime.assembly)
         if any(nvr for dep in rhcos_config.dependencies.rpms for _, nvr in dep.items()):
-            raise ElliottFatalError(f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release.")
+            raise ElliottFatalError(
+                f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release."
+            )
 
     builds: List[Dict] = []
 
@@ -542,7 +606,9 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
                     component_builds.update(pinned_by_is)  # pinned rpms take precedence over those from tags
 
                 # Honors group dependencies
-                group_deps = builder.from_group_deps(el_version, runtime.group_config, runtime.rpm_map)  # the return value doesn't include any ART managed rpms
+                group_deps = builder.from_group_deps(
+                    el_version, runtime.group_config, runtime.rpm_map
+                )  # the return value doesn't include any ART managed rpms
                 # Group dependencies should take precedence over anything previously determined except those pinned by "is".
                 for component, dep_build in group_deps.items():
                     if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
@@ -561,8 +627,7 @@ async def _fetch_builds_by_kind_rpm(runtime: Runtime, tag_pv_map: Dict[str, str]
 
     if not_attachable_nvrs:
         LOGGER.warning(
-            f"The following NVRs will not be swept because they don't have allowed tags"
-            f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}",
+            f"The following NVRs will not be swept because they don't have allowed tags" f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}",
         )
 
     shipped = set()

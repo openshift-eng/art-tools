@@ -1,5 +1,6 @@
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
+
 from pyartcd import util
 
 
@@ -20,8 +21,10 @@ class TestUtil(IsolatedAsyncioTestCase):
 
     def test_nightlies_with_pullspecs(self):
         nightly_tags = [
-            '4.14.0-0.nightly-arm64-2023-09-15-082316', '4.14.0-0.nightly-ppc64le-2023-09-15-125921',
-            '4.14.0-0.nightly-s390x-2023-09-15-114441', '4.14.0-0.nightly-2023-09-15-055234',
+            '4.14.0-0.nightly-arm64-2023-09-15-082316',
+            '4.14.0-0.nightly-ppc64le-2023-09-15-125921',
+            '4.14.0-0.nightly-s390x-2023-09-15-114441',
+            '4.14.0-0.nightly-2023-09-15-055234',
         ]
 
         expected = {
@@ -101,8 +104,14 @@ class TestUtil(IsolatedAsyncioTestCase):
         )
         cmd_gather_async.assert_awaited_once_with(
             [
-                'doozer', '', '--assembly=stream', '--data-path=https://github.com/openshift-eng/ocp-build-data',
-                '--group=openshift-4.15', 'config:read-group', '--default=no', 'freeze_automation',
+                'doozer',
+                '',
+                '--assembly=stream',
+                '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.15',
+                'config:read-group',
+                '--default=no',
+                'freeze_automation',
             ],
         )
 
@@ -115,9 +124,14 @@ class TestUtil(IsolatedAsyncioTestCase):
         )
         cmd_gather_async.assert_awaited_once_with(
             [
-                'doozer', '--working-dir=doozer_working', '--assembly=stream',
+                'doozer',
+                '--working-dir=doozer_working',
+                '--assembly=stream',
                 '--data-path=https://github.com/random-fork/ocp-build-data',
-                '--group=openshift-4.15@random-branch', 'config:read-group', '--default=no', 'freeze_automation',
+                '--group=openshift-4.15@random-branch',
+                'config:read-group',
+                '--default=no',
+                'freeze_automation',
             ],
         )
 

@@ -7,7 +7,6 @@ Test functions related to controlled command execution
 import asyncio
 import subprocess
 import unittest
-
 from unittest import IsolatedAsyncioTestCase, mock
 
 from artcommonlib import exectools
@@ -26,6 +25,7 @@ class RetryTestCase(IsolatedAsyncioTestCase):
     """
     Test the exectools.retry() method
     """
+
     ERROR_MSG = r"Giving up after {} failed attempt\(s\)"
 
     def test_success(self):
@@ -45,10 +45,18 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         fail_function = lambda: False
         assertRaisesRegex = self.assertRaisesRegex if hasattr(self, 'assertRaisesRegex') else self.assertRaisesRegexp
         assertRaisesRegex(
-            Exception, self.ERROR_MSG.format(1), exectools.retry, 1, fail_function,
+            Exception,
+            self.ERROR_MSG.format(1),
+            exectools.retry,
+            1,
+            fail_function,
         )
         assertRaisesRegex(
-            Exception, self.ERROR_MSG.format(2), exectools.retry, 2, fail_function,
+            Exception,
+            self.ERROR_MSG.format(2),
+            exectools.retry,
+            2,
+            fail_function,
         )
 
     def test_wait(self):
@@ -65,8 +73,11 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         # loop 3 times, writing into the collector each try and wait
         assertRaisesRegex = self.assertRaisesRegex if hasattr(self, 'assertRaisesRegex') else self.assertRaisesRegexp
         assertRaisesRegex(
-            Exception, self.ERROR_MSG.format(3),
-            exectools.retry, 3, lambda: calls.append("f"),
+            Exception,
+            self.ERROR_MSG.format(3),
+            exectools.retry,
+            3,
+            lambda: calls.append("f"),
             wait_f=lambda n: calls.extend(("w", str(n))),
         )
 
@@ -95,8 +106,12 @@ class TestExectools(IsolatedAsyncioTestCase):
                 self.assertEqual(stdout, "hello there\n")
                 self.assertEqual(stderr, "")
                 MockPopen.assert_called_once_with(
-                    ["/usr/bin/echo", "hello", "there"], cwd=None, env=mock.ANY,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                    ["/usr/bin/echo", "hello", "there"],
+                    cwd=None,
+                    env=mock.ANY,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.DEVNULL,
                 )
                 mock_popen.communicate.assert_called_once_with(timeout=3000)
                 self.assertTrue(any(line for line in cm.output if "Executing:cmd_gather: /usr/bin/echo hello there" in line))
@@ -111,8 +126,12 @@ class TestExectools(IsolatedAsyncioTestCase):
                 with self.assertRaises(subprocess.TimeoutExpired):
                     status, stdout, stderr = exectools.cmd_gather(["/usr/bin/sleep", "10"], timeout=3000)
                 MockPopen.assert_called_once_with(
-                    ["/usr/bin/sleep", "10"], cwd=None, env=mock.ANY,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                    ["/usr/bin/sleep", "10"],
+                    cwd=None,
+                    env=mock.ANY,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.DEVNULL,
                 )
                 mock_popen.communicate.assert_any_call(timeout=3000)
                 mock_popen.communicate.assert_any_call()
@@ -130,8 +149,12 @@ class TestExectools(IsolatedAsyncioTestCase):
                 self.assertEqual(stdout, "")
                 self.assertEqual(stderr, "error")
                 MockPopen.assert_called_once_with(
-                    ["/usr/bin/false"], cwd=None, env=mock.ANY,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                    ["/usr/bin/false"],
+                    cwd=None,
+                    env=mock.ANY,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    stdin=subprocess.DEVNULL,
                 )
                 mock_popen.communicate.assert_called_once_with(timeout=3000)
                 self.assertTrue(any(line for line in cm.output if "Executing:cmd_gather: /usr/bin/false" in line))
@@ -143,7 +166,13 @@ class TestExectools(IsolatedAsyncioTestCase):
             exectools.cmd_assert(["/usr/bin/echo", "hello", "there"])
             cmd_gather.assert_called_once_with(
                 ["/usr/bin/echo", "hello", "there"],
-                set_env=None, realtime=False, strip=False, log_stdout=False, log_stderr=True, timeout=None, cwd=None,
+                set_env=None,
+                realtime=False,
+                strip=False,
+                log_stdout=False,
+                log_stderr=True,
+                timeout=None,
+                cwd=None,
             )
 
     @mock.patch("artcommonlib.exectools.cmd_gather")
@@ -173,8 +202,12 @@ class TestExectools(IsolatedAsyncioTestCase):
             proc.returncode = 0
             proc.communicate.return_value = (fake_stdout, fake_stderr)
 
-            rc, out, err = await exectools.cmd_gather_async(cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL)
-            create_subprocess_exec.assert_awaited_once_with(*cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL)
+            rc, out, err = await exectools.cmd_gather_async(
+                cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL
+            )
+            create_subprocess_exec.assert_awaited_once_with(
+                *cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL
+            )
             self.assertEqual(rc, 0)
             self.assertEqual(out, fake_stdout.decode("utf-8"))
             self.assertEqual(err, fake_stderr.decode("utf-8"))
@@ -194,7 +227,8 @@ class TestExectools(IsolatedAsyncioTestCase):
         items = [1, 2, 3]
         results = exectools.parallel_exec(
             lambda k, v: k,
-            items, n_threads=4,
+            items,
+            n_threads=4,
         )
         results = results.get()
         self.assertEqual(results, items)

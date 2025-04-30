@@ -3,9 +3,12 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from doozerlib.opm import (
-    OpmRegistryAuth, generate_basic_template,
-    generate_dockerfile, render,
-    render_catalog_from_template, verify_opm,
+    OpmRegistryAuth,
+    generate_basic_template,
+    generate_dockerfile,
+    render,
+    render_catalog_from_template,
+    verify_opm,
 )
 
 
@@ -41,8 +44,15 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         await generate_basic_template(catalog_file, template_file)
         mock_gather_opm.assert_called_once_with(
             [
-                'alpha', 'convert-template', 'basic', '-o', 'yaml', '--', str(catalog_file),
-            ], stdout=mock_open.return_value.__enter__.return_value,
+                'alpha',
+                'convert-template',
+                'basic',
+                '-o',
+                'yaml',
+                '--',
+                str(catalog_file),
+            ],
+            stdout=mock_open.return_value.__enter__.return_value,
         )
 
     @patch("builtins.open")
@@ -54,8 +64,18 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         await render_catalog_from_template(template_file, catalog_file, auth=auth)
         mock_gather_opm.assert_called_once_with(
             [
-                'alpha', 'render-template', 'basic', '--migrate-level', 'none', '-o', 'yaml', '--', str(template_file),
-            ], stdout=mock_open.return_value.__enter__.return_value, auth=auth,
+                'alpha',
+                'render-template',
+                'basic',
+                '--migrate-level',
+                'none',
+                '-o',
+                'yaml',
+                '--',
+                str(template_file),
+            ],
+            stdout=mock_open.return_value.__enter__.return_value,
+            auth=auth,
         )
 
         with self.assertRaises(ValueError, msg="Invalid migrate level: invalid"):

@@ -8,18 +8,18 @@ from typing import Iterable, List
 from urllib.parse import urljoin
 
 import click
-from ruamel.yaml import YAML
-
 from artcommonlib import exectools
-from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_print
+from artcommonlib.format_util import green_prefix, green_print, red_prefix, red_print, yellow_print
 from elliottlib import Runtime, brew
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cvp import CVPInspector
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.util import (
-    parse_nvr, pbar_header,
+    parse_nvr,
+    pbar_header,
     progress_func,
 )
+from ruamel.yaml import YAML
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
@@ -29,26 +29,39 @@ LOGGER = logging.getLogger(__name__)
 
 @cli.command("verify-cvp", short_help="Verify CVP test results")
 @click.option(
-    '--all', 'all_images', required=False, is_flag=True,
+    '--all',
+    'all_images',
+    required=False,
+    is_flag=True,
     help='Verify all latest image builds (default to False)',
 )
 @click.option(
-    '--build', '-b', 'nvrs',
-    multiple=True, metavar='NVR_OR_ID',
+    '--build',
+    '-b',
+    'nvrs',
+    multiple=True,
+    metavar='NVR_OR_ID',
     help='Only verify specified builds',
 )
 @click.option(
-    '--include-content-set-check', "include_content_set_check", is_flag=True,
+    '--include-content-set-check',
+    "include_content_set_check",
+    is_flag=True,
     help="Include content_set_check",
 )
 @click.option(
-    '--output', '-o', 'output', metavar='FORMAT', default="text", type=click.Choice(['text', 'json', 'yaml']),
+    '--output',
+    '-o',
+    'output',
+    metavar='FORMAT',
+    default="text",
+    type=click.Choice(['text', 'json', 'yaml']),
     help='Output format. One of: text|json|yaml',
 )
 @pass_runtime
 @click_coroutine
 async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set_check, output: str):
-    """ Verify CVP test results
+    """Verify CVP test results
 
     Example 1: Verify CVP test results for all latest 4.12 image builds, including optional content_set_check
 
@@ -127,7 +140,9 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
 
             LOGGER.info("Processing CVP optional test results...")
             included_checks = {"content_set_check"}
-            passed_optional, failed_optional, missing_optional = inspector.categorize_sanity_test_optional_results(dict(zip(completed, optional_check_results)), included_checks=included_checks)
+            passed_optional, failed_optional, missing_optional = inspector.categorize_sanity_test_optional_results(
+                dict(zip(completed, optional_check_results)), included_checks=included_checks
+            )
 
             async def _reconstruct_optional_test_results(test_results: Dict):
                 results = {}
@@ -138,14 +153,20 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                     r["build_url"] = f"https://brewweb.devel.redhat.com/buildinfo?buildID={nvr_builds[nvr]['id']}"
                     if result:
                         r["ref_url"] = urljoin(nvr_results[nvr]['ref_url'], "sanity-tests-optional-results.json")
-                        failed = {check["name"] for check in result["checks"] if (not included_checks or check["name"] in included_checks) and not check["ok"]}
+                        failed = {
+                            check["name"]
+                            for check in result["checks"]
+                            if (not included_checks or check["name"] in included_checks) and not check["ok"]
+                        }
                         outcome = "PASSED" if not failed else "FAILED"
                         r["outcome"] = outcome
                         r["failed_checks"] = sorted(failed)
                         if failed:
                             LOGGER.info("Examining content_set_check for %s", nvr)
                             failed_checks = [check for check in result["checks"] if check["name"] in failed]
-                            tasks[nvr] = inspector.diagnostic_sanity_test_optional_checks(nvr_builds[nvr], failed_checks, included_checks=included_checks)
+                            tasks[nvr] = inspector.diagnostic_sanity_test_optional_checks(
+                                nvr_builds[nvr], failed_checks, included_checks=included_checks
+                            )
                 if tasks:
                     for nvr, diagnostic_report in zip(tasks.keys(), await asyncio.gather(*tasks.values())):
                         results[nvr]["diagnostic_report"] = diagnostic_report
@@ -195,7 +216,11 @@ def print_report(report: Dict):
     if not sanity_test_optional_checks:
         return
 
-    passed_optional, failed_optional, missing_optional = sanity_test_optional_checks["passed"], sanity_test_optional_checks["failed"], sanity_test_optional_checks["missing"]
+    passed_optional, failed_optional, missing_optional = (
+        sanity_test_optional_checks["passed"],
+        sanity_test_optional_checks["failed"],
+        sanity_test_optional_checks["missing"],
+    )
     print()
     print("sanity_test_optional_checks")
     green_prefix("passed: {}".format(len(passed_optional)))
@@ -238,7 +263,8 @@ async def get_latest_image_builds(image_metas: Iterable[ImageMetadata]):
     pbar_header(
         'Generating list of images: ',
         f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...',
-        seq=image_metas, file=sys.stderr,
+        seq=image_metas,
+        file=sys.stderr,
     )
     builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
     return builds

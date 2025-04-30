@@ -13,8 +13,9 @@ def parse_record_log(file: TextIO) -> Dict[str, List[Dict[str, Optional[str]]]]:
         fields = line.rstrip().split("|")
         type = fields[0]
         record = {
-            entry_split[0]: entry_split[1] if len(entry_split) > 1 else None for entry_split in
-            map(lambda entry: entry.split("=", 1), fields[1:]) if entry_split[0]
+            entry_split[0]: entry_split[1] if len(entry_split) > 1 else None
+            for entry_split in map(lambda entry: entry.split("=", 1), fields[1:])
+            if entry_split[0]
         }
         result.setdefault(type, []).append(record)
     return result

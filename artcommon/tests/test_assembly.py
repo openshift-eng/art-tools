@@ -1,10 +1,15 @@
 from unittest import TestCase
 
 import yaml
-
-from artcommonlib.assembly import assembly_rhcos_config, assembly_basis_event, assembly_group_config, \
-    assembly_config_struct, assembly_metadata_config, _merger
-from artcommonlib.model import Model, Missing
+from artcommonlib.assembly import (
+    _merger,
+    assembly_basis_event,
+    assembly_config_struct,
+    assembly_group_config,
+    assembly_metadata_config,
+    assembly_rhcos_config,
+)
+from artcommonlib.model import Missing, Model
 
 
 class TestAssembly(TestCase):
@@ -292,8 +297,7 @@ releases:
                     },
                 },
                 "parent": {
-                    "assembly": {
-                    },
+                    "assembly": {},
                 },
             },
         }
@@ -346,7 +350,8 @@ releases:
         }
         actual = assembly_config_struct(Model(release_configs), "child", "foo", {})
         self.assertEqual(
-            actual, {
+            actual,
+            {
                 "a": 1,
                 "b": 2,
                 "c": 4,

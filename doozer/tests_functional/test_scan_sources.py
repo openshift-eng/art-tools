@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 import unittest
-import yaml
 
+import yaml
 from tests_functional import DoozerRunnerTestCase
 
 
@@ -38,17 +38,34 @@ class TestScanSources(DoozerRunnerTestCase):
         # cat debug.log | grep "scan-sources coordinate" | grep <distgitkey>
 
         results_yaml, _ = self.run_doozer(
-            '--group', 'openshift-4.7@f1ab35e29f32739e76022ecd071830da234e19b1',
-            '--brew-event', str(35224480 + 1),  # coordinate "brew_event:"
-            '-r', 'openshift',
-            '--lock-downstream', 'openshift', '7938260919bf8bd798b3898e656ffcff843b056b',  # coordinate "dg_commit:"
-            '--lock-upstream', 'openshift', 'e67f5dcb92ff67ca4f0cade72fd0ef7de757fdd6',  # coordinate "upstream_commit_hash:"
-            '-i', 'ose-cluster-config-operator',
-            '--lock-downstream', 'ose-cluster-config-operator', '74a8fc7bf72ab86ee249378f1978ab9de6fd2770',
-            '--lock-upstream', 'ose-cluster-config-operator', '02d75c708012184dc6bdb54eb2f680a7f2662582',
-            '-i', 'ose-machine-api-operator',
-            '--lock-downstream', 'ose-machine-api-operator', '2e8d8a721126a876461b21fe0b0defdd2e3a560e',
-            '--lock-upstream', 'ose-machine-api-operator', 'c1f0af99a394ea73daa3d4f25d1c325b2173251b',
+            '--group',
+            'openshift-4.7@f1ab35e29f32739e76022ecd071830da234e19b1',
+            '--brew-event',
+            str(35224480 + 1),  # coordinate "brew_event:"
+            '-r',
+            'openshift',
+            '--lock-downstream',
+            'openshift',
+            '7938260919bf8bd798b3898e656ffcff843b056b',  # coordinate "dg_commit:"
+            '--lock-upstream',
+            'openshift',
+            'e67f5dcb92ff67ca4f0cade72fd0ef7de757fdd6',  # coordinate "upstream_commit_hash:"
+            '-i',
+            'ose-cluster-config-operator',
+            '--lock-downstream',
+            'ose-cluster-config-operator',
+            '74a8fc7bf72ab86ee249378f1978ab9de6fd2770',
+            '--lock-upstream',
+            'ose-cluster-config-operator',
+            '02d75c708012184dc6bdb54eb2f680a7f2662582',
+            '-i',
+            'ose-machine-api-operator',
+            '--lock-downstream',
+            'ose-machine-api-operator',
+            '2e8d8a721126a876461b21fe0b0defdd2e3a560e',
+            '--lock-upstream',
+            'ose-machine-api-operator',
+            'c1f0af99a394ea73daa3d4f25d1c325b2173251b',
             'config:scan-sources',
             '--yaml',
         )
@@ -66,7 +83,9 @@ class TestScanSources(DoozerRunnerTestCase):
         result_image_ose_machine_api_operator = get_result_for('images', 'ose-machine-api-operator')
         # expecting.. Distgit contains SOURCE_GIT_COMMIT hash c0534cccc5e282e68fda7a99c58e7678bbe32849
         #         different from upstream HEAD c1f0af99a394ea73daa3d4f25d1c325b2173251b
-        self._assert_result(result_image_ose_machine_api_operator, True, ['c0534cccc5e282e68fda7a99c58e7678bbe32849', 'c1f0af99a394ea73daa3d4f25d1c325b2173251b'])
+        self._assert_result(
+            result_image_ose_machine_api_operator, True, ['c0534cccc5e282e68fda7a99c58e7678bbe32849', 'c1f0af99a394ea73daa3d4f25d1c325b2173251b']
+        )
 
         result_image_ose_cluster_config_operator = get_result_for('images', 'ose-cluster-config-operator')
         self._assert_result(result_image_ose_cluster_config_operator, False)  # Control group; expect no change
@@ -79,14 +98,26 @@ class TestScanSources(DoozerRunnerTestCase):
         # cat debug.log | grep "scan-sources coordinate" | grep <distgitkey>
 
         results_yaml, _ = self.run_doozer(
-            '--group', 'openshift-4.5@b21620c9d6c721f4030a69b39f60724b024c765d',
-            '--brew-event', str(35224766 + 1),  # coordinate "brew_event:"
-            '-r', 'openshift',
-            '--lock-downstream', 'openshift', 'e87df3907735155a62d600fa18335eab5fad8a80',  # coordinate "dg_commit:"
-            '--lock-upstream', 'openshift', '70b8a93e9cdae20828d630d3d2357c79edb8e334',  # coordinate "upstream_commit_hash:"
-            '-i', 'jenkins-agent-maven-35-rhel7',
-            '--lock-downstream', 'jenkins-agent-maven-35-rhel7', '950040a89294503f603576016e9d1598fc11c1e7',
-            '--lock-upstream', 'jenkins-agent-maven-35-rhel7', 'bff850168142a6de2716bf14aa09bcfb40e5eb78',
+            '--group',
+            'openshift-4.5@b21620c9d6c721f4030a69b39f60724b024c765d',
+            '--brew-event',
+            str(35224766 + 1),  # coordinate "brew_event:"
+            '-r',
+            'openshift',
+            '--lock-downstream',
+            'openshift',
+            'e87df3907735155a62d600fa18335eab5fad8a80',  # coordinate "dg_commit:"
+            '--lock-upstream',
+            'openshift',
+            '70b8a93e9cdae20828d630d3d2357c79edb8e334',  # coordinate "upstream_commit_hash:"
+            '-i',
+            'jenkins-agent-maven-35-rhel7',
+            '--lock-downstream',
+            'jenkins-agent-maven-35-rhel7',
+            '950040a89294503f603576016e9d1598fc11c1e7',
+            '--lock-upstream',
+            'jenkins-agent-maven-35-rhel7',
+            'bff850168142a6de2716bf14aa09bcfb40e5eb78',
             'config:scan-sources',
             '--yaml',
         )
@@ -110,17 +141,34 @@ class TestScanSources(DoozerRunnerTestCase):
         # At this exact moment, openshift-enterprise-cli had an upstream code change.
         # That should trigger images which depend on it to rebuild (cluster-logging-operator).
         results_yaml, _ = self.run_doozer(
-            '--group', 'openshift-4.7@f1ab35e29f32739e76022ecd071830da234e19b1',
-            '--brew-event', str(35246115 + 1),  # coordinate "brew_event:"
-            '-r', 'openshift-clients',
-            '--lock-downstream', 'openshift-clients', 'a08a6c176a135ee2dd2d3fffb154579382315ce8',  # coordinate "dg_commit:"
-            '--lock-upstream', 'openshift-clients', '9aef6d2c56fb26083112368e877dca34bee161d4',  # coordinate "upstream_commit_hash:"
-            '-i', 'openshift-enterprise-cli',
-            '--lock-downstream', 'openshift-enterprise-cli', '07df2ef7d844fea74fbe8b1535742884268d33d9',
-            '--lock-upstream', 'openshift-enterprise-cli', '9aef6d2c56fb26083112368e877dca34bee161d4',
-            '-i', 'cluster-logging-operator',
-            '--lock-downstream', 'cluster-logging-operator', 'db34acea03c319dcd9bd731041dcd6333bbb025a',
-            '--lock-upstream', 'cluster-logging-operator', '192886641823c745e9a7530d9f7ade18d60919b2',
+            '--group',
+            'openshift-4.7@f1ab35e29f32739e76022ecd071830da234e19b1',
+            '--brew-event',
+            str(35246115 + 1),  # coordinate "brew_event:"
+            '-r',
+            'openshift-clients',
+            '--lock-downstream',
+            'openshift-clients',
+            'a08a6c176a135ee2dd2d3fffb154579382315ce8',  # coordinate "dg_commit:"
+            '--lock-upstream',
+            'openshift-clients',
+            '9aef6d2c56fb26083112368e877dca34bee161d4',  # coordinate "upstream_commit_hash:"
+            '-i',
+            'openshift-enterprise-cli',
+            '--lock-downstream',
+            'openshift-enterprise-cli',
+            '07df2ef7d844fea74fbe8b1535742884268d33d9',
+            '--lock-upstream',
+            'openshift-enterprise-cli',
+            '9aef6d2c56fb26083112368e877dca34bee161d4',
+            '-i',
+            'cluster-logging-operator',
+            '--lock-downstream',
+            'cluster-logging-operator',
+            'db34acea03c319dcd9bd731041dcd6333bbb025a',
+            '--lock-upstream',
+            'cluster-logging-operator',
+            '192886641823c745e9a7530d9f7ade18d60919b2',
             'config:scan-sources',
             '--yaml',
         )
@@ -147,12 +195,20 @@ class TestScanSources(DoozerRunnerTestCase):
 
         #
         results_yaml, _ = self.run_doozer(
-            '--group', 'openshift-4.7@f1ab35e29f32739e76022ecd071830da234e19b1',
-            '--brew-event', str(35246115 + 1),  # coordinate "brew_event:"
-            '-r', 'openshift-clients',
-            '--lock-downstream', 'openshift-clients', 'a08a6c176a135ee2dd2d3fffb154579382315ce8',  # coordinate "dg_commit:"
-            '--lock-upstream', 'openshift-clients', '9aef6d2c56fb26083112368e877dca34bee161d4',  # coordinate "upstream_commit_hash:"
-            '-i', 'vertical-pod-autoscaler-operator',  # up and downstream don't matter; at brew event, this image does not exist for 4.7
+            '--group',
+            'openshift-4.7@f1ab35e29f32739e76022ecd071830da234e19b1',
+            '--brew-event',
+            str(35246115 + 1),  # coordinate "brew_event:"
+            '-r',
+            'openshift-clients',
+            '--lock-downstream',
+            'openshift-clients',
+            'a08a6c176a135ee2dd2d3fffb154579382315ce8',  # coordinate "dg_commit:"
+            '--lock-upstream',
+            'openshift-clients',
+            '9aef6d2c56fb26083112368e877dca34bee161d4',  # coordinate "upstream_commit_hash:"
+            '-i',
+            'vertical-pod-autoscaler-operator',  # up and downstream don't matter; at brew event, this image does not exist for 4.7
             'config:scan-sources',
             '--yaml',
         )

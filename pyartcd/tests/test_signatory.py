@@ -1,16 +1,17 @@
 import asyncio
 import base64
-from datetime import datetime, timezone, timedelta
-from io import BytesIO
 import json
-from cryptography.hazmat.primitives.serialization import Encoding
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
 
-from unittest import IsolatedAsyncioTestCase
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from pyartcd.signatory import AsyncSignatory
 
 
@@ -25,21 +26,26 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
 
         builder = x509.CertificateBuilder()
         builder = builder.subject_name(
-            x509.Name([
-                x509.NameAttribute(NameOID.USER_ID, expected),
-            ]),
+            x509.Name(
+                [
+                    x509.NameAttribute(NameOID.USER_ID, expected),
+                ]
+            ),
         )
         builder = builder.issuer_name(
-            x509.Name([
-                x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
-            ]),
+            x509.Name(
+                [
+                    x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
+                ]
+            ),
         )
         builder = builder.not_valid_before(datetime.today() - one_day)
         builder = builder.not_valid_after(datetime.today() + (one_day * 30))
         builder = builder.serial_number(x509.random_serial_number())
         builder = builder.public_key(public_key)
         certificate = builder.sign(
-            private_key=private_key, algorithm=hashes.SHA256(),
+            private_key=private_key,
+            algorithm=hashes.SHA256(),
         )
         open.return_value.__aenter__.return_value.read.return_value = certificate.public_bytes(Encoding.PEM)
         actual = await AsyncSignatory._get_certificate_account_name("/path/to/client.crt")
@@ -64,7 +70,9 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         signatory = AsyncSignatory(uri, cert_file, key_file, sig_keyname="test", requestor="fake-requestor", subscription_name="fake-subscription")
         await signatory.start()
-        umb.subscribe.assert_awaited_once_with("/queue/Consumer.fake-service-account.fake-subscription.VirtualTopic.eng.robosignatory.art.sign", "fake-subscription")
+        umb.subscribe.assert_awaited_once_with(
+            "/queue/Consumer.fake-service-account.fake-subscription.VirtualTopic.eng.robosignatory.art.sign", "fake-subscription"
+        )
 
     @patch("pyartcd.signatory.datetime", wraps=datetime)
     @patch("pyartcd.signatory.AsyncUMBClient", autospec=True)
@@ -185,7 +193,9 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         _sign_artifact.side_effect = lambda *args, **kwargs: sig_file.write(b"fake-signature")
 
         await signatory.sign_message_digest("openshift", "4.0.1", artifact, sig_file)
-        _sign_artifact.assert_awaited_once_with(typ='message-digest', product='openshift', release_name='4.0.1', name='sha256sum.txt.gpg', artifact=artifact, sig_file=sig_file)
+        _sign_artifact.assert_awaited_once_with(
+            typ='message-digest', product='openshift', release_name='4.0.1', name='sha256sum.txt.gpg', artifact=artifact, sig_file=sig_file
+        )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')
 
     @patch("pyartcd.signatory.AsyncSignatory._sign_artifact")
@@ -200,5 +210,7 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         pullspec = "example.com/fake/repo@sha256:dead-beef"
 
         await signatory.sign_json_digest("openshift", "4.0.1", pullspec, "sha256:dead-beef", sig_file)
-        _sign_artifact.assert_awaited_once_with(typ='json-digest', product='openshift', release_name='4.0.1', name='sha256=dead-beef', artifact=ANY, sig_file=sig_file)
+        _sign_artifact.assert_awaited_once_with(
+            typ='json-digest', product='openshift', release_name='4.0.1', name='sha256=dead-beef', artifact=ANY, sig_file=sig_file
+        )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')

@@ -1,8 +1,9 @@
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock
-from pathlib import Path
-from dockerfile_parse import DockerfileParser
+
 from artcommonlib.model import Missing
+from dockerfile_parse import DockerfileParser
 from doozerlib.backend.rebaser import KonfluxRebaser
 
 

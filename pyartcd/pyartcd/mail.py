@@ -21,7 +21,9 @@ class MailService:
         self.reply_to = reply_to
         self.cc = cc
 
-    def send_mail(self, to: Union[str, List[str]], subject: str, content: str, archive_dir: Optional[str] = None, dry_run: bool = False) -> EmailMessage:
+    def send_mail(
+        self, to: Union[str, List[str]], subject: str, content: str, archive_dir: Optional[str] = None, dry_run: bool = False
+    ) -> EmailMessage:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = self.sender
@@ -34,7 +36,15 @@ class MailService:
 
         if archive_dir:
             archive_dir.mkdir(parents=True, exist_ok=True)
-            filename = ("email-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + re.sub(r"[^@.\w]+", "_", msg["To"]) + "-" + re.sub(r"[^@.\w]+", "_", subject) + ".eml")
+            filename = (
+                "email-"
+                + datetime.now().strftime("%Y%m%d-%H%M%S")
+                + "-"
+                + re.sub(r"[^@.\w]+", "_", msg["To"])
+                + "-"
+                + re.sub(r"[^@.\w]+", "_", subject)
+                + ".eml"
+            )
             with open(archive_dir / filename, "w") as f:
                 gen = Generator(f)
                 gen.flatten(msg)
@@ -42,7 +52,9 @@ class MailService:
 
         _LOGGER.info(
             "Sending email to %s: %s - %s",
-            msg["To"], subject, content,
+            msg["To"],
+            subject,
+            content,
         )
 
         if not dry_run:
@@ -64,7 +76,9 @@ class MailService:
                         sleep_secs *= 2
             _LOGGER.info(
                 "Sent email to %s: %s - %s",
-                msg["To"], subject, content,
+                msg["To"],
+                subject,
+                content,
             )
         else:
             _LOGGER.warn("[DRY RUN] Would have sent email: %s", msg)

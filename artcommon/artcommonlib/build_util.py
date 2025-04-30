@@ -1,4 +1,5 @@
-from typing import List, Optional, Iterable, Dict
+from typing import Dict, Iterable, List, Optional
+
 from artcommonlib import logutil
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
@@ -7,7 +8,7 @@ LOGGER = logutil.get_logger(__name__)
 
 
 def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[Dict]:
-    """ Find the latest build specific to the assembly in a list of builds belonging to the same component and brew tag
+    """Find the latest build specific to the assembly in a list of builds belonging to the same component and brew tag
     :param builds: a list of build dicts sorted by tagging event in descending order
     :param assembly: the name of assembly; None if assemblies support is disabled
     :return: a brew build dict or None
@@ -24,7 +25,8 @@ def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[D
         if not chosen_build and assembly != "stream":
             # If no such build, fall back to the newest build containing ".assembly.stream"
             chosen_build = next(
-                (build for build in builds if isolate_assembly_in_release(build["release"]) == "stream"), None,
+                (build for build in builds if isolate_assembly_in_release(build["release"]) == "stream"),
+                None,
             )
         if not chosen_build:
             # If none of the builds have .assembly.stream in the RELEASE field,
@@ -37,7 +39,7 @@ def find_latest_build(builds: List[Dict], assembly: Optional[str]) -> Optional[D
 
 
 def find_latest_builds(brew_builds: Iterable[Dict], assembly: Optional[str]) -> Iterable[Dict]:
-    """ Find latest builds specific to the assembly in a list of brew builds.
+    """Find latest builds specific to the assembly in a list of brew builds.
     :param brew_builds: a list of build dicts sorted by tagging event in descending order
     :param assembly: the name of assembly; None if assemblies support is disabled
     :return: an iterator of latest brew build dicts

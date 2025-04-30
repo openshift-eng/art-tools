@@ -1,22 +1,21 @@
-from typing import Tuple, List, Dict, Set
-import click
-from io import BytesIO
-import koji
-import re
-import requests
-import yaml
 import json
+import re
+from io import BytesIO
+from typing import Dict, List, Set, Tuple
 from zipfile import ZipFile
 
-from errata_tool import Erratum
-
+import click
+import koji
+import requests
+import yaml
 from artcommonlib import exectools
-from artcommonlib.format_util import red_print, green_print
+from artcommonlib.format_util import green_print, red_print
 from elliottlib import brew, constants, errata
+from elliottlib.cli.common import cli, move_builds, pass_runtime
 from elliottlib.cli.find_builds_cli import find_builds_cli
-from elliottlib.cli.common import cli, pass_runtime, move_builds
-from elliottlib.exceptions import ElliottFatalError, BrewBuildException
+from elliottlib.exceptions import BrewBuildException, ElliottFatalError
 from elliottlib.runtime import Runtime
+from errata_tool import Erratum
 
 
 @cli.command("verify-attached-operators", short_help="Verify attached operator bundle references are (being) shipped")
@@ -42,8 +41,11 @@ from elliottlib.runtime import Runtime
 @pass_runtime
 @click.pass_context
 def verify_attached_operators_cli(
-    ctx: click.Context, runtime: Runtime, omit_shipped: bool,
-    omit_attached: bool, gather_dependencies: bool,
+    ctx: click.Context,
+    runtime: Runtime,
+    omit_shipped: bool,
+    omit_attached: bool,
+    gather_dependencies: bool,
     advisories: Tuple[int, ...],
 ):
     """
@@ -84,14 +86,21 @@ def verify_attached_operators_cli(
     runtime.initialize(mode="images")
 
     problems, invalid, unshipped_builds_by_advisory = _analyze_image_builds(
-        runtime, advisories, omit_shipped, omit_attached, gather_dependencies,
+        runtime,
+        advisories,
+        omit_shipped,
+        omit_attached,
+        gather_dependencies,
     )
 
     if invalid or problems:
         raise ElliottFatalError("Please resolve the errors above before shipping bundles.")
 
     changes_needed, changes_made = _handle_missing_builds(
-        ctx, gather_dependencies, advisories, unshipped_builds_by_advisory,
+        ctx,
+        gather_dependencies,
+        advisories,
+        unshipped_builds_by_advisory,
     )
     if changes_needed:
         if changes_made:
@@ -100,7 +109,11 @@ def verify_attached_operators_cli(
             # necessary e.g. if any builds were added, we can now check their CDN repos.
             # this time, consider it a problem when builds are not attached correctly.
             problems, invalid, unshipped_builds_by_advisory = _analyze_image_builds(
-                runtime, advisories, omit_shipped, True, False,
+                runtime,
+                advisories,
+                omit_shipped,
+                True,
+                False,
             )
             if invalid or problems:
                 raise ElliottFatalError("Please resolve the errors above before shipping bundles.")
@@ -111,7 +124,10 @@ def verify_attached_operators_cli(
 
 
 def _analyze_image_builds(
-    runtime, advisories: List, omit_shipped: bool, omit_attached: bool,
+    runtime,
+    advisories: List,
+    omit_shipped: bool,
+    omit_attached: bool,
     gather_dependencies: bool,
 ) -> (List[str], bool, Dict):
     """
@@ -141,25 +157,33 @@ def _analyze_image_builds(
         image_builds.extend(_get_shipped_images(runtime, brew_session))
     available_shasums = _extract_available_image_shasums(image_builds)
     problems, unshipped_builds_by_advisory = _missing_references(
-        runtime, bundles, available_shasums, omit_attached, gather_dependencies,
+        runtime,
+        bundles,
+        available_shasums,
+        omit_attached,
+        gather_dependencies,
     )
 
     if problems:
         problem_str = "\n              ".join(problems)
-        red_print(f"""
+        red_print(
+            f"""
             Some references had problems (see notes above):
               {problem_str}
             Ensure all bundle references are configured with the necessary repos.
-        """)
+        """
+        )
 
     invalid = _validate_csvs(bundles)
     if invalid:
         invalid_str = "\n              ".join(invalid)
-        red_print(f"""
+        red_print(
+            f"""
             The following bundles failed CSV validation:
               {invalid_str}
             Check art.yaml substitutions for failing matches.
-        """)
+        """
+        )
 
     return problems, invalid, unshipped_builds_by_advisory
 
@@ -266,9 +290,7 @@ def _missing_references(runtime, bundles, available_shasums, omit_attached, gath
     # check that bundle references are all either shipped or shipping,
     # and that they will/did ship to the right repo on the registry
     references = [
-        [ref['image'], build]  # ref => the bundle build that references it
-        for build in bundles
-        for ref in build['csv']['spec']['relatedImages']
+        [ref['image'], build] for build in bundles for ref in build['csv']['spec']['relatedImages']  # ref => the bundle build that references it
     ]
     green_print(f"Found {len(bundles)} bundles with {len(references)} references")
     problems = set()
@@ -316,10 +338,10 @@ def _missing_references(runtime, bundles, available_shasums, omit_attached, gath
 
 
 def _handle_missing_builds(
-        ctx: click.Context,
-        gather_dependencies: bool,
-        advisories: Tuple[int, ...],
-        builds_by_advisory: Dict[int, List],
+    ctx: click.Context,
+    gather_dependencies: bool,
+    advisories: Tuple[int, ...],
+    builds_by_advisory: Dict[int, List],
 ) -> (bool, bool):
     """
     If the only problems were builds not being attached to the right advisories, either report what
@@ -350,10 +372,17 @@ def _handle_missing_builds(
             else:
                 # attaching builds from scratch is complicated; call out to existing cli
                 ctx.invoke(
-                    find_builds_cli, advisory_id=target, default_advisory_type=None,
-                    builds=missing_nvrs, kind="image", as_json=False,
-                    no_cdn_repos=True, payload=False,
-                    non_payload=False, include_shipped=False, member_only=False,
+                    find_builds_cli,
+                    advisory_id=target,
+                    default_advisory_type=None,
+                    builds=missing_nvrs,
+                    kind="image",
+                    as_json=False,
+                    no_cdn_repos=True,
+                    payload=False,
+                    non_payload=False,
+                    include_shipped=False,
+                    member_only=False,
                 )
         return True, True
     else:
@@ -368,18 +397,15 @@ def _nvr_for_operand_pullspec(runtime, spec):
     spec = f"{urls.brew_image_host}/{urls.brew_image_namespace}/openshift-{spec}"
     info = exectools.cmd_assert(
         f"oc image info -o json --filter-by-os=linux/amd64 {spec}",
-        retries=3, pollrate=5,
+        retries=3,
+        pollrate=5,
     )[0]
     labels = json.loads(info)["config"]["config"]["Labels"]
     return f"{labels['com.redhat.component']}-{labels['version']}-{labels['release']}"
 
 
 def _get_attached_advisory_ids(nvr):
-    return set(
-        ad["id"]
-        for ad in brew.get_brew_build(nvr=nvr).all_errata
-        if ad["status"] != "DROPPED_NO_SHIP"
-    )
+    return set(ad["id"] for ad in brew.get_brew_build(nvr=nvr).all_errata if ad["status"] != "DROPPED_NO_SHIP")
 
 
 def _get_cdn_repos(attached_advisories, for_nvr):

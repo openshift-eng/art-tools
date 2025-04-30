@@ -6,12 +6,12 @@ from enum import Enum
 from typing import Optional
 
 import requests
+from jenkinsapi.build import Build
+from jenkinsapi.custom_exceptions import NotFound
 from jenkinsapi.jenkins import Jenkins
 from jenkinsapi.job import Job
 from jenkinsapi.queue import QueueItem
-from jenkinsapi.build import Build
 from jenkinsapi.utils.crumb_requester import CrumbRequester
-from jenkinsapi.custom_exceptions import NotFound
 
 from pyartcd import constants
 
@@ -152,8 +152,10 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
     jenkins_url = get_jenkins_url()
     triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, jenkins_url)
     triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
-    description = f'Started by upstream project <b>{current_job_name}</b> ' \
-                  f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
+    description = (
+        f'Started by upstream project <b>{current_job_name}</b> '
+        f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
+    )
     set_build_description(triggered_build, description)
 
     return triggered_build
@@ -202,7 +204,8 @@ def is_build_running(build_path: str) -> bool:
 
 @check_env_vars
 def start_build(
-    job: Jobs, params: dict,
+    job: Jobs,
+    params: dict,
     block_until_building: bool = True,
     block_until_complete: bool = False,
     watch_building_delay: int = 5,
@@ -245,8 +248,12 @@ def start_build(
 
 
 def start_ocp4(
-    build_version: str, assembly: str, rpm_list: list,
-    image_list: list, comment_on_pr: bool, **kwargs,
+    build_version: str,
+    assembly: str,
+    rpm_list: list,
+    image_list: list,
+    comment_on_pr: bool,
+    **kwargs,
 ) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
@@ -285,8 +292,11 @@ def start_ocp4(
 
 
 def start_ocp4_konflux(
-    build_version: str, assembly: str, image_list: list,
-    limit_arches: list = None, **kwargs,
+    build_version: str,
+    assembly: str,
+    image_list: list,
+    limit_arches: list = None,
+    **kwargs,
 ) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
@@ -338,9 +348,13 @@ def start_rhcos(build_version: str, new_build: bool, job_name: str = 'build', **
 
 
 def start_build_sync(
-    build_version: str, assembly: str, doozer_data_path: Optional[str] = None,
-    doozer_data_gitref: Optional[str] = None, build_system: Optional[str] = 'brew',
-    exclude_arches: list = None, **kwargs,
+    build_version: str,
+    assembly: str,
+    doozer_data_path: Optional[str] = None,
+    doozer_data_gitref: Optional[str] = None,
+    build_system: Optional[str] = 'brew',
+    exclude_arches: list = None,
+    **kwargs,
 ) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
@@ -366,8 +380,12 @@ def start_build_sync(
 
 
 def start_cincinnati_prs(
-    from_releases: list, release_name: str, advisory_id: int,
-    candidate_pr_note: str, skip_ota_notification, **kwargs,
+    from_releases: list,
+    release_name: str,
+    advisory_id: int,
+    candidate_pr_note: str,
+    skip_ota_notification,
+    **kwargs,
 ) -> Optional[str]:
     return start_build(
         job=Jobs.CINCINNATI_PRS,
@@ -378,7 +396,8 @@ def start_cincinnati_prs(
             'CANDIDATE_PR_NOTE': candidate_pr_note,
             'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification,
             'GITHUB_ORG': 'openshift',
-        }, **kwargs,
+        },
+        **kwargs,
     )
 
 
@@ -395,9 +414,12 @@ def start_build_microshift(build_version: str, assembly: str, dry_run: bool, **k
 
 
 def start_olm_bundle(
-    build_version: str, assembly: str, operator_nvrs: list,
+    build_version: str,
+    assembly: str,
+    operator_nvrs: list,
     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-    doozer_data_gitref: str = '', **kwargs,
+    doozer_data_gitref: str = '',
+    **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')
@@ -417,9 +439,12 @@ def start_olm_bundle(
 
 
 def start_olm_bundle_konflux(
-        build_version: str, assembly: str, operator_nvrs: list,
-        doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-        doozer_data_gitref: str = '', **kwargs,
+    build_version: str,
+    assembly: str,
+    operator_nvrs: list,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+    **kwargs,
 ) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')

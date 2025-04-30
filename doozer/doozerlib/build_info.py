@@ -1,11 +1,15 @@
-
 import asyncio
 import logging
 import os
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import (
-    Awaitable, Dict, List, Optional, Tuple, Union,
+    Awaitable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
     cast,
 )
 
@@ -67,7 +71,7 @@ class BrewImageInspector(ImageInspector):
         self._cache = {}
 
         if self.build_record_inspector:
-            assert (self.build_record_inspector.get_build_id() == self.get_build_id())
+            assert self.build_record_inspector.get_build_id() == self.get_build_id()
 
     def image_arch(self) -> str:
         """
@@ -219,7 +223,9 @@ class BrewImageInspector(ImageInspector):
 
 class KonfluxImageInspector(ImageInspector):
     def __init__(
-        self, runtime: "doozerlib.Runtime", image_info: Dict,
+        self,
+        runtime: "doozerlib.Runtime",
+        image_info: Dict,
         build_record_inspector: 'KonfluxBuildRecordInspector' = None,
     ):
         super().__init__(runtime, build_record_inspector)
@@ -728,7 +734,9 @@ class KonfluxBuildRecordInspector(BuildRecordInspector):
             )
             logger.info('Looking for outdated RPMs in build %s...', self._build_record.nvr)
             non_latest_rpms = OutdatedRPMFinder().find_non_latest_rpms(
-                installed_rpms_for_arch[arch], repodatas, logger=cast(logging.Logger, logger),
+                installed_rpms_for_arch[arch],
+                repodatas,
+                logger=cast(logging.Logger, logger),
             )
             if non_latest_rpms:
                 logger.warning('Found outdated RPMs in %s for arch %s', self._build_record.nvr, arch)

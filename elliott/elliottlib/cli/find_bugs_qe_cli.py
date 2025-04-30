@@ -1,12 +1,11 @@
-import click
 import sys
 import traceback
 
+import click
 from artcommonlib import logutil
 from elliottlib import Runtime
 from elliottlib.cli.common import cli
 from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode
-
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -21,7 +20,8 @@ class FindBugsQE(FindBugsMode):
 
 @cli.command("find-bugs:qe", short_help="Change MODIFIED bugs to ON_QA")
 @click.option(
-    "--noop", "--dry-run",
+    "--noop",
+    "--dry-run",
     is_flag=True,
     default=False,
     help="Don't change anything",
@@ -29,12 +29,12 @@ class FindBugsQE(FindBugsMode):
 @click.pass_obj
 def find_bugs_qe_cli(runtime: Runtime, noop):
     """Find MODIFIED bugs for the target-releases, and set them to ON_QA.
-    with a release comment on each bug
+        with a release comment on each bug
 
-\b
-    $ elliott -g openshift-4.6 find-bugs:qe
+    \b
+        $ elliott -g openshift-4.6 find-bugs:qe
 
-"""
+    """
     runtime.initialize()
     find_bugs_obj = FindBugsQE()
     exit_code = 0
@@ -78,6 +78,8 @@ def find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker):
                 # Make this explicit in the bug comment. Not applicable for security trackers/flaw bugs
                 security_level = bug.security_level
                 if security_level:
-                    comment = "This is not a public issue, the customer visible advisory will not link the fix." \
-                              "Setting the Security Level to public before the advisory ships will have it included"
+                    comment = (
+                        "This is not a public issue, the customer visible advisory will not link the fix."
+                        "Setting the Security Level to public before the advisory ships will have it included"
+                    )
                     bug_tracker.add_comment(bug.id, comment, private=True, noop=noop)

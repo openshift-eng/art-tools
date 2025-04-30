@@ -1,5 +1,6 @@
 from unittest import TestCase
 from unittest.mock import patch
+
 from doozerlib.backend.konflux_client import KonfluxClient
 
 
@@ -13,7 +14,6 @@ class TestPLRUrl(TestCase):
                 "labels": {
                     "appstudio.openshift.io/application": "openshift-4-19",
                 },
-
             },
         }
         actual = KonfluxClient.build_pipeline_url(pipeline_run)

@@ -1,9 +1,10 @@
-import json, yaml
-import unittest
+import json
 import os
-from unittest.mock import MagicMock, patch
+import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import yaml
 from elliottlib.cli import verify_attached_operators_cli as vaocli
 from elliottlib.exceptions import BrewBuildException
 
@@ -57,19 +58,22 @@ class TestVerifyAttachedOperators(unittest.TestCase):
     def test_validate_csvs(self, mock_red_print):
         bundles = [
             dict(
-                nvr="spam", csv=dict(
+                nvr="spam",
+                csv=dict(
                     metadata={"name": "spam.v4-202303240327"},
                     spec={"version": "v4.12.0-202303240327"},
                 ),
             ),
             dict(
-                nvr="eggs", csv=dict(
+                nvr="eggs",
+                csv=dict(
                     metadata={"name": "eggs.v4-notimestamp"},
                     spec={"version": "v4.12.0-202303240327"},
                 ),
             ),
             dict(
-                nvr="baked-beans", csv=dict(
+                nvr="baked-beans",
+                csv=dict(
                     metadata={"name": "bakedbeans.v4-202303240327"},
                 ),
             ),
@@ -127,7 +131,8 @@ class TestVerifyAttachedOperators(unittest.TestCase):
     def test_missing_references(self, mock_gcdnr, mock_gadids, mock_nvr, mock_green, mock_red):
         out = []  # populated by print due to side effects below
         mock_red.side_effect = mock_green.side_effect = lambda arg: out.append(arg)
-        bundles = yaml.safe_load("""
+        bundles = yaml.safe_load(
+            """
             - nvr: bundle-nvr-1-0
               csv:
                 apiVersion: operators.coreos.com/v1alpha1
@@ -139,7 +144,8 @@ class TestVerifyAttachedOperators(unittest.TestCase):
                   relatedImages:
                   - image: registry.redhat.io/openshift4/ose-kube-rbac-proxy@sha256:feedface
                     name: ose-kube-rbac-proxy
-        """)  # obviously, much omitted
+        """
+        )  # obviously, much omitted
         mock_nvr.return_value = "operand-nvr-1-0"
         mock_gadids.return_value = set()
         mock_gcdnr.return_value = set()

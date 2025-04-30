@@ -1,10 +1,10 @@
-from future.utils import bytes_to_native_str
-from artcommonlib.metadata import CONFIG_MODES
-import yaml
-import sys
 import csv
 import io
+import sys
 
+import yaml
+from artcommonlib.metadata import CONFIG_MODES
+from future.utils import bytes_to_native_str
 
 VALID_UPDATES = {
     'mode': CONFIG_MODES,
@@ -16,6 +16,7 @@ class MetaDataConfig(object):
     Holds common functions for managing the MetaData configs
     Mostly is a class to hold runtime
     """
+
     def __init__(self, runtime):
         self.runtime = runtime
         if self.runtime.remove_tmp_working_dir:
@@ -119,8 +120,7 @@ class MetaDataConfig(object):
 
         if image_list is None:
             print(
-                'Not correct --type specified (--type image or --type rpm). '
-                'Or not consistent with global options: --images/-i and --rpms/-r',
+                'Not correct --type specified (--type image or --type rpm). ' 'Or not consistent with global options: --images/-i and --rpms/-r',
             )
             return
 

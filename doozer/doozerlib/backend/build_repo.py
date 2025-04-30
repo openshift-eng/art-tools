@@ -6,7 +6,6 @@ from typing import List, Optional, Sequence, Union, cast
 
 from artcommonlib import exectools, git_helper
 from artcommonlib import util as art_util
-
 from doozerlib import constants
 from doozerlib.image import ImageMetadata
 from doozerlib.source_resolver import SourceResolution
@@ -15,8 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class BuildRepo:
-    """ A class to clone a build source repository into a local directory.
-    """
+    """A class to clone a build source repository into a local directory."""
 
     def __init__(
         self,
@@ -25,7 +23,7 @@ class BuildRepo:
         local_dir: Union[str, Path],
         logger: Optional[logging.Logger] = None,
     ) -> None:
-        """ Initialize a BuildRepo object.
+        """Initialize a BuildRepo object.
         :param url: The URL of the build source repository.
         :param branch: The branch of the build source repository to clone. None to not switch to any branch.
         :param local_dir: The local directory to clone the build source repository into.
@@ -39,24 +37,22 @@ class BuildRepo:
 
     @property
     def https_url(self) -> str:
-        """ Get the HTTPS URL of the build source repository.
-        """
+        """Get the HTTPS URL of the build source repository."""
         return art_util.convert_remote_git_to_https(self.url)
 
     @property
     def commit_hash(self) -> Optional[str]:
-        """ Get the commit hash of the current commit in the build source repository.
+        """Get the commit hash of the current commit in the build source repository.
         Returns None if the branch has no commits yet.
         """
         return self._commit_hash
 
     def exists(self) -> bool:
-        """ Check if the local directory already exists.
-        """
+        """Check if the local directory already exists."""
         return self.local_dir.joinpath(".git").exists()
 
     async def ensure_source(self, upcycle: bool = False, strict: bool = False):
-        """ Ensure that the build source repository is cloned into the local directory.
+        """Ensure that the build source repository is cloned into the local directory.
         :param upcycle: If True, the local directory will be deleted and recreated if it already exists.
         :param strict: If True, raise an exception if the branch is not found in the build source repository.
                        Otherwise, create a new branch instead.
@@ -76,7 +72,7 @@ class BuildRepo:
             await self.clone(strict=strict)
 
     async def clone(self, strict: bool = False):
-        """ Clone the build source repository into the local directory.
+        """Clone the build source repository into the local directory.
         :param strict: If True, raise an exception if the branch is not found in the build source repository;
                        otherwise, create a new branch instead.
         """
@@ -93,12 +89,12 @@ class BuildRepo:
                 await self.switch(self.branch, orphan=True)
 
     async def init(self):
-        """ Initialize the local directory as a git repository."""
+        """Initialize the local directory as a git repository."""
         local_dir = str(self.local_dir)
         await git_helper.run_git_async(["init", local_dir])
 
     async def set_remote_url(self, url: Optional[str], remote_name: str = "origin"):
-        """ Set the URL of the remote in the build source repository.
+        """Set the URL of the remote in the build source repository.
         :param url: The URL of the remote. None to use the default URL specified in the constructor.
         :param remote_name: The name of the remote.
         """
@@ -112,7 +108,7 @@ class BuildRepo:
             await git_helper.run_git_async(["-C", local_dir, "remote", "set-url", remote_name, url])
 
     async def fetch(self, refspec: str, depth: Optional[int] = 1, strict: bool = False):
-        """ Fetch a refspec from the build source repository.
+        """Fetch a refspec from the build source repository.
         :param refspec: The refspec to fetch.
         :param depth: The depth of the fetch. None to fetch the entire history.
         :param strict: If True, raise an exception if the refspec is not found in the remote.
@@ -131,7 +127,7 @@ class BuildRepo:
         return True
 
     async def switch(self, branch: str, detach: bool = False, orphan: bool = False):
-        """ Switch to a different branch in the build source repository.
+        """Switch to a different branch in the build source repository.
         :param branch: The branch to switch to.
         """
         local_dir = str(self.local_dir)
@@ -145,13 +141,12 @@ class BuildRepo:
         self._commit_hash = await self._get_commit_hash(local_dir)
 
     async def delete_all_files(self):
-        """ Delete all files in the local directory.
-        """
+        """Delete all files in the local directory."""
         await git_helper.run_git_async(["-C", str(self.local_dir), "rm", "-rf", "--ignore-unmatch", "."])
 
     @staticmethod
     async def _get_commit_hash(local_dir: str, strict: bool = False) -> Optional[str]:
-        """ Get the commit hash of the current commit in the build source repository.
+        """Get the commit hash of the current commit in the build source repository.
         :return: The commit hash of the current commit; None if the branch has no commits yet.
         """
         rc, out, err = await git_helper.gather_git_async(["-C", str(local_dir), "rev-parse", "HEAD"], check=False)
@@ -165,7 +160,7 @@ class BuildRepo:
         return out.strip()
 
     async def commit(self, message: str, allow_empty: bool = False, force: bool = False):
-        """ Commit changes in the local directory to the build source repository."""
+        """Commit changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
         await git_helper.run_git_async(["-C", local_dir, "add", "."] + (["-f"] if force else []))
         commit_opts = []
@@ -175,7 +170,7 @@ class BuildRepo:
         self._commit_hash = await self._get_commit_hash(local_dir, strict=True)
 
     async def tag(self, tag: str):
-        """ Tag the current commit in the build source repository.
+        """Tag the current commit in the build source repository.
 
         :param tag: The tag to apply to the current commit.
         """
@@ -183,7 +178,7 @@ class BuildRepo:
         await git_helper.run_git_async(["-C", local_dir, "tag", "-fam", tag, "--", tag])
 
     async def push(self):
-        """ Push changes in the local directory to the build source repository."""
+        """Push changes in the local directory to the build source repository."""
         local_dir = str(self.local_dir)
         await git_helper.run_git_async(["-C", local_dir, "push", "origin", "HEAD"])
         try:
@@ -194,7 +189,7 @@ class BuildRepo:
 
     @staticmethod
     async def from_local_dir(local_dir: Union[str, Path], logger: Optional[logging.Logger] = None):
-        """ Create a BuildRepo object from an existing local directory.
+        """Create a BuildRepo object from an existing local directory.
         :param local_dir: The local directory containing the build source repository.
         :param logger: A logger object to use for logging messages
         :return: A BuildRepo object

@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -10,22 +9,24 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBundleBuildRecord, KonfluxFbcBuildRecord,
+    KonfluxBuildOutcome,
+    KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord,
 )
 from artcommonlib.konflux.konflux_db import (
-    Engine, KonfluxBuildOutcome,
+    Engine,
+    KonfluxBuildOutcome,
     KonfluxDb,
 )
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
-from kubernetes.dynamic import resource
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from doozerlib import constants, opm, util
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
+from kubernetes.dynamic import resource
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 yaml = opm.yaml
@@ -63,7 +64,7 @@ class KonfluxFbcImporter:
         self._logger = logger or LOGGER.getChild(self.__class__.__name__)
 
     async def import_from_index_image(self, metadata: ImageMetadata, index_image: str | None = None):
-        """ Create a file based catalog (FBC) by importing from an existing index image.
+        """Create a file based catalog (FBC) by importing from an existing index image.
 
         :param metadata: The metadata of the operator image.
         :param index_image: The index image to import from. If not provided, a default index image is used.
@@ -76,11 +77,13 @@ class KonfluxFbcImporter:
             logger.info("Using default index image %s for OCP %s.%s", index_image, self.ocp_version[0], self.ocp_version[1])
 
         # Clone the FBC repo
-        build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map({
-            "group": self.group,
-            "assembly_name": self.assembly,
-            "distgit_key": metadata.distgit_key,
-        })
+        build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
+            {
+                "group": self.group,
+                "assembly_name": self.assembly,
+                "distgit_key": metadata.distgit_key,
+            }
+        )
         logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, build_branch, repo_dir)
         build_repo = BuildRepo(url=self.fbc_git_repo, branch=build_branch, local_dir=repo_dir, logger=logger)
         await build_repo.ensure_source(upcycle=self.upcycle, strict=False)
@@ -102,7 +105,7 @@ class KonfluxFbcImporter:
             logger.info("Not pushing changes to remote repository")
 
     async def _update_dir(self, metadata: ImageMetadata, build_repo: BuildRepo, index_image: str, logger: logging.Logger):
-        """ Update the FBC directory with the given operator image metadata and index image."""
+        """Update the FBC directory with the given operator image metadata and index image."""
         repo_dir = build_repo.local_dir
         # Get package name of the operator
         package_name = await self._get_package_name(metadata)
@@ -162,7 +165,7 @@ class KonfluxFbcImporter:
         return blobs
 
     def _filter_catalog_blobs(self, blobs: List[Dict], allowed_package_names: Set[str]):
-        """ Filter catalog blobs by package names.
+        """Filter catalog blobs by package names.
 
         :param blobs: List of catalog blobs.
         :param allowed_package_names: Set of allowed package names.
@@ -194,7 +197,7 @@ class KonfluxFbcImporter:
         return filtered_blobs[package_name]
 
     async def _get_package_name(self, metadata: ImageMetadata) -> str:
-        """ Get OLM package name of the given OLM operator
+        """Get OLM package name of the given OLM operator
         This function loads OLM package name for the operator image
         by resolving sources and loading package.yaml files.
 
@@ -220,18 +223,18 @@ class KonfluxFbcImporter:
 
 class KonfluxFbcRebaser:
     def __init__(
-            self,
-            base_dir: str | PathLike,
-            group: str,
-            assembly: str,
-            version: str,
-            release: str,
-            commit_message: str,
-            push: bool,
-            fbc_repo: str,
-            upcycle: bool,
-            record_logger: Optional[RecordLogger] = None,
-            logger: Optional[logging.Logger] = None,
+        self,
+        base_dir: str | PathLike,
+        group: str,
+        assembly: str,
+        version: str,
+        release: str,
+        commit_message: str,
+        push: bool,
+        fbc_repo: str,
+        upcycle: bool,
+        record_logger: Optional[RecordLogger] = None,
+        logger: Optional[logging.Logger] = None,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.group = group
@@ -262,11 +265,13 @@ class KonfluxFbcRebaser:
 
         try:
             # Clone the FBC repo
-            fbc_build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map({
-                "group": self.group,
-                "assembly_name": self.assembly,
-                "distgit_key": metadata.distgit_key,
-            })
+            fbc_build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
+                {
+                    "group": self.group,
+                    "assembly_name": self.assembly,
+                    "distgit_key": metadata.distgit_key,
+                }
+            )
             logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
             build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
             await build_repo.ensure_source(upcycle=self.upcycle, strict=True)  # FIXME: Currently rebasing against an empty FBC repo is not supported
@@ -297,8 +302,13 @@ class KonfluxFbcRebaser:
                 self._record_logger.add_record("rebase_fbc_konflux", **record)
 
     async def _rebase_dir(
-        self, metadata: ImageMetadata, build_repo: BuildRepo, bundle_build: KonfluxBundleBuildRecord,
-        version: str, release: str, logger: logging.Logger,
+        self,
+        metadata: ImageMetadata,
+        build_repo: BuildRepo,
+        bundle_build: KonfluxBundleBuildRecord,
+        version: str,
+        release: str,
+        logger: logging.Logger,
     ):
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
@@ -442,9 +452,7 @@ class KonfluxFbcRebaser:
 
     def _generate_image_digest_mirror_set(self, olm_bundle_blobs: Iterable[Dict]):
         source_repos = {
-            related_image["image"].split('@', 1)[0]
-            for bundle_blob in olm_bundle_blobs
-            for related_image in bundle_blob.get("relatedImages", [])
+            related_image["image"].split('@', 1)[0] for bundle_blob in olm_bundle_blobs for related_image in bundle_blob.get("relatedImages", [])
         }
         if not source_repos:
             return None
@@ -478,7 +486,7 @@ class KonfluxFbcRebaser:
         )
 
     async def _fetch_olm_bundle_blob(self, bundle_build: KonfluxBundleBuildRecord):
-        """ Fetch the olm.bundle blob for the given bundle build.
+        """Fetch the olm.bundle blob for the given bundle build.
 
         :param bundle_build: The bundle build record.
         :return: A tuple of (bundle name, package name, bundle blob).
@@ -505,7 +513,7 @@ class KonfluxFbcRebaser:
         return olm_bundle_name, olm_package, olm_bundle_blob
 
     def _catagorize_catalog_blobs(self, blobs: List[Dict]):
-        """ Given a list of catalog blobs, categorize them by schema and package name.
+        """Given a list of catalog blobs, categorize them by schema and package name.
 
         :param blobs: A list of catalog blobs.
         :return: a dictionary of the form {package_name: {schema: {blob_name: blob}}}
@@ -536,21 +544,21 @@ class KonfluxFbcBuildError(Exception):
 
 class KonfluxFbcBuilder:
     def __init__(
-            self,
-            base_dir: Path,
-            group: str,
-            assembly: str,
-            db: KonfluxDb,
-            fbc_repo: str,
-            konflux_namespace: str,
-            konflux_kubeconfig: Optional[str] = None,
-            konflux_context: Optional[str] = None,
-            image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
-            skip_checks: bool = False,
-            pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
-            dry_run: bool = False,
-            record_logger: Optional[RecordLogger] = None,
-            logger: logging.Logger = LOGGER,
+        self,
+        base_dir: Path,
+        group: str,
+        assembly: str,
+        db: KonfluxDb,
+        fbc_repo: str,
+        konflux_namespace: str,
+        konflux_kubeconfig: Optional[str] = None,
+        konflux_context: Optional[str] = None,
+        image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
+        skip_checks: bool = False,
+        pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+        dry_run: bool = False,
+        record_logger: Optional[RecordLogger] = None,
+        logger: logging.Logger = LOGGER,
     ):
         self.base_dir = base_dir
         self.group = group
@@ -592,11 +600,13 @@ class KonfluxFbcBuilder:
                 build_repo = await BuildRepo.from_local_dir(repo_dir, logger)
                 logger.info("FBC repository loaded from %s", repo_dir)
             else:
-                build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map({
-                    "group": self.group,
-                    "assembly_name": self.assembly,
-                    "distgit_key": metadata.distgit_key,
-                })
+                build_branch = "art-{group}-assembly-{assembly_name}-fbc-{distgit_key}".format_map(
+                    {
+                        "group": self.group,
+                        "assembly_name": self.assembly,
+                        "distgit_key": metadata.distgit_key,
+                    }
+                )
                 logger.info("Cloning bundle repository %s branch %s into %s", self.fbc_repo, build_branch, repo_dir)
                 build_repo = BuildRepo(
                     url=self.fbc_repo,
@@ -660,7 +670,8 @@ class KonfluxFbcBuilder:
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxFbcBuildError(
                         f"Konflux image build for {metadata.distgit_key} failed",
-                        pipelinerun_name, pipelinerun,
+                        pipelinerun_name,
+                        pipelinerun,
                     )
                 else:
                     error = None
@@ -677,14 +688,14 @@ class KonfluxFbcBuilder:
         return pipelinerun_name, pipelinerun
 
     async def _start_build(
-            self,
-            metadata: ImageMetadata,
-            build_repo: BuildRepo,
-            output_image: str,
-            arches: Sequence[str],
-            logger: logging.Logger,
+        self,
+        metadata: ImageMetadata,
+        build_repo: BuildRepo,
+        output_image: str,
+        arches: Sequence[str],
+        logger: logging.Logger,
     ):
-        """ Start a build with Konflux. """
+        """Start a build with Konflux."""
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
         # Ensure the Application resource exists
@@ -732,8 +743,11 @@ class KonfluxFbcBuilder:
         return pipelinerun, url
 
     async def _update_konflux_db(
-        self, metadata: ImageMetadata, build_repo: BuildRepo,
-        pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
+        self,
+        metadata: ImageMetadata,
+        build_repo: BuildRepo,
+        pipelinerun: resource.ResourceInstance,
+        outcome: KonfluxBuildOutcome,
         arches: Sequence[str],
         logger: Optional[logging.Logger] = None,
     ):
@@ -799,26 +813,29 @@ class KonfluxFbcBuilder:
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
-                            f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                            f"pipelinerun {pipelinerun_name}",
+                            f"[{metadata.distgit_key}] Could not find expected results in konflux " f"pipelinerun {pipelinerun_name}",
                         )
 
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime
 
-                    build_record_params.update({
-                        'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'image_tag': image_pullspec.split(':')[-1],
-                    })
+                    build_record_params.update(
+                        {
+                            'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
+                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            'image_tag': image_pullspec.split(':')[-1],
+                        }
+                    )
                 case KonfluxBuildOutcome.FAILURE:
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime
-                    build_record_params.update({
-                        'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                    })
+                    build_record_params.update(
+                        {
+                            'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                            'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
+                        }
+                    )
 
             build_record = KonfluxFbcBuildRecord(**build_record_params)
             db.add_build(build_record)

@@ -2,31 +2,32 @@
 Utility functions and object abstractions for general interactions
 with BugTrackers
 """
+
 import asyncio
 import itertools
+import os
 import re
 import urllib.parse
 import xmlrpc.client
-import bugzilla
-import os
-import requests
-from requests_gssapi import HTTPSPNEGOAuth
 from datetime import datetime, timezone
 from time import sleep
 from typing import Dict, Iterable, List, Optional
-from jira import JIRA, Issue
-from errata_tool import Erratum
-from errata_tool.jira_issue import JiraIssue as ErrataJira
-from errata_tool.bug import Bug as ErrataBug
-from koji import ClientSession
-from tenacity import retry, stop_after_attempt, wait_fixed
 
-from artcommonlib import logutil, exectools
-from elliottlib import constants, exceptions, errata, util
+import bugzilla
+import requests
+from artcommonlib import exectools, logutil
+from elliottlib import constants, errata, exceptions, util
 from elliottlib.cli import cli_opts
 from elliottlib.errata_async import AsyncErrataAPI
 from elliottlib.metadata import Metadata
-from elliottlib.util import isolate_timestamp_in_release, chunk
+from elliottlib.util import chunk, isolate_timestamp_in_release
+from errata_tool import Erratum
+from errata_tool.bug import Bug as ErrataBug
+from errata_tool.jira_issue import JiraIssue as ErrataJira
+from jira import JIRA, Issue
+from koji import ClientSession
+from requests_gssapi import HTTPSPNEGOAuth
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logutil.get_logger(__name__)
 
@@ -153,8 +154,10 @@ class Bug:
             raise ValueError(err)
 
         if len(target_release_versions) != 1:
-            err = f'Found target_releases for different MAJOR.MINOR versions: {target_releases}. ' \
+            err = (
+                f'Found target_releases for different MAJOR.MINOR versions: {target_releases}. '
                 'There should be only 1 MAJOR.MINOR version for all bugs. Fix the offending bug(s) and try again.'
+            )
             raise ValueError(err)
 
         return sorted(target_releases.keys())[0]
@@ -517,7 +520,11 @@ class BugTracker:
         raise NotImplementedError
 
     def attach_bugs(
-        self, bugids: List, advisory_id: int = 0, advisory_obj: Erratum = None, noop=False,
+        self,
+        bugids: List,
+        advisory_id: int = 0,
+        advisory_obj: Erratum = None,
+        noop=False,
         verbose=False,
     ):
         raise NotImplementedError
@@ -547,10 +554,14 @@ class BugTracker:
         return self.create_bug(bug_title, bug_description, "VERIFIED", [], noop)
 
     def update_bug_status(
-        self, bug: Bug, target_status: str,
-        comment: Optional[str] = None, log_comment: bool = True, noop=False,
+        self,
+        bug: Bug,
+        target_status: str,
+        comment: Optional[str] = None,
+        log_comment: bool = True,
+        noop=False,
     ):
-        """ Update bug status and optionally leave a comment
+        """Update bug status and optionally leave a comment
         :return: True if but status has been actually updated
         """
         current_status = bug.status
@@ -575,8 +586,11 @@ class BugTracker:
 
     @staticmethod
     def get_corresponding_flaw_bugs(
-        tracker_bugs: List[Bug], flaw_bug_tracker, brew_api,
-        strict: bool = True, verbose: bool = False,
+        tracker_bugs: List[Bug],
+        flaw_bug_tracker,
+        brew_api,
+        strict: bool = True,
+        verbose: bool = False,
     ) -> (Dict, Dict):
         """Get corresponding flaw bug objects for given list of tracker bug objects.
         flaw_bug_tracker object to fetch flaw bugs from
@@ -589,10 +603,7 @@ class BugTracker:
             list(set(sum([t.corresponding_flaw_bug_ids for t in tracker_bugs], []))),
             verbose=verbose,
         )
-        flaw_tracker_map = {
-            bug.id: {'bug': bug, 'trackers': []}
-            for bug in flaw_bugs
-        }
+        flaw_tracker_map = {bug.id: {'bug': bug, 'trackers': []} for bug in flaw_bugs}
 
         # Validate that each tracker has a corresponding flaw bug
         # and a whiteboard component
@@ -620,12 +631,10 @@ class BugTracker:
 
         error_msg = ''
         if trackers_with_no_flaws:
-            error_msg += 'Cannot find any corresponding flaw bugs for these trackers: ' \
-                         f'{sorted(trackers_with_no_flaws)}. '
+            error_msg += 'Cannot find any corresponding flaw bugs for these trackers: ' f'{sorted(trackers_with_no_flaws)}. '
 
         if trackers_with_invalid_components:
-            error_msg += "These trackers do not have a valid whiteboard component value:" \
-                         f" {sorted(trackers_with_invalid_components)}."
+            error_msg += "These trackers do not have a valid whiteboard component value:" f" {sorted(trackers_with_invalid_components)}."
 
         if error_msg:
             if strict:
@@ -635,8 +644,7 @@ class BugTracker:
 
         invalid_trackers = trackers_with_no_flaws | trackers_with_invalid_components
         tracker_flaws = {
-            t.id: [b for b in t.corresponding_flaw_bug_ids if b in flaw_tracker_map]
-            for t in tracker_bugs if t.id not in invalid_trackers
+            t.id: [b for b in t.corresponding_flaw_bug_ids if b in flaw_tracker_map] for t in tracker_bugs if t.id not in invalid_trackers
         }
         return tracker_flaws, flaw_tracker_map
 
@@ -715,8 +723,7 @@ class JIRABugTracker(BugTracker):
         invalid_bugs = [b for b in bugids if not self.looks_like_a_jira_project_bug(b)]
         if invalid_bugs:
             logger.warn(
-                f"Cannot fetch bugs from a different project (current project: {self._project}):"
-                f" {invalid_bugs}",
+                f"Cannot fetch bugs from a different project (current project: {self._project}):" f" {invalid_bugs}",
             )
         bugids = [b for b in bugids if self.looks_like_a_jira_project_bug(b)]
         if not bugids:
@@ -748,8 +755,7 @@ class JIRABugTracker(BugTracker):
                 link_dict[link.relationship] = link.object.url
         return link_dict
 
-    def create_bug(self, bug_title: str, bug_description: str, target_status: str, keywords: List, noop=False) -> \
-            JIRABug:
+    def create_bug(self, bug_title: str, bug_description: str, target_status: str, keywords: List, noop=False) -> JIRABug:
         fields = {
             'project': {'key': self._project},
             'issuetype': {'name': 'Bug'},
@@ -780,7 +786,8 @@ class JIRABugTracker(BugTracker):
             self._client.add_comment(bugid, comment)
 
     def _query(
-        self, bugids: Optional[List] = None,
+        self,
+        bugids: Optional[List] = None,
         status: Optional[List] = None,
         target_release: Optional[List] = None,
         include_labels: Optional[List] = None,
@@ -858,7 +865,11 @@ class JIRABugTracker(BugTracker):
         advisory_obj.commit()
 
     def attach_bugs(
-        self, bugids: List, advisory_id: int = 0, advisory_obj: Erratum = None, noop=False,
+        self,
+        bugids: List,
+        advisory_id: int = 0,
+        advisory_obj: Erratum = None,
+        noop=False,
         verbose=False,
     ):
         if not advisory_obj:
@@ -866,14 +877,15 @@ class JIRABugTracker(BugTracker):
         return errata.add_jira_bugs_with_retry(advisory_obj, bugids, noop=noop)
 
     def filter_bugs_by_cutoff_event(
-        self, bugs: Iterable, desired_statuses: Iterable[str],
-        sweep_cutoff_timestamp: float, verbose=False,
+        self,
+        bugs: Iterable,
+        desired_statuses: Iterable[str],
+        sweep_cutoff_timestamp: float,
+        verbose=False,
     ) -> List:
         dt = datetime.utcfromtimestamp(sweep_cutoff_timestamp).strftime("%Y/%m/%d %H:%M")
         val = ','.join(f'"{s}"' for s in desired_statuses)
-        query = f"issue in ({','.join([b.id for b in bugs])}) " \
-                f"and status was in ({val}) " \
-                f'on("{dt}")'
+        query = f"issue in ({','.join([b.id for b in bugs])}) " f"and status was in ({val}) " f'on("{dt}")'
         return self._search(query, verbose=verbose)
 
     async def filter_attached_bugs(self, bugs: Iterable):
@@ -918,8 +930,7 @@ class BugzillaBugTracker(BugTracker):
         client = bugzilla.Bugzilla(self._server)
         if not client.logged_in:
             raise ValueError(
-                f"elliott requires cached login credentials for {self._server}. Login using 'bugzilla "
-                "login --api-key",
+                f"elliott requires cached login credentials for {self._server}. Login using 'bugzilla " "login --api-key",
             )
         return client
 
@@ -1006,7 +1017,8 @@ class BugzillaBugTracker(BugTracker):
     def _update_bug_status(self, bugid, target_status):
         if target_status == 'CLOSED':
             return self._client.update_bugs(
-                [bugid], self._client.build_update(
+                [bugid],
+                self._client.build_update(
                     status=target_status,
                     resolution='WONTFIX',
                 ),
@@ -1017,10 +1029,13 @@ class BugzillaBugTracker(BugTracker):
         self._client.update_bugs([bugid], self._client.build_update(comment=comment, comment_private=private))
 
     def filter_bugs_by_cutoff_event(
-        self, bugs: Iterable, desired_statuses: Iterable[str],
-        sweep_cutoff_timestamp: float, verbose=False,
+        self,
+        bugs: Iterable,
+        desired_statuses: Iterable[str],
+        sweep_cutoff_timestamp: float,
+        verbose=False,
     ) -> List:
-        """ Given a list of bugs, finds those that have changed to one of the desired statuses before the given timestamp.
+        """Given a list of bugs, finds those that have changed to one of the desired statuses before the given timestamp.
 
         According to @jupierce:
 
@@ -1064,7 +1079,7 @@ class BugzillaBugTracker(BugTracker):
 
             @classmethod
             def from_history_ent(cls, history):
-                """ Converts from bug history dict returned from Bugzilla to BugStatusChange object.
+                """Converts from bug history dict returned from Bugzilla to BugStatusChange object.
                 The history dict returned from Bugzilla includes bug changes on all fields, but we are only interested in the "status" field change.
                 :return: BugStatusChange object, or None if the history doesn't include a "status" field change.
                 """
@@ -1074,9 +1089,9 @@ class BugzillaBugTracker(BugTracker):
                 return cls(to_timestamp(history["when"]), status_change["removed"], status_change["added"])
 
         for bug, bug_history in zip(before_cutoff_bugs, bugs_history["bugs"]):
-            assert bug.id == bug_history[
-                "id"
-            ]  # `bugs_history["bugs"]` returned from Bugzilla API should have the same order as `before_cutoff_bugs`, but be safe
+            assert (
+                bug.id == bug_history["id"]
+            )  # `bugs_history["bugs"]` returned from Bugzilla API should have the same order as `before_cutoff_bugs`, but be safe
 
             # We are only interested in "status" field changes
             status_changes = filter(None, map(BugStatusChange.from_history_ent, bug_history["history"]))
@@ -1102,8 +1117,10 @@ class BugzillaBugTracker(BugTracker):
 
             # Per @Justin Pierce: If a BZ seems to qualify for a sweep currently and at the sweep cutoff event, then all state changes after the sweep cutoff event must be to a greater than the state which qualified the BZ at the sweep cutoff event.
             regressed_changes = [
-                change.new for change in after_cutoff_status_changes if
-                constants.VALID_BUG_STATES.index(change.new) <= constants.VALID_BUG_STATES.index(
+                change.new
+                for change in after_cutoff_status_changes
+                if constants.VALID_BUG_STATES.index(change.new)
+                <= constants.VALID_BUG_STATES.index(
                     sweep_cutoff_status,
                 )
             ]
@@ -1136,17 +1153,11 @@ class BugzillaBugTracker(BugTracker):
 
     def get_tracker_bugs(self, bug_ids: List, strict: bool = False, verbose: bool = False):
         fields = ["target_release", "blocks", 'whiteboard', 'keywords']
-        return [
-            b for b in self.get_bugs(bug_ids, permissive=not strict, include_fields=fields, verbose=verbose) if
-            b.is_tracker_bug()
-        ]
+        return [b for b in self.get_bugs(bug_ids, permissive=not strict, include_fields=fields, verbose=verbose) if b.is_tracker_bug()]
 
     def get_flaw_bugs(self, bug_ids: List, strict: bool = True, verbose: bool = False):
         fields = ["product", "component", "depends_on", "alias", "severity", "summary"]
-        return [
-            b for b in self.get_bugs(bug_ids, permissive=not strict, include_fields=fields, verbose=verbose) if
-            b.is_flaw_bug()
-        ]
+        return [b for b in self.get_bugs(bug_ids, permissive=not strict, include_fields=fields, verbose=verbose) if b.is_flaw_bug()]
 
 
 def get_highest_impact(trackers, tracker_flaws_map):
@@ -1177,7 +1188,7 @@ def get_highest_impact(trackers, tracker_flaws_map):
 
 
 def is_viable_bug(bug_obj):
-    """ Check if a bug is viable to attach to an advisory.
+    """Check if a bug is viable to attach to an advisory.
 
     A viable bug must be in one of MODIFIED and VERIFIED status. We accept ON_QA
     bugs as viable as well, as they will be shortly moved to MODIFIED while attaching.
@@ -1191,11 +1202,20 @@ def is_viable_bug(bug_obj):
 def _construct_query_url(config, status, search_filter='default', flag=None):
     query_url = SearchURL(config)
     query_url.fields = [
-        'id', 'status', 'summary', 'creation_time', 'cf_pm_score', 'component',
+        'id',
+        'status',
+        'summary',
+        'creation_time',
+        'cf_pm_score',
+        'component',
         # the api expects "sub_components" for the field "sub_component"
         # https://github.com/python-bugzilla/python-bugzilla/blob/main/bugzilla/base.py#L321
         'sub_components',
-        'external_bugs', 'whiteboard', 'keywords', 'target_release', 'depends_on',
+        'external_bugs',
+        'whiteboard',
+        'keywords',
+        'target_release',
+        'depends_on',
     ]
 
     filter_list = []
@@ -1264,7 +1284,10 @@ class SearchFilter(object):
 
     def tostring(self, number):
         return SearchFilter.pattern.format(
-            number, self.field, self.operator, urllib.parse.quote(self.value),
+            number,
+            self.field,
+            self.operator,
+            urllib.parse.quote(self.value),
         )
 
 
@@ -1336,23 +1359,21 @@ class SearchURL(object):
 
 
 def to_timestamp(dt: xmlrpc.client.DateTime):
-    """ Converts xmlrpc.client.DateTime to timestamp """
+    """Converts xmlrpc.client.DateTime to timestamp"""
     return datetime.strptime(dt.value, "%Y%m%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
 
 
 async def approximate_cutoff_timestamp(basis_event: int, koji_api: ClientSession, metas: Iterable[Metadata]) -> float:
-    """ Calculate an approximate sweep cutoff timestamp from the given basis event
-    """
+    """Calculate an approximate sweep cutoff timestamp from the given basis event"""
     basis_timestamp = koji_api.getEvent(basis_event)["ts"]
     tasks = [meta.get_latest_build(default=None, complete_before_event=basis_event, honor_is=False) for meta in metas]
     builds: List[Dict] = await asyncio.gather(*tasks)
     nvrs = [b["nvr"] for b in builds if b]
-    rebase_timestamp_strings = filter(None, [isolate_timestamp_in_release(nvr) for nvr in nvrs])  # the timestamp in the release field of NVR is the approximate rebase time
+    rebase_timestamp_strings = filter(
+        None, [isolate_timestamp_in_release(nvr) for nvr in nvrs]
+    )  # the timestamp in the release field of NVR is the approximate rebase time
     # convert to UNIX timestamps
-    rebase_timestamps = [
-        datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).timestamp()
-        for ts in rebase_timestamp_strings
-    ]
+    rebase_timestamps = [datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).timestamp() for ts in rebase_timestamp_strings]
     return min(basis_timestamp, max(rebase_timestamps, default=basis_timestamp))
 
 
@@ -1372,6 +1393,7 @@ def sort_cve_bugs(bugs):
         impact = constants.security_impact_map[get_highest_security_impact([bug])]
         year, num = bug.alias[0].split("-")[1:]
         return impact, -int(year), -int(num)
+
     return sorted(bugs, key=cve_sort_key, reverse=True)
 
 
@@ -1400,8 +1422,10 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
     major, minor = util.minor_version_tuple(current_target_release)
     ocp_product_name = f"Red Hat OpenShift Container Platform {major}"
     components_not_yet_fixed = []
-    pyxis_base_url = "https://pyxis.engineering.redhat.com/v1/repositories/registry/registry.access.redhat.com" \
-                     "/repository/{pkg_name}/images?page_size=1&include=data.brew"
+    pyxis_base_url = (
+        "https://pyxis.engineering.redhat.com/v1/repositories/registry/registry.access.redhat.com"
+        "/repository/{pkg_name}/images?page_size=1&include=data.brew"
+    )
 
     if 'package_state' not in data:
         logger.info(f'{flaw_bug.id} ({alias}) not considered a first-fix because no unfixed components were found')
@@ -1437,8 +1461,7 @@ def is_first_fix_any(flaw_bug: BugzillaBug, tracker_bugs: Iterable[Bug], current
 
     if first_fix_components:
         logger.info(
-            f'{flaw_bug.id} ({alias}) considered first-fix for these (component, tracker):'
-            f' {first_fix_components}',
+            f'{flaw_bug.id} ({alias}) considered first-fix for these (component, tracker):' f' {first_fix_components}',
         )
         return True
 

@@ -1,12 +1,11 @@
 # This file is part of dotconfig project <https://github.com/adammhaile/dotconfig>
 # and released under LGPL v3 <https://www.gnu.org/licenses/lgpl-3.0.en.html>
 import itertools
-
-from future.utils import string_types
-import yaml
 import os
 import shutil
 
+import yaml
+from future.utils import string_types
 
 VALID_EXT = [
     'yaml',
@@ -17,9 +16,16 @@ VALID_EXT = [
 
 class Config(object):
     def __init__(
-        self, app=None, name=None, base_dir='~/.config/',
-        template_file=None, template=None, envvars={},
-        defaults={}, cli_args={}, path_override=None,
+        self,
+        app=None,
+        name=None,
+        base_dir='~/.config/',
+        template_file=None,
+        template=None,
+        envvars={},
+        defaults={},
+        cli_args={},
+        path_override=None,
         file_override=None,
     ):
         """

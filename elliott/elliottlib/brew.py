@@ -1,33 +1,36 @@
 """
 Utility functions for general interactions with Brew and Builds
 """
-from tenacity import retry, stop_after_attempt, wait_fixed
-from artcommonlib import logutil
+
 # stdlib
 import json
 import logging
+import re
 import ssl
 import threading
 import time
-import re
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Tuple, BinaryIO
+from typing import BinaryIO, Dict, Iterable, List, Optional, Tuple
 
 # 3rd party
 import koji
 import requests
-from requests_gssapi import HTTPSPNEGOAuth
-
+from artcommonlib import logutil
 from artcommonlib.model import Missing
+
 # ours
 from elliottlib import constants, exceptions
 from elliottlib.util import total_size
+from requests_gssapi import HTTPSPNEGOAuth
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logutil.get_logger(__name__)
 
 
-def get_tagged_builds(tag_component_tuples: Iterable[Tuple[str, Optional[str]]], build_type: Optional[str], event: Optional[int], session: koji.ClientSession) -> List[Optional[List[Dict]]]:
-    """ Get tagged builds  for multiple Brew tags (and components) as of the given event
+def get_tagged_builds(
+    tag_component_tuples: Iterable[Tuple[str, Optional[str]]], build_type: Optional[str], event: Optional[int], session: koji.ClientSession
+) -> List[Optional[List[Dict]]]:
+    """Get tagged builds  for multiple Brew tags (and components) as of the given event
 
     In each list for a component, builds are ordered from newest tagged to oldest tagged:
     https://pagure.io/koji/blob/3fed02c8adb93cde614af9f61abd12bbccdd6682/f/hub/kojihub.py#_1392
@@ -48,9 +51,10 @@ def get_tagged_builds(tag_component_tuples: Iterable[Tuple[str, Optional[str]]],
     return [build for task in tasks for build in task.result]
 
 
-def get_latest_builds(tag_component_tuples: List[Tuple[str, str]], session: koji.ClientSession, event: Optional[int] = None) \
-        -> List[Optional[List[Dict]]]:
-    """ Get latest builds for multiple Brew components
+def get_latest_builds(
+    tag_component_tuples: List[Tuple[str, str]], session: koji.ClientSession, event: Optional[int] = None
+) -> List[Optional[List[Dict]]]:
+    """Get latest builds for multiple Brew components
 
     :param tag_component_tuples: List of (tag, component_name) tuples
     :param event: Brew event ID, or None for now.
@@ -190,8 +194,8 @@ def get_brew_build(nvr, product_version='', session=None):
     else:
         raise exceptions.BrewBuildException(
             "{build}: {msg}".format(
-            build=nvr,
-            msg=res.text,
+                build=nvr,
+                msg=res.text,
             ),
         )
 
@@ -233,15 +237,15 @@ def get_nvr_root_log(name, version, release, arch='x86_64'):
 class Build(object):
     """An existing brew build
 
-How might you use this object? Great question. I'd start by fetching
-the details of a known build from the Errata Tool using the
-/api/v1/build/{id_or_nvr} API endpoint. Then take that build NVR or ID
-and the build object from the API and initialize a new Build object
-from those.
+    How might you use this object? Great question. I'd start by fetching
+    the details of a known build from the Errata Tool using the
+    /api/v1/build/{id_or_nvr} API endpoint. Then take that build NVR or ID
+    and the build object from the API and initialize a new Build object
+    from those.
 
-Save yourself some time and use the brew.get_brew_build()
-function. Give it an NVR or a build ID and it will give you an
-initialized Build object (provided the build exists).
+    Save yourself some time and use the brew.get_brew_build()
+    function. Give it an NVR or a build ID and it will give you an
+    initialized Build object (provided the build exists).
 
     """
 
@@ -335,7 +339,7 @@ initialized Build object (provided the build exists).
 
     def process(self):
         """Generate some easy to access attributes about this build so we
-           don't have to do extra manipulation later back in the view"""
+        don't have to do extra manipulation later back in the view"""
         # Has this build been attached to any erratum?
         self.all_errata = self.body.get('all_errata', [])
 
@@ -367,7 +371,7 @@ initialized Build object (provided the build exists).
 
     def to_json(self):
         """Method for adding this build to advisory via the Errata Tool
-API. This is the body content of the erratum add_builds endpoint."""
+        API. This is the body content of the erratum add_builds endpoint."""
         return {
             'product_version': self.product_version,
             'build': self.nvr,
@@ -435,122 +439,126 @@ class KojiWrapper(koji.ClientSession):
     _koji_wrapper_result_cache = {}
 
     # A list of methods which support receiving an event kwarg. See --brew-event CLI argument.
-    methods_with_event = set([
-        'getBuildConfig',
-        'getBuildTarget',
-        'getBuildTargets',
-        'getExternalRepo',
-        'getExternalRepoList',
-        'getFullInheritance',
-        'getGlobalInheritance',
-        'getHost',
-        'getInheritanceData',
-        'getLatestBuilds',
-        'getLatestMavenArchives',
-        'getLatestRPMS',
-        'getPackageConfig',
-        'getRepo',
-        'getTag',
-        'getTagExternalRepos',
-        'getTagGroups',
-        'listChannels',
-        'listExternalRepos',
-        'listPackages',
-        'listTagged',
-        'listTaggedArchives',
-        'listTaggedRPMS',
-        'newRepo',
-    ])
+    methods_with_event = set(
+        [
+            'getBuildConfig',
+            'getBuildTarget',
+            'getBuildTargets',
+            'getExternalRepo',
+            'getExternalRepoList',
+            'getFullInheritance',
+            'getGlobalInheritance',
+            'getHost',
+            'getInheritanceData',
+            'getLatestBuilds',
+            'getLatestMavenArchives',
+            'getLatestRPMS',
+            'getPackageConfig',
+            'getRepo',
+            'getTag',
+            'getTagExternalRepos',
+            'getTagGroups',
+            'listChannels',
+            'listExternalRepos',
+            'listPackages',
+            'listTagged',
+            'listTaggedArchives',
+            'listTaggedRPMS',
+            'newRepo',
+        ]
+    )
 
     # Methods which cannot be constrained, but are considered safe to allow even when brew-event is set.
     # Why? If you know the parameters, those parameters should have already been constrained by another
     # koji API call.
-    safe_methods = set([
-        'getEvent',
-        'getBuild',
-        'listArchives',
-        'listRPMs',
-        'getPackage',
-        'getPackageID',
-        'listTags',
-        'gssapi_login',
-        'sslLogin',
-        'getTaskInfo',
-        'build',
-        'buildContainer',
-        'buildImage',
-        'buildReferences',
-        'cancelBuild',
-        'cancelTask',
-        'cancelTaskChildren',
-        'cancelTaskFull',
-        'chainBuild',
-        'chainMaven',
-        'createImageBuild',
-        'createMavenBuild',
-        'filterResults',
-        'getAPIVersion',
-        'getArchive',
-        'getArchiveFile',
-        'getArchiveType',
-        'getArchiveTypes',
-        'getAverageBuildDuration',
-        'getBuildLogs',
-        'getBuildNotificationBlock',
-        'getBuildType',
-        'getBuildroot',
-        'getChangelogEntries',
-        'getImageArchive',
-        'getImageBuild',
-        'getLoggedInUser',
-        'getMavenArchive',
-        'getMavenBuild',
-        'getPerms',
-        'getRPM',
-        'getRPMDeps',
-        'getRPMFile',
-        'getRPMHeaders',
-        'getTaskChildren',
-        'getTaskDescendents',
-        'getTaskRequest',
-        'getTaskResult',
-        'getUser',
-        'getUserPerms',
-        'getVolume',
-        'getWinArchive',
-        'getWinBuild',
-        'hello',
-        'listArchiveFiles',
-        'listArchives',
-        'listBTypes',
-        'listBuildRPMs',
-        'listBuildroots',
-        'listRPMFiles',
-        'listRPMs',
-        'listTags',
-        'listTaskOutput',
-        'listTasks',
-        'listUsers',
-        'listVolumes',
-        'login',
-        'logout',
-        'logoutChild',
-        'makeTask',
-        'mavenEnabled',
-        'mergeScratch',
-        'moveAllBuilds',
-        'moveBuild',
-        'queryRPMSigs',
-        'resubmitTask',
-        'tagBuild',
-        'tagBuildBypass',
-        'taskFinished',
-        'taskReport',
-        'untagBuild',
-        'winEnabled',
-        'winBuild',
-        'uploadFile',
-    ])
+    safe_methods = set(
+        [
+            'getEvent',
+            'getBuild',
+            'listArchives',
+            'listRPMs',
+            'getPackage',
+            'getPackageID',
+            'listTags',
+            'gssapi_login',
+            'sslLogin',
+            'getTaskInfo',
+            'build',
+            'buildContainer',
+            'buildImage',
+            'buildReferences',
+            'cancelBuild',
+            'cancelTask',
+            'cancelTaskChildren',
+            'cancelTaskFull',
+            'chainBuild',
+            'chainMaven',
+            'createImageBuild',
+            'createMavenBuild',
+            'filterResults',
+            'getAPIVersion',
+            'getArchive',
+            'getArchiveFile',
+            'getArchiveType',
+            'getArchiveTypes',
+            'getAverageBuildDuration',
+            'getBuildLogs',
+            'getBuildNotificationBlock',
+            'getBuildType',
+            'getBuildroot',
+            'getChangelogEntries',
+            'getImageArchive',
+            'getImageBuild',
+            'getLoggedInUser',
+            'getMavenArchive',
+            'getMavenBuild',
+            'getPerms',
+            'getRPM',
+            'getRPMDeps',
+            'getRPMFile',
+            'getRPMHeaders',
+            'getTaskChildren',
+            'getTaskDescendents',
+            'getTaskRequest',
+            'getTaskResult',
+            'getUser',
+            'getUserPerms',
+            'getVolume',
+            'getWinArchive',
+            'getWinBuild',
+            'hello',
+            'listArchiveFiles',
+            'listArchives',
+            'listBTypes',
+            'listBuildRPMs',
+            'listBuildroots',
+            'listRPMFiles',
+            'listRPMs',
+            'listTags',
+            'listTaskOutput',
+            'listTasks',
+            'listUsers',
+            'listVolumes',
+            'login',
+            'logout',
+            'logoutChild',
+            'makeTask',
+            'mavenEnabled',
+            'mergeScratch',
+            'moveAllBuilds',
+            'moveBuild',
+            'queryRPMSigs',
+            'resubmitTask',
+            'tagBuild',
+            'tagBuildBypass',
+            'taskFinished',
+            'taskReport',
+            'untagBuild',
+            'winEnabled',
+            'winBuild',
+            'uploadFile',
+        ]
+    )
 
     def __init__(self, koji_session_args, brew_event=None, force_instance_caching=False):
         """
@@ -648,7 +656,9 @@ class KojiWrapper(koji.ClientSession):
             elif not kw_opts.brew_event_aware:
                 # If --brew-event has been specified and non-constrainable API call is invoked, raise
                 # an exception if the caller has not made clear that are ok with that via brew_event_aware option.
-                raise IOError(f'Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True')
+                raise IOError(
+                    f'Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True'
+                )
 
         return kwargs
 
@@ -711,7 +721,7 @@ class KojiWrapper(koji.ClientSession):
             ([  {'methodName': 'getBuild', 'params': (1328870, {'__starstar': True, 'strict': True})},
                 {'methodName': 'getLastEvent', 'params': ()}],)
             """
-            multiArg = args[0]   # args is a tuple, the first should be our listing of method invocations.
+            multiArg = args[0]  # args is a tuple, the first should be our listing of method invocations.
             for call_dict in multiArg:  # For each method invocation in the multicall
                 method_name = call_dict['methodName']
                 params = self.modify_koji_call_params(method_name, call_dict['params'], aggregate_kw_opts)
@@ -769,7 +779,8 @@ class KojiWrapper(koji.ClientSession):
                             'method_name': name,
                             'args': args,
                             'kwargs': kwargs,
-                        }, sort_keys=True,
+                        },
+                        sort_keys=True,
                     )
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:

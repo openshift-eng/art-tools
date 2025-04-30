@@ -1,19 +1,16 @@
+import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
-from functional_tests import constants
-import subprocess
 
 from elliottlib.cli import verify_attached_operators_cli
 from elliottlib.runtime import Runtime
+from functional_tests import constants
 
 
 class TestVerifyAttachedOperators(unittest.TestCase):
 
     def setUp(self):
-        self.patchers = [
-            patch(f"elliottlib.cli.verify_attached_operators_cli.{it}", lambda x: x)
-            for it in ["red_print", "green_print"]
-        ]
+        self.patchers = [patch(f"elliottlib.cli.verify_attached_operators_cli.{it}", lambda x: x) for it in ["red_print", "green_print"]]
         for p in self.patchers:
             # disable the printed output during tests (remove this to debug...)
             p.start()
@@ -40,8 +37,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
     def test_verify_attached_operators_ok(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.12", "verify-attached-operators", "110351"],
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.12", "verify-attached-operators", "110351"],
             capture_output=True,
             encoding='utf-8',
         )
@@ -49,8 +45,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
     def test_verify_attached_operators_wrong(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.8", "verify-attached-operators", "--omit-shipped", "--omit-attached", "81215"],
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.8", "verify-attached-operators", "--omit-shipped", "--omit-attached", "81215"],
             # 4.9.0 GA metadata advisory; will be missing operands from other advisories
             capture_output=True,
             encoding='utf-8',

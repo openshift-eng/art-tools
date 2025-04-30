@@ -4,7 +4,6 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 import yaml
-
 from doozerlib.cli import detect_embargo
 
 
@@ -16,8 +15,10 @@ class TestDetectEmbargoCli(TestCase):
         ]
         nvrs = [b["nvr"] for b in builds]
         expected = [builds[1]]
-        with patch("doozerlib.brew.get_build_objects", return_value=builds), \
-             patch("doozerlib.build_status_detector.BuildStatusDetector.find_embargoed_builds", return_value=[2]):
+        with (
+            patch("doozerlib.brew.get_build_objects", return_value=builds),
+            patch("doozerlib.build_status_detector.BuildStatusDetector.find_embargoed_builds", return_value=[2]),
+        ):
             actual = detect_embargo.detect_embargoes_in_nvrs(MagicMock(), nvrs)
         self.assertListEqual(actual, expected)
 
@@ -38,9 +39,11 @@ class TestDetectEmbargoCli(TestCase):
         builds_to_detect = [b for builds in included_builds for b in builds if b["id"] in {11, 13, 21, 23}]
         event_id = 42
         expected = [b for builds in included_builds for b in builds if b["id"] in {13, 23}]
-        with patch("doozerlib.brew.get_latest_builds", return_value=included_builds), \
-             patch("doozerlib.brew.get_tagged_builds", return_value=excluded_builds), \
-             patch("doozerlib.build_status_detector.BuildStatusDetector.find_embargoed_builds", return_value=[13, 23]) as find_embargoed_builds:
+        with (
+            patch("doozerlib.brew.get_latest_builds", return_value=included_builds),
+            patch("doozerlib.brew.get_tagged_builds", return_value=excluded_builds),
+            patch("doozerlib.build_status_detector.BuildStatusDetector.find_embargoed_builds", return_value=[13, 23]) as find_embargoed_builds,
+        ):
             actual = detect_embargo.detect_embargoes_in_tags(runtime, "all", included_tags, excluded_tags, event_id)
             find_embargoed_builds.assert_called_once_with(builds_to_detect, candidate_tags)
         self.assertEqual(actual, expected)
@@ -76,7 +79,9 @@ class TestDetectEmbargoCli(TestCase):
         fake_runtime = MagicMock()
         parallel_exec.return_value.get.return_value = [release_pullspecs[k] for k in releases]
         with patch("doozerlib.cli.detect_embargo.detect_embargoes_in_pullspecs") as detect_embargoes_in_pullspecs:
-            detect_embargoes_in_pullspecs.side_effect = lambda _, pullspecs: (["example.com/repo:bar"], [builds[1]]) if "example.com/repo:bar" in pullspecs else ([], [])
+            detect_embargoes_in_pullspecs.side_effect = lambda _, pullspecs: (
+                (["example.com/repo:bar"], [builds[1]]) if "example.com/repo:bar" in pullspecs else ([], [])
+            )
             actual = detect_embargo.detect_embargoes_in_releases(fake_runtime, releases)
             detect_embargoes_in_pullspecs.assert_called()
             detect_embargoes_in_pullspecs.reset_mock()
@@ -89,7 +94,8 @@ class TestDetectEmbargoCli(TestCase):
         fake_cmd_assert.return_value = (
             """
         {"config":{"Labels": {"com.redhat.component":"atomic-openshift-cluster-autoscaler-container", "version":"v4.3.25", "release":"202006081335"}}}
-        """, "",
+        """,
+            "",
         )
         actual = detect_embargo.get_nvr_by_pullspec(pullspec)
         self.assertEqual(actual, expected)
@@ -99,7 +105,8 @@ class TestDetectEmbargoCli(TestCase):
         fake_cmd_assert.return_value = (
             """
         {"references":{"spec":{"tags":[{"name":"foo","from":{"name":"registry.example.com/foo:abc"}}, {"name":"bar","from":{"name":"registry.example.com/bar:def"}}]}}}
-        """, "",
+        """,
+            "",
         )
         actual = list(detect_embargo.get_image_pullspecs_from_release_payload("doesn't matter"))
         expected = ["registry.example.com/foo:abc", "registry.example.com/bar:def"]

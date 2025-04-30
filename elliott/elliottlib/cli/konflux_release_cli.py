@@ -3,24 +3,22 @@ import sys
 from dataclasses import dataclass
 
 import click
-from kubernetes.dynamic import exceptions
-
-from elliottlib.cli.common import cli, click_coroutine
-from elliottlib.runtime import Runtime
-from elliottlib.cli.snapshot_cli import GetSnapshotCli
-from elliottlib.shipment_model import ShipmentConfig, Shipment, ShipmentEnv
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from doozerlib.backend.konflux_client import (
-    KonfluxClient,
-    API_VERSION,
-    KIND_RELEASE_PLAN,
-    KIND_SNAPSHOT,
-    KIND_RELEASE,
-    KIND_APPLICATION,
-)
 from artcommonlib import logutil
 from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
-
+from doozerlib.backend.konflux_client import (
+    API_VERSION,
+    KIND_APPLICATION,
+    KIND_RELEASE,
+    KIND_RELEASE_PLAN,
+    KIND_SNAPSHOT,
+    KonfluxClient,
+)
+from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.cli.snapshot_cli import GetSnapshotCli
+from elliottlib.runtime import Runtime
+from elliottlib.shipment_model import Shipment, ShipmentConfig, ShipmentEnv
+from kubernetes.dynamic import exceptions
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -36,8 +34,14 @@ class ReleaseConfig:
 
 class CreateReleaseCli:
     def __init__(
-        self, runtime: Runtime, config_path: str, release_env: str, konflux_config: dict,
-        image_repo_pull_secret: dict, dry_run: bool, force: bool,
+        self,
+        runtime: Runtime,
+        config_path: str,
+        release_env: str,
+        konflux_config: dict,
+        image_repo_pull_secret: dict,
+        dry_run: bool,
+        force: bool,
     ):
         self.runtime = runtime
         self.config_path = config_path
@@ -69,18 +73,15 @@ class CreateReleaseCli:
         meta = config.shipment.metadata
         if meta.product != self.runtime.product:
             raise ValueError(
-                f"shipment.metadata.product={meta.product} is expected to be the "
-                f"same as runtime.product={self.runtime.product}",
+                f"shipment.metadata.product={meta.product} is expected to be the " f"same as runtime.product={self.runtime.product}",
             )
         elif meta.group != self.runtime.group:
             raise ValueError(
-                f"shipment.metadata.group={meta.group} is expected to be the "
-                f"same as runtime.group={self.runtime.group}",
+                f"shipment.metadata.group={meta.group} is expected to be the " f"same as runtime.group={self.runtime.group}",
             )
         elif meta.assembly != self.runtime.assembly:
             raise ValueError(
-                f"shipment.metadata.assembly={meta.assembly} is expected to be the "
-                f"same as runtime.assembly={self.runtime.assembly}",
+                f"shipment.metadata.assembly={meta.assembly} is expected to be the " f"same as runtime.assembly={self.runtime.assembly}",
             )
 
         # Ensure CRDs are accessible
@@ -101,23 +102,25 @@ class CreateReleaseCli:
 
         release_config = self.get_release_config(config.shipment, self.release_env)
         LOGGER.info(
-            f"Constructed release config with snapshot={release_config.snapshot}"
-            f" releasePlan={release_config.release_plan}",
+            f"Constructed release config with snapshot={release_config.snapshot}" f" releasePlan={release_config.release_plan}",
         )
 
         if not self.force:
             env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
             if env_config.shipped():
                 raise ValueError(
-                    f"existing release metadata is not empty for {self.release_env}: "
-                    f"{env_config.model_dump()}. Use --force to proceed",
+                    f"existing release metadata is not empty for {self.release_env}: " f"{env_config.model_dump()}. Use --force to proceed",
                 )
 
         # verify snapshot
         # TODO: make it work for bundle
         get_snapshot_cli = GetSnapshotCli(
-            self.runtime, self.konflux_config, self.image_repo_pull_secret,
-            for_bundle=False, for_fbc=meta.fbc, snapshot=release_config.snapshot,
+            self.runtime,
+            self.konflux_config,
+            self.image_repo_pull_secret,
+            for_bundle=False,
+            for_fbc=meta.fbc,
+            snapshot=release_config.snapshot,
             dry_run=False,
         )
         actual_nvrs = set(await get_snapshot_cli.run())
@@ -126,8 +129,7 @@ class CreateReleaseCli:
             missing = expected_nvrs - actual_nvrs
             extra = actual_nvrs - expected_nvrs
             raise ValueError(
-                f"snapshot includes missing or extra nvrs than what's defined in spec: {missing=} "
-                f"{extra=}",
+                f"snapshot includes missing or extra nvrs than what's defined in spec: {missing=} " f"{extra=}",
             )
 
         release_obj = await self.new_release(release_config)
@@ -194,35 +196,56 @@ def konflux_release_cli():
 
 
 @konflux_release_cli.command(
-    "new", short_help="Create a new Konflux Release in the given namespace for the given "
-    "shipment-data configuration",
+    "new",
+    short_help="Create a new Konflux Release in the given namespace for the given " "shipment-data configuration",
 )
 @click.option('--konflux-kubeconfig', metavar='KUBECONF_PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
-@click.option('--pull-secret', metavar='PATH', help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.')
 @click.option(
-    '--config', metavar='CONFIG_PATH', required=True,
-    help='Path of the shipment config file to use for creating release. The path should be from the root of the  '
-         'given shipment-data repo.',
+    '--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.'
 )
 @click.option(
-    '--env', metavar='RELEASE_ENV', required=True, type=click.Choice(["stage", "prod"]),
+    '--pull-secret',
+    metavar='PATH',
+    help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.',
+)
+@click.option(
+    '--config',
+    metavar='CONFIG_PATH',
+    required=True,
+    help='Path of the shipment config file to use for creating release. The path should be from the root of the  ' 'given shipment-data repo.',
+)
+@click.option(
+    '--env',
+    metavar='RELEASE_ENV',
+    required=True,
+    type=click.Choice(["stage", "prod"]),
     help='Release environment to create the release for',
 )
 @click.option(
-    '--apply', is_flag=True, default=False,
+    '--apply',
+    is_flag=True,
+    default=False,
     help='Create the release in cluster (False by default)',
 )
 @click.option(
-    '--force', is_flag=True, default=False,
+    '--force',
+    is_flag=True,
+    default=False,
     help='Proceed even if an associated release/advisory detected',
 )
 @click.pass_obj
 @click_coroutine
 async def new_release_cli(
-    runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-    pull_secret, config, env, apply, force,
+    runtime: Runtime,
+    konflux_kubeconfig,
+    konflux_context,
+    konflux_namespace,
+    pull_secret,
+    config,
+    env,
+    apply,
+    force,
 ):
     """
     Create a new Konflux Release in the given namespace based on the config provided

@@ -8,8 +8,8 @@ in a working directory other than the CWD and return without needing to
 explicitly handle it.
 """
 
-import threading
 import pathlib
+import threading
 
 
 class Dir(object):
@@ -24,6 +24,7 @@ class Dir(object):
 
     The exectools library honors these contexts automatically.
     """
+
     _tl = threading.local()
 
     def __init__(self, newdir):

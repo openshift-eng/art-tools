@@ -1,9 +1,8 @@
 import copy
+import typing
 from enum import Enum
 
-import typing
-
-from artcommonlib.model import Model, Missing, ListModel
+from artcommonlib.model import ListModel, Missing, Model
 
 
 class AssemblyTypes(Enum):
@@ -81,6 +80,7 @@ class AssemblyIssue:
     An encapsulation of an issue with an assembly. Some issues are critical for any
     assembly and some are on relevant for assemblies we intend for GA.
     """
+
     def __init__(self, msg: str, component: str, code: AssemblyIssueCode = AssemblyIssueCode.IMPERMISSIBLE):
         """
         :param msg: A human readable message describing the issue.
@@ -141,9 +141,15 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
             if hasattr(key_struct, "primitive"):
                 key_struct = key_struct.primitive()
             key_struct = _merger(
-                key_struct, parent_config_struct.primitive() if hasattr(
-                parent_config_struct, "primitive",
-                ) else parent_config_struct,
+                key_struct,
+                (
+                    parent_config_struct.primitive()
+                    if hasattr(
+                        parent_config_struct,
+                        "primitive",
+                    )
+                    else parent_config_struct
+                ),
             )
         else:
             key_struct = parent_config_struct

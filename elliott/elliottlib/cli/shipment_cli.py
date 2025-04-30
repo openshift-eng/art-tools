@@ -1,15 +1,22 @@
-import click
 import sys
-from ruamel.yaml import YAML
 
+import click
+from artcommonlib import logutil
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
 from elliottlib.cli.common import cli, click_coroutine
 from elliottlib.runtime import Runtime
-from artcommonlib import logutil
 from elliottlib.shipment_model import (
-    Shipment, Metadata, Environments, ShipmentEnv, Snapshot, Spec, ShipmentConfig,
-    Data, ReleaseNotes,
+    Data,
+    Environments,
+    Metadata,
+    ReleaseNotes,
+    Shipment,
+    ShipmentConfig,
+    ShipmentEnv,
+    Snapshot,
+    Spec,
 )
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from ruamel.yaml import YAML
 
 LOGGER = logutil.get_logger(__name__)
 
@@ -26,8 +33,14 @@ def shipment_cli():
 
 class InitShipmentCli:
     def __init__(
-        self, runtime: Runtime, application: str, snapshot: str, stage_rpa: str, prod_rpa: str,
-        for_fbc: bool, advisory_key: str,
+        self,
+        runtime: Runtime,
+        application: str,
+        snapshot: str,
+        stage_rpa: str,
+        prod_rpa: str,
+        for_fbc: bool,
+        advisory_key: str,
     ):
         self.runtime = runtime
         self.application = application
@@ -105,8 +118,13 @@ class InitShipmentCli:
 @click.pass_obj
 @click_coroutine
 async def init_shipment_cli(
-    runtime: Runtime, application: str, snapshot: str, stage_rpa: str,
-    prod_rpa: str, for_fbc: bool, advisory_key: str,
+    runtime: Runtime,
+    application: str,
+    snapshot: str,
+    stage_rpa: str,
+    prod_rpa: str,
+    for_fbc: bool,
+    advisory_key: str,
 ):
     """
     Init a new shipment config based on the given group and assembly, for a Konflux release.
@@ -119,8 +137,7 @@ async def init_shipment_cli(
     """
     if advisory_key and for_fbc:
         raise ValueError(
-            "Cannot use --for-fbc and --advisory-key together. An fbc shipment is not expected to have "
-            "an advisory",
+            "Cannot use --for-fbc and --advisory-key together. An fbc shipment is not expected to have " "an advisory",
         )
 
     pipeline = InitShipmentCli(

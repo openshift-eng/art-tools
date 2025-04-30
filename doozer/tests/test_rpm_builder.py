@@ -1,7 +1,6 @@
-import logging
 import io
+import logging
 from pathlib import Path
-
 from unittest import IsolatedAsyncioTestCase, mock
 
 from artcommonlib import gitdata
@@ -28,7 +27,9 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
 
     def _make_rpm_meta(self, runtime, source_sha, distgit_sha):
         data_obj = gitdata.DataObj(
-            "foo", "/path/to/ocp-build-data/rpms/foo.yml", {
+            "foo",
+            "/path/to/ocp-build-data/rpms/foo.yml",
+            {
                 "name": "foo",
                 "content": {
                     "source": {
@@ -68,17 +69,22 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
     @mock.patch("artcommonlib.exectools.cmd_gather_async")
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
     async def test_rebase(
-        self, mocked_cmd_assert_async: mock.Mock, mocked_cmd_gather_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
-        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock,
+        self,
+        mocked_cmd_assert_async: mock.Mock,
+        mocked_cmd_gather_async: mock.Mock,
+        mocked_open: mock.Mock,
+        mocked_os_remove: mock.Mock,
+        mocked_copy: mock.Mock,
+        mocked_mkdir: mock.Mock,
     ):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
-        mocked_cmd_gather_async.side_effect = \
-            lambda cmd, **kwargs: {"spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", "")} \
-            .get(cmd[0], (0, "fake_stdout", "fake_stderr"))
+        mocked_cmd_gather_async.side_effect = lambda cmd, **kwargs: {
+            "spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", "")
+        }.get(cmd[0], (0, "fake_stdout", "fake_stderr"))
 
         builder = RPMBuilder(runtime, scratch=False, dry_run=False)
         builder._populate_specfile_async = mock.AsyncMock(return_value=["fake spec content"])
@@ -89,7 +95,17 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(rpm.release, "202104070000.test.p0.g" + source_sha[:7])
         mocked_open.assert_called_once_with(dg.dg_path / "foo.spec", "w")
         mocked_open.return_value.__aenter__.return_value.writelines.assert_called_once_with(["fake spec content"])
-        mocked_cmd_assert_async.assert_any_call(["tar", "-czf", str(dg.dg_path / f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"), "--exclude=.git", fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,", "."], cwd=rpm.source_path)
+        mocked_cmd_assert_async.assert_any_call(
+            [
+                "tar",
+                "-czf",
+                str(dg.dg_path / f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"),
+                "--exclude=.git",
+                fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
+                ".",
+            ],
+            cwd=rpm.source_path,
+        )
         mocked_cmd_assert_async.assert_any_call(["rhpkg", "new-sources", f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"], cwd=dg.dg_path)
         mocked_cmd_gather_async.assert_called_with(["spectool", "--", str(dg.dg_path / "foo.spec")], cwd=dg.dg_path)
         mocked_copy.assert_any_call(Path(rpm.source_path) / "a.diff", dg.dg_path / "a.diff", follow_symlinks=False)
@@ -113,17 +129,22 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
     @mock.patch("artcommonlib.exectools.cmd_gather_async")
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
     async def test_rebase_with_assembly(
-        self, mocked_cmd_assert_async: mock.Mock, mocked_cmd_gather_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
-        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock,
+        self,
+        mocked_cmd_assert_async: mock.Mock,
+        mocked_cmd_gather_async: mock.Mock,
+        mocked_open: mock.Mock,
+        mocked_os_remove: mock.Mock,
+        mocked_copy: mock.Mock,
+        mocked_mkdir: mock.Mock,
     ):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime(assembly='tester')
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
-        mocked_cmd_gather_async.side_effect = \
-            lambda cmd, **kwargs: {"spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", "")} \
-            .get(cmd[0], (0, "fake_stdout", "fake_stderr"))
+        mocked_cmd_gather_async.side_effect = lambda cmd, **kwargs: {
+            "spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", "")
+        }.get(cmd[0], (0, "fake_stdout", "fake_stderr"))
 
         builder = RPMBuilder(runtime, scratch=False, dry_run=False)
         builder._populate_specfile_async = mock.AsyncMock(return_value=["fake spec content"])
@@ -134,7 +155,17 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         self.assertEqual(rpm.release, "202104070000.test.p0.g" + source_sha[:7] + '.assembly.tester')
         mocked_open.assert_called_once_with(dg.dg_path / "foo.spec", "w")
         mocked_open.return_value.__aenter__.return_value.writelines.assert_called_once_with(["fake spec content"])
-        mocked_cmd_assert_async.assert_any_call(["tar", "-czf", str(dg.dg_path / f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"), "--exclude=.git", fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,", "."], cwd=rpm.source_path)
+        mocked_cmd_assert_async.assert_any_call(
+            [
+                "tar",
+                "-czf",
+                str(dg.dg_path / f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"),
+                "--exclude=.git",
+                fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
+                ".",
+            ],
+            cwd=rpm.source_path,
+        )
         mocked_cmd_assert_async.assert_any_call(["rhpkg", "new-sources", f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"], cwd=dg.dg_path)
         mocked_cmd_gather_async.assert_called_with(["spectool", "--", str(dg.dg_path / "foo.spec")], cwd=dg.dg_path)
         mocked_copy.assert_any_call(Path(rpm.source_path) / "a.diff", dg.dg_path / "a.diff", follow_symlinks=False)
@@ -169,9 +200,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
             }[target],
         )
         builder._watch_tasks_async = mock.AsyncMock(
-            side_effect=lambda task_ids, _: {
-            task_id: None for task_id in task_ids
-            },
+            side_effect=lambda task_ids, _: {task_id: None for task_id in task_ids},
         )
         mocked_cmd_gather_async.return_value = (0, "some stdout", "some stderr")
         dg.resolve_specfile_async = mock.AsyncMock(return_value=(dg.dg_path / "foo.spec", ("foo", "1.2.3", "1"), source_sha))
@@ -182,7 +211,11 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         }[taskID]
 
         actual = await builder.build(rpm)
-        expected = ([10001, 10002], ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"], ["foo-1.2.3-1.el8", "foo-1.2.3-1.el7"])
+        expected = (
+            [10001, 10002],
+            ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"],
+            ["foo-1.2.3-1.el8", "foo-1.2.3-1.el7"],
+        )
         self.assertEqual(actual, expected)
         self.assertTrue(rpm.build_status)
         builder._golang_required.assert_called_once_with(rpm.specfile)
@@ -211,9 +244,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
             }[target],
         )
         builder._watch_tasks_async = mock.AsyncMock(
-            side_effect=lambda task_ids, _: {
-            task_id: "Some error" for task_id in task_ids
-            },
+            side_effect=lambda task_ids, _: {task_id: "Some error" for task_id in task_ids},
         )
         mocked_cmd_gather_async.return_value = (0, "some stdout", "some stderr")
         dg.resolve_specfile_async = mock.AsyncMock(return_value=(dg.dg_path / "foo.spec", ("foo", "1.2.3", "1"), source_sha))
@@ -221,7 +252,10 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         with self.assertRaises(RetryException) as cm:
             await builder.build(rpm)
 
-        expected = ([10001, 10002], ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"])
+        expected = (
+            [10001, 10002],
+            ["https://brewweb.example.com/brew/taskinfo?taskID=10001", "https://brewweb.example.com/brew/taskinfo?taskID=10002"],
+        )
         self.assertEqual(cm.exception.args[1], expected)
         self.assertIn("Giving up after 3 failed attempt(s):", cm.exception.args[0])
         self.assertFalse(rpm.build_status)
@@ -237,22 +271,26 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_gather_async")
     async def test_golang_required(self, mocked_cmd_gather_async: mock.Mock):
         mocked_cmd_gather_async.return_value = (
-            0, """
+            0,
+            """
 git
 python3-devel
-        """, "",
+        """,
+            "",
         )
         builder = RPMBuilder(mock.Mock(), scratch=False, dry_run=False)
         actual = await builder._golang_required("./foo.spec")
         self.assertFalse(actual)
 
         mocked_cmd_gather_async.return_value = (
-            0, """
+            0,
+            """
 git
 python3-devel
 golang-1.2.3
 systemd-units
-        """, "",
+        """,
+            "",
         )
         builder = RPMBuilder(mock.Mock(), scratch=False, dry_run=False)
         actual = await builder._golang_required("./foo.spec")
@@ -308,10 +346,12 @@ Some description
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
         mocked_cmd_gather_async.return_value = (
-            0, """
+            0,
+            """
 Created task: 123456
 Task info: https://brewweb.example.com/brew/taskinfo?taskID=123456
-        """, "",
+        """,
+            "",
         )
 
         # call with scratch=False

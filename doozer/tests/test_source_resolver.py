@@ -1,13 +1,11 @@
-
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import Mock
 
 from artcommonlib import exectools
 from artcommonlib.model import Missing, Model
-from flexmock import flexmock
-
 from doozerlib.source_resolver import SourceResolver
+from flexmock import flexmock
 
 
 class SourceResolverTestCase(TestCase):
@@ -47,12 +45,7 @@ class SourceResolverTestCase(TestCase):
         self.assertEqual(("main_branch", "spam"), sr.detect_remote_source_branch(source_details, stage=False))
 
         # got a hit on the fallback branch
-        (
-            flexmock(SourceResolver).
-            should_receive("_get_remote_branch_ref").
-            and_return(None).
-            and_return("eggs")
-        )
+        (flexmock(SourceResolver).should_receive("_get_remote_branch_ref").and_return(None).and_return("eggs"))
         self.assertEqual(("fallback_branch", "eggs"), sr.detect_remote_source_branch(source_details, stage=False))
 
         # no target or fallback branch

@@ -1,9 +1,9 @@
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock, patch, ANY, Mock
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
+from artcommonlib.model import Model
 from doozerlib.backend.konflux_client import API_VERSION, KIND_SNAPSHOT
 from elliottlib.cli.snapshot_cli import CreateSnapshotCli, GetSnapshotCli
-from artcommonlib.model import Model
 
 
 class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
@@ -70,32 +70,34 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
 
             await cli.run()
 
-            self.konflux_client._create.assert_called_once_with({
-                'apiVersion': 'appstudio.redhat.com/v1alpha1',
-                'kind': 'Snapshot',
-                'metadata': {
-                    'labels': {
-                        'test.appstudio.openshift.io/type': 'override',
+            self.konflux_client._create.assert_called_once_with(
+                {
+                    'apiVersion': 'appstudio.redhat.com/v1alpha1',
+                    'kind': 'Snapshot',
+                    'metadata': {
+                        'labels': {
+                            'test.appstudio.openshift.io/type': 'override',
+                        },
+                        'name': 'ose-4-18-timestamp',
+                        'namespace': 'test-namespace',
                     },
-                    'name': 'ose-4-18-timestamp',
-                    'namespace': 'test-namespace',
-                },
-                'spec': {
-                    'application': 'openshift-4-18',
-                    'components': [
-                        {
-                            'containerImage': 'registry/image@sha256:digest1',
-                            'name': 'ose-4-18-component1',
-                            'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}},
-                        },
-                        {
-                            'containerImage': 'registry/image@sha256:digest2',
-                            'name': 'ose-4-18-component2',
-                            'source': {'git': {'revision': 'test', 'url': 'https://github.com/test/repo2'}},
-                        },
-                    ],
-                },
-            })
+                    'spec': {
+                        'application': 'openshift-4-18',
+                        'components': [
+                            {
+                                'containerImage': 'registry/image@sha256:digest1',
+                                'name': 'ose-4-18-component1',
+                                'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}},
+                            },
+                            {
+                                'containerImage': 'registry/image@sha256:digest2',
+                                'name': 'ose-4-18-component2',
+                                'source': {'git': {'revision': 'test', 'url': 'https://github.com/test/repo2'}},
+                            },
+                        ],
+                    },
+                }
+            )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch('elliottlib.runtime.Runtime')
@@ -120,7 +122,9 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
         records = await cli.fetch_build_records()
         self.assertEqual(records, mock_records)
         self.runtime.konflux_db.get_build_records_by_nvrs.assert_called_once_with(
-            builds, where=ANY, strict=True,
+            builds,
+            where=ANY,
+            strict=True,
         )
 
 
@@ -167,11 +171,13 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             },
             'spec': {
                 'application': 'openshift-4-18',
-                'components': [{
-                    'containerImage': 'registry/image@sha256:digest1',
-                    'name': 'ose-4-18-component1',
-                    'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}},
-                }],
+                'components': [
+                    {
+                        'containerImage': 'registry/image@sha256:digest1',
+                        'name': 'ose-4-18-component1',
+                        'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}},
+                    }
+                ],
             },
         }
         self.konflux_client._get.return_value = Model(snapshot)

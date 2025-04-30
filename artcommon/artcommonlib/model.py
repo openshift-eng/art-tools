@@ -150,7 +150,7 @@ class Model(dict):
         super(Model, self).__delitem__(key)
 
     def primitive(self):
-        """ Recursively turn Model into dicts. """
+        """Recursively turn Model into dicts."""
         d = {}
         for k, v in self.items():
             if isinstance(v, Model) or isinstance(v, ListModel):

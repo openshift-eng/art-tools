@@ -1,9 +1,10 @@
 import unittest
+
+import elliottlib.cli.remove_bugs_cli
 from click.testing import CliRunner
 from elliottlib import errata
-from elliottlib.cli.common import cli, Runtime
-import elliottlib.cli.remove_bugs_cli
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
 from flexmock import flexmock
 
 
@@ -24,8 +25,16 @@ class RemoveBugsTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("remove_bugs").with_args(advisory, {1, 2}, False)
 
         result = runner.invoke(
-            cli, [
-                '-g', 'openshift-4.6', 'remove-bugs', '1', '2', 'OCPBUGS-3', 'OCPBUGS-4', '-a',
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'remove-bugs',
+                '1',
+                '2',
+                'OCPBUGS-3',
+                'OCPBUGS-4',
+                '-a',
                 advisory.errata_id,
             ],
         )

@@ -10,12 +10,11 @@ from typing import Dict, List, Optional
 
 import aiofiles
 import aiofiles.os
-
 from artcommonlib import exectools
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_assembly_in_release
 from doozerlib import brew
-from doozerlib.build_visibility import get_visibility_suffix, BuildVisibility
+from doozerlib.build_visibility import BuildVisibility, get_visibility_suffix
 from doozerlib.constants import BREWWEB_URL
 from doozerlib.distgit import RPMDistGitRepo
 from doozerlib.rpmcfg import RPMMetadata
@@ -24,13 +23,17 @@ from doozerlib.util import is_in_directory
 
 
 class RPMBuilder:
-    """ It builds RPMs!
-    """
+    """It builds RPMs!"""
 
     def __init__(
-        self, runtime: Runtime, *, push: bool = True, scratch: bool = False, dry_run: bool = False,
+        self,
+        runtime: Runtime,
+        *,
+        push: bool = True,
+        scratch: bool = False,
+        dry_run: bool = False,
     ) -> None:
-        """ Create a RPMBuilder instance.
+        """Create a RPMBuilder instance.
         :param runtime: Doozer runtime
         :param scratch: Whether to push commits and upload sources to distgit
         :param scratch: Whether to create a scratch build
@@ -42,7 +45,7 @@ class RPMBuilder:
         self._dry_run = dry_run
 
     async def rebase(self, rpm: RPMMetadata, version: str, release: str) -> str:
-        """ Rebases and pushes the distgit repo for an rpm
+        """Rebases and pushes the distgit repo for an rpm
         :param rpm: Metadata of the rpm
         :param version: Set rpm version
         :param release: Set rpm release
@@ -59,10 +62,12 @@ class RPMBuilder:
         # cleanup distgit dir
         logger.info("Cleaning up distgit repo...")
         await exectools.cmd_assert_async(
-            ["git", "reset", "--hard", "origin/" + dg.branch], cwd=dg.distgit_dir,
+            ["git", "reset", "--hard", "origin/" + dg.branch],
+            cwd=dg.distgit_dir,
         )
         await exectools.cmd_assert_async(
-            ["git", "rm", "--ignore-unmatch", "-rf", "."], cwd=dg.distgit_dir,
+            ["git", "rm", "--ignore-unmatch", "-rf", "."],
+            cwd=dg.distgit_dir,
         )
 
         # set .p? flag
@@ -94,7 +99,9 @@ class RPMBuilder:
         if rpm.config.content.source.modifications is not Missing:
             logger.info("Running custom modifications...")
             await exectools.to_thread(
-                rpm._run_modifications, rpm.specfile, rpm.source_path,
+                rpm._run_modifications,
+                rpm.specfile,
+                rpm.source_path,
             )
 
         # generate new specfile
@@ -108,7 +115,9 @@ class RPMBuilder:
             await f.writelines(specfile)
 
         if rpm.get_package_name_from_spec() != rpm.get_package_name():
-            raise IOError(f'RPM package name in .spec file ({rpm.get_package_name_from_spec()}) does not match doozer metadata name {rpm.get_package_name()}')
+            raise IOError(
+                f'RPM package name in .spec file ({rpm.get_package_name_from_spec()}) does not match doozer metadata name {rpm.get_package_name()}'
+            )
 
         rpm.specfile = str(dg_specfile_path)
 
@@ -133,7 +142,8 @@ class RPMBuilder:
         if self._push:
             if not self._dry_run:
                 await exectools.cmd_assert_async(
-                    ["rhpkg", "new-sources", tarball_name], cwd=dg.dg_path,
+                    ["rhpkg", "new-sources", tarball_name],
+                    cwd=dg.dg_path,
                 )
             else:
                 async with aiofiles.open(dg.dg_path / "sources", "w") as f:
@@ -144,7 +154,8 @@ class RPMBuilder:
         # copy Source1, Source2,... and Patch0, Patch1,...
         logger.info("Determining additional sources and patches...")
         _, out, _ = await exectools.cmd_gather_async(
-            ["spectool", "--", str(dg_specfile_path)], cwd=dg.dg_path,
+            ["spectool", "--", str(dg_specfile_path)],
+            cwd=dg.dg_path,
         )
         for line in out.splitlines():
             line_split = line.split(": ")
@@ -156,14 +167,18 @@ class RPMBuilder:
             if not is_in_directory(src, rpm.source_path):
                 raise ValueError(
                     "STOP! Source file {} referenced in Specfile {} lives outside of the source directory {}".format(
-                        filename, dg_specfile_path, rpm.source_path,
+                        filename,
+                        dg_specfile_path,
+                        rpm.source_path,
                     ),
                 )
             dest = dg.dg_path / filename
             if not is_in_directory(dest, dg.dg_path):
                 raise ValueError(
                     "STOP! Source file {} referenced in Specfile {} would be copied to a directory outside of distgit directory {}".format(
-                        filename, dg_specfile_path, dg.dg_path,
+                        filename,
+                        dg_specfile_path,
+                        dg.dg_path,
                     ),
                 )
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -194,7 +209,7 @@ class RPMBuilder:
         return commit_hash
 
     async def build(self, rpm: RPMMetadata, retries: int = 3):
-        """ Builds rpm with the latest distgit commit
+        """Builds rpm with the latest distgit commit
         :param rpm: Metadata of the RPM
         :param retries: The number of times to retry
         """
@@ -247,8 +262,7 @@ class RPMBuilder:
                     logs_rc, _, logs_err = await exectools.cmd_gather_async(cmd, check=False)
                     if logs_rc != exectools.SUCCESS:
                         logger.warning(
-                            "Error downloading build logs from brew for task %s: %s"
-                            % (task_id, logs_err),
+                            "Error downloading build logs from brew for task %s: %s" % (task_id, logs_err),
                         )
                 else:
                     logger.warning("DRY RUN - Would have downloaded Brew logs with %s", cmd)
@@ -259,7 +273,9 @@ class RPMBuilder:
                     if not koji_api.logged_in:
                         koji_api.gssapi_login()
                     with koji_api.multicall(strict=True) as m:
-                        multicall_tasks = [m.listBuilds(taskID=task_id, completeBefore=None) for task_id in task_ids]    # this call should not be constrained by brew event
+                        multicall_tasks = [
+                            m.listBuilds(taskID=task_id, completeBefore=None) for task_id in task_ids
+                        ]  # this call should not be constrained by brew event
                     nvrs = [task.result[0]["nvr"] for task in multicall_tasks]
                     if self._runtime.hotfix:
                         # Tag rpms so they don't get garbage collected.
@@ -273,10 +289,7 @@ class RPMBuilder:
                 rpm.build_status = True
                 break
             # An error occurred. We don't have a viable build.
-            message = ", ".join(
-                f"Task {task_id} failed: {errors[task_id]}"
-                for task_id in failed_tasks
-            )
+            message = ", ".join(f"Task {task_id} failed: {errors[task_id]}" for task_id in failed_tasks)
             logger.warning(
                 "Error building rpm %s [attempt #%s] in Brew: %s",
                 rpm.qualified_name,
@@ -302,7 +315,10 @@ class RPMBuilder:
 
     @staticmethod
     async def _populate_specfile_async(
-        rpm: RPMMetadata, source_filename: str, source_commit_url: str, go_compliance_shim=False,
+        rpm: RPMMetadata,
+        source_filename: str,
+        source_commit_url: str,
+        go_compliance_shim=False,
     ) -> List[str]:
         """Populates spec file
         :param source_filename: Path to the template spec file
@@ -347,15 +363,17 @@ class RPMBuilder:
                 lines[i] = f"{lines[i].strip()}\n{maintainer_string}\n"
                 described = True
             elif "%global os_git_vars " in line:
-                lines[
-                    i
-                ] = f"%global os_git_vars OS_GIT_VERSION={full} OS_GIT_MAJOR={major} OS_GIT_MINOR={minor} OS_GIT_PATCH={patch} OS_GIT_COMMIT={commit_sha} OS_GIT_TREE_STATE=clean"
+                lines[i] = (
+                    f"%global os_git_vars OS_GIT_VERSION={full} OS_GIT_MAJOR={major} OS_GIT_MINOR={minor} OS_GIT_PATCH={patch} OS_GIT_COMMIT={commit_sha} OS_GIT_TREE_STATE=clean"
+                )
                 for k, v in rpm.extra_os_git_vars.items():
                     lines[i] += f" {k}={v}"
                 lines[i] += "\n"
             elif "%global commit" in line:
                 lines[i] = re.sub(
-                    r"commit\s+\w+", "commit {}".format(commit_sha), lines[i],
+                    r"commit\s+\w+",
+                    "commit {}".format(commit_sha),
+                    lines[i],
                 )
             elif line.startswith("%setup"):
                 lines[i] = f"%setup -q -n {rpm.config.name}-{rpm.version}\n"
@@ -367,7 +385,9 @@ class RPMBuilder:
             elif line.startswith("%build"):
                 if go_compliance_shim:
                     rpm_builder_go_wrapper_sh = pathlib.Path(pathlib.Path(__file__).parent, 'rpm_builder_go_wrapper.sh').read_text()
-                    lines[i] = f'''{line}
+                    lines[
+                        i
+                    ] = f'''{line}
 export REAL_GO_PATH=$(which go || true)
 if [[ -n "$REAL_GO_PATH" ]]; then
     GOSHIM_DIR=/tmp/goshim
@@ -408,7 +428,7 @@ fi
         return lines
 
     async def _build_target_async(self, rpm: RPMMetadata, target: str):
-        """ Creates a Brew task to build the rpm against specific target
+        """Creates a Brew task to build the rpm against specific target
         :param rpm: Metadata of the rpm
         :param target: The target to build against
         """
@@ -427,25 +447,19 @@ fi
         out_lines = out.splitlines()
         # Look for a line like: "Created task: 13949050" . Extract the identifier.
         task_id = int(
-            next(
-                (line.split(":")[1]).strip()
-                for line in out_lines
-                if line.startswith("Created task:")
-            ),
+            next((line.split(":")[1]).strip() for line in out_lines if line.startswith("Created task:")),
         )
         # Look for a line like: "Task info: https://brewweb.engineering.redhat.com/brew/taskinfo?taskID=13948942"
-        task_url = next(
-            (line.split(":", 1)[1]).strip()
-            for line in out_lines
-            if line.startswith("Task info:")
-        )
+        task_url = next((line.split(":", 1)[1]).strip() for line in out_lines if line.startswith("Task info:"))
         logger.info("Build running: %s - %s - %s", rpm.rpm_name, target, task_url)
         return task_id, task_url
 
     async def _watch_tasks_async(
-        self, task_ids: List[int], logger: logging.Logger,
+        self,
+        task_ids: List[int],
+        logger: logging.Logger,
     ) -> Dict[int, Optional[str]]:
-        """ Asynchronously watches Brew Tasks for completion
+        """Asynchronously watches Brew Tasks for completion
         :param task_ids: List of Brew task IDs
         :param logger: A logger for logging
         :return: a dict of task ID and error message mappings

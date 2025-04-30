@@ -1,6 +1,6 @@
 import unittest
-from flexmock import flexmock
 
+from flexmock import flexmock
 from validator.schema import image_schema, rpm_schema, validate
 
 
@@ -17,10 +17,6 @@ class TestSchema(unittest.TestCase):
     def test_unsupported_schema(self):
         err = validate('unknown/my-file.yml', 'data')
         self.assertEqual(
-            err, (
-                'Could not determine a schema\n'
-                'Supported schemas: image, rpm\n'
-                'Make sure the file is placed in either dir '
-                '"images" or "rpms"'
-            ),
+            err,
+            ('Could not determine a schema\n' 'Supported schemas: image, rpm\n' 'Make sure the file is placed in either dir ' '"images" or "rpms"'),
         )

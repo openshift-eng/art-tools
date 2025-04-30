@@ -5,7 +5,6 @@ from typing import Dict, Optional, Tuple
 from urllib.parse import quote
 
 import koji
-
 from artcommonlib import exectools
 from doozerlib import brew, distgit, image, runtime
 from doozerlib.constants import BREWWEB_URL, DISTGIT_GIT_URL
@@ -20,13 +19,16 @@ class OSBS2BuildError(Exception):
 
 
 class OSBS2Builder:
-    """ Builds container images with OSBS 2
-    """
+    """Builds container images with OSBS 2"""
 
     def __init__(
-        self, runtime: "runtime.Runtime", *, scratch: bool = False, dry_run: bool = False,
+        self,
+        runtime: "runtime.Runtime",
+        *,
+        scratch: bool = False,
+        dry_run: bool = False,
     ) -> None:
-        """ Create a OSBS2Builder instance.
+        """Create a OSBS2Builder instance.
         :param runtime: Doozer runtime
         :param scratch: Whether to create a scratch build
         :param dry_run: Don't build anything but just exercise the code
@@ -36,7 +38,7 @@ class OSBS2Builder:
         self.dry_run = dry_run
 
     async def build(self, image: "image.ImageMetadata", profile: Dict, retries: int = 3) -> Tuple[int, Optional[str], Optional[Dict]]:
-        """ Build an image
+        """Build an image
         :param image: Image metadata
         :param profile: Build profile
         :param retries: The number of times to retry
@@ -131,7 +133,8 @@ class OSBS2Builder:
         if error:
             raise OSBS2BuildError(
                 f"Giving up after {retries} failed attempt(s): {message}",
-                task_id, task_url,
+                task_id,
+                task_url,
             )
 
         if build_info:
@@ -142,8 +145,7 @@ class OSBS2Builder:
         if not self.scratch and self._runtime.hotfix:
             # Tag the image so it won't get garbage collected.
             logger.info(
-                f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()}'
-                f' to prevent garbage collection',
+                f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()}' f' to prevent garbage collection',
             )
             if self.dry_run:
                 logger.warning("[DRY RUN] Build %s would have been tagged into %s", build_info["nvr"], image.hotfix_brew_tag())
@@ -168,8 +170,7 @@ class OSBS2Builder:
                 existence, repo_url = True, f"https://cgit.example.com/{repo_file}"
             if not existence:
                 raise FileNotFoundError(
-                    f"Repo file {repo_file} is not available on cgit; cgit cache may not be"
-                    f" reflecting distgit in a timely manner.",
+                    f"Repo file {repo_file} is not available on cgit; cgit cache may not be" f" reflecting distgit in a timely manner.",
                 )
             repo_list = [repo_url]
 

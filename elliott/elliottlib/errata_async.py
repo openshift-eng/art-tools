@@ -2,15 +2,13 @@ import asyncio
 import base64
 from typing import Dict, Iterable, List, Optional, Set, Union, cast
 from urllib.parse import quote, urlparse
-from aiohttp import ClientResponse, ClientResponseError, ClientTimeout
 
 import aiohttp
 import gssapi
-
+from aiohttp import ClientResponse, ClientResponseError, ClientTimeout
 from artcommonlib import logutil
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.rpm_utils import parse_nvr
-
 from elliottlib import constants, util
 
 _LOGGER = logutil.get_logger(__name__)
@@ -73,9 +71,7 @@ class AsyncErrataAPI:
 
     async def get_builds_flattened(self, advisory: Union[int, str]) -> Set[str]:
         pv_builds = await self.get_builds(advisory)
-        return {
-            nvr for pv in pv_builds.values() for pvb in pv["builds"] for nvr in pvb
-        }
+        return {nvr for pv in pv_builds.values() for pvb in pv["builds"] for nvr in pvb}
 
     async def get_cves(self, advisory: Union[int, str]) -> List[str]:
         # Errata API "/cve/show/{advisory}.json" doesn't return the correct CVEs for some RHSAs.
@@ -143,7 +139,7 @@ class AsyncErrataAPI:
             params["page[number]"] += 1
 
     def get_batches(self, id: int = 0, name: str = ""):
-        """ Get details of all batches ordered by name.
+        """Get details of all batches ordered by name.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
 
         :param id: Filter by batch ID
@@ -159,10 +155,15 @@ class AsyncErrataAPI:
         return self._paginated_request(aiohttp.hdrs.METH_GET, path, params=params)
 
     async def create_batch(
-        self, name: str, release_name: str, release_date: str, description: str,
-        is_active: bool = True, is_locked: bool = False,
+        self,
+        name: str,
+        release_name: str,
+        release_date: str,
+        description: str,
+        is_active: bool = True,
+        is_locked: bool = False,
     ):
-        """ Create a new batch.
+        """Create a new batch.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
 
         :param name: Batch name
@@ -193,7 +194,7 @@ class AsyncErrataAPI:
         is_active: Optional[bool] = None,
         is_locked: Optional[bool] = None,
     ):
-        """ Update an existing batch.
+        """Update an existing batch.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
 
         :param batch_id: Batch ID
@@ -221,7 +222,7 @@ class AsyncErrataAPI:
         return cast(Dict, await self._make_request(aiohttp.hdrs.METH_PUT, path, json=data)).get("data", {})
 
     async def change_batch_for_advisory(self, advisory: int, batch_id: Optional[int] = None):
-        """ Change the batch association for an advisory.
+        """Change the batch association for an advisory.
 
         :param advisory: Advisory ID
         :param batch_id: Batch ID to associate with the advisory. If None, clear the batch association.
@@ -235,16 +236,26 @@ class AsyncErrataAPI:
         return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
 
     async def create_advisory(
-        self, product: str, release: str, errata_type: str,
-        advisory_synopsis: str, advisory_topic: str, advisory_description: str, advisory_solution: str,
-        advisory_publish_date_override: Optional[str] = None, advisory_text_only: bool = False,
-        advisory_quality_responsibility_name: str = "Default", advisory_security_impact: Optional[str] = None,
-        advisory_package_owner_email: Optional[str] = None, advisory_manager_email: Optional[str] = None,
+        self,
+        product: str,
+        release: str,
+        errata_type: str,
+        advisory_synopsis: str,
+        advisory_topic: str,
+        advisory_description: str,
+        advisory_solution: str,
+        advisory_publish_date_override: Optional[str] = None,
+        advisory_text_only: bool = False,
+        advisory_quality_responsibility_name: str = "Default",
+        advisory_security_impact: Optional[str] = None,
+        advisory_package_owner_email: Optional[str] = None,
+        advisory_manager_email: Optional[str] = None,
         advisory_assigned_to_email: Optional[str] = None,
         idsfixed: Optional[List[Union[str, int]]] = None,
-        batch_id: Optional[int] = None, batch_name: Optional[str] = None,
+        batch_id: Optional[int] = None,
+        batch_name: Optional[str] = None,
     ):
-        """ Create a new advisory.
+        """Create a new advisory.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
 
         :param product: Product name
@@ -313,7 +324,7 @@ class AsyncErrataAPI:
         return advisory
 
     async def request_liveid(self, advisory_id: int):
-        """ Request a Live ID for an advisory.
+        """Request a Live ID for an advisory.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
 
         :param advisory_id: Advisory ID
@@ -325,7 +336,7 @@ class AsyncErrataAPI:
 class AsyncErrataUtils:
     @classmethod
     async def get_advisory_cve_exclusions(cls, api: AsyncErrataAPI, advisory_id: int):
-        """ This is a wrapper around `AsyncErrataAPI.get_cve_package_exclusions`.
+        """This is a wrapper around `AsyncErrataAPI.get_cve_package_exclusions`.
         The result value of original Errata API call `get_cve_package_exclusions` is not user-friendly.
         This method converts the result value into a better data structure.
         :return: a dict that key is CVE name, value is another dict with package name as key and exclusion_id as value
@@ -337,7 +348,7 @@ class AsyncErrataUtils:
 
     @classmethod
     def compute_cve_exclusions(cls, attached_builds: Iterable[str], expected_cve_components: Dict[str, Set[str]]):
-        """ Compute cve package exclusions from a list of attached builds and CVE-components mapping.
+        """Compute cve package exclusions from a list of attached builds and CVE-components mapping.
         :param attached_builds: list of NVRs
         :param expected_cve_components: a dict mapping each CVE to a list of brew components
         :return: a dict that key is CVE name, value is another dict with package name as key and 0 as value
@@ -369,8 +380,7 @@ class AsyncErrataUtils:
             )
 
         cve_exclusions = {
-            cve_name: {pkg: 0 for pkg in attached_brew_components - components}
-            for cve_name, components in expected_cve_components.items()
+            cve_name: {pkg: 0 for pkg in attached_brew_components - components} for cve_name, components in expected_cve_components.items()
         }
         return cve_exclusions
 
@@ -387,8 +397,7 @@ class AsyncErrataUtils:
             # Make sure they are go builder nvrs (this should never happen)
             if builder_nvr['name'] != constants.GOLANG_BUILDER_CVE_COMPONENT:
                 raise ValueError(
-                    f"Unexpected `name` value for nvr {builder_nvr}. Expected "
-                    f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.",
+                    f"Unexpected `name` value for nvr {builder_nvr}. Expected " f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.",
                 )
 
             if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
@@ -418,8 +427,7 @@ class AsyncErrataUtils:
             for base_golang_builder in base_golang_builders:
                 nvrs.update({nvr[0] for nvr in go_nvr_map[base_golang_builder]})
             _LOGGER.info(
-                f"Associating golang {cve_name} with golang "
-                f"images ({len(nvrs)})",
+                f"Associating golang {cve_name} with golang " f"images ({len(nvrs)})",
             )
             expected_cve_components[cve_name] = nvrs
 
@@ -427,33 +435,30 @@ class AsyncErrataUtils:
 
     @classmethod
     def diff_cve_exclusions(
-        cls, current_exclusions: Dict[str, Dict[str, int]],
+        cls,
+        current_exclusions: Dict[str, Dict[str, int]],
         expected_exclusions: Dict[str, Dict[str, int]],
     ):
-        """ Given 2 cve_package_exclusions dicts, return the difference.
+        """Given 2 cve_package_exclusions dicts, return the difference.
         :return: (extra_exclusions, missing_exclusions)
         """
         extra_exclusions = {
-            cve: {
-                pkg: exclusions[pkg] for pkg in exclusions.keys()
-                - expected_exclusions.get(cve, {}).keys()
-            }
+            cve: {pkg: exclusions[pkg] for pkg in exclusions.keys() - expected_exclusions.get(cve, {}).keys()}
             for cve, exclusions in current_exclusions.items()
         }
         missing_exclusions = {
-            cve: {
-                pkg: exclusions[pkg] for pkg in exclusions.keys()
-                - current_exclusions.get(cve, {}).keys()
-            }
+            cve: {pkg: exclusions[pkg] for pkg in exclusions.keys() - current_exclusions.get(cve, {}).keys()}
             for cve, exclusions in expected_exclusions.items()
         }
         return extra_exclusions, missing_exclusions
 
     @classmethod
     async def validate_cves_and_get_exclusions_diff(
-        cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[
-        str
-        ], cve_components_mapping: Dict[str, Dict],
+        cls,
+        api: AsyncErrataAPI,
+        advisory_id: int,
+        attached_builds: List[str],
+        cve_components_mapping: Dict[str, Dict],
     ):
         _LOGGER.info("Getting associated CVEs for advisory %s", advisory_id)
         advisory_cves = await api.get_cves(advisory_id)
@@ -484,10 +489,14 @@ class AsyncErrataUtils:
 
     @classmethod
     async def associate_builds_with_cves(
-        cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[str],
-        cve_components_mapping: Dict[str, Dict], dry_run=False,
+        cls,
+        api: AsyncErrataAPI,
+        advisory_id: int,
+        attached_builds: List[str],
+        cve_components_mapping: Dict[str, Dict],
+        dry_run=False,
     ):
-        """ Request Errata to associate CVEs to attached Brew builds
+        """Request Errata to associate CVEs to attached Brew builds
         :param api: Errata API
         :param advisory_id: advisory id
         :param attached_builds: list of attached Brew build NVRs

@@ -1,4 +1,5 @@
 import unittest
+
 import schema
 from validator.schema.modification_schema import modification
 

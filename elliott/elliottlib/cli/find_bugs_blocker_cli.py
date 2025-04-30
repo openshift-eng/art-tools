@@ -1,13 +1,13 @@
-import click
+import logging
 import sys
 import traceback
-import logging
 
+import click
 from artcommonlib.format_util import green_prefix
-from elliottlib.cli.find_bugs_sweep_cli import print_report, FindBugsMode
+from elliottlib import Runtime, constants
 from elliottlib.bzutil import BugTracker
-from elliottlib import (Runtime, constants)
 from elliottlib.cli.common import cli
+from elliottlib.cli.find_bugs_sweep_cli import FindBugsMode, print_report
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +28,8 @@ class FindBugsBlocker(FindBugsMode):
 
 @cli.command("find-bugs:blocker", short_help="List active blocker bugs")
 @click.option(
-    "--include-status", 'include_status',
+    "--include-status",
+    'include_status',
     multiple=True,
     default=None,
     required=False,
@@ -36,7 +37,8 @@ class FindBugsBlocker(FindBugsMode):
     help="Include bugs of this status",
 )
 @click.option(
-    "--exclude-status", 'exclude_status',
+    "--exclude-status",
+    'exclude_status',
     multiple=True,
     default=None,
     required=False,
@@ -44,7 +46,8 @@ class FindBugsBlocker(FindBugsMode):
     help="Exclude bugs of this status",
 )
 @click.option(
-    '--output', '-o',
+    '--output',
+    '-o',
     required=False,
     type=click.Choice(['text', 'json', 'slack']),
     default='text',
@@ -53,18 +56,18 @@ class FindBugsBlocker(FindBugsMode):
 @click.pass_obj
 def find_bugs_blocker_cli(runtime: Runtime, include_status, exclude_status, output):
     """
-List active OCP blocker bugs for the target-releases.
-default bug status to search: ['NEW', 'ASSIGNED', 'POST', 'MODIFIED', 'ON_DEV', 'ON_QA']
-Use --exclude_status to filter out from default status list.
+    List active OCP blocker bugs for the target-releases.
+    default bug status to search: ['NEW', 'ASSIGNED', 'POST', 'MODIFIED', 'ON_DEV', 'ON_QA']
+    Use --exclude_status to filter out from default status list.
 
-    Find blocker bugs for 4.6:
-\b
-    $ elliott -g openshift-4.6 find-bugs:blocker
+        Find blocker bugs for 4.6:
+    \b
+        $ elliott -g openshift-4.6 find-bugs:blocker
 
-    Output in json format:
-\b
-    $ elliott -g openshift-4.6 find-bugs:blocker --output json
-"""
+        Output in json format:
+    \b
+        $ elliott -g openshift-4.6 find-bugs:blocker --output json
+    """
     runtime.initialize()
     find_bugs_obj = FindBugsBlocker()
     find_bugs_obj.include_status(include_status)

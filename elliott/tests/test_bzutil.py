@@ -2,13 +2,12 @@ import logging
 import unittest
 import xmlrpc.client
 from datetime import datetime, timezone
-
 from unittest import mock
-import requests
-from flexmock import flexmock
 
+import requests
 from elliottlib import bzutil, constants, exceptions
-from elliottlib.bzutil import Bug, JIRABugTracker, BugzillaBugTracker, BugzillaBug, JIRABug, BugTracker
+from elliottlib.bzutil import Bug, BugTracker, BugzillaBug, BugzillaBugTracker, JIRABug, JIRABugTracker
+from flexmock import flexmock
 
 hostname = "bugzilla.redhat.com"
 
@@ -71,7 +70,11 @@ class TestBugTracker(unittest.TestCase):
         brew_api.should_receive("getPackageID").and_return(True)
         self.assertRaises(
             exceptions.ElliottFatalError,
-            BugTracker.get_corresponding_flaw_bugs, tracker_bugs, BugzillaBugTracker({}), brew_api, strict=True,
+            BugTracker.get_corresponding_flaw_bugs,
+            tracker_bugs,
+            BugzillaBugTracker({}),
+            brew_api,
+            strict=True,
         )
 
 
@@ -141,7 +144,9 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')),
+            fields=flexmock(
+                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')
+            ),
         )
         expected = True
         actual = JIRABug(bug).is_tracker_bug()
@@ -491,7 +496,10 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         self.assertRaisesRegex(
             ValueError,
             r'does not seem to have trackers',
-            bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [], tr,
+            bzutil.is_first_fix_any,
+            BugzillaBug(flexmock(id=1)),
+            [],
+            tr,
         )
 
         # should raise error when flaw alias isn't present
@@ -499,7 +507,10 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         self.assertRaisesRegex(
             ValueError,
             r'does not have a CVE alias',
-            bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [JIRABug(flexmock(key="OCPBUGS-foo"))], tr,
+            bzutil.is_first_fix_any,
+            BugzillaBug(flexmock(id=1)),
+            [JIRABug(flexmock(key="OCPBUGS-foo"))],
+            tr,
         )
 
     def test_is_first_fix_any(self):
@@ -527,14 +538,10 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         }
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)).ordered()
 
         pyxis_data = {'data': [{'brew': {'package': 'some-image'}}]}
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(status_code=200, json=lambda: pyxis_data))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(flexmock(status_code=200, json=lambda: pyxis_data)).ordered()
 
         tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
@@ -545,9 +552,7 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
 
     def test_is_first_fix_any_missing_package_state(self):
         hydra_data = {}
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))\
-
+        flexmock(requests).should_receive('get').and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))
         tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
         tracker_bugs = [flexmock(id=2, whiteboard_component='openshift-clients')]
@@ -580,14 +585,10 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
                 },
             ],
         }
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)).ordered()
 
         pyxis_data = {'data': [{'brew': {'package': 'some-image'}}]}
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(status_code=200, json=lambda: pyxis_data))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(flexmock(status_code=200, json=lambda: pyxis_data)).ordered()
 
         tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
@@ -617,13 +618,8 @@ class TestGetHigestImpact(unittest.TestCase):
         logging.disable(logging.NOTSET)
 
     def test_lowest_to_highest_impact(self):
-        trackers = [
-            flexmock(id=index, severity=severity)
-            for index, severity in enumerate(constants.BUG_SEVERITY_NUMBER_MAP.keys())
-        ]
-        tracker_flaws_map = {
-            tracker.id: [] for tracker in trackers
-        }
+        trackers = [flexmock(id=index, severity=severity) for index, severity in enumerate(constants.BUG_SEVERITY_NUMBER_MAP.keys())]
+        tracker_flaws_map = {tracker.id: [] for tracker in trackers}
         impact = bzutil.get_highest_impact(trackers, tracker_flaws_map)
         self.assertEqual(impact, constants.SECURITY_IMPACT[4])
 

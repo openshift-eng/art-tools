@@ -1,5 +1,6 @@
-import unittest
 import subprocess
+import unittest
+
 from functional_tests import constants
 
 # this test may break for EOL releases - apparently the CDN repos for
@@ -12,7 +13,8 @@ class AdvisoryImagesTestCase(unittest.TestCase):
             constants.ELLIOTT_CMD
             + [
                 "--assembly=test",
-                "--group=openshift-4.2", "advisory-images",
+                "--group=openshift-4.2",
+                "advisory-images",
             ],
         )
         self.assertIn("\n#########\n", out.decode("utf-8"))
@@ -22,7 +24,9 @@ class AdvisoryImagesTestCase(unittest.TestCase):
             constants.ELLIOTT_CMD
             + [
                 "--assembly=test",
-                "advisory-images", "--advisory", "65127",
+                "advisory-images",
+                "--advisory",
+                "65127",
             ],
         )
         self.assertIn("\n#########\n", out.decode("utf-8"))

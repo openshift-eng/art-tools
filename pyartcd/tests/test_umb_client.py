@@ -2,7 +2,7 @@ import asyncio
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import ANY, MagicMock, patch
 
-from pyartcd.umb_client import AsyncUMBClient, parse_stomp_uri, parse_broker_uri
+from pyartcd.umb_client import AsyncUMBClient, parse_broker_uri, parse_stomp_uri
 
 
 class TestModuleFunctions(TestCase):
@@ -58,6 +58,7 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
     async def test_call_in_sender_thread_with_exception(self):
         def func():
             raise ValueError("Test error")
+
         client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
         client._sender_loop = asyncio.get_event_loop()
         with self.assertRaises(ValueError):

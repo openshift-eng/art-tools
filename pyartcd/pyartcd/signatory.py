@@ -1,4 +1,3 @@
-
 import asyncio
 import base64
 import io
@@ -6,22 +5,22 @@ import itertools
 import json
 import logging
 import os
-import aiohttp
-from random import uniform
 import uuid
 from datetime import datetime, timedelta
-from tenacity import retry, wait_random_exponential, stop_after_attempt
-from typing import Set, Iterable, List, BinaryIO, Dict, cast
+from random import uniform
+from typing import BinaryIO, Dict, Iterable, List, Set, cast
 
 import aiofiles
+import aiohttp
+from artcommonlib import exectools
+from artcommonlib.util import run_limited_unordered
 from cryptography import x509
 from cryptography.x509.oid import NameOID
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from artcommonlib import exectools
 from pyartcd.exceptions import SignatoryServerError
+from pyartcd.oc import get_image_info, get_release_image_info
 from pyartcd.umb_client import AsyncUMBClient
-from pyartcd.oc import get_release_image_info, get_image_info
-from artcommonlib.util import run_limited_unordered
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,8 +77,7 @@ class AsyncSignatory:
 
     @staticmethod
     async def _get_certificate_account_name(cert_file: str):
-        """ Get service account name embedded in the certificate file
-        """
+        """Get service account name embedded in the certificate file"""
         async with aiofiles.open(cert_file, "rb") as f:
             cert = x509.load_pem_x509_certificate(await f.read())
         return cert.subject.get_attributes_for_oid(NameOID.USER_ID)[0].value
@@ -92,25 +90,25 @@ class AsyncSignatory:
         await self._umb.connect()
         # Subscribe to the consumer queue
         # e.g. /queue/Consumer.openshift-art-bot.artcd.VirtualTopic.eng.robosignatory.art.sign
-        consumer_queue = self.CONSUMER_QUEUE_TEMPLATE.format_map({
-            "service_account": service_account,
-            "subscription": self.subscription_name,
-        })
+        consumer_queue = self.CONSUMER_QUEUE_TEMPLATE.format_map(
+            {
+                "service_account": service_account,
+                "subscription": self.subscription_name,
+            }
+        )
         self._receiver = await self._umb.subscribe(consumer_queue, self.subscription_name)
         # Start a task to handle messages received from the consumer queue
         self._receiver_task = asyncio.create_task(self._handle_messages())
 
     async def close(self):
-        """ Closes connection to UMB
-        """
+        """Closes connection to UMB"""
         await self._umb.close()
         # self._receiver_task will stop until receives EOF or it was garbage collected
         self._receiver_task = None
         self._receiver = None
 
     async def _handle_messages(self):
-        """ Handles messages received from the consumer queue
-        """
+        """Handles messages received from the consumer queue"""
         receiver = self._receiver
         assert receiver, "start() was not called"
         async for message in receiver.iter_messages():
@@ -143,15 +141,12 @@ class AsyncSignatory:
         artifact: BinaryIO,
         sig_file: BinaryIO,
     ):
-        """ Signs an artifact
-        """
+        """Signs an artifact"""
         # Create a signing request
         # Example request: https://datagrepper.stage.engineering.redhat.com/id?id=ID:umb-stage-3.umb-001.preprod.us-east-1.aws.redhat.com-38533-1689629292398-10:23520:-1:1:1&is_raw=true&size=extra-large
         artifact_base64 = io.BytesIO()
         base64.encode(artifact, artifact_base64)
-        request_id = (
-            f'{product}-{typ}-{datetime.utcnow().strftime("%Y%m%d%H%M%S")}-{uuid.uuid4()}'
-        )
+        request_id = f'{product}-{typ}-{datetime.utcnow().strftime("%Y%m%d%H%M%S")}-{uuid.uuid4()}'
         message = {
             "artifact": artifact_base64.getvalue().decode(),
             "artifact_meta": {
@@ -185,10 +180,14 @@ class AsyncSignatory:
         return artifact_meta
 
     async def sign_json_digest(
-        self, product: str, release_name: str, pullspec: str, digest: str, sig_file: BinaryIO,
+        self,
+        product: str,
+        release_name: str,
+        pullspec: str,
+        digest: str,
+        sig_file: BinaryIO,
     ):
-        """ Sign a JSON digest claim
-        """
+        """Sign a JSON digest claim"""
         json_claim = {
             "critical": {
                 "image": {"docker-manifest-digest": digest},
@@ -214,10 +213,13 @@ class AsyncSignatory:
         return signature_meta
 
     async def sign_message_digest(
-        self, product: str, release_name: str, artifact: BinaryIO, sig_file: BinaryIO,
+        self,
+        product: str,
+        release_name: str,
+        artifact: BinaryIO,
+        sig_file: BinaryIO,
     ):
-        """ Sign a message digest
-        """
+        """Sign a message digest"""
         name = "sha256sum.txt.gpg"
         signature_meta = await self._sign_artifact(
             typ="message-digest",
@@ -248,9 +250,15 @@ class SigstoreSignatory:
     ENV["AWS_REGION"] = "us-east-1"
 
     def __init__(
-        self, logger, dry_run: bool, signing_creds: str,
-        signing_key_ids: List[str], rekor_url: str,
-        concurrency_limit: int, sign_release: bool, sign_components: bool,
+        self,
+        logger,
+        dry_run: bool,
+        signing_creds: str,
+        signing_key_ids: List[str],
+        rekor_url: str,
+        concurrency_limit: int,
+        sign_release: bool,
+        sign_components: bool,
         verify_release: bool,
     ) -> None:
         self._logger = logger
@@ -265,7 +273,7 @@ class SigstoreSignatory:
 
     @staticmethod
     def redigest_pullspec(pullspec, digest):
-        """ form the pullspec for a digest in the same repo as an existing pullspec """
+        """form the pullspec for a digest in the same repo as an existing pullspec"""
         if len(halves := pullspec.split("@sha256:")) == 2:  # assume that was a digest at the end
             return f"{halves[0]}@{digest}"
         elif len(halves := pullspec.rsplit(":", 1)) == 2:
@@ -274,7 +282,9 @@ class SigstoreSignatory:
         return f"{pullspec}@{digest}"  # assume it was a bare registry/repo
 
     async def discover_pullspecs(
-            self, pullspecs: Iterable[str], release_name: str,
+        self,
+        pullspecs: Iterable[str],
+        release_name: str,
     ) -> (Set[str], Dict[str, Exception]):
         """
         Recursively discover pullspecs that need signatures. Given manifest lists, examine the
@@ -286,7 +296,7 @@ class SigstoreSignatory:
         :return: a set of discovered pullspecs to sign, and a dict of any discovery errors
         """
         seen: Set[str] = set(pullspecs)  # prevent re-examination and multiple signings
-        need_signing: Set[str] = set()   # pullspecs for manifests to be signed
+        need_signing: Set[str] = set()  # pullspecs for manifests to be signed
         errors: Dict[str, Exception] = {}  # pullspec -> error when examining it
 
         need_examining: List[str] = list(pullspecs)
@@ -306,7 +316,9 @@ class SigstoreSignatory:
         return need_signing, errors
 
     async def _examine_pullspec(
-            self, pullspec: str, release_name: str,
+        self,
+        pullspec: str,
+        release_name: str,
     ) -> (Set[str], Set[str], Dict[str, Exception]):
         """
         Determine what a pullspec is (single manifest, manifest list, release image) and
@@ -330,7 +342,7 @@ class SigstoreSignatory:
             # manifest to see if that might be a release image.
             for manifest in img_info:
                 need_examining.add(self.redigest_pullspec(manifest["name"], manifest["digest"]))
-        elif (this_rn := img_info["config"]["config"]["Labels"].get("io.openshift.release")):
+        elif this_rn := img_info["config"]["config"]["Labels"].get("io.openshift.release"):
             # release image; get references and examine those
             self._logger.info("%s is a release image with name %s", pullspec, this_rn)
             if release_name != this_rn:
@@ -368,11 +380,8 @@ class SigstoreSignatory:
 
     @staticmethod
     async def get_release_image_references(pullspec: str) -> Set[str]:
-        """ Retrieve the pullspecs referenced by a release image """
-        return set(
-            tag["from"]["name"]
-            for tag in (await get_release_image_info(pullspec))["references"]["spec"]["tags"]
-        )
+        """Retrieve the pullspecs referenced by a release image"""
+        return set(tag["from"]["name"] for tag in (await get_release_image_info(pullspec))["references"]["spec"]["tags"])
 
     async def sign_pullspecs(self, need_signing: Iterable[str]) -> Dict[str, Exception]:
         """
@@ -417,11 +426,13 @@ class SigstoreSignatory:
         log = self._logger
         for signing_key_id in self.signing_key_ids:
             cmd = [
-                "cosign", "sign",
+                "cosign",
+                "sign",
                 "--yes",
                 # https://issues.redhat.com/browse/ART-10052
                 f"--sign-container-identity={pullspec}",
-                "--key", f"awskms:///{signing_key_id}",
+                "--key",
+                f"awskms:///{signing_key_id}",
             ]
 
             if self.rekor_url:

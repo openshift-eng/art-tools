@@ -2,9 +2,8 @@
 Test the Dir() class.  Verify that it works as a context_manager.
 """
 
-import unittest
-
 import os
+import unittest
 from multiprocessing.dummy import Pool
 
 from artcommonlib import pushd
@@ -38,10 +37,7 @@ class DirTestCase(unittest.TestCase):
         """
         thread_count = 10
         with Pool(thread_count) as pool:
-            results = [
-                pool.apply_async(lambda: self.test_getcwd())
-                for _ in range(thread_count)
-            ]
+            results = [pool.apply_async(lambda: self.test_getcwd()) for _ in range(thread_count)]
             for result in results:
                 result.get()
 

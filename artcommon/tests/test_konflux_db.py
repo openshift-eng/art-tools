@@ -3,12 +3,10 @@ from datetime import datetime, timedelta, timezone
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from google.cloud.bigquery import SchemaField, Row
-
 from artcommonlib import constants
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome, \
-    Engine
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord
 from artcommonlib.konflux.konflux_db import KonfluxDb
+from google.cloud.bigquery import Row, SchemaField
 
 
 class TestKonfluxDB(IsolatedAsyncioTestCase):
@@ -72,7 +70,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             self.db.search_builds_by_fields(
                 start_search=start_search,
                 where={'name': 'ironic', 'group': 'openshift-4.18'},
-            ), None,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -101,10 +100,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time',
-            ), None,
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time',
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -116,10 +116,12 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time', sorting='ASC',
-            ), None,
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time',
+                sorting='ASC',
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -131,10 +133,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time', sorting='ASC', limit=0,
-            ), None,
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time',
+                sorting='ASC',
+                limit=0,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -146,10 +151,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time', sorting='ASC', limit=10,
-            ), None,
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time',
+                sorting='ASC',
+                limit=10,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -162,19 +170,25 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             await anext(
                 self.db.search_builds_by_fields(
-                start_search=start_search,
-                where={'name': 'ironic', 'group': 'openshift-4.18'},
-                order_by='start_time', sorting='ASC', limit=-1,
-                ), None,
+                    start_search=start_search,
+                    where={'name': 'ironic', 'group': 'openshift-4.18'},
+                    order_by='start_time',
+                    sorting='ASC',
+                    limit=-1,
+                ),
+                None,
             )
 
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            extra_patterns={'name': 'installer'},
-            order_by='start_time', sorting='ASC', limit=10,
-            ), None,
+                start_search=start_search,
+                extra_patterns={'name': 'installer'},
+                order_by='start_time',
+                sorting='ASC',
+                limit=10,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -186,10 +200,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            extra_patterns={'name': '^ose-installer$'},
-            order_by='start_time', sorting='ASC', limit=10,
-            ), None,
+                start_search=start_search,
+                extra_patterns={'name': '^ose-installer$'},
+                order_by='start_time',
+                sorting='ASC',
+                limit=10,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -201,10 +218,13 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            extra_patterns={'name': 'installer', 'group': 'openshift'},
-            order_by='start_time', sorting='ASC', limit=10,
-            ), None,
+                start_search=start_search,
+                extra_patterns={'name': 'installer', 'group': 'openshift'},
+                order_by='start_time',
+                sorting='ASC',
+                limit=10,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -216,13 +236,16 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={
-                'engine': [Engine.BREW, Engine.KONFLUX],
-                'name': ['ironic', 'ose-installer'],
-            },
-            order_by='start_time', sorting='ASC', limit=10,
-            ), None,
+                start_search=start_search,
+                where={
+                    'engine': [Engine.BREW, Engine.KONFLUX],
+                    'name': ['ironic', 'ose-installer'],
+                },
+                order_by='start_time',
+                sorting='ASC',
+                limit=10,
+            ),
+            None,
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE outcome IN ('success', 'failure') AND "
@@ -237,14 +260,15 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             [Row(('ironic', '1.0.0', '3'), {'name': 0, 'version': 1, 'release': 2})],
             [],
             [],
-            [Row(('ironic', '1.0.0', '2'), {'name': 0, 'version': 1, 'release': 2}), Row(('ironic', '1.0.0', '1'), {'name': 0, 'version': 1, 'release': 2})],
+            [
+                Row(('ironic', '1.0.0', '2'), {'name': 0, 'version': 1, 'release': 2}),
+                Row(('ironic', '1.0.0', '1'), {'name': 0, 'version': 1, 'release': 2}),
+            ],
         ]
-        mock_query_async.side_effect = [
-            MagicMock(total_rows=len(batch), __iter__=MagicMock(return_value=iter(batch)))
-            for batch in mocked_rows
-        ]
+        mock_query_async.side_effect = [MagicMock(total_rows=len(batch), __iter__=MagicMock(return_value=iter(batch))) for batch in mocked_rows]
         records = [
-            record async for record in self.db.search_builds_by_fields(
+            record
+            async for record in self.db.search_builds_by_fields(
                 start_search=datetime(2024, 10, 1, 8, 0, 0, tzinfo=timezone.utc),
                 end_search=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
                 window_size=30,
@@ -279,8 +303,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         query_mock.reset_mock()
         await self.db.get_latest_build(
-            name='ironic', group='openshift-4.18',
-            outcome='success', assembly='stream',
+            name='ironic',
+            group='openshift-4.18',
+            outcome='success',
+            assembly='stream',
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
@@ -293,8 +319,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
 
         query_mock.reset_mock()
         await self.db.get_latest_build(
-            name='ironic', group='openshift-4.18', outcome='success',
-            completed_before=now, assembly='stream',
+            name='ironic',
+            group='openshift-4.18',
+            outcome='success',
+            completed_before=now,
+            assembly='stream',
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
@@ -309,8 +338,11 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         like = {'release': 'b45ea65'}
         await self.db.get_latest_build(
-            name='ironic', group='openshift-4.18', outcome='success',
-            extra_patterns=like, assembly='stream',
+            name='ironic',
+            group='openshift-4.18',
+            outcome='success',
+            extra_patterns=like,
+            assembly='stream',
         )
         query_mock.assert_called_once_with(
             f"SELECT * FROM `{constants.BUILDS_TABLE_ID}` WHERE name = 'ironic' "
@@ -336,7 +368,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             "AND assembly = 'stream' "
             f"AND start_time >= '{str(lower_bound)}' "
             f"AND start_time < '{now}' "
-            "ORDER BY `start_time` DESC LIMIT 1", actual_calls,
+            "ORDER BY `start_time` DESC LIMIT 1",
+            actual_calls,
         )
 
         self.assertIn(
@@ -345,7 +378,8 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             "AND assembly = 'stream' "
             f"AND start_time >= '{str(lower_bound)}' "
             f"AND start_time < '{now}' "
-            "ORDER BY `start_time` DESC LIMIT 1", actual_calls,
+            "ORDER BY `start_time` DESC LIMIT 1",
+            actual_calls,
         )
 
     @patch('artcommonlib.konflux.konflux_db.datetime')
@@ -356,7 +390,10 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
             MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
             MagicMock(total_rows=0, __next__=MagicMock(side_effect=StopIteration)),
-            MagicMock(total_rows=0, __next__=MagicMock(return_value=Row(('ironic', '1.0.0', '2', "ironic-1.0.0-2"), {'name': 0, 'version': 1, 'release': 2, 'nvr': 3}))),
+            MagicMock(
+                total_rows=0,
+                __next__=MagicMock(return_value=Row(('ironic', '1.0.0', '2', "ironic-1.0.0-2"), {'name': 0, 'version': 1, 'release': 2, 'nvr': 3})),
+            ),
         ]
         record = await self.db.get_latest_build(name='ironic', group='openshift-4.18', assembly='stream')
         expected_queries = [
@@ -400,7 +437,6 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             SchemaField('record_id', 'STRING', 'REQUIRED'),
             SchemaField('build_id', 'STRING', 'REQUIRED'),
             SchemaField('nvr', 'STRING', 'REQUIRED'),
-
         ]
         self.db.bind(KonfluxBuildRecord)
         self.assertEqual(self.db.generate_build_schema(), expected_fields)

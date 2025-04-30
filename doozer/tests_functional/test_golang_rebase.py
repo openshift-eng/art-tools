@@ -29,12 +29,18 @@ class TestGoLangRebase(DoozerRunnerTestCase):
         target_version = 'v1.15.99'
         target_release = '777'
         _, _ = self.run_doozer(
-            '--group', f'rhel-8-golang-1.15@{target_ocp_build_data_commitish}',
-            '--lock-upstream', 'openshift-golang-builder', target_ocp_build_data_commitish,  # this build checks out ocp-build-data as its upstream
+            '--group',
+            f'rhel-8-golang-1.15@{target_ocp_build_data_commitish}',
+            '--lock-upstream',
+            'openshift-golang-builder',
+            target_ocp_build_data_commitish,  # this build checks out ocp-build-data as its upstream
             'images:rebase',
-            '--version', target_version,
-            '--release', target_release,
-            '-m', 'test message',
+            '--version',
+            target_version,
+            '--release',
+            target_release,
+            '-m',
+            'test message',
         )
 
         dfp = DockerfileParser(str(self.distgit_image_path('openshift-golang-builder').joinpath('Dockerfile')))
@@ -50,12 +56,16 @@ class TestGoLangRebase(DoozerRunnerTestCase):
         # Assert commit information
         self.assertEqual(dfp.labels['io.openshift.build.commit.id'], target_ocp_build_data_commitish)
         self.assertEqual(dfp.labels['io.openshift.build.source-location'], "https://github.com/openshift-eng/ocp-build-data")
-        self.assertEqual(dfp.labels['io.openshift.build.commit.url'], f"https://github.com/openshift-eng/ocp-build-data/commit/{target_ocp_build_data_commitish}")
+        self.assertEqual(
+            dfp.labels['io.openshift.build.commit.url'], f"https://github.com/openshift-eng/ocp-build-data/commit/{target_ocp_build_data_commitish}"
+        )
 
         # Ensure that meta.content.set_build_variables == false  worked. Each of the following variables is
         # injected by doozer unless the set_build_variables is false. This is required for the golang builder
         # since if these variables are set, upstream builds tend to use them as their own version/commit information.
-        for env_var_name in 'SOURCE_GIT_COMMIT OS_GIT_COMMIT SOURCE_GIT_URL SOURCE_GIT_TAG OS_GIT_VERSION SOURCE_DATE_EPOCH BUILD_VERSION BUILD_RELEASE SOURCE_GIT_TAG SOURCE_GIT_URL OS_GIT_MAJOR OS_GIT_MINOR OS_GIT_PATCH OS_GIT_TREE_STATE SOURCE_GIT_TREE_STATE'.split():
+        for (
+            env_var_name
+        ) in 'SOURCE_GIT_COMMIT OS_GIT_COMMIT SOURCE_GIT_URL SOURCE_GIT_TAG OS_GIT_VERSION SOURCE_DATE_EPOCH BUILD_VERSION BUILD_RELEASE SOURCE_GIT_TAG SOURCE_GIT_URL OS_GIT_MAJOR OS_GIT_MINOR OS_GIT_PATCH OS_GIT_TREE_STATE SOURCE_GIT_TREE_STATE'.split():
             self.assertIsNone(dfp.envs.get(env_var_name, None))
 
         self.assertEqual(dfp.envs.get('VERSION'), '1.15')

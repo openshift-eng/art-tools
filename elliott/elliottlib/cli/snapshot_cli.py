@@ -1,27 +1,26 @@
-import click
-import sys
-import os
 import asyncio
+import os
+import sys
 
-from kubernetes.dynamic import exceptions
-from kubernetes.dynamic.resource import ResourceInstance
-
-from elliottlib.cli.common import cli, click_coroutine
-from elliottlib.runtime import Runtime
-from doozerlib.util import oc_image_info_for_arch_async
-from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
-from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
-from doozerlib.backend.konflux_client import KonfluxClient, API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT
+import click
 from artcommonlib import logutil
-from artcommonlib.rpm_utils import parse_nvr
-from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxRecord,
+    Engine,
     KonfluxBuildRecord,
     KonfluxBundleBuildRecord,
     KonfluxFbcBuildRecord,
-    Engine,
+    KonfluxRecord,
 )
+from artcommonlib.rpm_utils import parse_nvr
+from artcommonlib.util import get_utc_now_formatted_str, new_roundtrip_yaml_handler
+from doozerlib.backend.konflux_client import API_VERSION, KIND_APPLICATION, KIND_COMPONENT, KIND_SNAPSHOT, KonfluxClient
+from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
+from doozerlib.constants import KONFLUX_DEFAULT_NAMESPACE
+from doozerlib.util import oc_image_info_for_arch_async
+from elliottlib.cli.common import cli, click_coroutine
+from elliottlib.runtime import Runtime
+from kubernetes.dynamic import exceptions
+from kubernetes.dynamic.resource import ResourceInstance
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -30,8 +29,14 @@ LOGGER = logutil.get_logger(__name__)
 
 class CreateSnapshotCli:
     def __init__(
-        self, runtime: Runtime, konflux_config: dict, image_repo_pull_secret: str,
-        for_bundle: bool, for_fbc: bool, builds: list, dry_run: bool,
+        self,
+        runtime: Runtime,
+        konflux_config: dict,
+        image_repo_pull_secret: str,
+        for_bundle: bool,
+        for_fbc: bool,
+        builds: list,
+        dry_run: bool,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
@@ -79,17 +84,14 @@ class CreateSnapshotCli:
         for pullspec in pullspecs:
             image_info_tasks.append(
                 asyncio.create_task(
-                oc_image_info_for_arch_async(
-                    pullspec,
-                    registry_config=image_repo_pull_secret,
-                ),
+                    oc_image_info_for_arch_async(
+                        pullspec,
+                        registry_config=image_repo_pull_secret,
+                    ),
                 ),
             )
         image_infos = await asyncio.gather(*image_info_tasks, return_exceptions=True)
-        errors = [
-            (pullspec, result) for pullspec, result in zip(pullspecs, image_infos)
-            if isinstance(result, BaseException)
-        ]
+        errors = [(pullspec, result) for pullspec, result in zip(pullspecs, image_infos) if isinstance(result, BaseException)]
         if errors:
             for pullspec, ex in errors:
                 LOGGER.error("Failed to inspect pullspec %s: %s", pullspec, ex)
@@ -168,25 +170,43 @@ def snapshot_cli():
 @snapshot_cli.command("new", short_help="Create a new Konflux Snapshot in the given namespace for the given builds (NVRs)")
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
-@click.option('--pull-secret', metavar='PATH', help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.')
+@click.option(
+    '--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.'
+)
+@click.option(
+    '--pull-secret',
+    metavar='PATH',
+    help='Path to the pull secret file to use. For example, if the images are in quay.io/org/repo then provide the pull secret to read from that repo.',
+)
 @click.option('--for-bundle', is_flag=True, help='To indicate that the given builds are bundle builds.')
 @click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
 @click.argument('builds', metavar='<NVR>', nargs=-1, required=False, default=None)
 @click.option(
-    "--builds-file", "-f", "builds_file",
+    "--builds-file",
+    "-f",
+    "builds_file",
     help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
 )
 @click.option(
-    '--apply', is_flag=True, default=False,
+    '--apply',
+    is_flag=True,
+    default=False,
     help='Create the snapshot in cluster (False by default)',
 )
 @click.pass_obj
 @click_coroutine
 async def new_snapshot_cli(
-    runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-    pull_secret, builds_file, for_bundle, for_fbc, builds, apply,
+    runtime: Runtime,
+    konflux_kubeconfig,
+    konflux_context,
+    konflux_namespace,
+    pull_secret,
+    builds_file,
+    for_bundle,
+    for_fbc,
+    builds,
+    apply,
 ):
     """
     Create a new Konflux Snapshot in the given namespace for the given builds
@@ -240,8 +260,14 @@ async def new_snapshot_cli(
 
 class GetSnapshotCli:
     def __init__(
-        self, runtime: Runtime, konflux_config: dict, image_repo_pull_secret: dict,
-        for_bundle: bool, for_fbc: bool, dry_run: bool, snapshot: str,
+        self,
+        runtime: Runtime,
+        konflux_config: dict,
+        image_repo_pull_secret: dict,
+        for_bundle: bool,
+        for_fbc: bool,
+        dry_run: bool,
+        snapshot: str,
     ):
         self.runtime = runtime
         self.konflux_config = konflux_config
@@ -343,8 +369,14 @@ class GetSnapshotCli:
 @snapshot_cli.command("get", short_help="Get NVRs from a Konflux Snapshot")
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
-@click.option('--pull-secret', metavar='PATH', help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.')
+@click.option(
+    '--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.'
+)
+@click.option(
+    '--pull-secret',
+    metavar='PATH',
+    help='Path to the pull secret file to use. For example, if the snapshot contains images from quay.io/org/repo then provide the pull secret to read from that repo.',
+)
 @click.option('--for-bundle', is_flag=True, help='To indicate that the given builds are bundle builds.')
 @click.option('--for-fbc', is_flag=True, help='To indicate that the given builds are fbc builds.')
 @click.option('--dry-run', is_flag=True, help='Do not fetch, just print what would happen')
@@ -352,8 +384,15 @@ class GetSnapshotCli:
 @click.pass_obj
 @click_coroutine
 async def get_snapshot_cli(
-    runtime: Runtime, konflux_kubeconfig, konflux_context, konflux_namespace,
-    pull_secret, for_bundle, for_fbc, dry_run, snapshot,
+    runtime: Runtime,
+    konflux_kubeconfig,
+    konflux_context,
+    konflux_namespace,
+    pull_secret,
+    for_bundle,
+    for_fbc,
+    dry_run,
+    snapshot,
 ):
     """
     Get NVRs from an existing Konflux Snapshot

@@ -4,7 +4,7 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence, Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 from artcommonlib import exectools
 
@@ -139,7 +139,8 @@ def plashet_config_for_major_minor(major, minor):
 
 
 async def build_plashets(
-    stream: str, release: str,
+    stream: str,
+    release: str,
     assembly: str = 'stream',
     repos: Sequence[str] = (),
     doozer_working: str = 'doozer-working',
@@ -184,8 +185,10 @@ async def build_plashets(
 
     # Load group config
     group_config = await util.load_group_config(
-        group=f'openshift-{stream}', assembly=assembly,
-        doozer_data_path=data_path, doozer_data_gitref=data_gitref,
+        group=f'openshift-{stream}',
+        assembly=assembly,
+        doozer_data_path=data_path,
+        doozer_data_gitref=data_gitref,
     )
 
     # Check if assemblies are enabled for current group
@@ -240,7 +243,8 @@ async def build_plashets(
 
         logger.info('Plashet repo for %s created: %s', repo_type, local_path)
         symlink_path = create_latest_symlink(
-            base_dir=base_dir, plashet_name=name,
+            base_dir=base_dir,
+            plashet_name=name,
         )
         logger.info('Symlink for %s created: %s', repo_type, symlink_path)
 
@@ -263,12 +267,21 @@ async def build_plashets(
 
 
 async def build_plashet_from_tags(
-    group_param: str, assembly: str, base_dir: os.PathLike, name: str, arches: Sequence[str],
-    include_embargoed: bool, signing_mode: str, signing_advisory: int,
-    tag_pvs: Sequence[Tuple[str, str]], embargoed_tags: Optional[Sequence[str]],
+    group_param: str,
+    assembly: str,
+    base_dir: os.PathLike,
+    name: str,
+    arches: Sequence[str],
+    include_embargoed: bool,
+    signing_mode: str,
+    signing_advisory: int,
+    tag_pvs: Sequence[Tuple[str, str]],
+    embargoed_tags: Optional[Sequence[str]],
     include_previous_packages: Optional[Sequence[str]] = None,
-    poll_for: int = 0, data_path: str = constants.OCP_BUILD_DATA_URL,
-    doozer_working: str = 'doozer-working', dry_run: bool = False,
+    poll_for: int = 0,
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = 'doozer-working',
+    dry_run: bool = False,
 ):
     """
     Builds Plashet repo with "from-tags"
@@ -280,22 +293,32 @@ async def build_plashet_from_tags(
     cmd = [
         "doozer",
         f'--data-path={data_path}',
-        "--working-dir", doozer_working,
-        "--group", group_param,
-        "--assembly", assembly,
+        "--working-dir",
+        doozer_working,
+        "--group",
+        group_param,
+        "--assembly",
+        assembly,
         "config:plashet",
-        "--base-dir", str(base_dir),
-        "--name", name,
-        "--repo-subdir", "os",
+        "--base-dir",
+        str(base_dir),
+        "--name",
+        name,
+        "--repo-subdir",
+        "os",
     ]
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])
-    cmd.extend([
-        "from-tags",
-        "--signing-advisory-id", f"{signing_advisory or 54765}",
-        "--signing-advisory-mode", "clean",
-        "--inherit",
-    ])
+    cmd.extend(
+        [
+            "from-tags",
+            "--signing-advisory-id",
+            f"{signing_advisory or 54765}",
+            "--signing-advisory-mode",
+            "clean",
+            "--inherit",
+        ]
+    )
     if include_embargoed:
         cmd.append("--include-embargoed")
     if embargoed_tags:
@@ -326,8 +349,11 @@ def create_latest_symlink(base_dir: os.PathLike, plashet_name: str):
 
 
 async def copy_to_remote(
-    plashet_remote_host: str, local_base_dir: os.PathLike, remote_base_dir: os.PathLike,
-    dry_run: bool = False, copy_links: bool = False,
+    plashet_remote_host: str,
+    local_base_dir: os.PathLike,
+    remote_base_dir: os.PathLike,
+    dry_run: bool = False,
+    copy_links: bool = False,
 ):
     """
     Copies plashet out to remote host (ocp-artifacts)
@@ -357,10 +383,19 @@ async def copy_to_remote(
         cmd.append('--copy-links')
     else:
         cmd.append('--links')
-    cmd.extend([
-        "--progress", "-h", "--no-g", "--omit-dir-times", "--chmod=Dug=rwX,ugo+r",
-        "--perms", "--", f"{local_base_dir}/", f"{plashet_remote_host}:{remote_base_dir}",
-    ])
+    cmd.extend(
+        [
+            "--progress",
+            "-h",
+            "--no-g",
+            "--omit-dir-times",
+            "--chmod=Dug=rwX,ugo+r",
+            "--perms",
+            "--",
+            f"{local_base_dir}/",
+            f"{plashet_remote_host}:{remote_base_dir}",
+        ]
+    )
 
     if dry_run:
         logger.warning("[DRY RUN] Would have run %s", cmd)

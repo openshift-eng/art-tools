@@ -1,8 +1,8 @@
 from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
 from artcommonlib.model import Missing
 from doozerlib.backend.konflux_image_builder import KonfluxImageBuilder
-from unittest.mock import MagicMock, patch
 
 
 class TestKonfluxCachi2(TestCase):
@@ -99,7 +99,10 @@ class TestKonfluxCachi2(TestCase):
         metadata.config.content.source.pkg_managers = ["gomod"]
         metadata.config.cachito.packages = {"gomod": [{"path": "."}, {"path": "api"}, {"path": "client/pkg"}]}
 
-        self.assertEqual(builder._prefetch(metadata=metadata), [{"type": "gomod", "path": "."}, {"type": "gomod", "path": "api"}, {"type": "gomod", "path": "client/pkg"}])
+        self.assertEqual(
+            builder._prefetch(metadata=metadata),
+            [{"type": "gomod", "path": "."}, {"type": "gomod", "path": "api"}, {"type": "gomod", "path": "client/pkg"}],
+        )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.konflux_image_builder.KonfluxImageBuilder._is_cachi2_enabled")

@@ -1,7 +1,8 @@
-from typing import Optional, Callable, Dict, List, Any
+import logging
+from typing import Any, Callable, Dict, List, Optional
+
 from jira import JIRA, Issue
 from tenacity import retry, stop_after_attempt, wait_fixed
-import logging
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -60,7 +61,8 @@ class JIRAClient:
         return new_fields
 
     def clone_issue(
-        self, source_issue: Issue,
+        self,
+        source_issue: Issue,
         dest_project: Optional[str] = None,
         reparent_to: Optional[str] = None,
         fields_transform: Optional[Callable] = None,
@@ -78,7 +80,8 @@ class JIRAClient:
             fields = fields_transform(fields)
         _LOGGER.debug(
             "Copying JIRA issue %s to project %s...",
-            source_issue.key, fields["project"]["key"],
+            source_issue.key,
+            fields["project"]["key"],
         )
         new_issue = self._client.create_issue(fields=fields)
         # create a link between the cloned and the original issue
@@ -86,18 +89,22 @@ class JIRAClient:
             self._client.create_issue_link("Cloners", new_issue, source_issue)
         _LOGGER.debug(
             "Created JIRA issue %s: %s",
-            new_issue.key, new_issue.permalink(),
+            new_issue.key,
+            new_issue.permalink(),
         )
         return new_issue
 
     def clone_issue_with_subtasks(
-        self, source_issue: Issue,
+        self,
+        source_issue: Issue,
         dest_project: Optional[str] = None,
         fields_transform: Optional[Callable] = None,
     ) -> List[Issue]:
         new_issues = [
             self.clone_issue(
-            source_issue, dest_project, fields_transform=fields_transform,
+                source_issue,
+                dest_project,
+                fields_transform=fields_transform,
             ),
         ]
         if source_issue.fields.subtasks:
@@ -106,15 +113,9 @@ class JIRAClient:
                 len(source_issue.fields.subtasks),
             )
             # refetch subtasks to populate all needed fields
-            subtasks = [
-                self.get_issue(subtask.key)
-                for subtask in source_issue.fields.subtasks
-            ]
+            subtasks = [self.get_issue(subtask.key) for subtask in source_issue.fields.subtasks]
             # populate field list
-            field_list = [
-                self._copy_issue_fields(subtask.raw["fields"])
-                for subtask in subtasks
-            ]
+            field_list = [self._copy_issue_fields(subtask.raw["fields"]) for subtask in subtasks]
             # reparent
             for fields in field_list:
                 fields["parent"] = {"id": new_issues[0].id}

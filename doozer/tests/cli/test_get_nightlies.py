@@ -1,7 +1,7 @@
+import json
 from typing import Dict
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import MagicMock, patch, AsyncMock
-import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from artcommonlib.model import Model
 from doozerlib.cli import get_nightlies as subject
@@ -70,7 +70,11 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         nightlies = await subject.find_rc_nightlies(self.runtime, {"x86_64"}, True, True)
         self.assertEqual(3, len(nightlies["x86_64"]))
         nightlies = await subject.find_rc_nightlies(
-            self.runtime, {"x86_64"}, True, True, ["4.12.0-0.nightly-2022-07-15-132344"],
+            self.runtime,
+            {"x86_64"},
+            True,
+            True,
+            ["4.12.0-0.nightly-2022-07-15-132344"],
         )
         self.assertEqual(1, len(nightlies["x86_64"]))
 
@@ -85,7 +89,8 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
     def vanilla_nightly(release_image_info=None, name=None):
         # just give me an instance to test (default supplies "pod" entry)
         nightly = subject.Nightly(
-            release_image_info=release_image_info or {
+            release_image_info=release_image_info
+            or {
                 "references": {
                     "spec": {
                         "tags": [
@@ -98,7 +103,9 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                     },
                 },
             },
-            name=name or "name", phase="Accepted", pullspec="nightly-pullspec",
+            name=name or "name",
+            phase="Accepted",
+            pullspec="nightly-pullspec",
         )
         nightly._process_nightly_release_data()
         return nightly
@@ -310,33 +317,43 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
 
         nightlies_for_arch = {
             "x86_64": [
-                make({
-                    "name": "nightly1",
-                    "equivalence": "digest1",  # represents the matching for this nightly
-                    "releaseInfo": {"config": {"created": "2022-07-17"}},
-                }),
-                make({
-                    "name": "nightly2",
-                    "equivalence": "digest1",
-                    "releaseInfo": {"config": {"created": "2022-07-18"}},
-                }),
-                make({
-                    "name": "nightly3",
-                    "equivalence": "digest2",
-                    "releaseInfo": {"config": {"created": "2022-07-16"}},
-                }),
+                make(
+                    {
+                        "name": "nightly1",
+                        "equivalence": "digest1",  # represents the matching for this nightly
+                        "releaseInfo": {"config": {"created": "2022-07-17"}},
+                    }
+                ),
+                make(
+                    {
+                        "name": "nightly2",
+                        "equivalence": "digest1",
+                        "releaseInfo": {"config": {"created": "2022-07-18"}},
+                    }
+                ),
+                make(
+                    {
+                        "name": "nightly3",
+                        "equivalence": "digest2",
+                        "releaseInfo": {"config": {"created": "2022-07-16"}},
+                    }
+                ),
             ],
             "s390x": [
-                make({
-                    "name": "nightly4",
-                    "equivalence": "digest1",  # matches two
-                    "releaseInfo": {"config": {"created": "2022-07-17"}},
-                }),
-                make({
-                    "name": "nightly5",
-                    "equivalence": "digest2",  # matches one
-                    "releaseInfo": {"config": {"created": "2022-07-15"}},
-                }),
+                make(
+                    {
+                        "name": "nightly4",
+                        "equivalence": "digest1",  # matches two
+                        "releaseInfo": {"config": {"created": "2022-07-17"}},
+                    }
+                ),
+                make(
+                    {
+                        "name": "nightly5",
+                        "equivalence": "digest2",  # matches one
+                        "releaseInfo": {"config": {"created": "2022-07-15"}},
+                    }
+                ),
             ],
         }
         sets = subject.generate_nightly_sets(nightlies_for_arch)
@@ -347,10 +364,12 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
 
         # check that an incompatible nightly torpedoes set creation
         nightlies_for_arch["ppc64le"] = [
-            make({
-                "name": "nightly6",
-                "equivalence": "digest3",  # incompatible with all
-                "releaseInfo": {"config": {"created": "2022-07-17"}},
-            }),
+            make(
+                {
+                    "name": "nightly6",
+                    "equivalence": "digest3",  # incompatible with all
+                    "releaseInfo": {"config": {"created": "2022-07-17"}},
+                }
+            ),
         ]
         self.assertEqual(0, len(subject.generate_nightly_sets(nightlies_for_arch)))

@@ -2,15 +2,17 @@
 For this command to work, https://github.com/openshift/check-payload binary has to exist in PATH and run as root
 This job is deployed on ART cluster
 """
+
 import json
 import sys
+from typing import Optional
 
 import click
-from typing import Optional
-from pyartcd.runtime import Runtime
-from pyartcd.cli import cli, pass_runtime, click_coroutine
-from artcommonlib.constants import ACTIVE_OCP_VERSIONS
 from artcommonlib import exectools
+from artcommonlib.constants import ACTIVE_OCP_VERSIONS
+
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.runtime import Runtime
 
 
 class ScanFips:

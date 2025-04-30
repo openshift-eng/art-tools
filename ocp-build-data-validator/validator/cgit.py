@@ -10,15 +10,14 @@ def validate(file, data, group_cfg):
 
     if not support.resource_is_reachable(endpoint):
         return (
-            url, (
-                'This validation must run from a network '
-                'with access to {}'.format(endpoint)
-            ),
+            url,
+            ('This validation must run from a network ' 'with access to {}'.format(endpoint)),
         )
 
     if not support.resource_exists(url):
         return (
-            url, (
+            url,
+            (
                 'Repo was not found in CGit cache.\n'
                 "If you didn't request a DistGit repo yet, "
                 'please check https://mojo.redhat.com/docs/DOC-1168290\n'

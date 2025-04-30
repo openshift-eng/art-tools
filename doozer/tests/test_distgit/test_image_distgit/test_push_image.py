@@ -1,13 +1,12 @@
 import errno
-import os
 import io
+import os
 import unittest
 from unittest.mock import Mock, patch
 
-from flexmock import flexmock
-
 from artcommonlib.assembly import AssemblyTypes
 from doozerlib import distgit
+from flexmock import flexmock
 
 
 class TestImageDistGitRepoPushImage(unittest.TestCase):
@@ -401,11 +400,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         )
 
         # simulating an "already exists" error on mkdir attempt
-        (
-            flexmock(distgit.os)
-            .should_receive("mkdir")
-            .and_raise(OSError(errno.EEXIST, os.strerror(errno.EEXIST)))
-        )
+        (flexmock(distgit.os).should_receive("mkdir").and_raise(OSError(errno.EEXIST, os.strerror(errno.EEXIST))))
 
         # preventing tests from executing real commands
         flexmock(distgit.exectools).should_receive("cmd_gather").and_return((0, "", ""))
@@ -459,11 +454,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         )
 
         # simulating an error while executing cmd_gather
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .and_return((1, "", "stderr"))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").and_return((1, "", "stderr")))
 
         # a failed cmd_gather will try again in X seconds, we don't want to wait
         flexmock(distgit.time).should_receive("sleep").replace_with(lambda *_: None)
@@ -543,13 +534,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         metadata.runtime.state = {"images:push": "my-runtime-state"}
         metadata.runtime.command = "images:push"
 
-        (
-            flexmock(distgit.state)
-            .should_receive("record_image_success")
-            .with_args("my-runtime-state", metadata)
-            .once()
-            .and_return(None)
-        )
+        (flexmock(distgit.state).should_receive("record_image_success").with_args("my-runtime-state", metadata).once().and_return(None))
 
         repo = distgit.ImageDistGitRepo(metadata, autoclone=False)
         tag_list = ["tag-a", "tag-b"]
@@ -583,11 +568,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         )
 
         # simulating an error while executing cmd_gather
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .and_return((1, "", "stderr"))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").and_return((1, "", "stderr")))
 
         # a failed cmd_gather will try again in X seconds, we don't want to wait
         flexmock(distgit.time).should_receive("sleep").replace_with(lambda *_: None)
@@ -670,13 +651,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
 
         expected_cmd = "oc image mirror --filter-by-os=amd64  --insecure=true --filename=some-workdir/push/my-distgit-key"
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd, timeout=1800)
-            .once()
-            .and_return((0, "", ""))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(expected_cmd, timeout=1800).once().and_return((0, "", "")))
 
         metadata = flexmock(
             config=flexmock(
@@ -706,7 +681,8 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(
             tag_list,
             push_to_defaults,
-            version_release_tuple=("version", "release"), filter_by_os='amd64',
+            version_release_tuple=("version", "release"),
+            filter_by_os='amd64',
         )
         self.assertEqual(expected, actual)
 
@@ -732,13 +708,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
 
         expected_cmd = "oc image mirror   --insecure=true --filename=some-workdir/push/my-distgit-key --registry-config=/auth/config.json"
 
-        (
-            flexmock(distgit.exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd, timeout=1800)
-            .once()
-            .and_return((0, "", ""))
-        )
+        (flexmock(distgit.exectools).should_receive("cmd_gather").with_args(expected_cmd, timeout=1800).once().and_return((0, "", "")))
 
         metadata = flexmock(
             config=flexmock(
@@ -768,7 +738,8 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
         actual = repo.push_image(
             tag_list,
             push_to_defaults,
-            version_release_tuple=("version", "release"), registry_config_dir='/auth',
+            version_release_tuple=("version", "release"),
+            registry_config_dir='/auth',
         )
         self.assertEqual(expected, actual)
 

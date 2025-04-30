@@ -1,18 +1,17 @@
 import asyncio
+import fnmatch
 import json
 import os
 import threading
 import time
-import fnmatch
-import requests
-import yaml
 from typing import Dict, List, cast
 
+import requests
+import yaml
 from artcommonlib import logutil
 from artcommonlib.model import Missing, Model
+from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_FILENAME, KONFLUX_REPO_CA_BUNDLE_TMP_PATH
 from doozerlib.repodata import Repodata, RepodataLoader
-from doozerlib.constants import KONFLUX_REPO_CA_BUNDLE_TMP_PATH, KONFLUX_REPO_CA_BUNDLE_FILENAME
-
 
 DEFAULT_REPOTYPES = ['unsigned', 'signed']
 
@@ -25,6 +24,7 @@ LOGGER = logutil.get_logger(__name__)
 class Repo(object):
     """Represents a single yum repository and provides sane ways to
     access each property based on the arch or repo type."""
+
     def __init__(self, name, data, valid_arches, gpgcheck=True):
         self.name = name
         self._valid_arches = valid_arches
@@ -59,10 +59,7 @@ class Repo(object):
         includepkgs_str = conf.get('extra_options', {}).get('includepkgs', "")
         self.includepkgs = pkgs_to_list(includepkgs_str)
 
-        excludepkgs_str = (
-            conf.get('extra_options', {}).get('exclude', "")
-            or conf.get('extra_options', {}).get('excludepkgs', "")
-        )
+        excludepkgs_str = conf.get('extra_options', {}).get('exclude', "") or conf.get('extra_options', {}).get('excludepkgs', "")
         self.excludepkgs = pkgs_to_list(excludepkgs_str)
 
         self.cs_optional = self._data.content_set.get('optional', False)
@@ -248,8 +245,7 @@ class Repo(object):
         # so apply it after excludepkgs
         if self.includepkgs:
             LOGGER.info(
-                f"Only including packages from {name} based on following patterns: {self.includepkgs}. "
-                "All other packages will be excluded.",
+                f"Only including packages from {name} based on following patterns: {self.includepkgs}. " "All other packages will be excluded.",
             )
             filtered_rpms = []
             for rpm in repodata.primary_rpms:
@@ -311,6 +307,7 @@ class Repos(object):
     Represents the entire collection of repos and provides
     automatic content_set and repo conf file generation.
     """
+
     def __init__(self, repos: Dict[str, Dict], arches: List[str], gpgcheck=True):
         self._arches = arches
         self._repos: Dict[str, Repo] = {}
@@ -417,7 +414,8 @@ class Repos(object):
                             "notes.content_set": {
                                 "$in": names,
                             },
-                        }, {
+                        },
+                        {
                             "id": {
                                 "$in": names,
                             },
@@ -441,7 +439,10 @@ class Repos(object):
         for i in range(retry_count):
             try:
                 response = requests.request(
-                    "POST", url, data=json.dumps(payload), headers=headers,
+                    "POST",
+                    url,
+                    data=json.dumps(payload),
+                    headers=headers,
                     cert=(cs_auth_cert, cs_auth_key),
                 )
                 break

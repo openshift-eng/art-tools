@@ -24,13 +24,14 @@ yaml.width = 1024 * 1024
 
 @dataclass
 class OpmRegistryAuth:
-    """ Dataclass for storing registry authentication information.
+    """Dataclass for storing registry authentication information.
 
     :param path: The path to the registry credentials file. If provided, username, password, and registry_url are ignored.
     :param username: The username to use for the registry. If provided, password is required.
     :param password: The password to use for the registry. If username is not provided, this is used as the auth token.
     :param registry_url: The URL of the registry to authenticate. Default is "quay.io".
     """
+
     path: Optional[str] = None
     username: Optional[str] = None
     password: Optional[str] = None
@@ -38,11 +39,11 @@ class OpmRegistryAuth:
 
 
 async def gather_opm(
-        args: List[str],
-        auth: Optional[OpmRegistryAuth] = None,
-        **kwargs,
+    args: List[str],
+    auth: Optional[OpmRegistryAuth] = None,
+    **kwargs,
 ):
-    """ Run opm with the given arguments and return the result.
+    """Run opm with the given arguments and return the result.
 
     :param args: The arguments to pass to opm.
     :param auth: The registry authentication information to use.
@@ -63,13 +64,16 @@ async def gather_opm(
             elif auth.password:  # Use the password as the auth token
                 auth_token = auth.password
             if auth_token:
-                auth_content = json.dumps({
-                    'auths': {
-                        auth.registry_url or "quay.io": {
-                            'auth': auth_token,
+                auth_content = json.dumps(
+                    {
+                        'auths': {
+                            auth.registry_url
+                            or "quay.io": {
+                                'auth': auth_token,
+                            },
                         },
-                    },
-                })
+                    }
+                )
 
     if not auth_content:
         LOGGER.warning("No registry auth provided. Running opm without auth.")
@@ -87,7 +91,7 @@ async def gather_opm(
 
 
 async def verify_opm():
-    """ Verify that opm is installed and at least version 1.47.0 """
+    """Verify that opm is installed and at least version 1.47.0"""
     try:
         _, out, _ = await gather_opm(["version"])
     except FileNotFoundError:
@@ -102,18 +106,20 @@ async def verify_opm():
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(5))
 async def render(
-    *input: str, output_format: str = "yaml", migrate: bool = False,
+    *input: str,
+    output_format: str = "yaml",
+    migrate: bool = False,
     auth: Optional[OpmRegistryAuth] = None,
 ) -> List[dict]:
     """
-    Run `opm render` on the given input and return the parsed file-based catalog blobs.
+        Run `opm render` on the given input and return the parsed file-based catalog blobs.
 
-    :param input: The catalog images, file-based catalog directories, bundle images, and sqlite
-database files to render.
-    :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
-    :param migrate: Whether to Perform all available schema migrations on the rendered FBC.
-    :param auth: The registry authentication information to use.
-    :return: The parsed file-based catalog blobs.
+        :param input: The catalog images, file-based catalog directories, bundle images, and sqlite
+    database files to render.
+        :param output_format: The output format to use when rendering the catalog. One of "yaml" or "json".
+        :param migrate: Whether to Perform all available schema migrations on the rendered FBC.
+        :param auth: The registry authentication information to use.
+        :return: The parsed file-based catalog blobs.
     """
     if not input:
         raise ValueError("input must not be empty.")
@@ -147,8 +153,11 @@ async def generate_basic_template(catalog_file: Path, template_file: Path, outpu
 
 
 async def render_catalog_from_template(
-        template_file: Path, catalog_file: Path, migrate_level: str = "none", output_format: str = "yaml",
-        auth: Optional[OpmRegistryAuth] = None,
+    template_file: Path,
+    catalog_file: Path,
+    migrate_level: str = "none",
+    output_format: str = "yaml",
+    auth: Optional[OpmRegistryAuth] = None,
 ):
     """
     Render a catalog from a template file.
@@ -167,9 +176,18 @@ async def render_catalog_from_template(
     with open(catalog_file, 'w') as out:
         await gather_opm(
             [
-                "alpha", "render-template", "basic", "--migrate-level", migrate_level, "-o",
-                output_format, "--", str(template_file),
-            ], stdout=out, auth=auth,
+                "alpha",
+                "render-template",
+                "basic",
+                "--migrate-level",
+                migrate_level,
+                "-o",
+                output_format,
+                "--",
+                str(template_file),
+            ],
+            stdout=out,
+            auth=auth,
         )
 
 
@@ -182,8 +200,10 @@ async def generate_dockerfile(dest_dir: Path, dc_dir_name: str, base_image: str,
     :param base_image: Image base to use to build catalog.
     """
     options = [
-        "--builder-image", builder_image,
-        "--base-image", base_image,
+        "--builder-image",
+        builder_image,
+        "--base-image",
+        base_image,
     ]
     LOGGER.debug(f"Generating FBC Dockerfile in {dest_dir}")
     await gather_opm(["generate", "dockerfile"] + options + ["--", dc_dir_name], cwd=dest_dir)

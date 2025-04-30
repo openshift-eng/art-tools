@@ -1,9 +1,8 @@
-
 from typing import Dict, Iterable, List, Optional, Tuple
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
-import koji
 
+import koji
 from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Model
 from doozerlib.cli.config_tag_rpms import TagRPMsCli
@@ -75,24 +74,29 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
     async def test_run_non_kernel_packages(
-        self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
-        tag_builds: AsyncMock, get_builds_tags: Mock,
+        self,
+        get_tagged_builds: AsyncMock,
+        untag_builds: AsyncMock,
+        tag_builds: AsyncMock,
+        get_builds_tags: Mock,
     ):
-        group_config = Model({
-            "vars": {
-                "RHCOS_EL_MAJOR": "9",
-                "RHCOS_EL_MINOR": "4",
-            },
-            "rpm_deliveries": [
-                {
-                    "packages": ["foo", "bar"],
-                    "rhel_tag": "test-rhel-tag",
-                    "integration_tag": "test-integration-tag",
-                    "stop_ship_tag": "test-stop-ship-tag",
-                    "target_tag": "test-target-tag",
+        group_config = Model(
+            {
+                "vars": {
+                    "RHCOS_EL_MAJOR": "9",
+                    "RHCOS_EL_MINOR": "4",
                 },
-            ],
-        })
+                "rpm_deliveries": [
+                    {
+                        "packages": ["foo", "bar"],
+                        "rhel_tag": "test-rhel-tag",
+                        "integration_tag": "test-integration-tag",
+                        "stop_ship_tag": "test-stop-ship-tag",
+                        "target_tag": "test-target-tag",
+                    },
+                ],
+            }
+        )
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
 
@@ -120,15 +124,18 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                 ("test-rhel-tag", "bar"): [{"nvr": "bar-1.0.0-1", "version": "1.0.0", "name": "bar"}],
             }
             return [results[tc] for tc in tag_component_tuples]
+
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
                 "foo-1.0.0-1": [{"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"}],
                 "bar-1.0.0-1": [
-                    {"name": "test-stop-ship-tag"}, {"name": "test-integration-tag"},
+                    {"name": "test-stop-ship-tag"},
+                    {"name": "test-integration-tag"},
                     {"name": "test-target-tag"},
                 ],
-            }[nvr] for nvr in nvr_list
+            }[nvr]
+            for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
             "tag_listing": {
@@ -146,24 +153,29 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
     async def test_run_kernel_version_match(
-        self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
-        tag_builds: AsyncMock, get_builds_tags: Mock,
+        self,
+        get_tagged_builds: AsyncMock,
+        untag_builds: AsyncMock,
+        tag_builds: AsyncMock,
+        get_builds_tags: Mock,
     ):
-        group_config = Model({
-            "vars": {
-                "RHCOS_EL_MAJOR": "9",
-                "RHCOS_EL_MINOR": "4",
-            },
-            "rpm_deliveries": [
-                {
-                    "packages": ["kernel", "kernel-rt"],
-                    "rhel_tag": "test-rhel-tag",
-                    "integration_tag": "test-integration-tag",
-                    "stop_ship_tag": "test-stop-ship-tag",
-                    "target_tag": "test-target-tag",
+        group_config = Model(
+            {
+                "vars": {
+                    "RHCOS_EL_MAJOR": "9",
+                    "RHCOS_EL_MINOR": "4",
                 },
-            ],
-        })
+                "rpm_deliveries": [
+                    {
+                        "packages": ["kernel", "kernel-rt"],
+                        "rhel_tag": "test-rhel-tag",
+                        "integration_tag": "test-integration-tag",
+                        "stop_ship_tag": "test-stop-ship-tag",
+                        "target_tag": "test-target-tag",
+                    },
+                ],
+            }
+        )
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
 
@@ -197,12 +209,14 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                 ("test-integration-tag", "kernel-rt"): [kernel_rt_build],
             }
             return [results[tc] for tc in tag_component_tuples]
+
         get_tagged_builds.side_effect = _get_tagged_builds
         get_builds_tags.side_effect = lambda nvr_list, _: [
             {
                 kernel_build['nvr']: [{"name": "test-integration-tag"}],
                 kernel_rt_build['nvr']: [{"name": "test-integration-tag"}],
-            }[nvr] for nvr in nvr_list
+            }[nvr]
+            for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
             "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build],
@@ -223,24 +237,29 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.untag_builds")
     @patch("doozerlib.cli.config_tag_rpms.TagRPMsCli.get_tagged_builds")
     async def test_run_kernel_version_mismatch(
-        self, get_tagged_builds: AsyncMock, untag_builds: AsyncMock,
-        tag_builds: AsyncMock, get_builds_tags: Mock,
+        self,
+        get_tagged_builds: AsyncMock,
+        untag_builds: AsyncMock,
+        tag_builds: AsyncMock,
+        get_builds_tags: Mock,
     ):
-        group_config = Model({
-            "vars": {
-                "RHCOS_EL_MAJOR": "9",
-                "RHCOS_EL_MINOR": "2",
-            },
-            "rpm_deliveries": [
-                {
-                    "packages": ["kernel", "kernel-rt"],
-                    "rhel_tag": "test-rhel-tag",
-                    "integration_tag": "test-integration-tag",
-                    "stop_ship_tag": "test-stop-ship-tag",
-                    "target_tag": "test-target-tag",
+        group_config = Model(
+            {
+                "vars": {
+                    "RHCOS_EL_MAJOR": "9",
+                    "RHCOS_EL_MINOR": "2",
                 },
-            ],
-        })
+                "rpm_deliveries": [
+                    {
+                        "packages": ["kernel", "kernel-rt"],
+                        "rhel_tag": "test-rhel-tag",
+                        "integration_tag": "test-integration-tag",
+                        "stop_ship_tag": "test-stop-ship-tag",
+                        "target_tag": "test-target-tag",
+                    },
+                ],
+            }
+        )
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
 
@@ -280,7 +299,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             {
                 kernel_build['nvr']: [{"name": "test-integration-tag"}],
                 kernel_rt_build['nvr']: [{"name": "test-integration-tag"}],
-            }[nvr] for nvr in nvr_list
+            }[nvr]
+            for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
             "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build],

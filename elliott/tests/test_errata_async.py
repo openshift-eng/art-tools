@@ -3,8 +3,8 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from artcommonlib.rpm_utils import parse_nvr
-from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib import constants
+from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 
 
 class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
@@ -129,7 +129,9 @@ class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
             return items
 
         actual = await _call()
-        _make_request.assert_awaited_with(ANY, 'GET', '/api/v1/cve_package_exclusion', params={'filter[errata_id]': '1', 'page[number]': 3, 'page[size]': 1000})
+        _make_request.assert_awaited_with(
+            ANY, 'GET', '/api/v1/cve_package_exclusion', params={'filter[errata_id]': '1', 'page[number]': 3, 'page[size]': 1000}
+        )
         self.assertEqual(actual, [{'id': 1}, {'id': 2}, {'id': 3}, {'id': 4}, {'id': 5}])
 
 
@@ -161,10 +163,8 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
         builder_el8 = 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca'
         builder_el9 = 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el9.g4d4caca'
         get_go_container_nvrs.return_value = {
-            builder_el8: {(n['name'], n['version'], n['release'])
-                          for n in [parse_nvr(n) for n in attached_builds if 'el8' in n]},
-            builder_el9: {(n['name'], n['version'], n['release'])
-                          for n in [parse_nvr(n) for n in attached_builds if 'el9' in n]},
+            builder_el8: {(n['name'], n['version'], n['release']) for n in [parse_nvr(n) for n in attached_builds if 'el8' in n]},
+            builder_el9: {(n['name'], n['version'], n['release']) for n in [parse_nvr(n) for n in attached_builds if 'el9' in n]},
         }
         expected = {
             "CVE-2099-1": {"a", "b"},
@@ -240,7 +240,10 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
             "CVE-2099-3": {},
         }
         actual = await AsyncErrataUtils.associate_builds_with_cves(
-            api, 1, attached_builds, cve_components_mapping,
+            api,
+            1,
+            attached_builds,
+            cve_components_mapping,
             dry_run=False,
         )
         api.delete_cve_package_exclusion.assert_any_await(2)

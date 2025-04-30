@@ -1,15 +1,15 @@
 import asyncio
-import time
-import re
 import datetime
+import re
+import time
 from typing import Any, List, Optional, Tuple, Union
 
-from artcommonlib.util import isolate_el_version_in_brew_tag
-from artcommonlib.brew import BuildStates
 from artcommonlib import logutil
-from artcommonlib.model import Missing, Model
 from artcommonlib.assembly import assembly_basis_event, assembly_metadata_config
-from artcommonlib.konflux.konflux_build_record import KonfluxBuildRecord, KonfluxBuildOutcome, Engine
+from artcommonlib.brew import BuildStates
+from artcommonlib.konflux.konflux_build_record import Engine, KonfluxBuildOutcome, KonfluxBuildRecord
+from artcommonlib.model import Missing, Model
+from artcommonlib.util import isolate_el_version_in_brew_tag
 
 CONFIG_MODES = [
     'enabled',  # business as usual
@@ -40,18 +40,21 @@ class MetadataBase(object):
         self.runtime.logger.debug("Loading metadata from {}".format(self.full_config_path))
 
         self.raw_config = Model(data_obj.data)  # Config straight from ocp-build-data
-        assert (self.raw_config.name is not Missing)
+        assert self.raw_config.name is not Missing
 
         self.config = assembly_metadata_config(
-            runtime.get_releases_config(), runtime.assembly, meta_type,
-            self.distgit_key, self.raw_config,
+            runtime.get_releases_config(),
+            runtime.assembly,
+            meta_type,
+            self.distgit_key,
+            self.raw_config,
         )
         self.namespace, self._component_name = self.extract_component_info(meta_type, self.name, self.config)
         self.mode = self.config.get('mode', CONFIG_MODE_DEFAULT).lower()
         if self.mode not in CONFIG_MODES:
             raise ValueError('Invalid mode for {}'.format(self.config_filename))
 
-        self.enabled = (self.mode == CONFIG_MODE_DEFAULT)
+        self.enabled = self.mode == CONFIG_MODE_DEFAULT
 
         self.qualified_name = "%s/%s" % (self.namespace, self.name)
         self.qualified_key = "%s/%s" % (self.namespace, self.distgit_key)
@@ -81,13 +84,11 @@ class MetadataBase(object):
         return split[1]
 
     def _default_brew_target(self):
-        """ Returns derived brew target name from the distgit branch name
-        """
+        """Returns derived brew target name from the distgit branch name"""
         return NotImplementedError()
 
     def determine_targets(self) -> List[str]:
-        """ Determine Brew targets for building this component
-        """
+        """Determine Brew targets for building this component"""
         targets = self.config.get("targets")
         if not targets:
             # If not specified in meta config, load from group config
@@ -175,9 +176,15 @@ class MetadataBase(object):
         return self._component_name
 
     def get_latest_brew_build(
-        self, default: Optional[Any] = -1, assembly: Optional[str] = None, extra_pattern: str = '*',
-        build_state: BuildStates = BuildStates.COMPLETE, component_name: Optional[str] = None,
-        el_target: Optional[Union[str, int]] = None, honor_is: bool = True, complete_before_event: Optional[int] = None,
+        self,
+        default: Optional[Any] = -1,
+        assembly: Optional[str] = None,
+        extra_pattern: str = '*',
+        build_state: BuildStates = BuildStates.COMPLETE,
+        component_name: Optional[str] = None,
+        el_target: Optional[Union[str, int]] = None,
+        honor_is: bool = True,
+        complete_before_event: Optional[int] = None,
     ):
         """
         :param default: A value to return if no latest is found (if not specified, an exception will be thrown)
@@ -211,7 +218,9 @@ class MetadataBase(object):
             package_info = koji_api.getPackage(component_name)  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
             if not package_info:
                 raise IOError(f'No brew package is defined for {component_name}')
-            package_id = package_info['id']  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
+            package_id = package_info[
+                'id'
+            ]  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
             # listBuilds returns all builds for the package; We need to limit the query to the builds
             # relevant for our major/minor.
 
@@ -490,7 +499,9 @@ class MetadataBase(object):
         if not build_record:
             self.logger.warning(
                 'No build found for %s in group and %s assembly %s',
-                self.distgit_key, self.runtime.group, self.runtime.assembly,
+                self.distgit_key,
+                self.runtime.group,
+                self.runtime.assembly,
             )
             return default
         return build_record

@@ -1,69 +1,76 @@
-import click
 import json
 import logging
 
+import click
 from artcommonlib import exectools
-from artcommonlib.arch_util import brew_arch_for_go_arch, go_suffix_for_arch, BREW_ARCHES, GO_ARCHES
+from artcommonlib.arch_util import BREW_ARCHES, GO_ARCHES, brew_arch_for_go_arch, go_suffix_for_arch
 from artcommonlib.format_util import green_print
-from elliottlib.cli.common import cli
+from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec, get_primary_container_name
 from elliottlib import rhcos, util
-from artcommonlib.rhcos import get_primary_container_name, get_build_id_from_rhcos_pullspec
+from elliottlib.cli.common import cli
 
 LOGGER = logging.getLogger(__name__)
 
 
 @cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")
 @click.option(
-    '--release', '-r', 'release',
+    '--release',
+    '-r',
+    'release',
     help='Show details for this OCP release. Can be a full pullspec or a named release ex: 4.8.4',
 )
 @click.option(
-    '--arch', 'arch',
+    '--arch',
+    'arch',
     default='x86_64',
     type=click.Choice(BREW_ARCHES + ['all']),
     help='Specify architecture. Default is x86_64. "all" to get all arches. aarch64 only works for 4.8+',
 )
 @click.option(
-    '--packages', '-p', 'packages',
+    '--packages',
+    '-p',
+    'packages',
     help='Show details for only these package names (comma-separated)',
 )
 @click.option(
-    '--go', '-g', 'go',
+    '--go',
+    '-g',
+    'go',
     is_flag=True,
     help='Show go version for packages that are go binaries',
 )
 @click.pass_obj
 def rhcos_cli(runtime, release, packages, arch, go):
     """
-    Show packages in an RHCOS build in a payload image.
-    There are several ways to specify the location of the RHCOS build.
+        Show packages in an RHCOS build in a payload image.
+        There are several ways to specify the location of the RHCOS build.
 
-    Usage:
+        Usage:
 
-\b Nightly
-    $ elliott -g openshift-4.8 rhcos -r 4.8.0-0.nightly-s390x-2021-07-31-070046
+    \b Nightly
+        $ elliott -g openshift-4.8 rhcos -r 4.8.0-0.nightly-s390x-2021-07-31-070046
 
-\b Named Release
-    $ elliott -g openshift-4.6 rhcos -r 4.6.31
+    \b Named Release
+        $ elliott -g openshift-4.6 rhcos -r 4.6.31
 
-\b Any Pullspec
-    $ elliott -g openshift-4.X rhcos -r <pullspec>
+    \b Any Pullspec
+        $ elliott -g openshift-4.X rhcos -r <pullspec>
 
-\b Assembly Definition
-    $ elliott --group openshift-4.8 --assembly 4.8.21 rhcos
+    \b Assembly Definition
+        $ elliott --group openshift-4.8 --assembly 4.8.21 rhcos
 
-\b Only lookup specified package(s)
-    $ elliott -g openshift-4.6 rhcos -r 4.6.31 -p "openshift,runc,cri-o,selinux-policy"
+    \b Only lookup specified package(s)
+        $ elliott -g openshift-4.6 rhcos -r 4.6.31 -p "openshift,runc,cri-o,selinux-policy"
 
-\b Also lookup go build version (if available)
-    $ elliott -g openshift-4.6 rhcos -r 4.6.31 -p openshift --go
+    \b Also lookup go build version (if available)
+        $ elliott -g openshift-4.6 rhcos -r 4.6.31 -p openshift --go
 
-\b Specify arch (default being x64)
-    $ elliott -g openshift-4.6 rhcos -r 4.6.31 --arch s390x -p openshift
+    \b Specify arch (default being x64)
+        $ elliott -g openshift-4.6 rhcos -r 4.6.31 --arch s390x -p openshift
 
-\b Get all arches (supported only for named release and assembly)
-    $ elliott -g openshift-4.6 rhcos -r 4.6.31 --arch all -p openshift
-"""
+    \b Get all arches (supported only for named release and assembly)
+        $ elliott -g openshift-4.6 rhcos -r 4.6.31 --arch all -p openshift
+    """
     named_assembly = runtime.assembly not in ['stream', 'test']
     count_options = sum(map(bool, [named_assembly, release]))
     if count_options != 1:
@@ -106,10 +113,7 @@ def rhcos_cli(runtime, release, packages, arch, go):
         build_ids = [get_build_id_from_image_pullspec(runtime, p) for p in payload_pullspecs]
     elif named_assembly:
         rhcos_pullspecs = get_rhcos_pullspecs_from_assembly(runtime)
-        build_ids = [
-            (get_build_id_from_rhcos_pullspec(p), arch) for arch, p in rhcos_pullspecs.items() if
-            arch in target_arches
-        ]
+        build_ids = [(get_build_id_from_rhcos_pullspec(p), arch) for arch, p in rhcos_pullspecs.items() if arch in target_arches]
 
     for build, local_arch in build_ids:
         _via_build_id(runtime, build, local_arch, version, packages, go, logger)
@@ -128,8 +132,7 @@ def get_rhcos_pullspecs_from_assembly(runtime):
     rhcos_def = runtime.releases_config.releases[runtime.assembly].assembly.rhcos
     if not rhcos_def:
         raise click.BadParameter(
-            "only named assemblies with valid rhcos values are supported. If an assembly is "
-            "based on another, try using the original assembly",
+            "only named assemblies with valid rhcos values are supported. If an assembly is " "based on another, try using the original assembly",
         )
 
     images = rhcos_def[get_primary_container_name(runtime)]['images']

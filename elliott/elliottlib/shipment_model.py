@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 from datetime import datetime, timezone
+from typing import List, Literal, Optional, Self, Union
 
-from typing import Union, List, Optional, Self, Literal
-
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from ruamel.yaml import scalarstring
-from pydantic import BaseModel, Field, field_serializer, ConfigDict, model_validator
 
 
 class StrictBaseModel(BaseModel):
@@ -13,7 +13,7 @@ class StrictBaseModel(BaseModel):
 
 
 class Metadata(StrictBaseModel):
-    """ Defines shipment metadata for a product release """
+    """Defines shipment metadata for a product release"""
 
     product: str  # product associated with shipment - see group.yml `product` field
     application: str  # Konflux application to release for
@@ -23,13 +23,13 @@ class Metadata(StrictBaseModel):
 
 
 class Spec(StrictBaseModel):
-    """ Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot """
+    """Defines spec of a Konflux Snapshot - list of NVRs that should go inside the snapshot"""
 
     nvrs: List[str]
 
 
 class Snapshot(StrictBaseModel):
-    """ Konflux Snapshot definition for release i.e. builds to release """
+    """Konflux Snapshot definition for release i.e. builds to release"""
 
     name: str  # Name of the snapshot to release - required until we create automatically by spec
     spec: Spec
@@ -50,7 +50,7 @@ class Issues(StrictBaseModel):
 
 
 class ReleaseNotes(StrictBaseModel):
-    """ Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release """
+    """Represents releaseNotes field which contains all advisory metadata, when constructing a Konflux release"""
 
     # setting attributes after object init can result in weird behavior
     # when dealing with yaml scalar strings
@@ -79,13 +79,13 @@ class ReleaseNotes(StrictBaseModel):
 
 
 class Data(StrictBaseModel):
-    """ Represents spec.data field when constructing a Konflux release """
+    """Represents spec.data field when constructing a Konflux release"""
 
     releaseNotes: ReleaseNotes
 
 
 class ShipmentEnv(StrictBaseModel):
-    """ Environment specific configuration for a release """
+    """Environment specific configuration for a release"""
 
     releasePlan: str
     liveID: int = None
@@ -99,18 +99,20 @@ class ShipmentEnv(StrictBaseModel):
 
 
 class Environments(StrictBaseModel):
-    """ Environments to release the shipment to """
+    """Environments to release the shipment to"""
 
     stage: ShipmentEnv = Field(
-        ..., description='Config for releasing to stage environment',
+        ...,
+        description='Config for releasing to stage environment',
     )
     prod: ShipmentEnv = Field(
-        ..., description='Config for releasing to prod environment',
+        ...,
+        description='Config for releasing to prod environment',
     )
 
 
 class Shipment(StrictBaseModel):
-    """ Config to ship a Konflux release for a product """
+    """Config to ship a Konflux release for a product"""
 
     metadata: Metadata
     environments: Environments
@@ -134,7 +136,7 @@ def add_schema_comment(schema: dict):
 
 
 class ShipmentConfig(StrictBaseModel):
-    """ Represents a Shipment Metadata Config file in a product's shipment-data repo """
+    """Represents a Shipment Metadata Config file in a product's shipment-data repo"""
 
     model_config = ConfigDict(json_schema_extra=add_schema_comment)
 

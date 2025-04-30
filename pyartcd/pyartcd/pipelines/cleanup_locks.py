@@ -1,9 +1,9 @@
 import os
 
 from aioredlock import Lock
-
-from pyartcd import jenkins, constants
 from artcommonlib import redis
+
+from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.locks import LockManager
 from pyartcd.runtime import Runtime
@@ -51,7 +51,8 @@ async def cleanup_locks(runtime: Runtime):
                     # Assume the build is not found because it was manually deleted, and clean up the orphan lock
                     runtime.logger.warning(
                         'Could not get build from lock %s with id %s: deleting',
-                        lock_name, build_path,
+                        lock_name,
+                        build_path,
                     )
                     lock: Lock = await lock_manager.get_lock(resource=lock_name, lock_identifier=build_path)
                     await lock_manager.unlock(lock)

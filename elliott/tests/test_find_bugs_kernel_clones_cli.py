@@ -3,39 +3,45 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import koji
-from jira import JIRA, Issue
-
 from artcommonlib.assembly import AssemblyTypes
+from elliottlib import early_kernel
+from elliottlib.bzutil import JIRABugTracker
 from elliottlib.cli.find_bugs_kernel_clones_cli import FindBugsKernelClonesCli
 from elliottlib.config_model import KernelBugSweepConfig
-from elliottlib.bzutil import JIRABugTracker
-from elliottlib import early_kernel
+from jira import JIRA, Issue
 
 
 class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self._config = KernelBugSweepConfig.model_validate({
-            "tracker_jira": {
-                "project": "KMAINT",
-                "labels": ["early-kernel-track"],
-            },
-            "bugzilla": {
-                "target_releases": ["9.2.0"],
-            },
-            "target_jira": {
-                "project": "OCPBUGS",
-                "component": "RHCOS",
-                "version": "4.14",
-                "target_release": "4.14.0",
-                "candidate_brew_tag": "rhaos-4.14-rhel-9-candidate",
-                "prod_brew_tag": "rhaos-4.14-rhel-9",
-            },
-        })
+        self._config = KernelBugSweepConfig.model_validate(
+            {
+                "tracker_jira": {
+                    "project": "KMAINT",
+                    "labels": ["early-kernel-track"],
+                },
+                "bugzilla": {
+                    "target_releases": ["9.2.0"],
+                },
+                "target_jira": {
+                    "project": "OCPBUGS",
+                    "component": "RHCOS",
+                    "version": "4.14",
+                    "target_release": "4.14.0",
+                    "candidate_brew_tag": "rhaos-4.14-rhel-9-candidate",
+                    "prod_brew_tag": "rhaos-4.14-rhel-9",
+                },
+            }
+        )
 
     def test_get_jira_bugs(self):
         runtime = MagicMock()
         cli = FindBugsKernelClonesCli(
-            runtime=runtime, trackers=[], bugs=[], move=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            bugs=[],
+            move=True,
+            update_tracker=True,
+            dry_run=False,
         )
         jira_client = MagicMock(spec=JIRA)
         component = MagicMock()
@@ -43,7 +49,8 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
         target_release = MagicMock()
         target_release.configure_mock(name="4.14.0")
         jira_client.issue.side_effect = lambda key: MagicMock(
-            spec=Issue, **{
+            spec=Issue,
+            **{
                 "key": key,
                 "fields": MagicMock(),
                 "fields.labels": ["art:cloned-kernel-bug"],
@@ -72,13 +79,16 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
     @patch("elliottlib.early_kernel.move_jira")
     @patch("elliottlib.brew.get_builds_tags")
     def test_update_jira_bugs(
-        self, get_builds_tags: Mock, _move_jira: Mock,
+        self,
+        get_builds_tags: Mock,
+        _move_jira: Mock,
         process_shipped_tracker: Mock,
     ):
         runtime = MagicMock()
         jira_client = MagicMock(spec=JIRA)
         tracker = jira_client.issue.return_value = MagicMock(
-            spec=Issue, ** {
+            spec=Issue,
+            **{
                 "key": "KMAINT-1",
                 "fields": MagicMock(),
                 "fields.project.key": "KMAINT",
@@ -88,26 +98,37 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
             },
         )
         cli = FindBugsKernelClonesCli(
-            runtime=runtime, trackers=[], bugs=[], move=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            bugs=[],
+            move=True,
+            update_tracker=True,
+            dry_run=False,
         )
         bugs = [
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-1", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-1",
+                    "fields": MagicMock(),
                     "fields.labels": ["art:bz#1", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "New",
                 },
             ),
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-2", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-2",
+                    "fields": MagicMock(),
                     "fields.labels": ["art:bz#2", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "Assigned",
                 },
             ),
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-3", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-3",
+                    "fields": MagicMock(),
                     "fields.labels": ["art:bz#3", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "ON_QA",
                 },
@@ -132,7 +153,11 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
         cli._update_jira_bugs(jira_client, bugs, koji_api, self._config)
         _move_jira.assert_any_call(ANY, False, jira_client, bugs[0], "CLOSED", ANY)
         process_shipped_tracker.assert_called_once_with(
-            ANY, False, ANY, tracker, ANY,
+            ANY,
+            False,
+            ANY,
+            tracker,
+            ANY,
             "rhaos-4.14-rhel-9",
         )
 
@@ -146,7 +171,8 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
         out = StringIO()
         FindBugsKernelClonesCli._print_report(report, out=out)
         self.assertEqual(
-            out.getvalue().strip(), """
+            out.getvalue().strip(),
+            """
 FOO-1	Verified	test bug 1
 FOO-2	ON_QA	test bug 2
 """.strip(),
@@ -157,8 +183,11 @@ FOO-2	ON_QA	test bug 2
     @patch("elliottlib.cli.find_bugs_kernel_clones_cli.FindBugsKernelClonesCli._update_jira_bugs")
     @patch("elliottlib.cli.find_bugs_kernel_clones_cli.FindBugsKernelClonesCli._search_for_jira_bugs")
     async def test_run_without_specified_bugs(
-        self, _search_for_jira_bugs: Mock, _update_jira_bugs: Mock,
-        _get_jira_bugs: Mock, _print_report: Mock,
+        self,
+        _search_for_jira_bugs: Mock,
+        _update_jira_bugs: Mock,
+        _get_jira_bugs: Mock,
+        _print_report: Mock,
     ):
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM)
         runtime.gitdata.load_data.return_value = MagicMock(
@@ -183,8 +212,10 @@ FOO-2	ON_QA	test bug 2
         )
         found_bugs = [
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-1", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-1",
+                    "fields": MagicMock(),
                     "fields.summary": "Fake bug 1",
                     "fields.summary": "Fake bug 1",
                     "fields.labels": ["art:bz#1", "art:kmaint:KMAINT-1"],
@@ -192,16 +223,20 @@ FOO-2	ON_QA	test bug 2
                 },
             ),
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-2", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-2",
+                    "fields": MagicMock(),
                     "fields.summary": "Fake bug 2",
                     "fields.labels": ["art:bz#2", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "Assigned",
                 },
             ),
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-3", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-3",
+                    "fields": MagicMock(),
                     "fields.summary": "Fake bug 3",
                     "fields.labels": ["art:bz#3", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "ON_QA",
@@ -210,7 +245,12 @@ FOO-2	ON_QA	test bug 2
         ]
         _search_for_jira_bugs.return_value = found_bugs
         cli = FindBugsKernelClonesCli(
-            runtime=runtime, trackers=[], bugs=[], move=True, update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            bugs=[],
+            move=True,
+            update_tracker=True,
+            dry_run=False,
         )
         cli.run()
         _update_jira_bugs.assert_called_once_with(ANY, found_bugs, ANY, ANY)
@@ -228,8 +268,11 @@ FOO-2	ON_QA	test bug 2
     @patch("elliottlib.cli.find_bugs_kernel_clones_cli.FindBugsKernelClonesCli._update_jira_bugs")
     @patch("elliottlib.cli.find_bugs_kernel_clones_cli.FindBugsKernelClonesCli._search_for_jira_bugs")
     async def test_run_with_specified_bugs(
-        self, _search_for_jira_bugs: Mock, _update_jira_bugs: Mock,
-        _get_jira_bugs: Mock, _print_report: Mock,
+        self,
+        _search_for_jira_bugs: Mock,
+        _update_jira_bugs: Mock,
+        _get_jira_bugs: Mock,
+        _print_report: Mock,
     ):
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM)
         runtime.gitdata.load_data.return_value = MagicMock(
@@ -254,8 +297,10 @@ FOO-2	ON_QA	test bug 2
         )
         found_bugs = [
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-1", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-1",
+                    "fields": MagicMock(),
                     "fields.summary": "Fake bug 1",
                     "fields.summary": "Fake bug 1",
                     "fields.labels": ["art:bz#1", "art:kmaint:KMAINT-1"],
@@ -263,16 +308,20 @@ FOO-2	ON_QA	test bug 2
                 },
             ),
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-2", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-2",
+                    "fields": MagicMock(),
                     "fields.summary": "Fake bug 2",
                     "fields.labels": ["art:bz#2", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "Assigned",
                 },
             ),
             MagicMock(
-                spec=Issue, **{
-                    "key": "FOO-3", "fields": MagicMock(),
+                spec=Issue,
+                **{
+                    "key": "FOO-3",
+                    "fields": MagicMock(),
                     "fields.summary": "Fake bug 3",
                     "fields.labels": ["art:bz#3", "art:kmaint:KMAINT-1"],
                     "fields.status.name": "ON_QA",
@@ -281,8 +330,12 @@ FOO-2	ON_QA	test bug 2
         ]
         _get_jira_bugs.return_value = found_bugs
         cli = FindBugsKernelClonesCli(
-            runtime=runtime, trackers=[], bugs=["FOO-1", "FOO-2", "FOO-3"], move=True,
-            update_tracker=True, dry_run=False,
+            runtime=runtime,
+            trackers=[],
+            bugs=["FOO-1", "FOO-2", "FOO-3"],
+            move=True,
+            update_tracker=True,
+            dry_run=False,
         )
         cli.run()
         _update_jira_bugs.assert_called_once_with(ANY, found_bugs, ANY, ANY)

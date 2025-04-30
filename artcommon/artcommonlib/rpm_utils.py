@@ -69,8 +69,7 @@ def parse_nvr(nvre: str):
 
 
 def to_nevr(d: Dict):
-    """ Converts an NEVR dict to N-E:V-R string
-    """
+    """Converts an NEVR dict to N-E:V-R string"""
     n = d["name"]
     e = d.get("epoch") or 0
     v = d["version"]
@@ -79,8 +78,7 @@ def to_nevr(d: Dict):
 
 
 def to_nevra(d: Dict):
-    """ Converts an NEVRA dict to N-E:V-R.A string
-    """
+    """Converts an NEVRA dict to N-E:V-R.A string"""
     arch = d["arch"]
     return to_nevr(d) + f".{arch}"
 
@@ -119,14 +117,16 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
     if nvr2["epoch"] is None:
         nvr2["epoch"] = ""
 
-    return label_compare((str(nvr1["epoch"]), str(nvr1["version"]), str(nvr1["release"])), (str(nvr2["epoch"]), str(nvr2["version"]), str(nvr2["release"])))
+    return label_compare(
+        (str(nvr1["epoch"]), str(nvr1["version"]), str(nvr1["release"])), (str(nvr2["epoch"]), str(nvr2["version"]), str(nvr2["release"]))
+    )
 
 
 EVR = Tuple[Optional[str], str, str]
 
 
 def label_compare(a: EVR, b: EVR):
-    """ This function is backported from C function `rpmverCmp`.
+    """This function is backported from C function `rpmverCmp`.
     https://github.com/rpm-software-management/rpm/blob/9e4caf0fc536d1244b298abd9dc4c535b6560d69/rpmio/rpmver.c#L115
 
     :return: 1: a is newer than b; 0: a and b are the same version; -1: b is newer than a
@@ -142,7 +142,7 @@ def label_compare(a: EVR, b: EVR):
 
 
 def _compare_values(a: Optional[str], b: Optional[str]):
-    """ This function is backported from C function `compare_values`.
+    """This function is backported from C function `compare_values`.
     https://github.com/rpm-software-management/rpm/blob/9e4caf0fc536d1244b298abd9dc4c535b6560d69/rpmio/rpmver.c#L104
     """
     if a is None and b is None:
@@ -155,7 +155,7 @@ def _compare_values(a: Optional[str], b: Optional[str]):
 
 
 def _rpmvercmp(a: str, b: str):
-    """ This function is backported from C function `rpmvercmp`.
+    """This function is backported from C function `rpmvercmp`.
     https://github.com/rpm-software-management/rpm/blob/9e4caf0fc536d1244b298abd9dc4c535b6560d69/rpmio/rpmvercmp.c#L16
     """
     if a == b:
@@ -204,15 +204,15 @@ def _rpmvercmp(a: str, b: str):
         # leave one and two pointing to the start of the alpha or numeric
         # segment and walk str1 and str2 to end of segment
         if str1[p].isdigit():
-            while (str1[p] != "\0" and str1[p].isdigit()):
+            while str1[p] != "\0" and str1[p].isdigit():
                 p += 1
-            while (str2[q] != "\0" and str2[q].isdigit()):
+            while str2[q] != "\0" and str2[q].isdigit():
                 q += 1
             isnum = 1
         else:
-            while (str1[p] != "\0" and str1[p].isalpha()):
+            while str1[p] != "\0" and str1[p].isalpha():
                 p += 1
-            while (str2[q] != "\0" and str2[q].isalpha()):
+            while str2[q] != "\0" and str2[q].isalpha():
                 q += 1
             isnum = 0
 

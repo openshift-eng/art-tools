@@ -1,6 +1,5 @@
-from schema import Schema, Optional, And, Or, Regex, SchemaError
+from schema import And, Optional, Or, Regex, Schema, SchemaError
 from validator.schema.modification_schema import modification
-
 
 GIT_SSH_URL_REGEX = r'((git@[\w\.]+))([\w\.@\:/\-~]+)(\.git)(/)?'
 GIT_WEB_URL_REGEX = r'https://github.com\/[a-z-]+/[a-z-]+'
@@ -33,38 +32,40 @@ RPM_CONTENT_SCHEMA = {
     },
 }
 
-rpm_schema = Schema({
-    'content': RPM_CONTENT_SCHEMA,
-    Optional('distgit'): {
-        Optional('branch'): And(str, len),
-    },
-    Optional('enabled_repos'): [
-        And(str, len),
-    ],
-    Optional('mode'): Or(*valid_modes),
-    'name': And(str, len),
-    'owners': [
-        And(str, len),
-    ],
-    Optional('maintainer'): {
-        Optional('product'): And(str, len),
-        'component': And(str, len),
-        Optional('subcomponent'): And(str, len),
-    },
-    Optional('targets'): [
-        And(str, len),
-    ],
-    Optional('hotfix_targets'): [
-        And(str, len),
-    ],
-    Optional('external_scanners'): {
-        Optional('sast_scanning'): {
-            Optional('jira_integration'): {
-                'enabled': And(bool),
+rpm_schema = Schema(
+    {
+        'content': RPM_CONTENT_SCHEMA,
+        Optional('distgit'): {
+            Optional('branch'): And(str, len),
+        },
+        Optional('enabled_repos'): [
+            And(str, len),
+        ],
+        Optional('mode'): Or(*valid_modes),
+        'name': And(str, len),
+        'owners': [
+            And(str, len),
+        ],
+        Optional('maintainer'): {
+            Optional('product'): And(str, len),
+            'component': And(str, len),
+            Optional('subcomponent'): And(str, len),
+        },
+        Optional('targets'): [
+            And(str, len),
+        ],
+        Optional('hotfix_targets'): [
+            And(str, len),
+        ],
+        Optional('external_scanners'): {
+            Optional('sast_scanning'): {
+                Optional('jira_integration'): {
+                    'enabled': And(bool),
+                },
             },
         },
-    },
-})
+    }
+)
 
 
 def validate(_, data):

@@ -8,7 +8,7 @@ class EntityLoggingAdapter(logging.LoggerAdapter):
 
 
 class RedactingFilter(logging.Filter):
-    """ A filter to remove sensitive information like passwords, tokens, and keys from logs
+    """A filter to remove sensitive information like passwords, tokens, and keys from logs
     https://docs.python.org/3/library/logging.html#filter-objects
     """
 

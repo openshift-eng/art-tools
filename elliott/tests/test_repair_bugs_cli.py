@@ -1,9 +1,10 @@
 import traceback
 import unittest
-from click.testing import CliRunner
-from elliottlib.cli.common import cli, Runtime
+
 import elliottlib.cli.repair_bugs_cli
+from click.testing import CliRunner
 from elliottlib.bzutil import BugzillaBugTracker, JIRABugTracker
+from elliottlib.cli.common import Runtime, cli
 from elliottlib.errata import Advisory
 from flexmock import flexmock
 
@@ -27,9 +28,19 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
 
         result = runner.invoke(
-            cli, [
-                '-g', 'openshift-4.6', 'repair-bugs', '--id', '1', '--id', 'OCPBUGS-1', '--to',
-                'ON_QA', '-a', '99999',
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'repair-bugs',
+                '--id',
+                '1',
+                '--id',
+                'OCPBUGS-1',
+                '--to',
+                'ON_QA',
+                '-a',
+                '99999',
             ],
         )
         self.assertEqual(result.exit_code, 0)
@@ -45,9 +56,18 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("get_bug").with_args("OCPBUGS-1").and_return(bug)
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
         result = runner.invoke(
-            cli, [
-                '-g', 'openshift-4.6', 'repair-bugs', '--close-placeholder', '--id', 'OCPBUGS-1',
-                '--to', 'ON_QA', '-a', '99999',
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'repair-bugs',
+                '--close-placeholder',
+                '--id',
+                'OCPBUGS-1',
+                '--to',
+                'ON_QA',
+                '-a',
+                '99999',
             ],
         )
         if result.exit_code != 0:
@@ -94,9 +114,18 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(Advisory).new_instances(advisory)
 
         result = runner.invoke(
-            cli, [
-                '-g', 'openshift-4.6', 'repair-bugs', '--auto', '--to', 'ON_QA', '--comment',
-                'close bug', '-a', '99999',
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'repair-bugs',
+                '--auto',
+                '--to',
+                'ON_QA',
+                '--comment',
+                'close bug',
+                '-a',
+                '99999',
             ],
         )
         self.assertIn("1 bugs successfully modified", result.output)

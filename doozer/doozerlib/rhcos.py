@@ -1,24 +1,23 @@
-
 import asyncio
 import json
-import tempfile
 import os
+import tempfile
 from typing import Dict, List, Optional, Tuple
 from urllib import request
 from urllib.error import URLError
-import koji
-from tenacity import retry, stop_after_attempt, wait_fixed
 
+import koji
+from artcommonlib import exectools, logutil, rhcos
 from artcommonlib.arch_util import brew_suffix_for_arch, go_arch_for_brew_arch
+from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
 from artcommonlib.model import Model
 from artcommonlib.release_util import isolate_el_version_in_release
 from artcommonlib.rhcos import get_build_id_from_rhcos_pullspec
 from doozerlib import brew, util
+from doozerlib.constants import ART_PROD_IMAGE_REPO
 from doozerlib.repodata import OutdatedRPMFinder, Repodata
 from doozerlib.runtime import Runtime
-from doozerlib.constants import ART_PROD_IMAGE_REPO
-from artcommonlib import rhcos, logutil, exectools
-from artcommonlib.constants import RHCOS_RELEASES_BASE_URL
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 logger = logutil.get_logger(__name__)
 
@@ -120,8 +119,7 @@ class RHCOSBuildFinder:
         for arch in arches_building:
             if not self.meta_has_required_attributes(self.rhcos_build_meta(build_dict["id"], arch=arch)):
                 logger.warning(
-                    f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run "
-                    "rhcos release job?",
+                    f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run " "rhcos release job?",
                 )
                 return False
         return True
@@ -157,13 +155,17 @@ class RHCOSBuildFinder:
         if self.runtime.group_config.rhcos.get("layered_rhcos", False) and pullspec:
             if meta_type == "commitmeta":
                 with tempfile.TemporaryDirectory() as temp_dir:
-                    stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm")
+                    stdout, _ = exectools.cmd_assert(
+                        f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
+                    )
                     with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
                         meta_data = json.load(f)
                 return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
             elif meta_type == "meta":
                 with tempfile.TemporaryDirectory() as temp_dir:
-                    stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm")
+                    stdout, _ = exectools.cmd_assert(
+                        f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
+                    )
                     with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
                         extensions_data = json.load(f)
                 return {"extensions": {"manifest": extensions_data}}
@@ -222,8 +224,7 @@ class RHCOSBuildInspector:
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
                     raise Exception(
-                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus'
-                        f' {self.build_id}',
+                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus' f' {self.build_id}',
                     )
                 self.build_id = image_build_id
 
@@ -446,7 +447,8 @@ class RHCOSBuildInspector:
                 "release": release,
                 "arch": arch,
                 "nvr": f"{name}-{version}-{release}",
-            } for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
+            }
+            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
         ]
 
         logger.info("Determining outdated rpms...")

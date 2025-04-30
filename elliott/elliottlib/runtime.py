@@ -1,28 +1,26 @@
 import atexit
-from contextlib import contextmanager
 import os
 import re
 import shutil
 import tempfile
-from multiprocessing import Lock, RLock
 import time
+from contextlib import contextmanager
+from multiprocessing import Lock, RLock
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
 import click
 import yaml
-
-from artcommonlib import gitdata
-from artcommonlib import exectools
-from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config
-from artcommonlib.model import Model, Missing
-from artcommonlib.runtime import GroupRuntime
+from artcommonlib import exectools, gitdata
+from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_type
 from artcommonlib.constants import SHIPMENT_DATA_URL_TEMPLATE
+from artcommonlib.model import Missing, Model
+from artcommonlib.runtime import GroupRuntime
 from elliottlib import brew, constants
+from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 from elliottlib.exceptions import ElliottFatalError
 from elliottlib.imagecfg import ImageMetadata
 from elliottlib.rpmcfg import RPMMetadata
-from elliottlib.bzutil import BugTracker, BugzillaBugTracker, JIRABugTracker
 
 
 def remove_tmp_working_dir(runtime):
@@ -123,7 +121,11 @@ class Runtime(GroupRuntime):
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
     def initialize(
-        self, mode='none', no_group=False, disabled=None, build_system: str = None,
+        self,
+        mode='none',
+        no_group=False,
+        disabled=None,
+        build_system: str = None,
         with_shipment: bool = False,
     ):
         if self.initialized:
@@ -238,7 +240,8 @@ class Runtime(GroupRuntime):
         image_data = {}
         if mode in ['images', 'both']:
             image_data = self.gitdata.load_data(
-                path='images', keys=image_keys,
+                path='images',
+                keys=image_keys,
                 exclude=image_ex,
                 filter_funcs=None if len(image_keys) else filter_func,
                 replace_vars=replace_vars,
@@ -250,7 +253,8 @@ class Runtime(GroupRuntime):
 
         if mode in ['rpms', 'both']:
             rpm_data = self.gitdata.load_data(
-                path='rpms', keys=rpm_keys,
+                path='rpms',
+                keys=rpm_keys,
                 exclude=rpm_ex,
                 replace_vars=replace_vars,
                 filter_funcs=None if len(rpm_keys) else filter_func,
@@ -353,8 +357,10 @@ class Runtime(GroupRuntime):
 
         try:
             self.gitdata = gitdata.GitData(
-                data_path=self.data_path, clone_dir=self.working_dir,
-                commitish=self.group_commitish, logger=self._logger,
+                data_path=self.data_path,
+                clone_dir=self.working_dir,
+                commitish=self.group_commitish,
+                logger=self._logger,
             )
             self.data_dir = self.gitdata.data_dir
 
@@ -379,15 +385,17 @@ class Runtime(GroupRuntime):
                     try:
                         parsed_url = urlparse(shipment_path)
                         scheme = parsed_url.scheme
-                        rest_of_the_url = shipment_path[len(scheme + "://"):]
+                        rest_of_the_url = shipment_path[len(scheme + "://") :]
                         shipment_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
                     except Exception as e:
                         self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {shipment_path}: {e}")
 
             try:
                 self.shipment_gitdata = gitdata.GitData(
-                    data_path=shipment_path, clone_dir=self.working_dir,
-                    commitish=commitish, logger=self._logger,
+                    data_path=shipment_path,
+                    clone_dir=self.working_dir,
+                    commitish=commitish,
+                    logger=self._logger,
                 )
             except gitdata.GitDataException as ex:
                 raise ElliottFatalError(ex)

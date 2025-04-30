@@ -9,7 +9,6 @@ from artcommonlib.assembly import AssemblyTypes
 from artcommonlib.model import Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.rpm_utils import label_compare
-
 from doozerlib import brew, util
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.source_modifications import SourceModifierFactory
@@ -21,8 +20,13 @@ from .metadata import Metadata
 class RPMMetadata(Metadata):
 
     def __init__(
-        self, runtime, data_obj, commitish: Optional[str] = None, clone_source=True,
-        source_modifier_factory=SourceModifierFactory(), prevent_cloning: Optional[bool] = False,
+        self,
+        runtime,
+        data_obj,
+        commitish: Optional[str] = None,
+        clone_source=True,
+        source_modifier_factory=SourceModifierFactory(),
+        prevent_cloning: Optional[bool] = False,
     ):
         super(RPMMetadata, self).__init__('rpm', runtime, data_obj, commitish, prevent_cloning=prevent_cloning)
 
@@ -67,7 +71,8 @@ class RPMMetadata(Metadata):
             if not os.path.isfile(self.specfile):
                 raise ValueError(
                     '{} config specified a spec file that does not exist: {}'.format(
-                        self.config_filename, self.specfile,
+                        self.config_filename,
+                        self.specfile,
                     ),
                 )
         else:
@@ -99,8 +104,7 @@ class RPMMetadata(Metadata):
             specfile_data = df.read()
 
         self.logger.debug(
-            "About to start modifying spec file [{}]:\n{}\n".
-            format(self.name, specfile_data),
+            "About to start modifying spec file [{}]:\n{}\n".format(self.name, specfile_data),
         )
 
         # add build data modifications dir to path; we *could* add more
@@ -123,7 +127,9 @@ class RPMMetadata(Metadata):
         }
 
         if self.runtime.assembly_type is not AssemblyTypes.STREAM:
-            context["release_name"] = util.get_release_name_for_assembly(self.runtime.group, self.runtime.get_releases_config(), self.runtime.assembly)
+            context["release_name"] = util.get_release_name_for_assembly(
+                self.runtime.group, self.runtime.get_releases_config(), self.runtime.assembly
+            )
 
         for modification in self.config.content.source.modifications:
             if self.source_modifier_factory.supports(modification.action):
@@ -144,8 +150,7 @@ class RPMMetadata(Metadata):
     target_golangs_lock = threading.Lock()
 
     def assert_golang_versions(self):
-        """ Assert all buildroots have consistent versions of golang compilers
-        """
+        """Assert all buildroots have consistent versions of golang compilers"""
         # no: do not check; x.y: only major and minor version; exact: the z-version must be the same
         check_mode = self.runtime.group_config.check_golang_versions
         if check_mode is Missing:
@@ -189,7 +194,12 @@ class RPMMetadata(Metadata):
                     go_toolset_builds = brew_session.getLatestBuilds(buildroot, package=f"go-toolset-{major}.{minor}", type="rpm")
                     if not go_toolset_builds:
                         raise DoozerFatalError(f"Buildroot {buildroot} doesn't have go-toolset-{major}.{minor} tagged in.")
-                    max_golang_nevr = (go_toolset_builds[0]["name"], go_toolset_builds[0]["epoch"], go_toolset_builds[0]["version"], go_toolset_builds[0]["release"])
+                    max_golang_nevr = (
+                        go_toolset_builds[0]["name"],
+                        go_toolset_builds[0]["epoch"],
+                        go_toolset_builds[0]["version"],
+                        go_toolset_builds[0]["release"],
+                    )
                 with RPMMetadata.target_golangs_lock:
                     RPMMetadata.target_golangs[target] = max_golang_nevr
 
@@ -200,8 +210,12 @@ class RPMMetadata(Metadata):
             first_nevr = RPMMetadata.target_golangs[first_target]
             for target in it:
                 nevr = RPMMetadata.target_golangs[target]
-                if (check_mode == "exact" and nevr[2] != first_nevr[2]) or (check_mode == "x.y" and nevr[2].split(".")[:2] != first_nevr[2].split(".")[:2]):
-                    raise DoozerFatalError(f"Buildroot for target {target} has inconsistent golang compiler version {nevr[2]} while target {first_target} has {first_nevr[2]}.")
+                if (check_mode == "exact" and nevr[2] != first_nevr[2]) or (
+                    check_mode == "x.y" and nevr[2].split(".")[:2] != first_nevr[2].split(".")[:2]
+                ):
+                    raise DoozerFatalError(
+                        f"Buildroot for target {target} has inconsistent golang compiler version {nevr[2]} while target {first_target} has {first_nevr[2]}."
+                    )
 
     def get_package_name_from_spec(self):
         """
@@ -243,11 +257,10 @@ class RPMMetadata(Metadata):
     def hotfix_brew_tags(self):
         hotfix_tags = []
         for target in self.targets:
-            base_tag = target[:-len("-candidate")] if target.endswith("-candidate") else target
+            base_tag = target[: -len("-candidate")] if target.endswith("-candidate") else target
             hotfix_tags.append(f"{base_tag}-hotfix")
         return hotfix_tags
 
     def _default_brew_target(self):
-        """ Returns derived brew target name from the distgit branch name
-        """
+        """Returns derived brew target name from the distgit branch name"""
         return f"{self.branch()}-candidate"

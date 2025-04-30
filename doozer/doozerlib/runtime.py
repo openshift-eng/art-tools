@@ -1,45 +1,37 @@
-import itertools
-from artcommonlib import exectools, gitdata
-from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
-    assembly_streams_config
-from artcommonlib.model import Model, Missing
-from artcommonlib.pushd import Dir
-from artcommonlib.util import isolate_el_version_in_brew_tag, deep_merge
-from doozerlib.record_logger import RecordLogger
-from doozerlib.source_resolver import SourceResolver
-
-from contextlib import contextmanager
-
-import os
-import tempfile
-import shutil
 import atexit
 import datetime
-import yaml
-import click
+import io
+import itertools
+import os
+import pathlib
+import re
+import shutil
+import signal
+import tempfile
+import time
 import traceback
 import urllib.parse
-import signal
-import io
-import pathlib
-from typing import Optional, List, Dict, Tuple, Union
-import time
-import re
-
-from jira import JIRA
-
-from artcommonlib.runtime import GroupRuntime
-from doozerlib import dblib
-
-from doozerlib.image import ImageMetadata
-from doozerlib.rpmcfg import RPMMetadata
-from doozerlib import state
+from contextlib import contextmanager
 from multiprocessing import Lock, RLock
-from doozerlib.repos import Repos
-from doozerlib.exceptions import DoozerFatalError
-from doozerlib import util
-from doozerlib import brew
+from typing import Dict, List, Optional, Tuple, Union
+
+import click
+import yaml
+from artcommonlib import exectools, gitdata
+from artcommonlib.assembly import AssemblyTypes, assembly_basis_event, assembly_group_config, assembly_streams_config, assembly_type
+from artcommonlib.model import Missing, Model
+from artcommonlib.pushd import Dir
+from artcommonlib.runtime import GroupRuntime
+from artcommonlib.util import deep_merge, isolate_el_version_in_brew_tag
+from doozerlib import brew, dblib, state, util
 from doozerlib.build_status_detector import BuildStatusDetector
+from doozerlib.exceptions import DoozerFatalError
+from doozerlib.image import ImageMetadata
+from doozerlib.record_logger import RecordLogger
+from doozerlib.repos import Repos
+from doozerlib.rpmcfg import RPMMetadata
+from doozerlib.source_resolver import SourceResolver
+from jira import JIRA
 
 # Values corresponds to schema for group.yml: freeze_automation. When
 # 'yes', doozer itself will inhibit build/rebase related activity
@@ -285,10 +277,16 @@ class Runtime(GroupRuntime):
             yaml.safe_dump(self.state, f, default_flow_style=False)
 
     def initialize(
-        self, mode='images', clone_distgits=True,
+        self,
+        mode='images',
+        clone_distgits=True,
         validate_content_sets=False,
-        no_group=False, clone_source=None, disabled=None,
-        prevent_cloning: bool = False, config_only: bool = False, group_only: bool = False,
+        no_group=False,
+        clone_source=None,
+        disabled=None,
+        prevent_cloning: bool = False,
+        config_only: bool = False,
+        group_only: bool = False,
         build_system: str = None,
     ):
 
@@ -540,7 +538,9 @@ class Runtime(GroupRuntime):
                     self.branch = self.group_config.branch
                     self._logger.info("Using branch from group.yml: %s" % self.branch)
                 else:
-                    self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
+                    self._logger.info(
+                        "No branch specified either in group.yml or on the command line; all included images will need to specify their own."
+                    )
             else:
                 self._logger.info("Using branch from command line: %s" % self.branch)
 
@@ -553,8 +553,7 @@ class Runtime(GroupRuntime):
                         regexen.append(re.compile(val))
                     except Exception as e:
                         raise ValueError(
-                            "could not compile image build log regex for group:\n{}\n{}"
-                            .format(val, e),
+                            "could not compile image build log regex for group:\n{}\n{}".format(val, e),
                         )
                 scanner.matches = regexen
 
@@ -582,7 +581,9 @@ class Runtime(GroupRuntime):
 
             def _register_name_in_bundle(name_in_bundle: str, distgit_key: str):
                 if name_in_bundle in self.name_in_bundle_map:
-                    raise ValueError(f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}")
+                    raise ValueError(
+                        f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}"
+                    )
                 self.name_in_bundle_map[name_in_bundle] = img.key
 
             for img in image_name_data.values():
@@ -600,7 +601,8 @@ class Runtime(GroupRuntime):
                     _register_name_in_bundle(short_name_with_ose, img.key)
 
             image_data = self.gitdata.load_data(
-                path='images', keys=image_keys,
+                path='images',
+                keys=image_keys,
                 exclude=image_ex,
                 replace_vars=replace_vars,
                 filter_funcs=None if len(image_keys) else filter_func,
@@ -608,7 +610,8 @@ class Runtime(GroupRuntime):
 
             try:
                 rpm_data = self.gitdata.load_data(
-                    path='rpms', keys=rpm_keys,
+                    path='rpms',
+                    keys=rpm_keys,
                     exclude=rpm_ex,
                     replace_vars=replace_vars,
                     filter_funcs=None if len(rpm_keys) else filter_func,
@@ -624,7 +627,9 @@ class Runtime(GroupRuntime):
             if mode in ['images', 'both']:
                 for i in image_data.values():
                     if i.key not in self.image_map:
-                        metadata = ImageMetadata(self, i, self.upstream_commitish_overrides.get(i.key), clone_source=clone_source, prevent_cloning=prevent_cloning)
+                        metadata = ImageMetadata(
+                            self, i, self.upstream_commitish_overrides.get(i.key), clone_source=clone_source, prevent_cloning=prevent_cloning
+                        )
                         self.image_map[metadata.distgit_key] = metadata
                         self.component_map[metadata.get_component_name()] = metadata
                 if not self.image_map:
@@ -646,7 +651,9 @@ class Runtime(GroupRuntime):
                     if clone_source is None:
                         # Historically, clone_source defaulted to True for rpms.
                         clone_source = True
-                    metadata = RPMMetadata(self, r, self.upstream_commitish_overrides.get(r.key), clone_source=clone_source, prevent_cloning=prevent_cloning)
+                    metadata = RPMMetadata(
+                        self, r, self.upstream_commitish_overrides.get(r.key), clone_source=clone_source, prevent_cloning=prevent_cloning
+                    )
                     self.rpm_map[metadata.distgit_key] = metadata
                     self.component_map[metadata.get_component_name()] = metadata
                 if not self.rpm_map:
@@ -658,7 +665,11 @@ class Runtime(GroupRuntime):
         for meta in list(self.rpm_map.values()) + list(self.image_map.values()):
             key = '{}/{}/#{}'.format(meta.namespace, meta.name, meta.branch())
             if key in no_collide_check:
-                raise IOError('Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}'.format(key, meta.config_filename, no_collide_check[key].config_filename))
+                raise IOError(
+                    'Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}'.format(
+                        key, meta.config_filename, no_collide_check[key].config_filename
+                    )
+                )
             no_collide_check[key] = meta
 
         if clone_distgits:
@@ -770,7 +781,11 @@ class Runtime(GroupRuntime):
         be thrown.
         """
         if self.freeze_automation == FREEZE_AUTOMATION_YES:
-            raise DoozerFatalError('Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.'.format(FREEZE_AUTOMATION_YES))
+            raise DoozerFatalError(
+                'Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.'.format(
+                    FREEZE_AUTOMATION_YES
+                )
+            )
 
     def image_metas(self) -> List[ImageMetadata]:
         return list(self.image_map.values())
@@ -873,7 +888,9 @@ class Runtime(GroupRuntime):
                 <Clayton Coleman> Yes, Get with the naming system or get out of town
                 """
                 if not image_meta.image_name_short.startswith("ose-"):
-                    raise ValueError(f"{image_meta.distgit_key} does not conform to payload naming convention with image name: {image_meta.image_name_short}")
+                    raise ValueError(
+                        f"{image_meta.distgit_key} does not conform to payload naming convention with image name: {image_meta.image_name_short}"
+                    )
 
                 payload_images.append(image_meta)
 
@@ -1006,7 +1023,9 @@ class Runtime(GroupRuntime):
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
 
-        matched_streams = list(itertools.islice(((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2))
+        matched_streams = list(
+            itertools.islice(((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2)
+        )
         if len(matched_streams) == 0:
             raise IOError(f"Unable to find definition for stream '{stream_name}'")
         if len(matched_streams) > 1:
@@ -1021,7 +1040,7 @@ class Runtime(GroupRuntime):
 
     @property
     def git_cache_dir(self):
-        """ Returns the directory where git repos are cached.
+        """Returns the directory where git repos are cached.
         :return: The directory. None if caching is disabled.
         """
         if not self.cache_dir:
@@ -1053,10 +1072,15 @@ class Runtime(GroupRuntime):
         # create a randomish repo name to avoid erroneous cache hits
         repoid = "oit" + datetime.datetime.now().strftime("%s")
         version_query = [
-            "/usr/bin/repoquery", "--quiet", "--tempcache",
-            "--repoid", repoid,
-            "--repofrompath", repoid + "," + repo_url,
-            "--queryformat", "%{VERSION}",
+            "/usr/bin/repoquery",
+            "--quiet",
+            "--tempcache",
+            "--repoid",
+            repoid,
+            "--repofrompath",
+            repoid + "," + repo_url,
+            "--queryformat",
+            "%{VERSION}",
             "atomic-openshift",
         ]
         rc, auto_version, err = exectools.cmd_gather(version_query)
@@ -1168,8 +1192,11 @@ class Runtime(GroupRuntime):
             )
 
         self.gitdata = gitdata.GitData(
-            data_path=self.data_path, clone_dir=self.working_dir,
-            commitish=self.group_commitish, reclone=self.upcycle, logger=self._logger,
+            data_path=self.data_path,
+            clone_dir=self.working_dir,
+            commitish=self.group_commitish,
+            reclone=self.upcycle,
+            logger=self._logger,
         )
         self.data_dir = self.gitdata.data_dir
 

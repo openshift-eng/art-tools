@@ -1,5 +1,6 @@
-import unittest
 import subprocess
+import unittest
+
 from functional_tests import constants
 
 
@@ -12,7 +13,8 @@ class FindBugsSweepTestCase(unittest.TestCase):
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(
-            result.returncode, 0,
+            result.returncode,
+            0,
             msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}",
         )
         self.assertRegex(result.stdout.decode(), "Found \\d+ bugs")

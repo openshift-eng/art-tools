@@ -1,12 +1,10 @@
-import unittest
-
-import re
 import datetime
-
+import re
+import unittest
 from unittest.mock import MagicMock, Mock
 
-from elliottlib.metadata import Metadata
 from artcommonlib.brew import BuildStates
+from elliottlib.metadata import Metadata
 
 
 class TestMetadata(unittest.TestCase):
@@ -43,9 +41,18 @@ class TestMetadata(unittest.TestCase):
         self.koji_mock = koji_mock
 
     def build_record(
-        self, creation_dt: datetime.datetime, assembly, el_target, name='foo-container',
-        version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-        release_prefix=None, build_state: BuildStates = BuildStates.COMPLETE, is_rpm: bool = False,
+        self,
+        creation_dt: datetime.datetime,
+        assembly,
+        el_target,
+        name='foo-container',
+        version='4.7.0',
+        p='p0',
+        epoch=None,
+        git_commit='4c0ed6d',
+        release_prefix=None,
+        build_state: BuildStates = BuildStates.COMPLETE,
+        is_rpm: bool = False,
     ):
         """
         :return: Returns an artificial brew build record.

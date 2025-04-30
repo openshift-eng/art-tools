@@ -1,15 +1,15 @@
-import os
-from typing import Optional
-import click
-import shutil
 import asyncio
-from tenacity import AsyncRetrying, stop_after_attempt
+import os
+import shutil
+from typing import Optional
 
-from pyartcd.runtime import Runtime
-from pyartcd.cli import cli, pass_runtime, click_coroutine
+import click
 from artcommonlib.exectools import cmd_assert_async
 from doozerlib.util import mkdirs
+from tenacity import AsyncRetrying, stop_after_attempt
 
+from pyartcd.cli import cli, click_coroutine, pass_runtime
+from pyartcd.runtime import Runtime
 
 N_RETRIES = 4
 ALL_ARCHES_LIST = ["x86_64", "s390x", "ppc64le", "aarch64", "multi"]
@@ -37,13 +37,19 @@ class QuayDoomsdaySync:
         path = f"{major_minor}/{self.version}/{arch}"
 
         mirror_cmd = [
-            "oc", "adm", "release", "mirror",
+            "oc",
+            "adm",
+            "release",
+            "mirror",
             f"quay.io/openshift-release-dev/ocp-release:{self.version}-{arch}",
             "--keep-manifest-list",
             f"--to-dir={self.workdir}/{path}",
         ]
         aws_cmd = [
-            "aws", "s3", "sync", f"{self.workdir}/{path}",
+            "aws",
+            "s3",
+            "sync",
+            f"{self.workdir}/{path}",
             f"s3://ocp-doomsday-registry/release-image/{path}",
         ]
 
@@ -84,7 +90,9 @@ class QuayDoomsdaySync:
         mkdirs(self.workdir)
 
         if not self.runtime.dry_run:
-            slack_response = await self.slack_client.say_in_thread(f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:")
+            slack_response = await self.slack_client.say_in_thread(
+                f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:"
+            )
             slack_channel_id = slack_response["channel"]
             main_message_ts = slack_response["message"]["ts"]
         else:

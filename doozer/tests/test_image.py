@@ -5,18 +5,17 @@ import tempfile
 import unittest
 from unittest import IsolatedAsyncioTestCase, mock
 
-from flexmock import flexmock
-
 from artcommonlib import exectools
 from artcommonlib.model import Model
 from doozerlib.repodata import Repodata, Rpm
 from doozerlib.repos import Repos
+from flexmock import flexmock
 
 try:
     from importlib import reload
 except ImportError:
     pass
-from doozerlib import image, build_info
+from doozerlib import build_info, image
 
 TEST_YAML = """---
 name: 'openshift/test'
@@ -82,9 +81,9 @@ class TestImageMetadata(unittest.TestCase):
         expected = 1
         actual = len(logs)
         self.assertEqual(
-            expected, actual,
-            "logging lines - expected: {}, actual: {}".
-            format(expected, actual),
+            expected,
+            actual,
+            "logging lines - expected: {}, actual: {}".format(expected, actual),
         )
 
     @unittest.skip("raising AttributeError: 'str' object has no attribute 'base_dir'")
@@ -118,12 +117,15 @@ class TestImageMetadata(unittest.TestCase):
     def test_pull_url(self):
         fake_runtime = flexmock(
             get_latest_build_info=lambda: ('openshift-cli', '1.1.1', '8'),
-            group_config=flexmock(urls=flexmock(brew_image_namespace='rh-osbs', brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888')),
+            group_config=flexmock(
+                urls=flexmock(brew_image_namespace='rh-osbs', brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888')
+            ),
         )
 
         fake_image = flexmock(
             pull_url=image.ImageMetadata.pull_url(),
-            runtime=fake_runtime, config=flexmock(name='test'),
+            runtime=fake_runtime,
+            config=flexmock(name='test'),
         )
 
         self.assertEqual(fake_image.pull_url(), "brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888/rh-osbs/openshift-test")
@@ -138,13 +140,7 @@ class TestImageMetadata(unittest.TestCase):
         go-toolset-1.10-1.10.3-7.el7              devtools-2018.4-rhel-7  deparker
         """
 
-        (
-            flexmock(exectools)
-            .should_receive("cmd_gather")
-            .with_args(expected_cmd)
-            .once()
-            .and_return((0, latest_build_output))
-        )
+        (flexmock(exectools).should_receive("cmd_gather").with_args(expected_cmd).once().and_return((0, latest_build_output)))
 
         test_base_yml = open('test_pull.yml', 'w')
         test_base_yml.write(TEST_BASE_YAML)
@@ -158,14 +154,18 @@ class TestImageMetadata(unittest.TestCase):
         self.assertEqual(r, "7")
 
     def test_get_brew_image_name_short(self):
-        image_model = Model({
-            'name': 'openshift/test',
-        })
-        data_obj = Model({
-            'key': 'my-distgit',
-            'data': image_model,
-            'filename': 'my-distgit.yaml',
-        })
+        image_model = Model(
+            {
+                'name': 'openshift/test',
+            }
+        )
+        data_obj = Model(
+            {
+                'key': 'my-distgit',
+                'data': image_model,
+                'filename': 'my-distgit.yaml',
+            }
+        )
         rt = mock.MagicMock()
         imeta = image.ImageMetadata(rt, data_obj)
         self.assertEqual(imeta.get_brew_image_name_short(), 'openshift-test')
@@ -178,8 +178,11 @@ class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.build_info.BrewImageInspector.get_image_meta")
     @mock.patch("doozerlib.build_info.BrewImageInspector.get_build_id")
     async def test_find_non_latest_rpms(
-        self, get_build_id: mock.Mock, get_image_meta: mock.Mock,
-        image_arch: mock.Mock, get_installed_rpm_dicts: mock.Mock,
+        self,
+        get_build_id: mock.Mock,
+        get_image_meta: mock.Mock,
+        image_arch: mock.Mock,
+        get_installed_rpm_dicts: mock.Mock,
         get_repodata_threadsafe: mock.AsyncMock,
     ):
         runtime = mock.MagicMock(
@@ -188,7 +191,8 @@ class TestImageInspector(IsolatedAsyncioTestCase):
                     "rhel-8-baseos-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
                     "rhel-8-appstream-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
                     "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
-                }, ["x86_64", "s390x", "ppc64le", "aarch64"],
+                },
+                ["x86_64", "s390x", "ppc64le", "aarch64"],
             ),
         )
         archive = mock.MagicMock()
@@ -196,7 +200,8 @@ class TestImageInspector(IsolatedAsyncioTestCase):
         get_build_id.return_value = 12345
         brew_build_inspector.get_build_id.return_value = 12345
         get_image_meta.return_value = mock.MagicMock(
-            autospec=image.ImageMetadata, config={
+            autospec=image.ImageMetadata,
+            config={
                 "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
             },
         )

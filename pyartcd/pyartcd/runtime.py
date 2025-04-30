@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import tomli
-
-from artcommonlib import runtime, model
+from artcommonlib import model, runtime
 from artcommonlib.exectools import cmd_gather_async
-from pyartcd import jenkins, util, constants
+
+from pyartcd import constants, jenkins, util
 from pyartcd.jira import JIRAClient
 from pyartcd.mail import MailService
 from pyartcd.slack import SlackClient
@@ -45,7 +45,8 @@ class Runtime:
             if not token and not self.dry_run:
                 raise ValueError("SLACK_BOT_TOKEN environment variable is not set")
         return SlackClient(
-            token, dry_run=self.dry_run,
+            token,
+            dry_run=self.dry_run,
             job_name=jenkins.get_job_name(),
             build_url=jenkins.get_build_url(),
             build_id=jenkins.get_build_id(),
@@ -81,18 +82,23 @@ class GroupRuntime(runtime.GroupRuntime):
 
         self._group_config = model.Model(
             await util.load_group_config(
-                self.group, self.assembly, None,
-                self.doozer_data_path, self.doozer_data_gitref,
+                self.group,
+                self.assembly,
+                None,
+                self.doozer_data_path,
+                self.doozer_data_gitref,
             ),
         )
         return self
 
     def __init__(
-            self,
-            config: Dict[str, Any], working_dir: Path,
-            group: str, assembly: str = "test",
-            doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-            doozer_data_gitref: str = '',
+        self,
+        config: Dict[str, Any],
+        working_dir: Path,
+        group: str,
+        assembly: str = "test",
+        doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+        doozer_data_gitref: str = '',
     ):
 
         self.config = config
