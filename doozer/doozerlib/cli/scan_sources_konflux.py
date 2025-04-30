@@ -420,14 +420,17 @@ class ConfigScanSources:
         # Inspect the SLSA provenance: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
         # To see if the latest build is actually hermetic
         cmd = f"cosign download attestation {build_record.image_pullspec} --registry-username {os.environ['KONFLUX_ART_IMAGES_USERNAME']} --registry-password {os.environ['KONFLUX_ART_IMAGES_PASSWORD']}"
-        rc, attestation, error = exectools.cmd_gather(cmd, strip=True)
+        rc, attestation, error = await exectools.cmd_gather_async(cmd, strip=True)
         if rc != 0:
             raise IOError(
                 f"Failed to get SLSA attestation for {build_record.image_pullspec}: {error}"
             )
 
-        # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
-        payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+        try:
+            # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
+            payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
+        except Exception as e:
+            raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
         is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
