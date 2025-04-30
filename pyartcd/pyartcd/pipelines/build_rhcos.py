@@ -88,8 +88,8 @@ class BuildRhcosPipeline:
                     param["name"] == "STREAM" and param["value"] == self._stream  # check build parameter with given stream
                     for action in build["actions"]
                     if "parameters" in action
-                    for param in action["parameters"]
-                )]
+                    for param in action["parameters"])
+                ]
 
     def get_stream(self):
         """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""

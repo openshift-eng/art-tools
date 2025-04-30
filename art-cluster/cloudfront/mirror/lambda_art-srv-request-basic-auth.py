@@ -81,7 +81,7 @@ def find_region(ip) -> Optional[str]:
         # if it were an EC2 instance.
         position = bisect(
             KeyifyList(
-            ip_ranges, lambda range: range[0],
+                ip_ranges, lambda range: range[0],
             ), ip_as_int,
         )
         # ip_ranges[position][0] > ip_as_int, ip_ranges[position - 1][0] <= ip_as_int

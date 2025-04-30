@@ -142,7 +142,7 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
                 key_struct = key_struct.primitive()
             key_struct = _merger(
                 key_struct, parent_config_struct.primitive() if hasattr(
-                parent_config_struct, "primitive",
+                    parent_config_struct, "primitive",
                 ) else parent_config_struct,
             )
         else:

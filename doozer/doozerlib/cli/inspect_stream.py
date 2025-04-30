@@ -79,9 +79,9 @@ def _check_cross_payload_consistency_requirements(runtime, assembly_inspector, r
     for arch in runtime.group_config.arches:
         issues.extend(
             PayloadGenerator.find_rhcos_payload_rpm_inconsistencies(
-            assembly_inspector.get_rhcos_build(arch),
-            assembly_inspector.get_group_release_images(),
-            requirements,
+                assembly_inspector.get_rhcos_build(arch),
+                assembly_inspector.get_group_release_images(),
+                requirements,
             ),
         )
     return issues

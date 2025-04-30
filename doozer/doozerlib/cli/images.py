@@ -592,9 +592,9 @@ def print_build_metrics(runtime):
 
         runtime.logger.info(
             'Task {} took {:.1f}m of active build and was waiting to start for {:.1f}m'.format(
-            task_id,
-            build_secs / 60.0,
-            wait_secs / 60.0,
+                task_id,
+                build_secs / 60.0,
+                wait_secs / 60.0,
             ),
         )
     runtime.logger.info('Aggregate time all builds spent building {:.1f}m'.format(aggregate_build_secs / 60.0))
@@ -1175,7 +1175,7 @@ def images_print(runtime, short, show_non_release, only_for_payload, show_base, 
     if not show_non_release and non_release_images:
         echo_verbose(
             "\nThe following {} non-release images were excluded; use --show-non-release to include them:".format(
-            len(non_release_images),
+                len(non_release_images),
             ),
         )
         for image in non_release_images:

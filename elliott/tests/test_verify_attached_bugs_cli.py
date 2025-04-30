@@ -117,7 +117,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("is_version_in_lifecycle_phase").and_return(True)
         flexmock(JIRABugTracker).should_receive("get_config").and_return({
             'project': 'OCPBUGS', 'target_release': [
-            '4.6.z',
+                '4.6.z',
             ],
         })
         client = flexmock()
@@ -125,7 +125,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({
             'project': 'OCPBUGS', 'target_release': [
-            '4.6.z',
+                '4.6.z',
             ],
         })
         flexmock(BugzillaBugTracker).should_receive("login")
@@ -183,7 +183,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("get_errata_config").and_return({})
         flexmock(JIRABugTracker).should_receive("get_config").and_return({
             'project': 'OCPBUGS', 'target_release': [
-            '4.6.z',
+                '4.6.z',
             ],
         })
         client = flexmock()
@@ -191,7 +191,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({
             'project': 'OCPBUGS', 'target_release': [
-            '4.6.z',
+                '4.6.z',
             ],
         })
         flexmock(BugzillaBugTracker).should_receive("login")

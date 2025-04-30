@@ -466,10 +466,10 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         pipeline.change_advisory_state_qe = AsyncMock()
         pipeline.get_advisory_info = AsyncMock(
             return_value={
-            "id": 2,
-            "errata_id": 2222,
-            "fulladvisory": "RHBA-2099:2222-02",
-            "status": "NEW_FILES",
+                "id": 2,
+                "errata_id": 2222,
+                "fulladvisory": "RHBA-2099:2222-02",
+                "status": "NEW_FILES",
             },
         )
 

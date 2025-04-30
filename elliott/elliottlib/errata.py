@@ -298,8 +298,8 @@ def build_signed(build):
     else:
         raise exceptions.ErrataToolError(
             "Other error (status_code={code}): {msg}".format(
-            code=res.status_code,
-            msg=res.text,
+                code=res.status_code,
+                msg=res.text,
             ),
         )
 
@@ -404,8 +404,8 @@ def get_brew_builds(errata_id, session=None):
     else:
         raise exceptions.BrewBuildException(
             "fetch builds from {id}: {msg}".format(
-            id=errata_id,
-            msg=res.text,
+                id=errata_id,
+                msg=res.text,
             ),
         )
 
@@ -446,8 +446,8 @@ def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
     else:
         raise exceptions.BrewBuildException(
             "{build}: {msg}".format(
-            build=nvr,
-            msg=res.text,
+                build=nvr,
+                msg=res.text,
             ),
         )
 

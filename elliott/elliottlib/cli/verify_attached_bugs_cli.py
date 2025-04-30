@@ -531,8 +531,7 @@ class BugValidator:
                         'Current Release', 'Errata', 'Next Release',
                         "Won't Do", "Won't Fix",
                         'Duplicate', 'Duplicate Issue',
-                        'Not a Bug',
-                    ]:
+                        'Not a Bug']:
                     if self.output == 'text':
                         message = f"Regression possible: {bug.status} bug {bug.id} is a backport of bug " \
                             f"{blocker.id} which was CLOSED {blocker.resolution}"

@@ -154,11 +154,11 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         runner = CliRunner()
         bugs = [
             flexmock(
-            id='BZ1',
-            is_tracker_bug=lambda: False,
-            is_invalid_tracker_bug=lambda: False,
-            component='whatever',
-            sub_component='whatever',
+                id='BZ1',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='whatever',
+                sub_component='whatever',
             ),
         ]
         advisory_id = 123

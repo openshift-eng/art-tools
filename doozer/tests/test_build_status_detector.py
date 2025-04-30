@@ -36,10 +36,7 @@ class TestBuildStatusDetector(TestCase):
 
         with patch("doozerlib.brew.get_builds_tags", return_value=tags), \
              patch("doozerlib.brew.list_image_rpms", return_value=rpm_lists), \
-             patch(
-                 "doozerlib.build_status_detector.BuildStatusDetector.find_shipped_builds",
-                 side_effect=lambda builds: {b for b in builds if b in shipped_builds},
-             ):
+             patch("doozerlib.build_status_detector.BuildStatusDetector.find_shipped_builds", side_effect=lambda builds: {b for b in builds if b in shipped_builds}):
             detector = BuildStatusDetector(MagicMock(build_system='brew'), MagicMock())
             detector.archive_lists = archive_lists
             actual = detector.find_embargoed_builds(builds, [])
@@ -69,14 +66,9 @@ class TestBuildStatusDetector(TestCase):
         embargoed_tag_builds = {301, 401}
         expected = {1, 4}
 
-        with patch(
-            "doozerlib.build_status_detector.BuildStatusDetector.rpms_in_embargoed_tag",
-            return_value=embargoed_tag_builds,
-        ), \
-             patch(
-                 "doozerlib.build_status_detector.BuildStatusDetector.find_shipped_builds",
-                 side_effect=lambda builds: {b for b in builds if b in shipped_rpm_builds},
-             ):
+        with patch("doozerlib.build_status_detector.BuildStatusDetector.rpms_in_embargoed_tag", return_value=embargoed_tag_builds), \
+             patch("doozerlib.build_status_detector.BuildStatusDetector.find_shipped_builds",
+                   side_effect=lambda builds: {b for b in builds if b in shipped_rpm_builds}):
             detector = BuildStatusDetector(MagicMock(build_system='brew'), MagicMock())
             detector.archive_lists = archive_lists
             actual = detector.find_with_embargoed_rpms(set(b["id"] for b in image_builds), ["test-candidate"])

@@ -59,7 +59,7 @@ class ConfigScanSources:
         self.all_image_metas = set(
             filter(
                 lambda meta: meta.enabled or (
-                meta.mode == 'disabled' and self.runtime.load_disabled
+                    meta.mode == 'disabled' and self.runtime.load_disabled
                 ), runtime.image_metas(),
             ),
         )
@@ -347,12 +347,12 @@ class ConfigScanSources:
         self.logger.info('Gathering latest image build records information...')
         latest_image_builds = await asyncio.gather(
             *[
-            self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names
+                self.runtime.image_map[name].get_latest_build(engine=Engine.KONFLUX.value) for name in image_names
             ],
         )
         self.latest_image_build_records_map.update((
             zip(
-            image_names, latest_image_builds,
+                image_names, latest_image_builds,
             )
         ))
 

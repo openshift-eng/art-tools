@@ -114,7 +114,7 @@ def find_default_advisory(runtime, default_advisory_type, quiet=False):
         red_prefix('No value defined for default advisory:')
         click.echo(
             ' The key advisories.{} is not defined for group {} in [group|releases].yml'.format(
-            default_advisory_type, runtime.group,
+                default_advisory_type, runtime.group,
             ),
         )
         exit(1)

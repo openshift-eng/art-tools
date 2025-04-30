@@ -180,7 +180,7 @@ def _assemble_repo(config, nvres: List[str]):
                 if not matched_count:
                     logger.warning(
                         "Unable to find any {arch} rpms for {nvre} in {p} ; this may be ok if the package doesn't support the arch and it is not required for that arch".format(
-                        arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed),
+                            arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed),
                         ),
                     )
 

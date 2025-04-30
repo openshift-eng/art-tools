@@ -451,9 +451,7 @@ class AsyncErrataUtils:
 
     @classmethod
     async def validate_cves_and_get_exclusions_diff(
-        cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[
-        str
-        ], cve_components_mapping: Dict[str, Dict],
+        cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[str], cve_components_mapping: Dict[str, Dict],
     ):
         _LOGGER.info("Getting associated CVEs for advisory %s", advisory_id)
         advisory_cves = await api.get_cves(advisory_id)

@@ -224,20 +224,20 @@ class KonfluxDb:
 
         return await asyncio.gather(
             *[
-            self.get_latest_build(
-                name=name,
-                group=group,
-                outcome=outcome,
-                assembly=assembly,
-                el_target=el_target,
-                artifact_type=artifact_type,
-                engine=engine,
-                completed_before=completed_before,
-                embargoed=embargoed,
-                extra_patterns=extra_patterns,
-                strict=strict,
-            )
-            for name in names
+                self.get_latest_build(
+                    name=name,
+                    group=group,
+                    outcome=outcome,
+                    assembly=assembly,
+                    el_target=el_target,
+                    artifact_type=artifact_type,
+                    engine=engine,
+                    completed_before=completed_before,
+                    embargoed=embargoed,
+                    extra_patterns=extra_patterns,
+                    strict=strict,
+                )
+                for name in names
             ],
         )
 

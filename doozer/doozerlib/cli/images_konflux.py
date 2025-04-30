@@ -80,13 +80,13 @@ class KonfluxRebaseCli:
             tasks.append(
                 asyncio.create_task(
                     rebaser.rebase_to(
-                    image_meta,
-                    self.version,
-                    self.release,
-                    force_yum_updates=self.force_yum_updates,
-                    image_repo=self.image_repo,
-                    commit_message=self.message,
-                    push=self.push,
+                        image_meta,
+                        self.version,
+                        self.release,
+                        force_yum_updates=self.force_yum_updates,
+                        image_repo=self.image_repo,
+                        commit_message=self.message,
+                        push=self.push,
                     ),
                 ),
             )

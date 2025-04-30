@@ -170,7 +170,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         )
         builder._watch_tasks_async = mock.AsyncMock(
             side_effect=lambda task_ids, _: {
-            task_id: None for task_id in task_ids
+                task_id: None for task_id in task_ids
             },
         )
         mocked_cmd_gather_async.return_value = (0, "some stdout", "some stderr")
@@ -212,7 +212,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         )
         builder._watch_tasks_async = mock.AsyncMock(
             side_effect=lambda task_ids, _: {
-            task_id: "Some error" for task_id in task_ids
+                task_id: "Some error" for task_id in task_ids
             },
         )
         mocked_cmd_gather_async.return_value = (0, "some stdout", "some stderr")

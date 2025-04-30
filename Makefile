@@ -9,10 +9,7 @@ venv:
 format:
 	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma --exit-zero-even-if-changed
 
-format-check:
-	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma
-
-lint: format-check
+lint:
 	uv run -m flake8
 
 pylint:

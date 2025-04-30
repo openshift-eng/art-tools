@@ -101,9 +101,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time',
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time',
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -116,9 +116,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time', sorting='ASC',
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time', sorting='ASC',
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -131,9 +131,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time', sorting='ASC', limit=0,
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time', sorting='ASC', limit=0,
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -146,9 +146,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={'name': 'ironic', 'group': 'openshift-4.18'},
-            order_by='start_time', sorting='ASC', limit=10,
+                start_search=start_search,
+                where={'name': 'ironic', 'group': 'openshift-4.18'},
+                order_by='start_time', sorting='ASC', limit=10,
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -162,18 +162,18 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         with self.assertRaises(AssertionError):
             await anext(
                 self.db.search_builds_by_fields(
-                start_search=start_search,
-                where={'name': 'ironic', 'group': 'openshift-4.18'},
-                order_by='start_time', sorting='ASC', limit=-1,
+                    start_search=start_search,
+                    where={'name': 'ironic', 'group': 'openshift-4.18'},
+                    order_by='start_time', sorting='ASC', limit=-1,
                 ), None,
             )
 
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            extra_patterns={'name': 'installer'},
-            order_by='start_time', sorting='ASC', limit=10,
+                start_search=start_search,
+                extra_patterns={'name': 'installer'},
+                order_by='start_time', sorting='ASC', limit=10,
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -186,9 +186,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            extra_patterns={'name': '^ose-installer$'},
-            order_by='start_time', sorting='ASC', limit=10,
+                start_search=start_search,
+                extra_patterns={'name': '^ose-installer$'},
+                order_by='start_time', sorting='ASC', limit=10,
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -201,9 +201,9 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            extra_patterns={'name': 'installer', 'group': 'openshift'},
-            order_by='start_time', sorting='ASC', limit=10,
+                start_search=start_search,
+                extra_patterns={'name': 'installer', 'group': 'openshift'},
+                order_by='start_time', sorting='ASC', limit=10,
             ), None,
         )
         query_mock.assert_called_once_with(
@@ -216,12 +216,12 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
         query_mock.reset_mock()
         await anext(
             self.db.search_builds_by_fields(
-            start_search=start_search,
-            where={
-                'engine': [Engine.BREW, Engine.KONFLUX],
-                'name': ['ironic', 'ose-installer'],
-            },
-            order_by='start_time', sorting='ASC', limit=10,
+                start_search=start_search,
+                where={
+                    'engine': [Engine.BREW, Engine.KONFLUX],
+                    'name': ['ironic', 'ose-installer'],
+                },
+                order_by='start_time', sorting='ASC', limit=10,
             ), None,
         )
         query_mock.assert_called_once_with(

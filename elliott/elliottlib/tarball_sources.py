@@ -80,7 +80,7 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
     assert source_commit_hash
     LOGGER.debug(
         "Source is from repo {}, commit {}".format(
-        source_repo_url, source_commit_hash,
+            source_repo_url, source_commit_hash,
         ),
     )
 
@@ -123,7 +123,7 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
         git_commit = repo.revparse_single(source_commit_hash).peel(pygit2.Commit)
     LOGGER.info(
         "Generating source from commit {}, author: {} <{}> message:{}".format(
-        git_commit.id, git_commit.author.name, git_commit.author.email, git_commit.message,
+            git_commit.id, git_commit.author.name, git_commit.author.email, git_commit.message,
         ),
     )
 
@@ -151,7 +151,7 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
                     archive.addfile(info)
                     LOGGER.warning(
                         "Created placeholder dir for submodule {}: {}. Dist-git repos usually don't use submodules!".format(
-                        full_name, entry.id,
+                            full_name, entry.id,
                         ),
                     )
                 elif entry.type_str == "blob":

@@ -89,14 +89,14 @@ class TestUtil(unittest.TestCase):
                 'extra': {
                     'image': {
                         'parent_image_builds': {
-                        'registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder@sha256:8e1cfc7198db25b97ce6f42e147b5c07d9725015ea971d04c91fe1249b565c80': {
-                            'id': 1977952,
-                            'nvr': 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca',
-                        },
-                        'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-base:v4.11.0-202205301910.p0.gf1330f6.assembly.stream': {
-                            'id': 2031610,
-                            'nvr': 'openshift-enterprise-base-container-v4.11.0-202205301910.p0.gf1330f6.assembly.stream',
-                        },
+                            'registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder@sha256:8e1cfc7198db25b97ce6f42e147b5c07d9725015ea971d04c91fe1249b565c80': {
+                                'id': 1977952,
+                                'nvr': 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca',
+                            },
+                            'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-base:v4.11.0-202205301910.p0.gf1330f6.assembly.stream': {
+                                'id': 2031610,
+                                'nvr': 'openshift-enterprise-base-container-v4.11.0-202205301910.p0.gf1330f6.assembly.stream',
+                            },
                         },
                     },
                 },

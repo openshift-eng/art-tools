@@ -52,7 +52,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
     working_dir = os.path.join(ctx.obj.working_dir, "tarball-sources")
     LOGGER.debug(
         "Use working directory {}.".format(
-        os.path.abspath(working_dir),
+            os.path.abspath(working_dir),
         ),
     )
     mkdirs(working_dir)
@@ -95,7 +95,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
         for nvr, product, product_version in builds:
             green_print(
                 "\t{}\t{}\t{}".format(
-                nvr, product, product_version,
+                    nvr, product, product_version,
                 ),
             )
 
@@ -107,7 +107,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
             else:
                 nvr_dirs[nvr].add(
                     os.path.join(
-                    out_dir, product_version, str(advisory), "release",
+                        out_dir, product_version, str(advisory), "release",
                     ),
                 )
 
@@ -119,7 +119,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
     # in order to figure out the source Git repo and commit hash for each build.
     click.echo(
         "Fetching build infos for {} from Koji/Brew...".format(
-        ", ".join(nvr_dirs.keys()),
+            ", ".join(nvr_dirs.keys()),
         ),
     )
     brew_session = koji.ClientSession(constants.BREW_HUB)
@@ -132,7 +132,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
         tarball_filename = nvr + ".tar.gz"
         click.echo(
             "Generating tarball source {} for {}...".format(
-            tarball_filename, nvr,
+                tarball_filename, nvr,
             ),
         )
 
@@ -158,7 +158,7 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
 
                 LOGGER.debug(
                     "Copying {} to {}...".format(
-                    temp_tarball_path, tarball_abspath,
+                        temp_tarball_path, tarball_abspath,
                     ),
                 )
                 shutil.copyfile(temp_tarball_path, tarball_abspath)  # `shutil.copyfile` uses default umask
@@ -187,7 +187,7 @@ def print_success_message(tarball_sources_list, out_dir):
         os.path.join(
             os.path.relpath(
                 os.path.dirname(
-                path,
+                    path,
                 ), out_dir,
             ), os.path.basename(path),
         ) for path in tarball_sources_list

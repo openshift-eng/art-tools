@@ -641,7 +641,7 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(
                     assembly_inspector.check_group_image_consistency(
-                    bbii, self.package_rpm_finder,
+                        bbii, self.package_rpm_finder,
                     ),
                 )
 
@@ -655,7 +655,7 @@ class GenPayloadCli:
             if bbii:
                 self.assembly_issues.extend(
                     assembly_inspector.check_installed_rpms_in_image(
-                    dg_key, bbii, self.package_rpm_finder,
+                        dg_key, bbii, self.package_rpm_finder,
                     ),
                 )
 
@@ -952,7 +952,7 @@ class GenPayloadCli:
                 self.logger.info(f"Building payload files for architecture: {arch}; private: {private_mode}")
                 tasks.append(
                     self.generate_specific_payload_imagestreams(
-                    arch, private_mode, payload_entries, multi_specs,
+                        arch, private_mode, payload_entries, multi_specs,
                     ),
                 )
             await asyncio.gather(*tasks)
@@ -1796,8 +1796,8 @@ class PayloadGenerator:
             if not bbii:
                 issues.append(
                     AssemblyIssue(
-                    f"RHCOS consistency configuration specifies a payload tag '{payload_tag}'"
-                    " that does not exist", payload_tag, AssemblyIssueCode.IMPERMISSIBLE,
+                        f"RHCOS consistency configuration specifies a payload tag '{payload_tag}'"
+                        " that does not exist", payload_tag, AssemblyIssueCode.IMPERMISSIBLE,
                     ),
                 )
                 continue
@@ -1806,8 +1806,8 @@ class PayloadGenerator:
             for pkg in consistent_pkgs:
                 issues.append(
                     self.validate_pkg_consistency_req(
-                    payload_tag, pkg, bbii, rhcos_rpm_vrs,
-                    str(primary_rhcos_build), package_rpm_finder,
+                        payload_tag, pkg, bbii, rhcos_rpm_vrs,
+                        str(primary_rhcos_build), package_rpm_finder,
                     ),
                 )
 
@@ -2091,11 +2091,7 @@ class PayloadGenerator:
         """
 
         brew_arch = brew_arch_for_go_arch(arch)  # Make certain this is brew arch nomenclature
-        members: Dict[
-            str, Optional[
-            ImageInspector
-            ],
-        ] = dict()  # Maps release payload tag name to the archive which should populate it
+        members: Dict[str, Optional[ImageInspector]] = dict()  # Maps release payload tag name to the archive which should populate it
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
 
             if build_inspector is None:

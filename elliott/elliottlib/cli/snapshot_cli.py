@@ -79,10 +79,10 @@ class CreateSnapshotCli:
         for pullspec in pullspecs:
             image_info_tasks.append(
                 asyncio.create_task(
-                oc_image_info_for_arch_async(
-                    pullspec,
-                    registry_config=image_repo_pull_secret,
-                ),
+                    oc_image_info_for_arch_async(
+                        pullspec,
+                        registry_config=image_repo_pull_secret,
+                    ),
                 ),
             )
         image_infos = await asyncio.gather(*image_info_tasks, return_exceptions=True)

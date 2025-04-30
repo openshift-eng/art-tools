@@ -97,7 +97,7 @@ class JIRAClient:
     ) -> List[Issue]:
         new_issues = [
             self.clone_issue(
-            source_issue, dest_project, fields_transform=fields_transform,
+                source_issue, dest_project, fields_transform=fields_transform,
             ),
         ]
         if source_issue.fields.subtasks:

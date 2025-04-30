@@ -190,8 +190,8 @@ def get_brew_build(nvr, product_version='', session=None):
     else:
         raise exceptions.BrewBuildException(
             "{build}: {msg}".format(
-            build=nvr,
-            msg=res.text,
+                build=nvr,
+                msg=res.text,
             ),
         )
 

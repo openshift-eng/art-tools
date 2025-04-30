@@ -261,11 +261,11 @@ class KonfluxOlmBundleRebaser:
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
             image_info_tasks.append(
                 asyncio.create_task(
-                util.oc_image_info_for_arch_async__caching(
-                    build_pullspec,
-                    registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
-                    registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
-                ),
+                    util.oc_image_info_for_arch_async__caching(
+                        build_pullspec,
+                        registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
+                        registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
+                    ),
                 ),
             )
         image_infos = await asyncio.gather(*image_info_tasks)

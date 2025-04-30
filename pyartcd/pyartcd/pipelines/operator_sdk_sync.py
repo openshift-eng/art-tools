@@ -47,7 +47,7 @@ class OperatorSDKPipeline:
 
             sdk_build = [
                 b for b in sum(list(map(list, advisory.errata_builds.values())), []) if b.startswith(
-                'openshift-enterprise-operator-sdk-container',
+                    'openshift-enterprise-operator-sdk-container',
                 )
             ]
             if not sdk_build:
