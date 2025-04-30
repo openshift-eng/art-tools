@@ -490,7 +490,7 @@ class AssemblyInspector:
                         # Impermissible as artist can just fix the assembly definition.
                         issues.append(
                             AssemblyIssue(
-                                f'Expected image build git commit {target_branch} but {build_commit} was found in the build', component=dgk
+                                f'Expected image build git commit {target_branch} but {build_commit} was found in the build', component=dgk,
                             ),
                         )
             except ValueError:
