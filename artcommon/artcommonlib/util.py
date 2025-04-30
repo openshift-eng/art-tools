@@ -1,18 +1,19 @@
-import asyncio
-import logging
-import re
-from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from pathlib import Path
-from typing import Dict, Iterable, List, Optional, OrderedDict, Tuple, Union
-
+import logging
+from typing import OrderedDict, Optional, Tuple, Iterable, List, Union, Dict
+from datetime import datetime, timezone, timedelta, date
+import re
+import asyncio
+import os
 import aiohttp
 import requests
-from artcommonlib.constants import RELEASE_SCHEDULES
-from artcommonlib.model import ListModel, Missing
-from ruamel.yaml import YAML
+from pathlib import Path
 from semver import VersionInfo
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, wait_fixed, stop_after_attempt
+from ruamel.yaml import YAML
+from artcommonlib.constants import RELEASE_SCHEDULES
+from artcommonlib.exectools import cmd_gather_async
+from artcommonlib.model import ListModel, Missing
 
 LOGGER = logging.getLogger(__name__)
 
@@ -445,3 +446,15 @@ def detect_package_managers(metadata, dest_dir: Path):
         if any(dest_dir.joinpath(file).is_file() for file in files):
             pkg_managers.append(pkg_manager)
     return pkg_managers
+
+
+@retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
+async def get_konflux_slsa_attestation(pull_spec: str):
+    """
+    Inspect the SLSA provenance: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
+    To see if the latest build is actually hermetic
+    """
+    cmd = f"cosign download attestation {pull_spec} --registry-username {os.environ['KONFLUX_ART_IMAGES_USERNAME']} --registry-password {os.environ['KONFLUX_ART_IMAGES_PASSWORD']}"
+    _, out, _ = await cmd_gather_async(cmd)
+
+    return out.strip()
