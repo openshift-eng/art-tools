@@ -14,7 +14,7 @@ format-check:
 	uv run -m black --check --target-version py311 --skip-string-normalization . --line-length 150
 	uv run -m isort --check-only --profile black --line-length 150 .
 
-lint: format-check
+lint:
 	uv run -m flake8
 
 pylint:
