@@ -1,4 +1,5 @@
 coverage
+add-trailing-comma
 black
 isort >= 5.0.0
 flake8
