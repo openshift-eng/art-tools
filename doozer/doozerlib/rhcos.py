@@ -185,10 +185,12 @@ class RHCOSBuildFinder:
         :return: Returns (rhcos build id, image pullspec) or (None, None) if not found.
         """
         if self.runtime.group_config.rhcos.get("layered_rhcos", False):
-            rhcosdata = util.oc_image_info_for_arch(container_conf.rhcos_index_tag, self.go_arch)
+            primary_rhcos = self.get_primary_container_conf()
+            rhcosdata = util.oc_image_info_for_arch(primary_rhcos.rhcos_index_tag, self.go_arch)
             build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]
-            pullspec = f"{ART_PROD_IMAGE_REPO}@{rhcosdata['digest']}"
-            return build_id, pullspec
+            if container_conf != self.get_primary_container_conf(): # not rhcos-coreos
+                rhcosdata = util.oc_image_info_for_arch(container_conf.rhcos_index_tag, self.go_arch)
+            return build_id, f"{ART_PROD_IMAGE_REPO}@{rhcosdata['digest']}"
         else:
             build_id = self.latest_rhcos_build_id()
             if build_id is None:
