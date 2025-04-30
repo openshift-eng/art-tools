@@ -1318,11 +1318,7 @@ class ImageDistGitRepo(DistGitRepo):
                             image_shas = []
                             for idx, build_id in enumerate(build_ids):
                                 build_info = Model(
-                                    kcs.getBuild(
-                                        int(
-                                        build_id,
-                                        ),
-                                    ),
+                                    kcs.getBuild(int(build_id)),
                                 )  # Example: https://gist.github.com/jupierce/fe05f8fe310fdf8aa8b5c5991cf21f05
 
                                 main_sha = build_info.extra.typeinfo.image.index.digests  # Typically contains manifest list sha
