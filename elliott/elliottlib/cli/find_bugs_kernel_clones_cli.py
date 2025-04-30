@@ -27,8 +27,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 class FindBugsKernelClonesCli:
-    def __init__(self, runtime: Runtime, trackers: Sequence[str], bugs: Sequence[str],
-                 move: bool, update_tracker: bool, dry_run: bool):
+    def __init__(
+        self, runtime: Runtime, trackers: Sequence[str], bugs: Sequence[str],
+        move: bool, update_tracker: bool, dry_run: bool,
+    ):
         self._runtime = runtime
         self._logger = LOGGER
         self.trackers = list(trackers)
@@ -71,11 +73,13 @@ class FindBugsKernelClonesCli:
             logger.info("Done.")
 
         # Print a report
-        report["jira_issues"] = [{
-            "key": bug.key,
-            "summary": bug.fields.summary,
-            "status": str(bug.fields.status.name),
-        } for bug in found_bugs]
+        report["jira_issues"] = [
+            {
+                "key": bug.key,
+                "summary": bug.fields.summary,
+                "status": str(bug.fields.status.name),
+            } for bug in found_bugs
+        ]
         self._print_report(report, sys.stdout)
 
     @staticmethod
@@ -105,8 +109,10 @@ class FindBugsKernelClonesCli:
 
     @staticmethod
     @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(30))
-    def _search_for_jira_bugs(jira_client: JIRA, trackers: Optional[List[str]],
-                              config: KernelBugSweepConfig):
+    def _search_for_jira_bugs(
+        jira_client: JIRA, trackers: Optional[List[str]],
+        config: KernelBugSweepConfig,
+    ):
         # search for jira bugs we created previously as clones of the original kernel bugs
         conditions = [
             "labels = art:cloned-kernel-bug",
@@ -121,11 +127,12 @@ class FindBugsKernelClonesCli:
         found_bugs = jira_client.search_issues(jql_str, maxResults=0)
         return cast(List[Issue], found_bugs)
 
-    def _find_trackers_for_bugs(self,
-                                config: KernelBugSweepConfig,
-                                bugs: List[Issue],
-                                jira_client: JIRA,
-                                ) -> (Dict[str, Issue], Dict[str, List[Issue]]):
+    def _find_trackers_for_bugs(
+        self,
+        config: KernelBugSweepConfig,
+        bugs: List[Issue],
+        jira_client: JIRA,
+    ) -> (Dict[str, Issue], Dict[str, List[Issue]]):
         # find relevant KMAINT trackers given the Jira bugs we previously made for them
         trackers: Dict[str, Issue] = {}
         tracker_bugs: Dict[str, List[Issue]] = {}
@@ -189,7 +196,7 @@ class FindBugsKernelClonesCli:
                 if self.update_tracker:
                     early_kernel.comment_on_tracker(
                         logger, self.dry_run, jira_client, tracker,
-                        [f"Build(s) {nvrs} was/were already tagged into {candidate}."]
+                        [f"Build(s) {nvrs} was/were already tagged into {candidate}."],
                         # do not reword, see NOTE in method
                     )
 
@@ -203,26 +210,37 @@ class FindBugsKernelClonesCli:
 
 
 @cli.command("find-bugs:kernel-clones", short_help="Find kernel bugs")
-@click.option("--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
-              help="Find by the specified KMAINT tracker JIRA_KEY")
-@click.option("--issue", "issues", metavar='JIRA_KEY', multiple=True,
-              help="Find by the specified Jira bug JIRA_KEY")
-@click.option("--move",
-              is_flag=True,
-              default=False,
-              help="Auto move Jira bugs to MODIFIED or CLOSED")
-@click.option("--update-tracker",
-              is_flag=True,
-              default=False,
-              help="Update KMAINT trackers state, links, and comments")
-@click.option("--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
+    help="Find by the specified KMAINT tracker JIRA_KEY",
+)
+@click.option(
+    "--issue", "issues", metavar='JIRA_KEY', multiple=True,
+    help="Find by the specified Jira bug JIRA_KEY",
+)
+@click.option(
+    "--move",
+    is_flag=True,
+    default=False,
+    help="Auto move Jira bugs to MODIFIED or CLOSED",
+)
+@click.option(
+    "--update-tracker",
+    is_flag=True,
+    default=False,
+    help="Update KMAINT trackers state, links, and comments",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Don't change anything",
+)
 @click.pass_obj
 def find_bugs_kernel_clones_cli(
         runtime: Runtime, trackers: Tuple[str, ...], issues: Tuple[str, ...],
-        move: bool, update_tracker: bool, dry_run: bool):
+        move: bool, update_tracker: bool, dry_run: bool,
+):
     """Find cloned kernel bugs in JIRA for weekly kernel release through OCP.
 
     Example 1: List all bugs in JIRA
@@ -244,6 +262,6 @@ def find_bugs_kernel_clones_cli(
         bugs=issues,
         move=move,
         update_tracker=update_tracker,
-        dry_run=dry_run
+        dry_run=dry_run,
     )
     cli.run()

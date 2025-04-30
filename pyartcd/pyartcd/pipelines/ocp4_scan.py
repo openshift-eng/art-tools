@@ -64,7 +64,7 @@ class Ocp4ScanPipeline:
                 assembly='stream',
                 rpm_list=rpm_list,
                 image_list=image_list,
-                comment_on_pr=True
+                comment_on_pr=True,
             )
 
         elif self.rhcos_inconsistent:
@@ -92,12 +92,12 @@ class Ocp4ScanPipeline:
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
-                build_system="brew"
+                build_system="brew",
             )
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
-                build_system="konflux"
+                build_system="konflux",
             )
 
         else:
@@ -207,7 +207,7 @@ async def ocp4_scan(runtime: Runtime, version: str):
                 lock=build_lock,
                 lock_name=build_lock_name,
                 lock_id=lock_identifier,
-                skip_if_locked=True
+                skip_if_locked=True,
             )
 
         await locks.run_with_lock(
@@ -215,7 +215,7 @@ async def ocp4_scan(runtime: Runtime, version: str):
             lock=lock,
             lock_name=lock_name,
             lock_id=lock_identifier,
-            skip_if_locked=True
+            skip_if_locked=True,
         )
 
     if pipeline.skipped:

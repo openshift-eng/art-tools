@@ -5,21 +5,31 @@ import click
 
 
 @cli.command("change-state", short_help="Change ADVISORY state")
-@click.option("--state", '-s', required=True,
-              type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
-              help="New state for the Advisory. NEW_FILES, QE, REL_PREP")
-@click.option("--from", "from_state", type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
-              help="(Optional) Only change state if the advisory is in this state")
-@click.option("--advisory", "-a", metavar='ADVISORY', type=int,
-              help="Change state of ADVISORY")
-@click.option("--default-advisories",
-              is_flag=True,
-              help="Change state of all advisories of specified group")
+@click.option(
+    "--state", '-s', required=True,
+    type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
+    help="New state for the Advisory. NEW_FILES, QE, REL_PREP",
+)
+@click.option(
+    "--from", "from_state", type=click.Choice(['NEW_FILES', 'QE', 'REL_PREP']),
+    help="(Optional) Only change state if the advisory is in this state",
+)
+@click.option(
+    "--advisory", "-a", metavar='ADVISORY', type=int,
+    help="Change state of ADVISORY",
+)
+@click.option(
+    "--default-advisories",
+    is_flag=True,
+    help="Change state of all advisories of specified group",
+)
 @use_default_advisory_option
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Do not actually change anything")
+@click.option(
+    "--noop", "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Do not actually change anything",
+)
 @click.pass_obj
 def change_state_cli(runtime, state, from_state, advisory, default_advisories, default_advisory_type, noop):
     """Change the state of an ADVISORY. Additional permissions may be

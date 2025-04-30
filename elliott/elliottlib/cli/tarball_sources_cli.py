@@ -26,9 +26,11 @@ def tarball_sources_cli(ctx):
 @tarball_sources_cli.command()
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=True)
 @click.option("--out-dir", type=click.Path(), default="./", help="Output directory for tarball sources.")
-@click.option("--out-layout", type=click.Choice(["hierarchical", "flat"]),
-              default="hierarchical", show_default=True,
-              help="Layout of output directory.")
+@click.option(
+    "--out-layout", type=click.Choice(["hierarchical", "flat"]),
+    default="hierarchical", show_default=True,
+    help="Layout of output directory.",
+)
 @click.option("--component", "components", multiple=True, help="Koji/Brew component names or build NVRs to filter on. Can be specified multiple times.")
 @click.option("-f", "--force", is_flag=True, help="Force overwrite existing files.")
 @click.pass_context
@@ -42,13 +44,17 @@ def create(ctx, advisories, out_dir, out_layout, components, force):
     if not force and os.path.isdir(out_dir) and os.listdir(out_dir):
         format_util.red_print(
             "Output directory {} is not empty.\n\
-Use --force to add new tarball sources to an existing directory.".format(os.path.abspath(out_dir)))
+Use --force to add new tarball sources to an existing directory.".format(os.path.abspath(out_dir)),
+        )
         exit(1)
     mkdirs(out_dir)
 
     working_dir = os.path.join(ctx.obj.working_dir, "tarball-sources")
-    LOGGER.debug("Use working directory {}.".format(
-        os.path.abspath(working_dir)))
+    LOGGER.debug(
+        "Use working directory {}.".format(
+        os.path.abspath(working_dir),
+        ),
+    )
     mkdirs(working_dir)
 
     # `nvr_dirs` is a dict with brew build NVRs as keys, values are
@@ -73,18 +79,25 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
     # due to a race condition existing in the implementation of `errata_tool.Erratum`'s parant class ErrataConnector.
     for advisory in advisories:
         click.echo(
-            "Finding builds from advisory {}...".format(advisory))
+            "Finding builds from advisory {}...".format(advisory),
+        )
         builds = tarball_sources.find_builds_from_advisory(
-            advisory, components)
+            advisory, components,
+        )
         if not builds:
             yellow_print(
-                "No matched builds found from advisory {}. Wrong advisory number?".format(advisory))
+                "No matched builds found from advisory {}. Wrong advisory number?".format(advisory),
+            )
             continue
         green_print(
-            "Found {} matched build(s) from advisory {}".format(len(builds), advisory))
+            "Found {} matched build(s) from advisory {}".format(len(builds), advisory),
+        )
         for nvr, product, product_version in builds:
-            green_print("\t{}\t{}\t{}".format(
-                nvr, product, product_version))
+            green_print(
+                "\t{}\t{}\t{}".format(
+                nvr, product, product_version,
+                ),
+            )
 
         for nvr, product, product_version in builds:
             if nvr not in nvr_dirs:
@@ -92,8 +105,11 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
             if out_layout == "flat":
                 nvr_dirs[nvr].add(out_dir)
             else:
-                nvr_dirs[nvr].add(os.path.join(
-                    out_dir, product_version, str(advisory), "release"))
+                nvr_dirs[nvr].add(
+                    os.path.join(
+                    out_dir, product_version, str(advisory), "release",
+                    ),
+                )
 
     if not nvr_dirs:
         format_util.red_print("Exiting because no matched builds from all specified advisories.")
@@ -101,8 +117,11 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
 
     # Check build infos from Koji/Brew
     # in order to figure out the source Git repo and commit hash for each build.
-    click.echo("Fetching build infos for {} from Koji/Brew...".format(
-        ", ".join(nvr_dirs.keys())))
+    click.echo(
+        "Fetching build infos for {} from Koji/Brew...".format(
+        ", ".join(nvr_dirs.keys()),
+        ),
+    )
     brew_session = koji.ClientSession(constants.BREW_HUB)
     brew_builds = brew.get_build_objects(nvr_dirs.keys(), brew_session)
 
@@ -111,30 +130,42 @@ Use --force to add new tarball sources to an existing directory.".format(os.path
     for build_info in brew_builds:
         nvr = build_info["nvr"]
         tarball_filename = nvr + ".tar.gz"
-        click.echo("Generating tarball source {} for {}...".format(
-            tarball_filename, nvr))
+        click.echo(
+            "Generating tarball source {} for {}...".format(
+            tarball_filename, nvr,
+            ),
+        )
 
         with tempfile.NamedTemporaryFile(suffix="-" + tarball_filename, dir=working_dir) as temp_tarball:
             temp_tarball_path = temp_tarball.name
             LOGGER.debug(
-                "Temporary tarball file is {}".format(temp_tarball_path))
+                "Temporary tarball file is {}".format(temp_tarball_path),
+            )
 
-            tarball_sources.generate_tarball_source(temp_tarball, nvr + "/", os.path.join(working_dir, "repos", build_info["name"]),
-                                                    build_info["source"])
+            tarball_sources.generate_tarball_source(
+                temp_tarball, nvr + "/", os.path.join(working_dir, "repos", build_info["name"]),
+                build_info["source"],
+            )
             for dest_dir in nvr_dirs[nvr]:
                 mkdirs(dest_dir)
                 tarball_abspath = os.path.abspath(
-                    os.path.join(dest_dir, tarball_filename))
+                    os.path.join(dest_dir, tarball_filename),
+                )
                 if os.path.exists(tarball_abspath):
                     yellow_print(
-                        "File {} will be overwritten.".format(tarball_abspath))
+                        "File {} will be overwritten.".format(tarball_abspath),
+                    )
 
-                LOGGER.debug("Copying {} to {}...".format(
-                    temp_tarball_path, tarball_abspath))
+                LOGGER.debug(
+                    "Copying {} to {}...".format(
+                    temp_tarball_path, tarball_abspath,
+                    ),
+                )
                 shutil.copyfile(temp_tarball_path, tarball_abspath)  # `shutil.copyfile` uses default umask
                 tarball_sources_list.append(tarball_abspath)
                 green_print(
-                    "Created tarball source {}.".format(tarball_abspath))
+                    "Created tarball source {}.".format(tarball_abspath),
+                )
 
     print_success_message(tarball_sources_list, out_dir)
 
@@ -152,11 +183,19 @@ def mkdirs(path):
 
 
 def print_success_message(tarball_sources_list, out_dir):
-    relative_paths = [os.path.join(os.path.relpath(os.path.dirname(
-        path), out_dir), os.path.basename(path)) for path in tarball_sources_list]
+    relative_paths = [
+        os.path.join(
+            os.path.relpath(
+                os.path.dirname(
+                path,
+                ), out_dir,
+            ), os.path.basename(path),
+        ) for path in tarball_sources_list
+    ]
     relative_paths.sort()
 
-    green_print("""
+    green_print(
+        """
 
 All tarball sources are successfully created.
 
@@ -167,4 +206,5 @@ To send all tarball sources to spmm-utils, run:
 Then notify RCM (https://projects.engineering.redhat.com/projects/RCM/issues) that the following tarball sources have been uploaded to spmm-utils:
 
 {}
-    """.format(pipes.quote(os.path.abspath(out_dir) + "/"), "\n".join(relative_paths)))
+    """.format(pipes.quote(os.path.abspath(out_dir) + "/"), "\n".join(relative_paths)),
+    )

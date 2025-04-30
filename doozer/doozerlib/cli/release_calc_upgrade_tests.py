@@ -3,8 +3,10 @@ from doozerlib.cli import cli
 from doozerlib import util
 
 
-@cli.command("release:calc-upgrade-tests",
-             short_help="Returns a list of recommended upgrade tests for an OCP release version")
+@cli.command(
+    "release:calc-upgrade-tests",
+    short_help="Returns a list of recommended upgrade tests for an OCP release version",
+)
 @click.option("--version", required=True, help="The release version to calculate upgrade tests for (e.g. 4.6.31)")
 def release_calc_upgrade_tests(version):
     arch = 'x86_64'

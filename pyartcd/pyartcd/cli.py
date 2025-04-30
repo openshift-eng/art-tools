@@ -38,22 +38,36 @@ def print_version(ctx, param, value):
 # GLOBAL OPTIONS: parameters for all commands
 # ============================================================================
 @click.group(context_settings=dict(help_option_names=['-h', '--help']))
-@click.option('--version', is_flag=True, callback=print_version,
-              expose_value=False, is_eager=True,
-              help="Print version information and quit")
-@click.option('--enable-telemetry', is_flag=True,
-              help="[Experimental] Enable OpenTelemetry support")
-@click.option("--config", "-c", metavar='PATH',
-              help="Configuration file ('~/.config/artcd.toml' by default)")
-@click.option("--working-dir", "-C", metavar='PATH', default=None,
-              help="Existing directory in which file operations should be performed (current directory by default)")
-@click.option("--dry-run", is_flag=True,
-              help="don't actually execute the pipeline; just print what would be done")
-@click.option("--verbosity", "-v", count=True,
-              help="[MULTIPLE] increase output verbosity")
+@click.option(
+    '--version', is_flag=True, callback=print_version,
+    expose_value=False, is_eager=True,
+    help="Print version information and quit",
+)
+@click.option(
+    '--enable-telemetry', is_flag=True,
+    help="[Experimental] Enable OpenTelemetry support",
+)
+@click.option(
+    "--config", "-c", metavar='PATH',
+    help="Configuration file ('~/.config/artcd.toml' by default)",
+)
+@click.option(
+    "--working-dir", "-C", metavar='PATH', default=None,
+    help="Existing directory in which file operations should be performed (current directory by default)",
+)
+@click.option(
+    "--dry-run", is_flag=True,
+    help="don't actually execute the pipeline; just print what would be done",
+)
+@click.option(
+    "--verbosity", "-v", count=True,
+    help="[MULTIPLE] increase output verbosity",
+)
 @click.pass_context
-def cli(ctx: click.Context, config: Optional[str], working_dir: Optional[str], dry_run: bool, verbosity: int,
-        enable_telemetry: bool):
+def cli(
+    ctx: click.Context, config: Optional[str], working_dir: Optional[str], dry_run: bool, verbosity: int,
+    enable_telemetry: bool,
+):
     # Initialize telemetry if needed
     if enable_telemetry or os.environ.get("TELEMETRY_ENABLED") == "1":
         initialize_telemetry()

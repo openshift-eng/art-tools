@@ -24,12 +24,16 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         public_key = private_key.public_key()
 
         builder = x509.CertificateBuilder()
-        builder = builder.subject_name(x509.Name([
-            x509.NameAttribute(NameOID.USER_ID, expected),
-        ]))
-        builder = builder.issuer_name(x509.Name([
-            x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
-        ]))
+        builder = builder.subject_name(
+            x509.Name([
+                x509.NameAttribute(NameOID.USER_ID, expected),
+            ]),
+        )
+        builder = builder.issuer_name(
+            x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
+            ]),
+        )
         builder = builder.not_valid_before(datetime.today() - one_day)
         builder = builder.not_valid_after(datetime.today() + (one_day * 30))
         builder = builder.serial_number(x509.random_serial_number())
@@ -54,7 +58,8 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         fake_messages = [
             MagicMock(
                 headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                body="")
+                body="",
+            ),
         ]
         receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         signatory = AsyncSignatory(uri, cert_file, key_file, sig_keyname="test", requestor="fake-requestor", subscription_name="fake-subscription")
@@ -74,7 +79,8 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         fake_messages = [
             MagicMock(
                 headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                body="")
+                body="",
+            ),
         ]
         receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         umb = AsyncUMBClient.return_value
@@ -96,7 +102,8 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         fake_messages = [
             MagicMock(
                 headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                body=json.dumps({"msg": {"request_id": "invalid-request-id"}}))
+                body=json.dumps({"msg": {"request_id": "invalid-request-id"}}),
+            ),
         ]
         receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         umb = AsyncUMBClient.return_value
@@ -119,7 +126,8 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         fake_messages = [
             MagicMock(
                 headers={"message-id": "fake-message-id", "timestamp": datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000},
-                body=json.dumps({"msg": {"request_id": "fake-request-id"}}))
+                body=json.dumps({"msg": {"request_id": "fake-request-id"}}),
+            ),
         ]
         receiver.iter_messages.return_value.__aiter__.return_value = fake_messages
         umb = AsyncUMBClient.return_value
@@ -151,11 +159,12 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
                     "name": "sha256sum.txt.gpg",
                     "product": "openshift",
                     "release_name": "4.0.1",
-                    "type": "message-digest"
+                    "type": "message-digest",
                 },
                 "signing_status": "success",
                 "errors": [],
-                "signed_artifact": base64.b64encode(b'fake-signature').decode()}
+                "signed_artifact": base64.b64encode(b'fake-signature').decode(),
+            },
         }
         expected_requested_id = 'openshift-message-digest-20230102123040-fake-uuid'
         asyncio.get_event_loop().call_soon(lambda: signatory._requests[expected_requested_id].set_result((response_headers, response_body)))

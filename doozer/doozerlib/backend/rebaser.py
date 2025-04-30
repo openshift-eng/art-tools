@@ -62,16 +62,17 @@ class KonfluxRebaser:
     - Handling of private fix bit in parent images
     """
 
-    def __init__(self,
-                 runtime: Runtime,
-                 base_dir: Path,
-                 source_resolver: SourceResolver,
-                 repo_type: str,
-                 upcycle: bool = False, force_private_bit: bool = False,
-                 record_logger: Optional[RecordLogger] = None,
-                 source_modifier_factory=SourceModifierFactory(),
-                 logger: Optional[logging.Logger] = None,
-                 ) -> None:
+    def __init__(
+        self,
+        runtime: Runtime,
+        base_dir: Path,
+        source_resolver: SourceResolver,
+        repo_type: str,
+        upcycle: bool = False, force_private_bit: bool = False,
+        record_logger: Optional[RecordLogger] = None,
+        source_modifier_factory=SourceModifierFactory(),
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self._runtime = runtime
         self._base_dir = base_dir
         self._source_resolver = source_resolver
@@ -112,7 +113,7 @@ class KonfluxRebaser:
             dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
                 "group": self._runtime.group,
                 "assembly_name": self._runtime.assembly,
-                "distgit_key": metadata.distgit_key
+                "distgit_key": metadata.distgit_key,
             })
 
             self._logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
@@ -248,8 +249,10 @@ class KonfluxRebaser:
         # Given an input release string, make an actual release string
         # e.g. 4.17.0-202407241200.p? -> 4.17.0-202407241200.p2.assembly.stream.gdeadbee.el9
         release = self._make_actual_release_string(metadata, input_release, private_fix, source)
-        self._update_build_dir(metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
-                               image_repo, uuid_tag)
+        self._update_build_dir(
+            metadata, dest_dir, source, version, release, downstream_parents, force_yum_updates,
+            image_repo, uuid_tag,
+        )
         metadata.private_fix = private_fix
 
         self._update_dockerignore(build_repo.local_dir)
@@ -301,10 +304,12 @@ class KonfluxRebaser:
                 if not parent_metadata:
                     raise IOError(f"Metadata config for parent image {member} is not found.")
 
-                build = asyncio.run(parent_metadata.get_latest_build(
-                    el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX
-                ))
+                build = asyncio.run(
+                    parent_metadata.get_latest_build(
+                        el_target=f'el{parent_metadata.branch_el_target()}',
+                        engine=Engine.KONFLUX,
+                    ),
+                )
 
                 if not build:
                     raise IOError(f"A build of parent image {member} is not found.")
@@ -315,7 +320,7 @@ class KonfluxRebaser:
             if parent_metadata.private_fix is None:
                 raise IOError(
                     f"Parent image {member} doesn't have .p? flag determined. "
-                    "This indicates a bug in Doozer. Please report this issue."
+                    "This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
             return f"{image_repo}:{parent_metadata.image_name_short}-{uuid_tag}", private_fix
@@ -494,7 +499,7 @@ class KonfluxRebaser:
                     # --no-merges because the merge bot is not the real author
                     # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
                     #   (though this means when the only commit is the initial add, that is omitted)
-                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name)
+                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name),
                 )
                 if rc == 0:
                     rc, ae, err = exectools.cmd_gather('git show -s --pretty=format:%ae {}'.format(sha))
@@ -527,7 +532,8 @@ class KonfluxRebaser:
                     owners=','.join(owners),
                     source_alias=source_alias,
                     source_dockerfile_subpath=source_dockerfile_subpath,
-                    dockerfile=str(dest_dir.joinpath('Dockerfile')))
+                    dockerfile=str(dest_dir.joinpath('Dockerfile')),
+                )
 
     def extract_version_release_private_fix(self, dfp: DockerfileParser) -> Tuple[Optional[str], Optional[str], Optional[bool]]:
         """
@@ -554,7 +560,8 @@ class KonfluxRebaser:
 
         self._logger.debug(
             "About to start modifying Dockerfile [%s]:\n%s\n" %
-            (metadata.distgit_key, dockerfile_data))
+            (metadata.distgit_key, dockerfile_data),
+        )
 
         # add build data modifications dir to path; we *could* add more
         # specific paths for the group and the individual config but
@@ -589,10 +596,12 @@ class KonfluxRebaser:
             with df_path.open('w', encoding="utf-8") as df:
                 df.write(new_dockerfile_data)
 
-    def _update_build_dir(self, metadata: ImageMetadata, dest_dir: Path,
-                          source: Optional[SourceResolution],
-                          version: str, release: str, downstream_parents: Optional[List[str]],
-                          force_yum_updates: bool, image_repo: str, uuid_tag: str):
+    def _update_build_dir(
+        self, metadata: ImageMetadata, dest_dir: Path,
+        source: Optional[SourceResolution],
+        version: str, release: str, downstream_parents: Optional[List[str]],
+        force_yum_updates: bool, image_repo: str, uuid_tag: str,
+    ):
         with exectools.Dir(dest_dir):
             self._generate_repo_conf(metadata, dest_dir, self._runtime.repos)
 
@@ -603,8 +612,10 @@ class KonfluxRebaser:
             self._write_osbs_image_config(metadata, dest_dir, source, version)
 
             df_path = dest_dir.joinpath('Dockerfile')
-            self._update_dockerfile(metadata, source, df_path, version, release, downstream_parents,
-                                    force_yum_updates, uuid_tag, dest_dir)
+            self._update_dockerfile(
+                metadata, source, df_path, version, release, downstream_parents,
+                force_yum_updates, uuid_tag, dest_dir,
+            )
 
             self._update_csv(metadata, dest_dir, version, release, image_repo, uuid_tag)
 
@@ -671,9 +682,11 @@ class KonfluxRebaser:
         df_stages.append(df_stage)
         return df_stages
 
-    def _update_dockerfile(self, metadata: ImageMetadata, source: Optional[SourceResolution],
-                           df_path: Path, version: str, release: str, downstream_parents: Optional[List[str]],
-                           force_yum_updates: bool, uuid_tag: str, dest_dir: Path):
+    def _update_dockerfile(
+        self, metadata: ImageMetadata, source: Optional[SourceResolution],
+        df_path: Path, version: str, release: str, downstream_parents: Optional[List[str]],
+        force_yum_updates: bool, uuid_tag: str, dest_dir: Path,
+    ):
         """ Update the Dockerfile in the build repo with the correct labels and version information.
         """
         dfp = DockerfileParser(str(df_path))
@@ -772,7 +785,7 @@ class KonfluxRebaser:
             df_lines.extend([
                 '',
                 '# RHEL version in final image must match the one in ART\'s config',
-                f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]'
+                f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
             ])
 
         df_content = "\n".join(df_lines)
@@ -836,7 +849,7 @@ class KonfluxRebaser:
         konflux_lines += [
             "ENV ART_BUILD_ENGINE=konflux",
             "ENV ART_BUILD_DEPS_METHOD=cachi2",
-            f"ENV ART_BUILD_NETWORK={network_mode}"
+            f"ENV ART_BUILD_NETWORK={network_mode}",
         ]
 
         # Three modes for handling upstreams depending on old
@@ -965,7 +978,7 @@ class KonfluxRebaser:
                 # repo source code available there.
                 "COPY . $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/",
                 # Cachito also writes a pem file which some builds erference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
-                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem"
+                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
             ]
 
         konflux_lines += [
@@ -977,7 +990,7 @@ class KonfluxRebaser:
                 "USER 0",
                 "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
                 f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
-                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"
+                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             ]
 
         if network_mode == "internal-only":
@@ -1021,12 +1034,13 @@ class KonfluxRebaser:
 
             # Put back original yum config
             # By default, .add_lines adds lines to the end
-            lines = ["\n# Start Konflux-specific steps",
-                     "USER 0",
-                     "RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
-                     f"{user_to_set if user_to_set else ''}",
-                     "# End Konflux-specific steps\n\n"
-                     ]
+            lines = [
+                "\n# Start Konflux-specific steps",
+                "USER 0",
+                "RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
+                f"{user_to_set if user_to_set else ''}",
+                "# End Konflux-specific steps\n\n",
+            ]
 
             dfp.add_lines(*lines)
 
@@ -1333,8 +1347,8 @@ class KonfluxRebaser:
                     {
                         'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
                         'remote_source': remote_source,
-                    }
-                ]
+                    },
+                ],
             })
 
         if metadata.image_build_method is not Missing and metadata.image_build_method != "osbs2":
@@ -1463,8 +1477,10 @@ class KonfluxRebaser:
             if final_stage_user:
                 output.write(f"# {yum_update_line_flag}\nUSER 0\n")
             else:
-                self._logger.warning("Will not inject `USER 0` before `yum update -y` for the final build stage because `final_stage_user` is missing (or 0) in image meta."
-                                     " If this build fails with `yum update -y` permission denied error, please set correct `final_stage_user` and rebase again.")
+                self._logger.warning(
+                    "Will not inject `USER 0` before `yum update -y` for the final build stage because `final_stage_user` is missing (or 0) in image meta."
+                    " If this build fails with `yum update -y` permission denied error, please set correct `final_stage_user` and rebase again.",
+                )
             output.write(f"# {yum_update_line_flag}\n{yum_update_line}  # set final_stage_user in ART metadata if this fails\n")
             if final_stage_user:
                 output.write(f"# {yum_update_line_flag}\nUSER {final_stage_user}\n")
@@ -1521,14 +1537,16 @@ class KonfluxRebaser:
             0,
             "",
             "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
-            ""
+            "",
         )
 
         return None
 
-    def _update_environment_variables(self, metadata: ImageMetadata, source: Optional[SourceResolution],
-                                      df_path: Path, build_update_envs: Dict[str, str],
-                                      metadata_envs: Dict[str, str]):
+    def _update_environment_variables(
+        self, metadata: ImageMetadata, source: Optional[SourceResolution],
+        df_path: Path, build_update_envs: Dict[str, str],
+        metadata_envs: Dict[str, str],
+    ):
         """
         There are three distinct sets of environment variables we need to consider
         in a Dockerfile:
@@ -1622,14 +1640,16 @@ class KonfluxRebaser:
         # If a merge has occurred, build up a MERGE mode environment variable line we want to inject into each stage.
         merge_env_line = None
         if do_set_build_variables and source and env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
-            env_vars_from_source.update(dict(
-                SOURCE_GIT_COMMIT=source.commit_hash,
-                SOURCE_GIT_TAG=source.latest_tag,
-                SOURCE_GIT_URL=source.public_upstream_url,
-                SOURCE_DATE_EPOCH=str(int(source.committer_date.timestamp())),
-                OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{source.commit_hash_short}',
-                OS_GIT_COMMIT=f'{source.commit_hash_short}'
-            ))
+            env_vars_from_source.update(
+                dict(
+                    SOURCE_GIT_COMMIT=source.commit_hash,
+                    SOURCE_GIT_TAG=source.latest_tag,
+                    SOURCE_GIT_URL=source.public_upstream_url,
+                    SOURCE_DATE_EPOCH=str(int(source.committer_date.timestamp())),
+                    OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{source.commit_hash_short}',
+                    OS_GIT_COMMIT=f'{source.commit_hash_short}',
+                ),
+            )
 
             merge_env_line = f"ENV {env_merge_line_flag} " + get_env_set_list(env_vars_from_source)
 
@@ -1679,8 +1699,10 @@ class KonfluxRebaser:
             if labels:
                 additional_labels = {}
 
-                for override_label in ["io.k8s.description", "io.k8s.display-name", "io.openshift.tags",
-                                       "description", "summary"]:
+                for override_label in [
+                    "io.k8s.description", "io.k8s.display-name", "io.openshift.tags",
+                    "description", "summary",
+                ]:
                     if override_label not in labels:
                         additional_labels[override_label] = "Empty"
 
@@ -1753,10 +1775,12 @@ class KonfluxRebaser:
             else:
                 meta = self._runtime.late_resolve_image(distgit)
                 assert meta is not None
-                build = asyncio.run(meta.get_latest_build(
-                    el_target=f'el{meta.branch_el_target()}',
-                    engine=Engine.KONFLUX
-                ))
+                build = asyncio.run(
+                    meta.get_latest_build(
+                        el_target=f'el{meta.branch_el_target()}',
+                        engine=Engine.KONFLUX,
+                    ),
+                )
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
                 v = build.version
@@ -1790,7 +1814,7 @@ class KonfluxRebaser:
             'MINOR': y,
             'SUBMINOR': z,
             'RELEASE': release,
-            'FULL_VER': '{}-{}'.format(version, release.split('.')[0])
+            'FULL_VER': '{}-{}'.format(version, release.split('.')[0]),
         }
 
         manifests_dir = csv_config.get('manifests-dir', 'manifests')
@@ -1876,9 +1900,11 @@ class KonfluxRebaser:
                 raise IOError(f'No brew package is defined for {component_name}')
             package_id = package_info['id']  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
             pattern_prefix = f'{component_name}-v{metadata.branch_major_minor()}.'
-            builds = koji_api.listBuilds(packageID=package_id,
-                                         state=BuildStates.COMPLETE.value,
-                                         pattern=f'{pattern_prefix}{pattern_suffix}*')
+            builds = koji_api.listBuilds(
+                packageID=package_id,
+                state=BuildStates.COMPLETE.value,
+                pattern=f'{pattern_prefix}{pattern_suffix}*',
+            )
             nvrs: Set[str] = set([build['nvr'] for build in builds])
             # NVRS should now be a set including entries like 'cluster-nfd-operator-container-v4.10.0-202211280957.p0.ga42b581.assembly.stream'
             # We need to convert these into versions like "4.11.0-202205250107"

@@ -8,16 +8,22 @@ import click
 LOGGER = logutil.get_logger(__name__)
 
 
-@cli.command('create-placeholder',
-             short_help='Create a placeholder bug')
-@click.option('--attach', '-a', 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help='Attach the bug to ADVISORY')
+@cli.command(
+    'create-placeholder',
+    short_help='Create a placeholder bug',
+)
+@click.option(
+    '--attach', '-a', 'advisory_id',
+    type=int, metavar='ADVISORY',
+    help='Attach the bug to ADVISORY',
+)
 @use_default_advisory_option
-@click.option("--noop", "--dry-run",
-              required=False,
-              default=False, is_flag=True,
-              help="Print what would change, but don't change anything")
+@click.option(
+    "--noop", "--dry-run",
+    required=False,
+    default=False, is_flag=True,
+    help="Print what would change, but don't change anything",
+)
 @click.pass_obj
 def create_placeholder_cli(runtime, kind, advisory_id, default_advisory_type, noop):
     """Create a placeholder bug for attaching to an advisory.

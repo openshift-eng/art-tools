@@ -36,14 +36,16 @@ class BuildSyncPipeline:
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
             self.group, self.assembly,
-            self.data_path, self.doozer_data_gitref
+            self.data_path, self.doozer_data_gitref,
         )
         return self
 
-    def __init__(self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
-                 emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
-                 images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
-                 build_system: str):
+    def __init__(
+        self, runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
+        emergency_ignore_issues: bool, retrigger_current_nightly: bool, doozer_data_gitref: str,
+        images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
+        build_system: str,
+    ):
         self.runtime = runtime
         self.version = version
         self.group = f'openshift-{version}'
@@ -113,14 +115,17 @@ class BuildSyncPipeline:
 
             if len(prs) > 1:
                 self.logger.warning(
-                    f"{len(prs)} PR(s) were found with head={head}. We need only 1.")
+                    f"{len(prs)} PR(s) were found with head={head}. We need only 1.",
+                )
                 return
 
             pr_number = prs[0]["number"]
 
             if self.runtime.dry_run:
-                self.logger.warning(f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} "
-                                    f"with the message: \n {text_body}")
+                self.logger.warning(
+                    f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} "
+                    f"with the message: \n {text_body}",
+                )
                 return
 
             # https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#create-an-issue-comment
@@ -134,7 +139,7 @@ class BuildSyncPipeline:
         self.supported_arches = await branch_arches(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
-            build_system=self.build_system
+            build_system=self.build_system,
         )
         self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
 
@@ -166,8 +171,10 @@ class BuildSyncPipeline:
         if self.assembly != 'stream':
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
-            await self.slack_client.say(f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build-sync> "
-                                        f"for assembly `{self.assembly}` succeeded!")
+            await self.slack_client.say(
+                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build-sync> "
+                f"for assembly `{self.assembly}` succeeded!",
+            )
 
         #  All good: delete fail counter
         if self.assembly == 'stream' and not self.runtime.dry_run:
@@ -201,8 +208,10 @@ class BuildSyncPipeline:
         arches -= set(self.exclude_arches)
 
         async def _retrigger_arch(arch: str):
-            self.logger.info('Triggering %s release controller to cut new release using previously synced builds...',
-                             arch)
+            self.logger.info(
+                'Triggering %s release controller to cut new release using previously synced builds...',
+                arch,
+            )
             suffix = go_suffix_for_arch(arch, is_private=False)
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag registry.access.redhat.com/ubi9 ' \
                 f'{self.is_base_name}{suffix}:trigger-release-controller --import-mode=PreserveOriginal'
@@ -238,13 +247,15 @@ class BuildSyncPipeline:
 
             # Backup the imagestream
             _, stdout, _ = await exectools.cmd_gather_async(
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} get is -n {ns} -o yaml')
+                f'oc --kubeconfig {os.environ["KUBECONFIG"]} get is -n {ns} -o yaml',
+            )
             with open(f'{ns}.backup.yaml', 'w') as f:
                 f.write(stdout)
 
             # Backup the upgrade graph for the releases
             _, stdout, _ = await exectools.cmd_gather_async(
-                f'oc --kubeconfig {os.environ["KUBECONFIG"]} get secret/release-upgrade-graph -n {ns} -o yaml')
+                f'oc --kubeconfig {os.environ["KUBECONFIG"]} get secret/release-upgrade-graph -n {ns} -o yaml',
+            )
             with open(f'{ns}.release-upgrade-graph.backup.yaml', 'w') as f:
                 f.write(stdout)
 
@@ -283,8 +294,10 @@ class BuildSyncPipeline:
         tag_pullspec = json.loads(out)['tag']['from']['name']
 
         # tag the pull spec into the CI imagestream (is/4.x) with the same tag name.
-        self.logger.info('Tagging ocp%s/%s:%s with %s',
-                         arch_suffix, self.version, tag, tag_pullspec)
+        self.logger.info(
+            'Tagging ocp%s/%s:%s with %s',
+            arch_suffix, self.version, tag, tag_pullspec,
+        )
         cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} ' \
               f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
 
@@ -295,8 +308,10 @@ class BuildSyncPipeline:
 
         if not arch_suffix:
             # Tag the image into the imagestream for private CI from openshift-priv.
-            self.logger.info('Tagging ocp-private/%s-priv:%s with %s',
-                             self.version, tag, tag_pullspec)
+            self.logger.info(
+                'Tagging ocp-private/%s-priv:%s with %s',
+                self.version, tag, tag_pullspec,
+            )
             cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp-private ' \
                   f'tag {tag_pullspec} {self.version}-priv:{tag} --import-mode=PreserveOriginal'
 
@@ -349,12 +364,13 @@ class BuildSyncPipeline:
         # Run release:gen-payload
         cmd = [
             'doozer',
-            f'--assembly={self.assembly}']
+            f'--assembly={self.assembly}',
+        ]
         if self.images:
             cmd.append(f'--images={self.images}')
         cmd.extend([
             f'--working-dir={mirror_working}',
-            f'--data-path={self.data_path}'
+            f'--data-path={self.data_path}',
         ])
         group_param = f'--group=openshift-{self.version}'
         if self.doozer_data_gitref:
@@ -364,7 +380,7 @@ class BuildSyncPipeline:
         cmd.extend([
             'release:gen-payload',
             f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
-            '--apply'
+            '--apply',
         ])
         if self.emergency_ignore_issues:
             cmd.append('--emergency-ignore-issues')
@@ -442,8 +458,10 @@ class BuildSyncPipeline:
     async def handle_failure(self):
         if self.assembly != 'stream':
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) failed!")
-            await self.slack_client.say(f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> "
-                                        f"for assembly {self.assembly} failed!")
+            await self.slack_client.say(
+                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> "
+                f"for assembly {self.assembly} failed!",
+            )
 
         # Increment failure count
         current_count = await redis.get_value(self.fail_count_name)
@@ -498,8 +516,10 @@ class BuildSyncPipeline:
                 await self.notify_failures('#forum-ocp-release', report, fail_count)
 
     async def notify_failures(self, channel, assembly_report, fail_count):
-        msg = (f'Pipeline has failed to assemble `{self.build_system.capitalize()}` release payload for {self.version} '
-               f'(assembly `{self.assembly}`) {fail_count} times.')
+        msg = (
+            f'Pipeline has failed to assemble `{self.build_system.capitalize()}` release payload for {self.version} '
+            f'(assembly `{self.assembly}`) {fail_count} times.'
+        )
         self.slack_client.bind_channel(channel)
         slack_response = await self.slack_client.say(msg)
         slack_thread = slack_response["message"]["ts"]
@@ -507,40 +527,66 @@ class BuildSyncPipeline:
 
 
 @cli.command('build-sync')
-@click.option("--version", required=True,
-              help="The OCP version to sync")
-@click.option("--assembly", required=True, default="stream",
-              help="The name of an assembly to sync")
-@click.option("--publish", is_flag=True,
-              help="Publish release image(s) directly to registry.ci for testing")
-@click.option("--data-path", required=True, default=constants.OCP_BUILD_DATA_URL,
-              help="ocp-build-data fork to use (e.g. assembly definition in your own fork)")
-@click.option("--emergency-ignore-issues", is_flag=True,
-              help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. "
-                   "Do not use without approval.")
-@click.option("--retrigger-current-nightly", is_flag=True,
-              help="Forces the release controller to re-run with existing images. No change will be made to payload"
-                   "images in the release")
-@click.option("--data-gitref", required=False,
-              help="(Optional) Doozer data path git [branch / tag / sha] to use")
-@click.option("--images", required=False,
-              help="(Optional) Comma-separated list of images to sync, for testing purposes")
-@click.option("--exclude-arches", required=False,
-              help="(Optional) Comma-separated list of arches NOT to sync (aarch64, ppc64le, s390x, x86_64)")
-@click.option("--skip-multiarch-payload", is_flag=True,
-              help="If group/assembly has multi_arch.enabled, you can bypass --apply-multi-arch and the generation of a"
-                   "heterogeneous release payload by setting this to true")
-@click.option("--embargo-permit-ack", is_flag=True, default=False,
-              help="To permit embargoed builds to be promoted after embargo lift")
-@click.option("--build-system", required=False, default='brew',
-              help="Whether a Brew payload or a Konflux one has to be produced")
+@click.option(
+    "--version", required=True,
+    help="The OCP version to sync",
+)
+@click.option(
+    "--assembly", required=True, default="stream",
+    help="The name of an assembly to sync",
+)
+@click.option(
+    "--publish", is_flag=True,
+    help="Publish release image(s) directly to registry.ci for testing",
+)
+@click.option(
+    "--data-path", required=True, default=constants.OCP_BUILD_DATA_URL,
+    help="ocp-build-data fork to use (e.g. assembly definition in your own fork)",
+)
+@click.option(
+    "--emergency-ignore-issues", is_flag=True,
+    help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. "
+         "Do not use without approval.",
+)
+@click.option(
+    "--retrigger-current-nightly", is_flag=True,
+    help="Forces the release controller to re-run with existing images. No change will be made to payload"
+         "images in the release",
+)
+@click.option(
+    "--data-gitref", required=False,
+    help="(Optional) Doozer data path git [branch / tag / sha] to use",
+)
+@click.option(
+    "--images", required=False,
+    help="(Optional) Comma-separated list of images to sync, for testing purposes",
+)
+@click.option(
+    "--exclude-arches", required=False,
+    help="(Optional) Comma-separated list of arches NOT to sync (aarch64, ppc64le, s390x, x86_64)",
+)
+@click.option(
+    "--skip-multiarch-payload", is_flag=True,
+    help="If group/assembly has multi_arch.enabled, you can bypass --apply-multi-arch and the generation of a"
+         "heterogeneous release payload by setting this to true",
+)
+@click.option(
+    "--embargo-permit-ack", is_flag=True, default=False,
+    help="To permit embargoed builds to be promoted after embargo lift",
+)
+@click.option(
+    "--build-system", required=False, default='brew',
+    help="Whether a Brew payload or a Konflux one has to be produced",
+)
 @pass_runtime
 @click_coroutine
 @start_as_current_span_async(TRACER, "build-sync")
-async def build_sync(runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
-                     emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
-                     images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
-                     build_system: str):
+async def build_sync(
+    runtime: Runtime, version: str, assembly: str, publish: bool, data_path: str,
+    emergency_ignore_issues: bool, retrigger_current_nightly: bool, data_gitref: str,
+    images: str, exclude_arches: str, skip_multiarch_payload: bool, embargo_permit_ack: bool,
+    build_system: str,
+):
     jenkins.init_jenkins()
     pipeline = await BuildSyncPipeline.create(
         runtime=runtime,
@@ -555,7 +601,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         exclude_arches=exclude_arches,
         skip_multiarch_payload=skip_multiarch_payload,
         embargo_permit_ack=embargo_permit_ack,
-        build_system=build_system
+        build_system=build_system,
     )
 
     if build_system == 'brew':
@@ -585,7 +631,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
                 coro=pipeline.run(),
                 lock=lock,
                 lock_name=lock_name,
-                lock_id=lock_identifier
+                lock_id=lock_identifier,
             )
         else:
             await pipeline.run()

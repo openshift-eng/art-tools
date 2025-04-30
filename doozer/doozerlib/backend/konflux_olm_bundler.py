@@ -13,7 +13,8 @@ import yaml
 from artcommonlib import exectools
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord)
+    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord,
+)
 from artcommonlib.konflux.konflux_db import Engine, KonfluxDb
 from artcommonlib.model import Model
 from artcommonlib import util as artlib_util
@@ -30,18 +31,19 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class KonfluxOlmBundleRebaser:
-    def __init__(self,
-                 base_dir: Path,
-                 group: str,
-                 assembly: str,
-                 group_config: Model,
-                 konflux_db: KonfluxDb,
-                 source_resolver: SourceResolver,
-                 upcycle: bool = False,
-                 image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
-                 dry_run: bool = False,
-                 logger: logging.Logger = _LOGGER,
-                 ):
+    def __init__(
+        self,
+        base_dir: Path,
+        group: str,
+        assembly: str,
+        group_config: Model,
+        konflux_db: KonfluxDb,
+        source_resolver: SourceResolver,
+        upcycle: bool = False,
+        image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
+        dry_run: bool = False,
+        logger: logging.Logger = _LOGGER,
+    ):
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
@@ -202,7 +204,8 @@ class KonfluxOlmBundleRebaser:
 
     async def _create_oit_files(
             self, package_name: str, csv_name: str,
-            bundle_dir: Path, operator_nvr: str, operands: Dict[str, Tuple[str, str, str]]):
+            bundle_dir: Path, operator_nvr: str, operands: Dict[str, Tuple[str, str, str]],
+    ):
         """ Create .oit files
 
         :param bundle_dir: The directory where the bundle is located.
@@ -223,7 +226,7 @@ class KonfluxOlmBundleRebaser:
                     "internal_pullspec": old_pullspec,
                     "public_pullspec": new_pullspec,
                 } for name, (old_pullspec, new_pullspec, nvr) in operands.items()
-            }
+            },
         })
         async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
             await f.write(content)
@@ -256,12 +259,15 @@ class KonfluxOlmBundleRebaser:
         # Get image infos for all found images
         for pullspec, (namespace, image_short_name, image_tag) in references.items():
             build_pullspec = f"{self.image_repo}:{image_short_name}-{image_tag}"
-            image_info_tasks.append(asyncio.create_task(
+            image_info_tasks.append(
+                asyncio.create_task(
                 util.oc_image_info_for_arch_async__caching(
                     build_pullspec,
                     registry_username=os.environ.get('KONFLUX_ART_IMAGES_USERNAME'),
                     registry_password=os.environ.get('KONFLUX_ART_IMAGES_PASSWORD'),
-                )))
+                ),
+                ),
+            )
         image_infos = await asyncio.gather(*image_info_tasks)
 
         # Replace image references in the content
@@ -279,7 +285,7 @@ class KonfluxOlmBundleRebaser:
             new_pullspec = '{}/{}@{}'.format(
                 'registry.redhat.io',  # hardcoded until appregistry is dead
                 f'{new_namespace}/{image_short_name}',
-                image_sha
+                image_sha,
             )
             new_content = new_content.replace(pullspec, new_pullspec)
             found_images[image_short_name] = (pullspec, new_pullspec, image_nvr)
@@ -333,8 +339,10 @@ class KonfluxOlmBundleRebaser:
         }
         return tags
 
-    def _create_dockerfile(self, metadata: ImageMetadata, operator_dir: Path, bundle_dir: Path,
-                           operator_framework_tags: Dict[str, str], input_release: str):
+    def _create_dockerfile(
+        self, metadata: ImageMetadata, operator_dir: Path, bundle_dir: Path,
+        operator_framework_tags: Dict[str, str], input_release: str,
+    ):
         operator_df = DockerfileParser(str(operator_dir.joinpath('Dockerfile')))
         bundle_df = DockerfileParser(str(bundle_dir.joinpath('Dockerfile')))
 
@@ -345,7 +353,7 @@ class KonfluxOlmBundleRebaser:
         bundle_df.labels['name'] = metadata.get_olm_bundle_image_name()
         bundle_df.labels['version'] = '{}.{}'.format(
             operator_df.labels['version'],
-            operator_df.labels['release']
+            operator_df.labels['release'],
         )
         bundle_df.labels = {
             **bundle_df.labels,
@@ -377,21 +385,23 @@ class KonfluxOlmBundleBuildError(Exception):
 
 
 class KonfluxOlmBundleBuilder:
-    def __init__(self,
-                 base_dir: Path,
-                 group: str,
-                 assembly: str,
-                 source_resolver: SourceResolver,
-                 db: KonfluxDb,
-                 konflux_namespace: str,
-                 konflux_kubeconfig: Optional[str] = None,
-                 konflux_context: Optional[str] = None,
-                 image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
-                 skip_checks: bool = False,
-                 pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
-                 dry_run: bool = False,
-                 record_logger: Optional[RecordLogger] = None,
-                 logger: logging.Logger = _LOGGER) -> None:
+    def __init__(
+        self,
+        base_dir: Path,
+        group: str,
+        assembly: str,
+        source_resolver: SourceResolver,
+        db: KonfluxDb,
+        konflux_namespace: str,
+        konflux_kubeconfig: Optional[str] = None,
+        konflux_context: Optional[str] = None,
+        image_repo: str = constants.KONFLUX_DEFAULT_IMAGE_REPO,
+        skip_checks: bool = False,
+        pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
+        dry_run: bool = False,
+        record_logger: Optional[RecordLogger] = None,
+        logger: logging.Logger = _LOGGER,
+    ) -> None:
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
@@ -519,8 +529,10 @@ class KonfluxOlmBundleBuilder:
         return pipelinerun_name, pipelinerun
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
-    async def _start_build(self, metadata: ImageMetadata, bundle_build_repo: BuildRepo, output_image: str, namespace: str,
-                           skip_checks: bool = False, additional_tags: Optional[Sequence[str]] = None):
+    async def _start_build(
+        self, metadata: ImageMetadata, bundle_build_repo: BuildRepo, output_image: str, namespace: str,
+        skip_checks: bool = False, additional_tags: Optional[Sequence[str]] = None,
+    ):
         """ Start a build with Konflux. """
         if not bundle_build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
@@ -570,10 +582,12 @@ class KonfluxOlmBundleBuilder:
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
         return pipelinerun, url
 
-    async def _update_konflux_db(self, metadata: ImageMetadata, build_repo: BuildRepo,
-                                 bundle_package_name: str, bundle_csv_name: str,
-                                 pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
-                                 operator_nvr: str, operand_nvrs: list[str]):
+    async def _update_konflux_db(
+        self, metadata: ImageMetadata, build_repo: BuildRepo,
+        bundle_package_name: str, bundle_csv_name: str,
+        pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
+        operator_nvr: str, operand_nvrs: list[str],
+    ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
         if not db or db.record_cls != KonfluxBundleBuildRecord:
@@ -633,8 +647,10 @@ class KonfluxOlmBundleBuilder:
                     image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
 
                     if not (image_pullspec and image_digest):
-                        raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                                         f"pipelinerun {pipelinerun_name}")
+                        raise ValueError(
+                            f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                            f"pipelinerun {pipelinerun_name}",
+                        )
 
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime

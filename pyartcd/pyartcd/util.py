@@ -69,9 +69,11 @@ def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
     return True
 
 
-async def load_group_config(group: str, assembly: str, env=None,
-                            doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-                            doozer_data_gitref: str = '') -> Dict:
+async def load_group_config(
+    group: str, assembly: str, env=None,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+) -> Dict:
     if doozer_data_gitref:
         group += f'@{doozer_data_gitref}'
     cmd = [
@@ -105,7 +107,7 @@ async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_
         f'--data-path={data_path}',
         f'--group={group}',
         'config:read-releases',
-        '--yaml'
+        '--yaml',
     ]
 
     try:
@@ -117,8 +119,10 @@ async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_
         return None
 
 
-async def load_assembly(group: str, assembly: str, key: str = '',
-                        data_path: str = constants.OCP_BUILD_DATA_URL) -> Optional[Dict]:
+async def load_assembly(
+    group: str, assembly: str, key: str = '',
+    data_path: str = constants.OCP_BUILD_DATA_URL,
+) -> Optional[Dict]:
     cmd = [
         'doozer',
         f'--data-path={data_path}',
@@ -126,7 +130,7 @@ async def load_assembly(group: str, assembly: str, key: str = '',
         f'--assembly={assembly}',
         'config:read-assembly',
         '--yaml',
-        key
+        key,
     ]
 
     try:
@@ -148,7 +152,8 @@ def get_assembly_basis(releases_config: Dict, assembly_name: str):
 
 def get_assembly_promotion_permits(releases_config: Dict, assembly_name: str):
     return artcommonlib.assembly.assembly_config_struct(
-        Model(releases_config), assembly_name, 'promotion_permits', [])
+        Model(releases_config), assembly_name, 'promotion_permits', [],
+    )
 
 
 def get_release_name_for_assembly(group_name: str, releases_config: Dict, assembly_name: str):
@@ -177,7 +182,7 @@ async def kinit():
             '-k',
             '-t',
             keytab_file,
-            keytab_user
+            keytab_user,
         ]
         await exectools.cmd_assert_async(cmd)
     else:
@@ -239,8 +244,10 @@ def get_changes(yaml_data: dict) -> dict:
     return changes
 
 
-async def get_freeze_automation(version: str, doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-                                doozer_working: str = '', doozer_data_gitref: str = '') -> str:
+async def get_freeze_automation(
+    version: str, doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = '', doozer_data_gitref: str = '',
+) -> str:
     """
     Returns freeze_automation flag for a specific group
     """
@@ -257,7 +264,7 @@ async def get_freeze_automation(version: str, doozer_data_path: str = constants.
         group_param,
         'config:read-group',
         '--default=no',
-        'freeze_automation'
+        'freeze_automation',
     ]
     _, out, _ = await exectools.cmd_gather_async(cmd)
     return out.strip()
@@ -290,8 +297,10 @@ def get_weekday() -> str:
     return datetime.today().strftime("%A")
 
 
-async def is_build_permitted(version: str, data_path: str = constants.OCP_BUILD_DATA_URL,
-                             doozer_working: str = '', doozer_data_gitref: str = '') -> bool:
+async def is_build_permitted(
+    version: str, data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_working: str = '', doozer_data_gitref: str = '',
+) -> bool:
     """
     Check whether the group should be built right now.
     This depends on:
@@ -305,7 +314,8 @@ async def is_build_permitted(version: str, data_path: str = constants.OCP_BUILD_
         version=version,
         doozer_data_path=data_path,
         doozer_working=doozer_working,
-        doozer_data_gitref=doozer_data_gitref)
+        doozer_data_gitref=doozer_data_gitref,
+    )
     logger.info('Group freeze automation flag is set to: "%s"', freeze_automation)
 
     # Check for frozen automation
@@ -316,8 +326,10 @@ async def is_build_permitted(version: str, data_path: str = constants.OCP_BUILD_
 
     # Check for frozen scheduled automation
     if freeze_automation == "scheduled" and not is_manual_build():
-        logger.info('Only manual runs are permitted according to freeze_automation in group.yml '
-                    'and this run appears to be non-manual.')
+        logger.info(
+            'Only manual runs are permitted according to freeze_automation in group.yml '
+            'and this run appears to be non-manual.',
+        )
         return False
 
     # Check if group can run on weekends
@@ -461,7 +473,7 @@ Please direct any questions to the Automated Release Tooling team (#forum-ocp-ar
         mail_client.send_mail(
             to=val['owners'],
             subject=email_subject,
-            content=explanation_body
+            content=explanation_body,
         )
 
 
@@ -508,7 +520,7 @@ Thanks for your help!\n"""
         mail_client.send_mail(
             to=owners,
             subject=email_subject,
-            content=explanation_body
+            content=explanation_body,
         )
 
 
@@ -560,10 +572,12 @@ The following logs are just the container build portion of the OSBS build:
         except:
             container_log = "Unfortunately there were no container build logs; " \
                             "something else about the build failed."
-            logger.warning('No container build log for failed %s build\n'
-                           '(task url %s)\n'
-                           'at path %s',
-                           failure['distgit'], failure['task_url'], container_log)
+            logger.warning(
+                'No container build log for failed %s build\n'
+                '(task url %s)\n'
+                'at path %s',
+                failure['distgit'], failure['task_url'], container_log,
+            )
 
         explanation_body = f"ART's brew/OSBS build of OCP image {failure['image']}:{failure['version']} has failed.\n\n"
         if failure['owners']:
@@ -580,13 +594,15 @@ The following logs are just the container build portion of the OSBS build:
 
         # Send email to owners of failed image builds
         # If art is the only owner of image (example for our ci golang builder images) send instead to our default automation email
-        owner = (failure['owners']
-                 if (failure['owners'] and failure['owners'] != ["aos-team-art@redhat.com"])
-                 else default_owner)
+        owner = (
+            failure['owners']
+            if (failure['owners'] and failure['owners'] != ["aos-team-art@redhat.com"])
+            else default_owner
+        )
         mail_client.send_mail(
             to=['aos-art-automation+failed-ocp-build@redhat.com', owner],
             subject=f'Failed OCP build of {failure["image"]}:{failure["version"]}',
-            content=explanation_body
+            content=explanation_body,
         )
 
 
@@ -629,8 +645,10 @@ async def mirror_to_google_cloud(source: Union[str, Path], dest: str, dry_run=Fa
     await exectools.cmd_assert_async(cmd, env=os.environ.copy(), stdout=sys.stderr)
 
 
-async def get_signing_mode(group: str = None, assembly: str = None, group_config: dict = None,
-                           doozer_data_path: str = constants.OCP_BUILD_DATA_URL, doozer_data_gitref: str = '') -> str:
+async def get_signing_mode(
+    group: str = None, assembly: str = None, group_config: dict = None,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL, doozer_data_gitref: str = '',
+) -> str:
     """
     If any arch is GA, use signed mode for everything
     This also includes EOL ones, that might be triggered manually

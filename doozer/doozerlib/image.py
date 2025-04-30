@@ -231,7 +231,8 @@ class ImageMetadata(Metadata):
 
         return "{host}/{name}:{version}-{release}".format(
             host=self.runtime.group_config.urls.brew_image_host, name=name, version=version,
-            release=release)
+            release=release,
+        )
 
     def pull_image(self):
         pull_image(self.pull_url())
@@ -486,7 +487,7 @@ class ImageMetadata(Metadata):
             if rebuild_hints:
                 return self, RebuildHint(
                     RebuildHintCode.PACKAGE_CHANGE,
-                    ";\n".join(rebuild_hints)
+                    ";\n".join(rebuild_hints),
                 )
         return self, RebuildHint(RebuildHintCode.BUILD_IS_UP_TO_DATE, 'No change detected')
 
@@ -502,8 +503,10 @@ class ImageMetadata(Metadata):
                 return False
 
     def calculate_config_digest(self, group_config, streams):
-        ignore_keys = ["owners", "scan_sources", "content.source.ci_alignment",
-                       "content.source.git", "external_scanners", "delivery"]  # list of keys that shouldn't be involved in config digest calculation
+        ignore_keys = [
+            "owners", "scan_sources", "content.source.ci_alignment",
+            "content.source.git", "external_scanners", "delivery",
+        ]  # list of keys that shouldn't be involved in config digest calculation
         image_config = copy(self.config)
         # If there is a konflux stanza in the image config, merge it with the main config
         if image_config.konflux is not Missing:

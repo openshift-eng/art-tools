@@ -8,8 +8,8 @@ class FindBugsSweepTestCase(unittest.TestCase):
         out = subprocess.check_output(
             constants.ELLIOTT_CMD
             + [
-                "--assembly=rc.7", "--group=openshift-4.11", "attach-cve-flaws", "--advisory=97037", "--noop"
-            ]
+                "--assembly=rc.7", "--group=openshift-4.11", "attach-cve-flaws", "--advisory=97037", "--noop",
+            ],
         )
         self.assertIn(out.decode("utf-8"), "Found \\d+ bugzilla tracker bugs attached")
 

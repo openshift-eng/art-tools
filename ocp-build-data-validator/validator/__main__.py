@@ -34,8 +34,10 @@ def validate(file, exclude_vpn, schema_only):
 
     (url, err) = github.validate(parsed, group_cfg)
     if err:
-        msg = ('GitHub validation failed for {} ({})\n'
-               'Returned error: {}').format(file, url, err)
+        msg = (
+            'GitHub validation failed for {} ({})\n'
+            'Returned error: {}'
+        ).format(file, url, err)
         support.fail_validation(msg, parsed)
 
     if exclude_vpn:
@@ -43,14 +45,18 @@ def validate(file, exclude_vpn, schema_only):
     else:
         (url, err) = cgit.validate(file, parsed, group_cfg)
         if err:
-            msg = ('CGit validation failed for {} ({})\n'
-                   'Returned error: {}').format(file, url, err)
+            msg = (
+                'CGit validation failed for {} ({})\n'
+                'Returned error: {}'
+            ).format(file, url, err)
             support.fail_validation(msg, parsed)
 
             (url, err) = distgit.validate(file, parsed, group_cfg)
             if err:
-                msg = ('DistGit validation failed for {} ({})\n'
-                       'Returned error: {}').format(file, url, err)
+                msg = (
+                    'DistGit validation failed for {} ({})\n'
+                    'Returned error: {}'
+                ).format(file, url, err)
                 support.fail_validation(msg, parsed)
 
     print(f'✅ Validated {file}')
@@ -58,28 +64,37 @@ def validate(file, exclude_vpn, schema_only):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Validation of ocp-build-data Image & RPM declarations')
-    parser.add_argument('files',
-                        metavar='FILE',
-                        type=str,
-                        nargs='+',
-                        help='Files to be validated')
-    parser.add_argument('-s',
-                        '--single-thread',
-                        dest='single_thread',
-                        default=False,
-                        action='store_true',
-                        help='Run in single thread, so code.interact() works')
-    parser.add_argument('--exclude-vpn',
-                        dest='exclude_vpn',
-                        default=False,
-                        action='store_true',
-                        help='Exclude validations that require vpn access')
-    parser.add_argument('--schema-only',
-                        dest='schema_only',
-                        default=False,
-                        action='store_true',
-                        help='Only run schema validations')
+        description='Validation of ocp-build-data Image & RPM declarations',
+    )
+    parser.add_argument(
+        'files',
+        metavar='FILE',
+        type=str,
+        nargs='+',
+        help='Files to be validated',
+    )
+    parser.add_argument(
+        '-s',
+        '--single-thread',
+        dest='single_thread',
+        default=False,
+        action='store_true',
+        help='Run in single thread, so code.interact() works',
+    )
+    parser.add_argument(
+        '--exclude-vpn',
+        dest='exclude_vpn',
+        default=False,
+        action='store_true',
+        help='Exclude validations that require vpn access',
+    )
+    parser.add_argument(
+        '--schema-only',
+        dest='schema_only',
+        default=False,
+        action='store_true',
+        help='Only run schema validations',
+    )
     args = parser.parse_args()
     print(f"Validating {len(args.files)} file(s)...")
     if args.single_thread:

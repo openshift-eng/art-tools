@@ -13,8 +13,10 @@ class FindBuildsTestCase(unittest.TestCase):
             "--assembly=stream", f"--group=openshift-{version}", "find-builds", "--kind=rpm",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 0,
+            msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}",
+        )
         self.assertRegex(result.stderr.decode(), "Found \\d+ builds")
 
     def test_find_images(self):
@@ -22,8 +24,10 @@ class FindBuildsTestCase(unittest.TestCase):
             f"--group=openshift-{version}", "-i", "openshift-enterprise-cli", "find-builds", "--kind=image",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 0,
+            msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}",
+        )
         self.assertRegex(result.stderr.decode(), "Found \\d+ builds")
 
     def test_change_state(self):
@@ -36,12 +40,14 @@ class FindBuildsTestCase(unittest.TestCase):
             '--images=openshift-enterprise-cli',
             'find-builds',
             '--kind=image',
-            '--attach=57899'
+            '--attach=57899',
         ]
         result = subprocess.run(command, capture_output=True)
 
-        self.assertEqual(result.returncode, 1,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 1,
+            msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}",
+        )
         self.assertIn('Cannot change state', result.stdout.decode())
 
 

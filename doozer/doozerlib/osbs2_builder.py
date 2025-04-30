@@ -24,7 +24,7 @@ class OSBS2Builder:
     """
 
     def __init__(
-        self, runtime: "runtime.Runtime", *, scratch: bool = False, dry_run: bool = False
+        self, runtime: "runtime.Runtime", *, scratch: bool = False, dry_run: bool = False,
     ) -> None:
         """ Create a OSBS2Builder instance.
         :param runtime: Doozer runtime
@@ -131,7 +131,7 @@ class OSBS2Builder:
         if error:
             raise OSBS2BuildError(
                 f"Giving up after {retries} failed attempt(s): {message}",
-                task_id, task_url
+                task_id, task_url,
             )
 
         if build_info:
@@ -141,8 +141,10 @@ class OSBS2Builder:
 
         if not self.scratch and self._runtime.hotfix:
             # Tag the image so it won't get garbage collected.
-            logger.info(f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()}'
-                        f' to prevent garbage collection')
+            logger.info(
+                f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()}'
+                f' to prevent garbage collection',
+            )
             if self.dry_run:
                 logger.warning("[DRY RUN] Build %s would have been tagged into %s", build_info["nvr"], image.hotfix_brew_tag())
             else:
@@ -165,8 +167,10 @@ class OSBS2Builder:
                 logger.warning("[DRY RUN] Would have checked if cgit repo file is present.")
                 existence, repo_url = True, f"https://cgit.example.com/{repo_file}"
             if not existence:
-                raise FileNotFoundError(f"Repo file {repo_file} is not available on cgit; cgit cache may not be"
-                                        f" reflecting distgit in a timely manner.")
+                raise FileNotFoundError(
+                    f"Repo file {repo_file} is not available on cgit; cgit cache may not be"
+                    f" reflecting distgit in a timely manner.",
+                )
             repo_list = [repo_url]
 
         opts = {

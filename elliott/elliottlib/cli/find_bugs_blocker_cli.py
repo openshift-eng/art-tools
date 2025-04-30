@@ -22,28 +22,34 @@ class FindBugsBlocker(FindBugsMode):
     def search(self, bug_tracker_obj: BugTracker, verbose: bool = False):
         return bug_tracker_obj.blocker_search(
             self.status,
-            verbose=verbose
+            verbose=verbose,
         )
 
 
 @cli.command("find-bugs:blocker", short_help="List active blocker bugs")
-@click.option("--include-status", 'include_status',
-              multiple=True,
-              default=None,
-              required=False,
-              type=click.Choice(constants.VALID_BUG_STATES),
-              help="Include bugs of this status")
-@click.option("--exclude-status", 'exclude_status',
-              multiple=True,
-              default=None,
-              required=False,
-              type=click.Choice(constants.VALID_BUG_STATES),
-              help="Exclude bugs of this status")
-@click.option('--output', '-o',
-              required=False,
-              type=click.Choice(['text', 'json', 'slack']),
-              default='text',
-              help='Display format for output')
+@click.option(
+    "--include-status", 'include_status',
+    multiple=True,
+    default=None,
+    required=False,
+    type=click.Choice(constants.VALID_BUG_STATES),
+    help="Include bugs of this status",
+)
+@click.option(
+    "--exclude-status", 'exclude_status',
+    multiple=True,
+    default=None,
+    required=False,
+    type=click.Choice(constants.VALID_BUG_STATES),
+    help="Exclude bugs of this status",
+)
+@click.option(
+    '--output', '-o',
+    required=False,
+    type=click.Choice(['text', 'json', 'slack']),
+    default='text',
+    help='Display format for output',
+)
 @click.pass_obj
 def find_bugs_blocker_cli(runtime: Runtime, include_status, exclude_status, output):
     """

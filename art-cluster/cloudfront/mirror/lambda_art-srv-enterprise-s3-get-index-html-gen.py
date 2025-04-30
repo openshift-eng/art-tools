@@ -521,15 +521,15 @@ def lambda_handler(event, context):
             'cache-control': [
                 {
                     'key': 'Cache-Control',
-                    'value': 'max-age=0'
-                }
+                    'value': 'max-age=0',
+                },
             ],
             "content-type": [
                 {
                     'key': 'Content-Type',
-                    'value': 'text/html'
-                }
-            ]
+                    'value': 'text/html',
+                },
+            ],
         },
         'body': content,
     }

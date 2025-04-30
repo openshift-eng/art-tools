@@ -20,10 +20,12 @@ class FindBugsQE(FindBugsMode):
 
 
 @cli.command("find-bugs:qe", short_help="Change MODIFIED bugs to ON_QA")
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--noop", "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Don't change anything",
+)
 @click.pass_obj
 def find_bugs_qe_cli(runtime: Runtime, noop):
     """Find MODIFIED bugs for the target-releases, and set them to ON_QA.
@@ -57,7 +59,8 @@ def find_bugs_qe(runtime, find_bugs_obj, noop, bug_tracker):
 
     release_comment = (
         "An ART build cycle completed after this fix was made, which usually means it can be"
-        f" expected in the next created {major_version}.{minor_version} nightly and release.")
+        f" expected in the next created {major_version}.{minor_version} nightly and release."
+    )
     for bug in bugs:
         updated = bug_tracker.update_bug_status(bug, 'ON_QA', comment=release_comment, noop=noop)
         if updated:

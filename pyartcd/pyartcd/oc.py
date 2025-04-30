@@ -56,7 +56,8 @@ async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False
 async def registry_login(runtime: Runtime):
     try:
         await exectools.cmd_gather_async(
-            f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
+            f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login',
+        )
 
     except KeyError:
         runtime.logger.error('KUBECONFIG env var must be defined!')
@@ -130,13 +131,15 @@ def extract_baremetal_installer(release_pullspec: str, path: str, arch: str, cmd
 
     cmd_os = f'linux/{arch}'
     # oc adm release extract --command=openshift-baremetal-install -n=ocp --to <path> <pullspec>
-    args = ['release', 'extract', f'--command={cmd}', '-n=ocp', '--from',
-            release_pullspec, '--filter-by-os', cmd_os, '--command-os', cmd_os,
-            f'--to={path}']
+    args = [
+        'release', 'extract', f'--command={cmd}', '-n=ocp', '--from',
+        release_pullspec, '--filter-by-os', cmd_os, '--command-os', cmd_os,
+        f'--to={path}',
+    ]
     return common_oc_wrapper(
         cmd_result_name='extract_baremetal',
         cli_verb='adm',
         oc_args=args,
         check_status=True,
-        return_value=True
+        return_value=True,
     )

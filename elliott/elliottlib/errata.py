@@ -69,7 +69,7 @@ class Advisory(Erratum):
             self.addBuilds(
                 buildlist=[build.nvr for build in builds if build.product_version == pv],
                 release=pv,
-                file_types={build.nvr: [file_type] for build in builds if build.product_version == pv}
+                file_types={build.nvr: [file_type] for build in builds if build.product_version == pv},
             )
 
         build_nvrs = sorted(build.nvr for build in builds)
@@ -209,8 +209,10 @@ def get_erratum_content_type(advisory_id: str):
     return None
 
 
-def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, create=False,
-                assigned_to=None, manager=None, package_owner=None):
+def new_erratum(
+    et_data, errata_type, boilerplate_name, release_date=None, create=False,
+    assigned_to=None, manager=None, package_owner=None,
+):
     """5.2.1.1. POST /api/v1/erratum
 
     Create a new advisory.
@@ -267,7 +269,7 @@ def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, creat
         qe_group=et_data['quality_responsibility_name'],
         owner_email=package_owner,
         manager_email=manager,
-        date=release_date
+        date=release_date,
     )
 
     if create:
@@ -284,17 +286,22 @@ def build_signed(build):
     :param string build: The build nvr or id
     """
     filter_endpoint = constants.errata_get_build_url.format(id=build)
-    res = requests.get(filter_endpoint,
-                       verify=ssl.get_default_verify_paths().openssl_cafile,
-                       auth=HTTPSPNEGOAuth())
+    res = requests.get(
+        filter_endpoint,
+        verify=ssl.get_default_verify_paths().openssl_cafile,
+        auth=HTTPSPNEGOAuth(),
+    )
     if res.status_code == 200:
         return res.json()['rpms_signed']
     elif res.status_code == 401:
         raise exceptions.ErrataToolUnauthenticatedException(res.text)
     else:
-        raise exceptions.ErrataToolError("Other error (status_code={code}): {msg}".format(
+        raise exceptions.ErrataToolError(
+            "Other error (status_code={code}): {msg}".format(
             code=res.status_code,
-            msg=res.text))
+            msg=res.text,
+            ),
+        )
 
 
 def get_art_release_from_erratum(advisory_id):
@@ -323,10 +330,12 @@ def add_comment(advisory_id, comment):
         :param dict comment: The metadata object to add as a comment
         """
     data = {"comment": json.dumps(comment)}
-    return requests.post(constants.errata_add_comment_url.format(id=advisory_id),
-                         verify=ssl.get_default_verify_paths().openssl_cafile,
-                         auth=HTTPSPNEGOAuth(),
-                         json=data)
+    return requests.post(
+        constants.errata_add_comment_url.format(id=advisory_id),
+        verify=ssl.get_default_verify_paths().openssl_cafile,
+        auth=HTTPSPNEGOAuth(),
+        json=data,
+    )
 
 
 @retry(reraise=True, stop=stop_after_attempt(3), wait=wait_fixed(60))
@@ -346,9 +355,11 @@ def get_builds(advisory_id, session=None):
     """
     if not session:
         session = requests.session()
-    res = session.get(constants.errata_get_builds_url.format(id=advisory_id),
-                      verify=ssl.get_default_verify_paths().openssl_cafile,
-                      auth=HTTPSPNEGOAuth())
+    res = session.get(
+        constants.errata_get_builds_url.format(id=advisory_id),
+        verify=ssl.get_default_verify_paths().openssl_cafile,
+        auth=HTTPSPNEGOAuth(),
+    )
     if res.status_code == 200:
         return res.json()
     else:
@@ -378,9 +389,11 @@ def get_brew_builds(errata_id, session=None):
     if session is None:
         session = requests.session()
 
-    res = session.get(constants.errata_get_builds_url.format(id=errata_id),
-                      verify=ssl.get_default_verify_paths().openssl_cafile,
-                      auth=HTTPSPNEGOAuth())
+    res = session.get(
+        constants.errata_get_builds_url.format(id=errata_id),
+        verify=ssl.get_default_verify_paths().openssl_cafile,
+        auth=HTTPSPNEGOAuth(),
+    )
     brew_list = []
     if res.status_code == 200:
         jlist = res.json()
@@ -389,9 +402,12 @@ def get_brew_builds(errata_id, session=None):
                 brew_list.append(brew.Build(nvr=list(obj.keys())[0], product_version=key))
         return brew_list
     else:
-        raise exceptions.BrewBuildException("fetch builds from {id}: {msg}".format(
+        raise exceptions.BrewBuildException(
+            "fetch builds from {id}: {msg}".format(
             id=errata_id,
-            msg=res.text))
+            msg=res.text,
+            ),
+        )
 
 
 @retry(reraise=True, stop=stop_after_attempt(10), wait=wait_fixed(3))
@@ -419,16 +435,21 @@ def get_brew_build(nvr, product_version='', session=None) -> brew.Build:
     if session is None:
         session = requests.Session()
 
-    res = session.get(constants.errata_get_build_url.format(id=nvr),
-                      verify=ssl.get_default_verify_paths().openssl_cafile,
-                      auth=HTTPSPNEGOAuth())
+    res = session.get(
+        constants.errata_get_build_url.format(id=nvr),
+        verify=ssl.get_default_verify_paths().openssl_cafile,
+        auth=HTTPSPNEGOAuth(),
+    )
 
     if res.status_code == 200:
         return brew.Build(nvr=nvr, body=res.json(), product_version=product_version)
     else:
-        raise exceptions.BrewBuildException("{build}: {msg}".format(
+        raise exceptions.BrewBuildException(
+            "{build}: {msg}".format(
             build=nvr,
-            msg=res.text))
+            msg=res.text,
+            ),
+        )
 
 
 def get_advisories_for_bug(bug_id, session=None):
@@ -441,9 +462,11 @@ def get_advisories_for_bug(bug_id, session=None):
     """
     if not session:
         session = requests.session()
-    r = session.get(constants.errata_get_advisories_for_bug_url.format(id=int(bug_id)),
-                    verify=ssl.get_default_verify_paths().openssl_cafile,
-                    auth=HTTPSPNEGOAuth())
+    r = session.get(
+        constants.errata_get_advisories_for_bug_url.format(id=int(bug_id)),
+        verify=ssl.get_default_verify_paths().openssl_cafile,
+        auth=HTTPSPNEGOAuth(),
+    )
     r.raise_for_status()
     return r.json()
 
@@ -463,8 +486,10 @@ def remove_bugzilla_bugs(advisory_obj, bugids: List):
     advisory_obj.commit()
 
 
-def add_bugzilla_bugs_with_retry(advisory: Erratum, bugids: List, noop: bool = False,
-                                 batch_size: int = constants.BUG_ATTACH_CHUNK_SIZE):
+def add_bugzilla_bugs_with_retry(
+    advisory: Erratum, bugids: List, noop: bool = False,
+    batch_size: int = constants.BUG_ATTACH_CHUNK_SIZE,
+):
     """
     adding specified bugs into advisory, retry 2 times: first time
     parse the exception message to get failed bug id list, remove from original
@@ -511,8 +536,10 @@ def add_bugzilla_bugs_with_retry(advisory: Erratum, bugids: List, noop: bool = F
         logger.info("All bugzilla bugs attached")
 
 
-def add_jira_bugs_with_retry(advisory: Erratum, bugids: List[str], noop: bool = False,
-                             batch_size: int = constants.BUG_ATTACH_CHUNK_SIZE):
+def add_jira_bugs_with_retry(
+    advisory: Erratum, bugids: List[str], noop: bool = False,
+    batch_size: int = constants.BUG_ATTACH_CHUNK_SIZE,
+):
     """
     :param advisory: advisory object
     :param bugids: iterable of jira bug ids to attach to advisory
@@ -673,21 +700,29 @@ def set_blocking_advisory(target_advisory_id, blocking_advisory_id, blocking_sta
     :param blocking_advisory_id: advisory number of the blocker
     :param blocking_state: a valid advisory state like "SHIPPED_LIVE" (default to "SHIPPED_LIVE")
     """
-    response = ErrataConnector()._post(f'/api/v1/erratum/{target_advisory_id}/add_blocking_errata',
-                                       json={"blocking_errata": blocking_advisory_id})
+    response = ErrataConnector()._post(
+        f'/api/v1/erratum/{target_advisory_id}/add_blocking_errata',
+        json={"blocking_errata": blocking_advisory_id},
+    )
     if response.status_code != requests.codes.created:
         # The endpoint 404s if the advisory is already in the list
         # with the error text "Advisory already listed"
         # so only warn if the error is something else
         if "Advisory already listed" not in response.text:
-            logger.warning(f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id}'
-                           f' with error: {response.text} status code: {response.status_code}')
+            logger.warning(
+                f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id}'
+                f' with error: {response.text} status code: {response.status_code}',
+            )
     data = {"blocking_errata": blocking_advisory_id, "blocker_state": blocking_state}
-    response = ErrataConnector()._post(f'/api/v1/erratum/{target_advisory_id}/set_blocker_state_for_blocking_errata',
-                                       json=data)
+    response = ErrataConnector()._post(
+        f'/api/v1/erratum/{target_advisory_id}/set_blocker_state_for_blocking_errata',
+        json=data,
+    )
     if response.status_code != requests.codes.created:
-        raise IOError(f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id} '
-                      f'with error: {response.text} status code: {response.status_code}')
+        raise IOError(
+            f'Failed to set blocking advisory {blocking_advisory_id} for advisory {target_advisory_id} '
+            f'with error: {response.text} status code: {response.status_code}',
+        )
     return response.json()
 
 
@@ -743,8 +778,10 @@ def remove_dependent_advisories(advisory_id):
         data = {"dependent_errata": int(dependent)}
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
-            raise IOError(f'Failed to remove dependent {dependent} from {advisory_id}'
-                          f'with code {response.status_code} and error: {response.text}')
+            raise IOError(
+                f'Failed to remove dependent {dependent} from {advisory_id}'
+                f'with code {response.status_code} and error: {response.text}',
+            )
 
 
 def remove_blocking_advisories_depends(advisory_id):
@@ -754,8 +791,10 @@ def remove_blocking_advisories_depends(advisory_id):
         data = {"blocking_errata": int(advisory_id)}
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
-            raise IOError(f'Failed to remove blocking {advisory_id} from {blocking_advisory}'
-                          f'with code {response.status_code} and error: {response.text}')
+            raise IOError(
+                f'Failed to remove blocking {advisory_id} from {blocking_advisory}'
+                f'with code {response.status_code} and error: {response.text}',
+            )
 
 
 def get_file_meta(advisory_id) -> List[dict]:
@@ -791,7 +830,7 @@ def create_batch(release_version, release_date):
         "release_name": "RHOSE ASYNC - AUTO",
         "release_date": release_date,
         "description": f"OCP {release_version}",
-        "is_active": True
+        "is_active": True,
     }
     response = ErrataConnector()._post("/api/v1/batches", json=data)
     if response.status_code != requests.codes.created:
@@ -875,8 +914,10 @@ def put_file_meta(advisory_id, file_meta: dict) -> List[dict]:
     """Update the metadata for some or all files in this advisory.
     https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#api-put-apiv1erratumidfilemeta
     """
-    return ErrataConnector()._put(f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true',
-                                  json=file_meta)
+    return ErrataConnector()._put(
+        f'/api/v1/erratum/{advisory_id}/filemeta?put_rank=true',
+        json=file_meta,
+    )
 
 
 def push_cdn_stage(advisory_id):

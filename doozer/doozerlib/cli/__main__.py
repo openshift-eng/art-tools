@@ -54,20 +54,34 @@ standard_library.install_aliases()
 
 
 @cli.command("db:query", short_help="Query database records")
-@click.option("-p", "--operation", required=True, metavar='NAME',
-              help="Which operation to query (e.g. 'build')")
-@click.option("-a", "--attribute", default=[], metavar='NAME', multiple=True,
-              help="Attribute name to output")
-@click.option("-m", "--match", default=[], metavar='NAME=VALUE', multiple=True,
-              help="name=value matches (AND logic)")
-@click.option("-l", "--like", default=[], metavar='NAME=%VALUE%', multiple=True,
-              help="name LIKE value matches (AND logic)")
-@click.option("-w", "--where", metavar='EXPR', default='',
-              help="Complex expression instead of matching. e.g. ( `NAME`=\"VALUE\" and `NAME2` LIKE \"VALUE2%\" ) or NOT `NAME3` < \"VALUE3\"")
-@click.option("-s", "--sort-by", '--order-by', default=None, metavar='NAME',
-              help="Attribute name to sort by. Note: The sort attribute must be present in at least one of the predicates of the expression.")
-@click.option("--limit", default=0, metavar='NUM',
-              help="Limit records returned to specified number")
+@click.option(
+    "-p", "--operation", required=True, metavar='NAME',
+    help="Which operation to query (e.g. 'build')",
+)
+@click.option(
+    "-a", "--attribute", default=[], metavar='NAME', multiple=True,
+    help="Attribute name to output",
+)
+@click.option(
+    "-m", "--match", default=[], metavar='NAME=VALUE', multiple=True,
+    help="name=value matches (AND logic)",
+)
+@click.option(
+    "-l", "--like", default=[], metavar='NAME=%VALUE%', multiple=True,
+    help="name LIKE value matches (AND logic)",
+)
+@click.option(
+    "-w", "--where", metavar='EXPR', default='',
+    help="Complex expression instead of matching. e.g. ( `NAME`=\"VALUE\" and `NAME2` LIKE \"VALUE2%\" ) or NOT `NAME3` < \"VALUE3\"",
+)
+@click.option(
+    "-s", "--sort-by", '--order-by', default=None, metavar='NAME',
+    help="Attribute name to sort by. Note: The sort attribute must be present in at least one of the predicates of the expression.",
+)
+@click.option(
+    "--limit", default=0, metavar='NUM',
+    help="Limit records returned to specified number",
+)
 @click.option("-o", "--output", metavar='format', default="human", help='Output format: human, csv, or yaml')
 @pass_runtime
 def db_select(runtime, operation, attribute, match, like, where, sort_by, limit, output):
@@ -173,22 +187,34 @@ def cleanup(runtime):
 
 
 @cli.command("release:calc-previous", short_help="Returns a list of releases to include in a release's previous field")
-@click.option("--version", metavar='NEW_VER', required=True,
-              help="The release to calculate previous for (e.g. 4.5.4 or 4.6.0..hotfix)")
-@click.option("-a", "--arch",
-              metavar='ARCH',
-              help="Arch for which the repo should be generated",
-              default='x86_64', required=False)
-@click.option("--graph-url", metavar='GRAPH_URL', required=False,
-              default='https://api.openshift.com/api/upgrades_info/v1/graph',
-              help="Cincinnati graph URL to query")
-@click.option("--graph-content-stable", metavar='JSON_FILE', required=False,
-              help="Override content from stable channel - primarily for testing")
-@click.option("--graph-content-candidate", metavar='JSON_FILE', required=False,
-              help="Override content from candidate channel - primarily for testing")
-@click.option("--suggestions-url", metavar='SUGGESTIONS_URL', required=False,
-              default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
-              help="Suggestions URL, load from {major}-{minor}-{arch}.yaml")
+@click.option(
+    "--version", metavar='NEW_VER', required=True,
+    help="The release to calculate previous for (e.g. 4.5.4 or 4.6.0..hotfix)",
+)
+@click.option(
+    "-a", "--arch",
+    metavar='ARCH',
+    help="Arch for which the repo should be generated",
+    default='x86_64', required=False,
+)
+@click.option(
+    "--graph-url", metavar='GRAPH_URL', required=False,
+    default='https://api.openshift.com/api/upgrades_info/v1/graph',
+    help="Cincinnati graph URL to query",
+)
+@click.option(
+    "--graph-content-stable", metavar='JSON_FILE', required=False,
+    help="Override content from stable channel - primarily for testing",
+)
+@click.option(
+    "--graph-content-candidate", metavar='JSON_FILE', required=False,
+    help="Override content from candidate channel - primarily for testing",
+)
+@click.option(
+    "--suggestions-url", metavar='SUGGESTIONS_URL', required=False,
+    default="https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/",
+    help="Suggestions URL, load from {major}-{minor}-{arch}.yaml",
+)
 def release_calc_previous(version, arch, graph_url, graph_content_stable, graph_content_candidate, suggestions_url):
     # Refer to https://docs.google.com/document/d/16eGVikCYARd6nUUtAIHFRKXa7R_rU5Exc9jUPcQoG8A/edit
     # for information on channels & edges
@@ -199,17 +225,25 @@ def release_calc_previous(version, arch, graph_url, graph_content_stable, graph_
 @cli.command("beta:reposync", short_help="Sync yum repos listed in group.yaml to local directory.")
 @click.option("-o", "--output", metavar="DIR", help="Output directory to sync to", required=True)
 @click.option("-c", "--cachedir", metavar="DIR", help="Cache directory for yum", required=True)
-@click.option("-a", "--arch",
-              metavar='ARCH',
-              help="Arch for which the repo should be generated",
-              default='x86_64', required=False)
-@click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
-              default="unsigned",
-              help="Repo group type to use for repo file generation (e.g. signed, unsigned).")
-@click.option("-n", "--name", "names", default=[], metavar='NAME', multiple=True,
-              help="Only sync the specified repository names; if not specified all will be synced.")
-@click.option('--dry-run', default=False, is_flag=True,
-              help='Print derived yum configuration for sync operation and exit')
+@click.option(
+    "-a", "--arch",
+    metavar='ARCH',
+    help="Arch for which the repo should be generated",
+    default='x86_64', required=False,
+)
+@click.option(
+    "--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
+    default="unsigned",
+    help="Repo group type to use for repo file generation (e.g. signed, unsigned).",
+)
+@click.option(
+    "-n", "--name", "names", default=[], metavar='NAME', multiple=True,
+    help="Only sync the specified repository names; if not specified all will be synced.",
+)
+@click.option(
+    '--dry-run', default=False, is_flag=True,
+    help='Print derived yum configuration for sync operation and exit',
+)
 @pass_runtime
 def beta_reposync(runtime, output, cachedir, arch, repo_type, names, dry_run):
     """Sync yum repos listed in group.yaml to local directory.
@@ -286,16 +320,17 @@ installonly_limit=3
                 continue
 
             color_print('Syncing repo {}'.format(repo.name), 'blue')
-            cmd = ('dnf '
-                   f'--config {yc_file.name} '
-                   f'--repoid {repo.name} '
-                   'reposync '
-                   f'--arch {arch} '
-                   '--arch noarch '
-                   '--delete '
-                   '--download-metadata '
-                   f'--download-path {output} '
-                   )
+            cmd = (
+                'dnf '
+                f'--config {yc_file.name} '
+                f'--repoid {repo.name} '
+                'reposync '
+                f'--arch {arch} '
+                '--arch noarch '
+                '--delete '
+                '--download-metadata '
+                f'--download-path {output} '
+            )
             if repo.is_reposync_latest_only():
                 cmd += '--newest-only '
 

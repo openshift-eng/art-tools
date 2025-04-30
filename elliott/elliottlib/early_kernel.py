@@ -65,7 +65,9 @@ def _link_tracker_advisories(
             jira_client.add_simple_link(
                 tracker, dict(
                     url=advisory.url(),
-                    title=f"{advisory.errata_name}: {advisory.synopsis}"))
+                    title=f"{advisory.errata_name}: {advisory.synopsis}",
+                ),
+            )
     return tracker_messages
 
 

@@ -158,8 +158,10 @@ class AsyncErrataAPI:
             params["filter[name]"] = name
         return self._paginated_request(aiohttp.hdrs.METH_GET, path, params=params)
 
-    async def create_batch(self, name: str, release_name: str, release_date: str, description: str,
-                           is_active: bool = True, is_locked: bool = False):
+    async def create_batch(
+        self, name: str, release_name: str, release_date: str, description: str,
+        is_active: bool = True, is_locked: bool = False,
+    ):
         """ Create a new batch.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
 
@@ -181,14 +183,16 @@ class AsyncErrataAPI:
         }
         return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data)).get("data", {})
 
-    async def update_batch(self,
-                           batch_id: int,
-                           name: Optional[str] = None,
-                           release_name: Optional[str] = None,
-                           release_date: Optional[str] = None,
-                           description: Optional[str] = None,
-                           is_active: Optional[bool] = None,
-                           is_locked: Optional[bool] = None):
+    async def update_batch(
+        self,
+        batch_id: int,
+        name: Optional[str] = None,
+        release_name: Optional[str] = None,
+        release_date: Optional[str] = None,
+        description: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        is_locked: Optional[bool] = None,
+    ):
         """ Update an existing batch.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#batches
 
@@ -230,14 +234,16 @@ class AsyncErrataAPI:
             data["clear_batch"] = True
         return cast(Dict, await self._make_request(aiohttp.hdrs.METH_POST, path, json=data))
 
-    async def create_advisory(self, product: str, release: str, errata_type: str,
-                              advisory_synopsis: str, advisory_topic: str, advisory_description: str, advisory_solution: str,
-                              advisory_publish_date_override: Optional[str] = None, advisory_text_only: bool = False,
-                              advisory_quality_responsibility_name: str = "Default", advisory_security_impact: Optional[str] = None,
-                              advisory_package_owner_email: Optional[str] = None, advisory_manager_email: Optional[str] = None,
-                              advisory_assigned_to_email: Optional[str] = None,
-                              idsfixed: Optional[List[Union[str, int]]] = None,
-                              batch_id: Optional[int] = None, batch_name: Optional[str] = None):
+    async def create_advisory(
+        self, product: str, release: str, errata_type: str,
+        advisory_synopsis: str, advisory_topic: str, advisory_description: str, advisory_solution: str,
+        advisory_publish_date_override: Optional[str] = None, advisory_text_only: bool = False,
+        advisory_quality_responsibility_name: str = "Default", advisory_security_impact: Optional[str] = None,
+        advisory_package_owner_email: Optional[str] = None, advisory_manager_email: Optional[str] = None,
+        advisory_assigned_to_email: Optional[str] = None,
+        idsfixed: Optional[List[Union[str, int]]] = None,
+        batch_id: Optional[int] = None, batch_name: Optional[str] = None,
+    ):
         """ Create a new advisory.
         https://errata.devel.redhat.com/documentation/developer-guide/api-http-api.html#advisories
 
@@ -356,9 +362,11 @@ class AsyncErrataUtils:
             raise ValueError(f"Missing builds for brew component(s): {missing_brew_components}")
 
         if golang_cve_names:
-            expected_cve_components = cls.populate_golang_cve_components(golang_cve_names,
-                                                                         expected_cve_components,
-                                                                         attached_builds)
+            expected_cve_components = cls.populate_golang_cve_components(
+                golang_cve_names,
+                expected_cve_components,
+                attached_builds,
+            )
 
         cve_exclusions = {
             cve_name: {pkg: 0 for pkg in attached_brew_components - components}
@@ -378,14 +386,18 @@ class AsyncErrataUtils:
 
             # Make sure they are go builder nvrs (this should never happen)
             if builder_nvr['name'] != constants.GOLANG_BUILDER_CVE_COMPONENT:
-                raise ValueError(f"Unexpected `name` value for nvr {builder_nvr}. Expected "
-                                 f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.")
+                raise ValueError(
+                    f"Unexpected `name` value for nvr {builder_nvr}. Expected "
+                    f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.",
+                )
 
             if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
                 if etcd_golang_builder:
-                    raise ValueError(f"Multiple etcd builds found in advisory {go_nvr_map[etcd_golang_builder][0]}, "
-                                     f"with builders: {etcd_golang_builder} and {builder_nvr_string}. "
-                                     "Please investigate")
+                    raise ValueError(
+                        f"Multiple etcd builds found in advisory {go_nvr_map[etcd_golang_builder][0]}, "
+                        f"with builders: {etcd_golang_builder} and {builder_nvr_string}. "
+                        "Please investigate",
+                    )
                 etcd_golang_builder = builder_nvr_string
             else:
                 base_golang_builders.append(builder_nvr_string)
@@ -395,52 +407,73 @@ class AsyncErrataUtils:
         # For now we map CVEs to base_golang build images
 
         if etcd_golang_builder:
-            _LOGGER.warning(f'etcd build found in advisory {go_nvr_map[etcd_golang_builder][0]}, with builder: '
-                            f'{etcd_golang_builder}. If an attached CVE affects etcd please manually associate CVE '
-                            'with etcd build')
+            _LOGGER.warning(
+                f'etcd build found in advisory {go_nvr_map[etcd_golang_builder][0]}, with builder: '
+                f'{etcd_golang_builder}. If an attached CVE affects etcd please manually associate CVE '
+                'with etcd build',
+            )
 
         for cve_name in golang_cve_names:
             nvrs = set()
             for base_golang_builder in base_golang_builders:
                 nvrs.update({nvr[0] for nvr in go_nvr_map[base_golang_builder]})
-            _LOGGER.info(f"Associating golang {cve_name} with golang "
-                         f"images ({len(nvrs)})")
+            _LOGGER.info(
+                f"Associating golang {cve_name} with golang "
+                f"images ({len(nvrs)})",
+            )
             expected_cve_components[cve_name] = nvrs
 
         return expected_cve_components
 
     @classmethod
-    def diff_cve_exclusions(cls, current_exclusions: Dict[str, Dict[str, int]],
-                            expected_exclusions: Dict[str, Dict[str, int]]):
+    def diff_cve_exclusions(
+        cls, current_exclusions: Dict[str, Dict[str, int]],
+        expected_exclusions: Dict[str, Dict[str, int]],
+    ):
         """ Given 2 cve_package_exclusions dicts, return the difference.
         :return: (extra_exclusions, missing_exclusions)
         """
-        extra_exclusions = {cve: {pkg: exclusions[pkg] for pkg in exclusions.keys()
-                                  - expected_exclusions.get(cve, {}).keys()}
-                            for cve, exclusions in current_exclusions.items()}
-        missing_exclusions = {cve: {pkg: exclusions[pkg] for pkg in exclusions.keys()
-                                    - current_exclusions.get(cve, {}).keys()}
-                              for cve, exclusions in expected_exclusions.items()}
+        extra_exclusions = {
+            cve: {
+                pkg: exclusions[pkg] for pkg in exclusions.keys()
+                - expected_exclusions.get(cve, {}).keys()
+            }
+            for cve, exclusions in current_exclusions.items()
+        }
+        missing_exclusions = {
+            cve: {
+                pkg: exclusions[pkg] for pkg in exclusions.keys()
+                - current_exclusions.get(cve, {}).keys()
+            }
+            for cve, exclusions in expected_exclusions.items()
+        }
         return extra_exclusions, missing_exclusions
 
     @classmethod
-    async def validate_cves_and_get_exclusions_diff(cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[
-                                                    str], cve_components_mapping: Dict[str, Dict]):
+    async def validate_cves_and_get_exclusions_diff(
+        cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[
+        str
+        ], cve_components_mapping: Dict[str, Dict],
+    ):
         _LOGGER.info("Getting associated CVEs for advisory %s", advisory_id)
         advisory_cves = await api.get_cves(advisory_id)
 
         extra_cves = cve_components_mapping.keys() - advisory_cves
         if extra_cves:
-            raise ValueError(f"The following CVEs does not seem to be associated with advisory {advisory_id}: "
-                             f"{', '.join(sorted(extra_cves))}. Make sure CVE names field in advisory"
-                             f"is consistent with CVEs that are attached (`elliott attach-cve-flaws` is your friend)")
+            raise ValueError(
+                f"The following CVEs does not seem to be associated with advisory {advisory_id}: "
+                f"{', '.join(sorted(extra_cves))}. Make sure CVE names field in advisory"
+                f"is consistent with CVEs that are attached (`elliott attach-cve-flaws` is your friend)",
+            )
 
         missing_cves = advisory_cves - cve_components_mapping.keys()
         if missing_cves:
-            raise ValueError(f"Tracker bugs for the following CVEs associated with advisory {advisory_id} "
-                             f"are not attached: {', '.join(sorted(missing_cves))}. Either attach trackers or remove "
-                             f"associated flaw bug (`elliott verify-attached-bugs` is your friend) and remove {missing_cves}"
-                             " from the CVE names field in advisory")
+            raise ValueError(
+                f"Tracker bugs for the following CVEs associated with advisory {advisory_id} "
+                f"are not attached: {', '.join(sorted(missing_cves))}. Either attach trackers or remove "
+                f"associated flaw bug (`elliott verify-attached-bugs` is your friend) and remove {missing_cves}"
+                " from the CVE names field in advisory",
+            )
 
         _LOGGER.info("Getting current CVE package exclusions for advisory %s", advisory_id)
         current_exclusions = await cls.get_advisory_cve_exclusions(api, advisory_id)
@@ -450,8 +483,10 @@ class AsyncErrataUtils:
         return extra_exclusions, missing_exclusions
 
     @classmethod
-    async def associate_builds_with_cves(cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[str],
-                                         cve_components_mapping: Dict[str, Dict], dry_run=False):
+    async def associate_builds_with_cves(
+        cls, api: AsyncErrataAPI, advisory_id: int, attached_builds: List[str],
+        cve_components_mapping: Dict[str, Dict], dry_run=False,
+    ):
         """ Request Errata to associate CVEs to attached Brew builds
         :param api: Errata API
         :param advisory_id: advisory id
@@ -459,10 +494,12 @@ class AsyncErrataUtils:
         :param cve_components_mapping: a dict mapping each CVE to a dict containing flaw bug and brew components
         """
 
-        extra_exclusions, missing_exclusions = await cls.validate_cves_and_get_exclusions_diff(api,
-                                                                                               advisory_id,
-                                                                                               attached_builds,
-                                                                                               cve_components_mapping)
+        extra_exclusions, missing_exclusions = await cls.validate_cves_and_get_exclusions_diff(
+            api,
+            advisory_id,
+            attached_builds,
+            cve_components_mapping,
+        )
         _LOGGER.info("Reconciling CVE package exclusions for advisory %s", advisory_id)
         if dry_run:
             _LOGGER.warning("[DRY RUN] Would have Reconciled CVE package exclusions for advisory %s", advisory_id)

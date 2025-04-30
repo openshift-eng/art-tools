@@ -91,12 +91,18 @@ LOGGER = logging.getLogger(__name__)
 @cli.command("get", short_help="Get information for an ADVISORY")
 @click.argument('advisory', type=int, required=False)
 @use_default_advisory_option
-@click.option('--details', is_flag=True, default=False,
-              help="Print the full object of the advisory")
-@click.option('--id-only', is_flag=True, default=False,
-              help="Print only the ID of the default advisory")
-@click.option('--json', 'as_json', metavar="FILE_NAME",
-              help="Dump the advisory as JSON to a file (or '-' for stdout)")
+@click.option(
+    '--details', is_flag=True, default=False,
+    help="Print the full object of the advisory",
+)
+@click.option(
+    '--id-only', is_flag=True, default=False,
+    help="Print only the ID of the default advisory",
+)
+@click.option(
+    '--json', 'as_json', metavar="FILE_NAME",
+    help="Dump the advisory as JSON to a file (or '-' for stdout)",
+)
 @pass_runtime
 @click.pass_context
 def get(ctx, runtime, default_advisory_type, details, id_only, as_json, advisory):
@@ -151,7 +157,8 @@ Fields for the short format: Release date, State, Synopsys, URL
             date=advisory.publish_date_override,
             state=advisory.errata_state,
             synopsis=advisory.synopsis,
-            url=advisory.url())
+            url=advisory.url(),
+        )
         click.echo(advisory_string)
         return
 
@@ -244,7 +251,7 @@ written out to summary_results.json.
             click.echo(f"{image} from payload has version {vr} which does not match {all_advisory_nvrs[image]} from advisory")
             payload_doesnt_match_errata[image] = {
                 'payload': vr,
-                'errata': all_advisory_nvrs[image]
+                'errata': all_advisory_nvrs[image],
             }
 
     if missing_in_errata:  # check if missing images are already shipped or pending to ship
@@ -298,17 +305,23 @@ written out to summary_results.json.
 
 
 @cli.command("poll-signed", short_help="Poll for RPM build 'signed' status")
-@click.option("--minutes", "-m", required=False,
-              default=15, type=int,
-              help="How long to poll before quitting")
-@click.option("--advisory", "-a",
-              type=int, metavar='ADVISORY',
-              help="Advisory to watch")
+@click.option(
+    "--minutes", "-m", required=False,
+    default=15, type=int,
+    help="How long to poll before quitting",
+)
+@click.option(
+    "--advisory", "-a",
+    type=int, metavar='ADVISORY',
+    help="Advisory to watch",
+)
 @use_default_advisory_option
-@click.option("--noop", "--dry-run",
-              required=False,
-              default=False, is_flag=True,
-              help="Don't actually poll, just print the signed status of each build")
+@click.option(
+    "--noop", "--dry-run",
+    required=False,
+    default=False, is_flag=True,
+    help="Don't actually poll, just print the signed status of each build",
+)
 @pass_runtime
 def poll_signed(runtime, minutes, advisory, default_advisory_type, noop):
     """Poll for the signed-status of RPM builds attached to
@@ -365,9 +378,11 @@ unsigned builds.
         click.echo("{} builds to check".format(len(all_builds)))
         start_time = datetime.datetime.now()
         while datetime.datetime.now() - start_time < datetime.timedelta(minutes=minutes):
-            pbar_header("Getting build signatures: ",
-                        "Should be pretty quick",
-                        all_builds)
+            pbar_header(
+                "Getting build signatures: ",
+                "Should be pretty quick",
+                all_builds,
+            )
             pool = ThreadPool(cpu_count())
             # Look up builds concurrently
             click.secho("[", nl=False)
@@ -375,8 +390,10 @@ unsigned builds.
             build_sigs = pool.map(
                 lambda build: progress_func(
                     lambda: elliottlib.errata.build_signed(build),
-                    '*'),
-                all_builds)
+                    '*',
+                ),
+                all_builds,
+            )
             # Wait for results
             pool.close()
             pool.join()

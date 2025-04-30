@@ -45,9 +45,11 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         fail_function = lambda: False
         assertRaisesRegex = self.assertRaisesRegex if hasattr(self, 'assertRaisesRegex') else self.assertRaisesRegexp
         assertRaisesRegex(
-            Exception, self.ERROR_MSG.format(1), exectools.retry, 1, fail_function)
+            Exception, self.ERROR_MSG.format(1), exectools.retry, 1, fail_function,
+        )
         assertRaisesRegex(
-            Exception, self.ERROR_MSG.format(2), exectools.retry, 2, fail_function)
+            Exception, self.ERROR_MSG.format(2), exectools.retry, 2, fail_function,
+        )
 
     def test_wait(self):
         """
@@ -65,7 +67,8 @@ class RetryTestCase(IsolatedAsyncioTestCase):
         assertRaisesRegex(
             Exception, self.ERROR_MSG.format(3),
             exectools.retry, 3, lambda: calls.append("f"),
-            wait_f=lambda n: calls.extend(("w", str(n))))
+            wait_f=lambda n: calls.extend(("w", str(n))),
+        )
 
         # check that the test and wait loop operated as expected
         self.assertEqual(calls, expected_calls)
@@ -93,7 +96,8 @@ class TestExectools(IsolatedAsyncioTestCase):
                 self.assertEqual(stderr, "")
                 MockPopen.assert_called_once_with(
                     ["/usr/bin/echo", "hello", "there"], cwd=None, env=mock.ANY,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                )
                 mock_popen.communicate.assert_called_once_with(timeout=3000)
                 self.assertTrue(any(line for line in cm.output if "Executing:cmd_gather: /usr/bin/echo hello there" in line))
                 self.assertTrue(any(line for line in cm.output if "Exited with: 0\nstdout>>hello there\n<<\nstderr>><<" in line))
@@ -108,7 +112,8 @@ class TestExectools(IsolatedAsyncioTestCase):
                     status, stdout, stderr = exectools.cmd_gather(["/usr/bin/sleep", "10"], timeout=3000)
                 MockPopen.assert_called_once_with(
                     ["/usr/bin/sleep", "10"], cwd=None, env=mock.ANY,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                )
                 mock_popen.communicate.assert_any_call(timeout=3000)
                 mock_popen.communicate.assert_any_call()
                 self.assertTrue(any(line for line in cm.output if "Executing:cmd_gather: /usr/bin/sleep 10" in line))
@@ -126,7 +131,8 @@ class TestExectools(IsolatedAsyncioTestCase):
                 self.assertEqual(stderr, "error")
                 MockPopen.assert_called_once_with(
                     ["/usr/bin/false"], cwd=None, env=mock.ANY,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                )
                 mock_popen.communicate.assert_called_once_with(timeout=3000)
                 self.assertTrue(any(line for line in cm.output if "Executing:cmd_gather: /usr/bin/false" in line))
                 self.assertTrue(any(line for line in cm.output if "Exited with error: 1\nstdout>><<\nstderr>>error<<\n" in line))
@@ -137,7 +143,8 @@ class TestExectools(IsolatedAsyncioTestCase):
             exectools.cmd_assert(["/usr/bin/echo", "hello", "there"])
             cmd_gather.assert_called_once_with(
                 ["/usr/bin/echo", "hello", "there"],
-                set_env=None, realtime=False, strip=False, log_stdout=False, log_stderr=True, timeout=None, cwd=None)
+                set_env=None, realtime=False, strip=False, log_stdout=False, log_stderr=True, timeout=None, cwd=None,
+            )
 
     @mock.patch("artcommonlib.exectools.cmd_gather")
     @mock.patch("time.sleep")
@@ -187,7 +194,8 @@ class TestExectools(IsolatedAsyncioTestCase):
         items = [1, 2, 3]
         results = exectools.parallel_exec(
             lambda k, v: k,
-            items, n_threads=4)
+            items, n_threads=4,
+        )
         results = results.get()
         self.assertEqual(results, items)
 

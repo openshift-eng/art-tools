@@ -64,13 +64,15 @@ class TestPlashetBuilder(unittest.TestCase):
                     {"el8": "fake2-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
-        finder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-        ])
+        finder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+            ],
+        )
         actual = finder.from_group_deps(8, group_config, {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8"])
         finder._get_builds.assert_called_once()
@@ -85,14 +87,16 @@ class TestPlashetBuilder(unittest.TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
-        finder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-            {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
-        ])
+        finder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+                {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
+            ],
+        )
         with self.assertRaises(ValueError) as ex:
             finder.from_group_deps(8, group_config, {"fake3": MagicMock(rpm_name="fake3")})
         self.assertIn("Group dependencies cannot have ART managed RPMs", str(ex.exception))
@@ -109,19 +113,21 @@ class TestPlashetBuilder(unittest.TestCase):
         meta_configs = {
             "fake1": Model({
                 "is": {
-                    "el8": "fake1-1.2.3-1.el8"
-                }
+                    "el8": "fake1-1.2.3-1.el8",
+                },
             }),
             "fake2": Model({
                 "is": {
-                    "el8": "fake2-1.2.3-1.el8"
-                }
+                    "el8": "fake2-1.2.3-1.el8",
+                },
             }),
         }
-        finder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-        ])
+        finder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+            ],
+        )
         assembly_metadata_config.side_effect = lambda *args: meta_configs[args[3]]
         actual = finder.from_pinned_by_is(8, "art1", releases_config, rpm_metas)
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8"])
@@ -131,11 +137,13 @@ class TestPlashetBuilder(unittest.TestCase):
     def test_from_image_member_deps(self, assembly_metadata_config: Mock):
         finder = BuildFinder(MagicMock())
 
-        finder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-            {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
-        ])
+        finder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+                {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
+            ],
+        )
         assembly_metadata_config.return_value = Model({
             "dependencies": {
                 "rpms": [
@@ -144,8 +152,8 @@ class TestPlashetBuilder(unittest.TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         image_meta = Model({
             "distgit_key": "fake-image",
@@ -159,11 +167,13 @@ class TestPlashetBuilder(unittest.TestCase):
     def test_from_rhcos_deps(self, assembly_rhcos_config: Mock):
         finder = BuildFinder(MagicMock())
 
-        finder._get_builds = MagicMock(return_value=[
-            {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
-            {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
-            {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
-        ])
+        finder._get_builds = MagicMock(
+            return_value=[
+                {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
+                {"id": 2, "build_id": 2, "name": "fake2", "nvr": "fake2-1.2.3-1.el8"},
+                {"id": 3, "build_id": 3, "name": "fake3", "nvr": "fake3-1.2.3-1.el8"},
+            ],
+        )
         assembly_rhcos_config.return_value = Model({
             "dependencies": {
                 "rpms": [
@@ -172,8 +182,8 @@ class TestPlashetBuilder(unittest.TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         actual = finder.from_rhcos_deps(8, "art1", Model(), {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8", "fake3-1.2.3-1.el8"])

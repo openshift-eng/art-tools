@@ -16,8 +16,10 @@ from elliottlib import Runtime, brew
 from elliottlib.cli.common import cli, click_coroutine, pass_runtime
 from elliottlib.cvp import CVPInspector
 from elliottlib.imagecfg import ImageMetadata
-from elliottlib.util import (parse_nvr, pbar_header,
-                             progress_func)
+from elliottlib.util import (
+    parse_nvr, pbar_header,
+    progress_func,
+)
 
 yaml = YAML(typ="safe")
 yaml.default_flow_style = False
@@ -28,17 +30,21 @@ LOGGER = logging.getLogger(__name__)
 @cli.command("verify-cvp", short_help="Verify CVP test results")
 @click.option(
     '--all', 'all_images', required=False, is_flag=True,
-    help='Verify all latest image builds (default to False)')
+    help='Verify all latest image builds (default to False)',
+)
 @click.option(
     '--build', '-b', 'nvrs',
     multiple=True, metavar='NVR_OR_ID',
-    help='Only verify specified builds')
+    help='Only verify specified builds',
+)
 @click.option(
     '--include-content-set-check', "include_content_set_check", is_flag=True,
-    help="Include content_set_check")
+    help="Include content_set_check",
+)
 @click.option(
     '--output', '-o', 'output', metavar='FORMAT', default="text", type=click.Choice(['text', 'json', 'yaml']),
-    help='Output format. One of: text|json|yaml')
+    help='Output format. One of: text|json|yaml',
+)
 @pass_runtime
 @click_coroutine
 async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set_check, output: str):
@@ -107,7 +113,7 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                 "passed": _reconstruct_test_results(passed),
                 "failed": _reconstruct_test_results(failed),
                 "missing": _reconstruct_test_results(missing),
-            }
+            },
         }
 
         if include_content_set_check:
@@ -232,6 +238,7 @@ async def get_latest_image_builds(image_metas: Iterable[ImageMetadata]):
     pbar_header(
         'Generating list of images: ',
         f'Hold on a moment, fetching Brew builds for {len(image_metas)} components...',
-        seq=image_metas, file=sys.stderr)
+        seq=image_metas, file=sys.stderr,
+    )
     builds: List[Dict] = await asyncio.gather(*[image.get_latest_build() for image in image_metas])
     return builds

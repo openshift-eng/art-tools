@@ -10,9 +10,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from artcommonlib import util as artlib_util
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBundleBuildRecord, KonfluxFbcBuildRecord)
-from artcommonlib.konflux.konflux_db import (Engine, KonfluxBuildOutcome,
-                                             KonfluxDb)
+    KonfluxBuildOutcome, KonfluxBundleBuildRecord, KonfluxFbcBuildRecord,
+)
+from artcommonlib.konflux.konflux_db import (
+    Engine, KonfluxBuildOutcome,
+    KonfluxDb,
+)
 from async_lru import alru_cache
 from dockerfile_parse import DockerfileParser
 from kubernetes.dynamic import resource
@@ -33,19 +36,20 @@ BASE_IMAGE_RHEL8_PULLSPEC_FORMAT = "registry.redhat.io/openshift4/ose-operator-r
 
 
 class KonfluxFbcImporter:
-    def __init__(self,
-                 base_dir: Path,
-                 group: str,
-                 assembly: str,
-                 ocp_version: Tuple[int, int],
-                 keep_templates: bool,
-                 upcycle: bool,
-                 push: bool,
-                 commit_message: Optional[str] = None,
-                 fbc_repo: str = constants.ART_FBC_GIT_REPO,
-                 auth: Optional[opm.OpmRegistryAuth] = None,
-                 logger: logging.Logger | None = None
-                 ):
+    def __init__(
+        self,
+        base_dir: Path,
+        group: str,
+        assembly: str,
+        ocp_version: Tuple[int, int],
+        keep_templates: bool,
+        upcycle: bool,
+        push: bool,
+        commit_message: Optional[str] = None,
+        fbc_repo: str = constants.ART_FBC_GIT_REPO,
+        auth: Optional[opm.OpmRegistryAuth] = None,
+        logger: logging.Logger | None = None,
+    ):
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
@@ -292,8 +296,10 @@ class KonfluxFbcRebaser:
             if self._record_logger:
                 self._record_logger.add_record("rebase_fbc_konflux", **record)
 
-    async def _rebase_dir(self, metadata: ImageMetadata, build_repo: BuildRepo, bundle_build: KonfluxBundleBuildRecord,
-                          version: str, release: str, logger: logging.Logger):
+    async def _rebase_dir(
+        self, metadata: ImageMetadata, build_repo: BuildRepo, bundle_build: KonfluxBundleBuildRecord,
+        version: str, release: str, logger: logging.Logger,
+    ):
         logger.info("Rebasing dir %s", build_repo.local_dir)
 
         # Fetch bundle image info and blob
@@ -455,11 +461,11 @@ class KonfluxFbcRebaser:
                         "source": source,
                         "mirrors": [
                             constants.KONFLUX_DEFAULT_IMAGE_REPO,
-                        ]
+                        ],
                     }
                     for source in source_repos
-                ]
-            }
+                ],
+            },
         }
         return image_digest_mirror_set
 
@@ -480,7 +486,8 @@ class KonfluxFbcRebaser:
         registry_auth = opm.OpmRegistryAuth(
             path=os.environ.get("KONFLUX_ART_IMAGES_AUTH_FILE"),
             username=os.environ.get("KONFLUX_ART_IMAGES_USERNAME"),
-            password=os.environ.get("KONFLUX_ART_IMAGES_PASSWORD"))
+            password=os.environ.get("KONFLUX_ART_IMAGES_PASSWORD"),
+        )
         rendered_blobs = await opm.render(bundle_build.image_pullspec, migrate=True, auth=registry_auth)
         if not isinstance(rendered_blobs, list) or len(rendered_blobs) != 1:
             raise IOError(f"Expected exactly one rendered blob, but got {len(rendered_blobs)}")
@@ -543,7 +550,8 @@ class KonfluxFbcBuilder:
             pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
             dry_run: bool = False,
             record_logger: Optional[RecordLogger] = None,
-            logger: logging.Logger = LOGGER):
+            logger: logging.Logger = LOGGER,
+    ):
         self.base_dir = base_dir
         self.group = group
         self.assembly = assembly
@@ -650,8 +658,10 @@ class KonfluxFbcBuilder:
                     await self._update_konflux_db(metadata, build_repo, pipelinerun, outcome, arches, logger=logger)
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
-                    error = KonfluxFbcBuildError(f"Konflux image build for {metadata.distgit_key} failed",
-                                                 pipelinerun_name, pipelinerun)
+                    error = KonfluxFbcBuildError(
+                        f"Konflux image build for {metadata.distgit_key} failed",
+                        pipelinerun_name, pipelinerun,
+                    )
                 else:
                     error = None
                     metadata.build_status = True
@@ -672,7 +682,8 @@ class KonfluxFbcBuilder:
             build_repo: BuildRepo,
             output_image: str,
             arches: Sequence[str],
-            logger: logging.Logger):
+            logger: logging.Logger,
+    ):
         """ Start a build with Konflux. """
         if not build_repo.commit_hash:
             raise IOError("Bundle repository must have a commit to build. Did you rebase?")
@@ -720,10 +731,12 @@ class KonfluxFbcBuilder:
         logger.info(f"PipelineRun {pipelinerun.metadata.name} created: {url}")
         return pipelinerun, url
 
-    async def _update_konflux_db(self, metadata: ImageMetadata, build_repo: BuildRepo,
-                                 pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
-                                 arches: Sequence[str],
-                                 logger: Optional[logging.Logger] = None):
+    async def _update_konflux_db(
+        self, metadata: ImageMetadata, build_repo: BuildRepo,
+        pipelinerun: resource.ResourceInstance, outcome: KonfluxBuildOutcome,
+        arches: Sequence[str],
+        logger: Optional[logging.Logger] = None,
+    ):
         logger = logger or self._logger.getChild(f"[{metadata.distgit_key}]")
         db = self._db
         if not db or db.record_cls != KonfluxFbcBuildRecord:
@@ -785,8 +798,10 @@ class KonfluxFbcBuilder:
                     image_digest = next((r['value'] for r in pipelinerun.status.results or [] if r['name'] == 'IMAGE_DIGEST'), None)
 
                     if not (image_pullspec and image_digest):
-                        raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                                         f"pipelinerun {pipelinerun_name}")
+                        raise ValueError(
+                            f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                            f"pipelinerun {pipelinerun_name}",
+                        )
 
                     start_time = pipelinerun.status.startTime
                     end_time = pipelinerun.status.completionTime

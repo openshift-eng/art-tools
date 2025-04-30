@@ -11,10 +11,10 @@ class TestPLRUrl(TestCase):
             "metadata": {
                 "name": "ose-4-19-ose-ovn-kubernetes-6wv6l",
                 "labels": {
-                    "appstudio.openshift.io/application": "openshift-4-19"
-                }
+                    "appstudio.openshift.io/application": "openshift-4-19",
+                },
 
-            }
+            },
         }
         actual = KonfluxClient.build_pipeline_url(pipeline_run)
         expected = "https://konflux-ui.apps.kflux-ocp-p01.7ayg.p1.openshiftapps.com/ns/ocp-art-tenant/applications/openshift-4-19/pipelineruns/ose-4-19-ose-ovn-kubernetes-6wv6l"

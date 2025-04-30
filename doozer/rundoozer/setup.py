@@ -21,10 +21,10 @@ setup(
     packages=[],
     include_package_data=True,
     scripts=[
-        'rundoozer'
+        'rundoozer',
     ],
 
     install_requires=[],
 
-    dependency_links=[]
+    dependency_links=[],
 )

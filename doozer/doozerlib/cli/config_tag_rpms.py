@@ -23,12 +23,14 @@ class TagRPMsCli:
         self.as_json = as_json
 
     @staticmethod
-    async def get_tagged_builds(session: koji.ClientSession,
-                                tag_component_tuples: Iterable[Tuple[str, Optional[str]]],
-                                build_type: Optional[str],
-                                event: Optional[int] = None,
-                                latest: int = 0,
-                                inherit: bool = False) -> List[List[Dict]]:
+    async def get_tagged_builds(
+        session: koji.ClientSession,
+        tag_component_tuples: Iterable[Tuple[str, Optional[str]]],
+        build_type: Optional[str],
+        event: Optional[int] = None,
+        latest: int = 0,
+        inherit: bool = False,
+    ) -> List[List[Dict]]:
         """ Get tagged builds as of the given event
 
         In each list for a component, builds are ordered from newest tagged to oldest tagged:
@@ -110,8 +112,10 @@ class TagRPMsCli:
             # For each package, look at builds in stop-ship tag and integration tag,
             # then find an acceptable build in integration tag.
             if not entry.target_tag:
-                logger.warning("RPM delivery config for package(s) %s doesn't define a target tag. Skipping...",
-                               ", ".join(entry.packages))
+                logger.warning(
+                    "RPM delivery config for package(s) %s doesn't define a target tag. Skipping...",
+                    ", ".join(entry.packages),
+                )
                 continue
             builds_to_tag.setdefault(entry.target_tag, dict())
             builds_to_untag.setdefault(entry.target_tag, set())
@@ -120,14 +124,16 @@ class TagRPMsCli:
             builds_in_stop_ship_tag = await self.get_tagged_builds(
                 koji_api,
                 [(entry.stop_ship_tag, pkg) for pkg in entry.packages],
-                build_type="rpm")
+                build_type="rpm",
+            )
             # Get all builds in integration tag
             logger.info("Getting tagged builds in integration tag %s...", entry.integration_tag)
             builds_in_integration_tag = await self.get_tagged_builds(
                 koji_api,
                 [(entry.integration_tag, pkg) for pkg in entry.packages],
                 build_type="rpm",
-                latest=0)
+                latest=0,
+            )
             # We assume in each rhel version, there are only a few hundreds of builds in the rhel candidate tag.
             # It should be fine to get all builds in one single Brew API call.
             logger.info("Getting latest tagged builds in rhel tag %s...", entry.rhel_tag)
@@ -135,7 +141,8 @@ class TagRPMsCli:
                 koji_api,
                 [(entry.rhel_tag, pkg) for pkg in entry.packages],
                 build_type="rpm",
-                latest=0) if entry.rhel_tag else [[] for _ in entry.packages]
+                latest=0,
+            ) if entry.rhel_tag else [[] for _ in entry.packages]
             for package, rhel_builds, candidate_builds, stop_ship_builds in zip(entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag):
                 stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
                 rhel_build_nvrs = {b["nvr"] for b in rhel_builds}
@@ -196,8 +203,10 @@ class TagRPMsCli:
 
                     # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
                     kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
-                    kernel_rt_version = (f"{kernel_rt_build['version']}-"
-                                         f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}")
+                    kernel_rt_version = (
+                        f"{kernel_rt_build['version']}-"
+                        f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
+                    )
                     if kernel_version not in kernel_rt_version:
                         raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
                     else:

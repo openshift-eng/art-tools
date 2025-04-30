@@ -39,12 +39,16 @@ def list_olm_operators(runtime: Runtime):
             print(image.get_component_name())
 
 
-@cli.command("olm-bundle:print", short_help="Print data for each operator",
-             context_settings=dict(
-                 ignore_unknown_options=True,  # permit patterns starting with dash; allows printing yaml lists
-             ))
-@click.option('--skip-missing', default=False, is_flag=True,
-              help='If no build has been performed, skip printing pattern that would require it')
+@cli.command(
+    "olm-bundle:print", short_help="Print data for each operator",
+    context_settings=dict(
+        ignore_unknown_options=True,  # permit patterns starting with dash; allows printing yaml lists
+    ),
+)
+@click.option(
+    '--skip-missing', default=False, is_flag=True,
+    help='If no build has been performed, skip printing pattern that would require it',
+)
 @click.argument("pattern", default="{component}", nargs=1)
 @pass_runtime
 def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
@@ -88,11 +92,13 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
             if "{" in s:
                 if skip_missing:
                     runtime.logger.warning(
-                        f'No build has been performed for {image.distgit_key} by {s} requires it; skipping')
+                        f'No build has been performed for {image.distgit_key} by {s} requires it; skipping',
+                    )
                     continue
                 else:
                     raise IOError(
-                        f"Fields remaining in pattern, but no build was found for {image.distgit_key} with which to populate those fields: {s}")
+                        f"Fields remaining in pattern, but no build was found for {image.distgit_key} with which to populate those fields: {s}",
+                    )
         else:
             nvr = build_info['nvr']
             olm_bundle = OLMBundle(runtime, build_info, dry_run=False)
@@ -135,10 +141,14 @@ def olm_bundles_print(runtime: Runtime, skip_missing, pattern: Optional[str]):
 
 @cli.command('olm-bundle:rebase-and-build', short_help='Rebase and build the bundle image for a given operator image')
 @click.argument('operator_nvrs', nargs=-1, required=False)
-@click.option("-f", "--force", required=False, is_flag=True,
-              help="Perform a build even if previous bundles for given NVRs already exist")
-@click.option('--dry-run', default=False, is_flag=True,
-              help='Do not push to distgit or build anything, but print what would be done.')
+@click.option(
+    "-f", "--force", required=False, is_flag=True,
+    help="Perform a build even if previous bundles for given NVRs already exist",
+)
+@click.option(
+    '--dry-run', default=False, is_flag=True,
+    help='Do not push to distgit or build anything, but print what would be done.',
+)
 @pass_runtime
 def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...], force: bool, dry_run: bool):
     """Rebase and build operator bundles.
@@ -184,8 +194,10 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
         # Since no operator nvs are explicitly given
         # fetch all latest operator builds from Brew
         # This will respect --images if specified
-        operator_metas = [meta for meta in runtime.ordered_image_metas() if
-                          meta.enabled and meta.config['update-csv'] is not Missing]
+        operator_metas = [
+            meta for meta in runtime.ordered_image_metas() if
+            meta.enabled and meta.config['update-csv'] is not Missing
+        ]
         results = exectools.parallel_exec(lambda meta, _: meta.get_latest_brew_build(), operator_metas)
         operator_builds = results.get()
 
@@ -258,7 +270,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_pipeline_url': record['task_url'],
                 'pipeline_commit': 'n/a',
-                'operator_nvr': olm_bundle.operator_dict['nvr']
+                'operator_nvr': olm_bundle.operator_dict['nvr'],
             }
 
             if record['status'] == 0:
@@ -274,7 +286,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     'operand_nvrs': [v for _, v in olm_bundle.found_image_references.items()],
                     'build_id': str(build_info['id']),
                     'outcome': KonfluxBuildOutcome.SUCCESS,
-                    'nvr': record['bundle_nvr']
+                    'nvr': record['bundle_nvr'],
                 })
 
             else:
@@ -288,7 +300,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     'outcome': KonfluxBuildOutcome.FAILURE,
                     'start_time': dateutil.parser.parse(task_start_time).replace(tzinfo=timezone.utc),
                     'end_time': dateutil.parser.parse(task_end_time).replace(tzinfo=timezone.utc),
-                    'nvr': 'n/a'
+                    'nvr': 'n/a',
                 })
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)
@@ -301,8 +313,10 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     olm_bundles = [OLMBundle(runtime, op, dry_run=dry_run) for op in operator_builds]
     get_branches_results = [bundle.does_bundle_branch_exist() for bundle in olm_bundles]
     if not all([result[0] for result in get_branches_results]):
-        LOGGER.error('One or more bundle branches do not exist: '
-                     f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.')
+        LOGGER.error(
+            'One or more bundle branches do not exist: '
+            f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.',
+        )
         sys.exit(1)
 
     results = exectools.parallel_exec(lambda bundle, _: rebase_and_build(bundle), olm_bundles).get()

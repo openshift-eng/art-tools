@@ -20,24 +20,32 @@ from elliottlib.runtime import Runtime
 
 
 @cli.command("verify-attached-operators", short_help="Verify attached operator bundle references are (being) shipped")
-@click.option("--omit-shipped",
-              required=False,
-              is_flag=True,
-              help='Do not query shipped images to satisfy bundle references')
-@click.option("--omit-attached",
-              required=False,
-              is_flag=True,
-              help='Do not query images shipping in other advisories to satisfy bundle references')
-@click.option("--gather-dependencies",
-              required=False,
-              is_flag=True,
-              help='Attach unshipped dependencies to advisory, removing them from any other advisory')
+@click.option(
+    "--omit-shipped",
+    required=False,
+    is_flag=True,
+    help='Do not query shipped images to satisfy bundle references',
+)
+@click.option(
+    "--omit-attached",
+    required=False,
+    is_flag=True,
+    help='Do not query images shipping in other advisories to satisfy bundle references',
+)
+@click.option(
+    "--gather-dependencies",
+    required=False,
+    is_flag=True,
+    help='Attach unshipped dependencies to advisory, removing them from any other advisory',
+)
 @click.argument("advisories", nargs=-1, type=click.IntRange(1), required=True)
 @pass_runtime
 @click.pass_context
-def verify_attached_operators_cli(ctx: click.Context, runtime: Runtime, omit_shipped: bool,
-                                  omit_attached: bool, gather_dependencies: bool,
-                                  advisories: Tuple[int, ...]):
+def verify_attached_operators_cli(
+    ctx: click.Context, runtime: Runtime, omit_shipped: bool,
+    omit_attached: bool, gather_dependencies: bool,
+    advisories: Tuple[int, ...],
+):
     """
     Verify attached operator bundle references are shipping or already shipped.
 
@@ -76,13 +84,15 @@ def verify_attached_operators_cli(ctx: click.Context, runtime: Runtime, omit_shi
     runtime.initialize(mode="images")
 
     problems, invalid, unshipped_builds_by_advisory = _analyze_image_builds(
-        runtime, advisories, omit_shipped, omit_attached, gather_dependencies)
+        runtime, advisories, omit_shipped, omit_attached, gather_dependencies,
+    )
 
     if invalid or problems:
         raise ElliottFatalError("Please resolve the errors above before shipping bundles.")
 
     changes_needed, changes_made = _handle_missing_builds(
-        ctx, gather_dependencies, advisories, unshipped_builds_by_advisory)
+        ctx, gather_dependencies, advisories, unshipped_builds_by_advisory,
+    )
     if changes_needed:
         if changes_made:
             # only happens with --gather-dependencies
@@ -90,7 +100,8 @@ def verify_attached_operators_cli(ctx: click.Context, runtime: Runtime, omit_shi
             # necessary e.g. if any builds were added, we can now check their CDN repos.
             # this time, consider it a problem when builds are not attached correctly.
             problems, invalid, unshipped_builds_by_advisory = _analyze_image_builds(
-                runtime, advisories, omit_shipped, True, False)
+                runtime, advisories, omit_shipped, True, False,
+            )
             if invalid or problems:
                 raise ElliottFatalError("Please resolve the errors above before shipping bundles.")
         else:
@@ -99,8 +110,10 @@ def verify_attached_operators_cli(ctx: click.Context, runtime: Runtime, omit_shi
     green_print("All operator bundles were valid and references were found.")
 
 
-def _analyze_image_builds(runtime, advisories: List, omit_shipped: bool, omit_attached: bool,
-                          gather_dependencies: bool) -> (List[str], bool, Dict):
+def _analyze_image_builds(
+    runtime, advisories: List, omit_shipped: bool, omit_attached: bool,
+    gather_dependencies: bool,
+) -> (List[str], bool, Dict):
     """
     Look up all the bundles in the advisories and determine if they will ship correctly
     params:
@@ -128,7 +141,8 @@ def _analyze_image_builds(runtime, advisories: List, omit_shipped: bool, omit_at
         image_builds.extend(_get_shipped_images(runtime, brew_session))
     available_shasums = _extract_available_image_shasums(image_builds)
     problems, unshipped_builds_by_advisory = _missing_references(
-        runtime, bundles, available_shasums, omit_attached, gather_dependencies)
+        runtime, bundles, available_shasums, omit_attached, gather_dependencies,
+    )
 
     if problems:
         problem_str = "\n              ".join(problems)
@@ -305,7 +319,7 @@ def _handle_missing_builds(
         ctx: click.Context,
         gather_dependencies: bool,
         advisories: Tuple[int, ...],
-        builds_by_advisory: Dict[int, List]
+        builds_by_advisory: Dict[int, List],
 ) -> (bool, bool):
     """
     If the only problems were builds not being attached to the right advisories, either report what
@@ -335,10 +349,12 @@ def _handle_missing_builds(
                 move_builds(attached_builds, "image", adv, target)
             else:
                 # attaching builds from scratch is complicated; call out to existing cli
-                ctx.invoke(find_builds_cli, advisory_id=target, default_advisory_type=None,
-                           builds=missing_nvrs, kind="image", as_json=False,
-                           no_cdn_repos=True, payload=False,
-                           non_payload=False, include_shipped=False, member_only=False)
+                ctx.invoke(
+                    find_builds_cli, advisory_id=target, default_advisory_type=None,
+                    builds=missing_nvrs, kind="image", as_json=False,
+                    no_cdn_repos=True, payload=False,
+                    non_payload=False, include_shipped=False, member_only=False,
+                )
         return True, True
     else:
         print("To automatically attach/move builds not already in the specified advisory, run with --gather-dependencies")
@@ -352,7 +368,7 @@ def _nvr_for_operand_pullspec(runtime, spec):
     spec = f"{urls.brew_image_host}/{urls.brew_image_namespace}/openshift-{spec}"
     info = exectools.cmd_assert(
         f"oc image info -o json --filter-by-os=linux/amd64 {spec}",
-        retries=3, pollrate=5
+        retries=3, pollrate=5,
     )[0]
     labels = json.loads(info)["config"]["config"]["Labels"]
     return f"{labels['com.redhat.component']}-{labels['version']}-{labels['release']}"

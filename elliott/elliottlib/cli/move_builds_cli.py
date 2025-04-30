@@ -13,22 +13,27 @@ LOGGER = logutil.get_logger(__name__)
 @click.option(
     '--from', 'from_advisory', metavar='ADVISORY_ID',
     type=int, required=True,
-    help='Source advisory to remove attached builds from')
+    help='Source advisory to remove attached builds from',
+)
 @click.option(
     '--to', 'to_advisory', metavar='ADVISORY_ID',
     type=int, required=True,
-    help='Target advisory to attach builds to')
+    help='Target advisory to attach builds to',
+)
 @click.option(
     '--kind', '-k', metavar='KIND', required=True,
     type=click.Choice(['rpm', 'image']),
-    help='Builds of the given KIND [rpm, image]')
+    help='Builds of the given KIND [rpm, image]',
+)
 @click.option(
     '--only', metavar='NVR',
-    help='Only move these builds. Comma separated Build NVRs')
+    help='Only move these builds. Comma separated Build NVRs',
+)
 @click.option(
     "--noop", "--dry-run",
     is_flag=True, default=False,
-    help="Don't change anything")
+    help="Don't change anything",
+)
 @click.pass_obj
 def move_builds_cli(runtime, from_advisory, to_advisory, kind, only, noop):
     """

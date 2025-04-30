@@ -81,7 +81,6 @@ tests = [
     "pytest>=6.2.1",
     "mypy>=0.812",
     "pylint",
-    "add-trailing-comma",
     "black",
     "isort>=5.0.0",
 ]

@@ -1,5 +1,4 @@
 autopep8
-add-trailing-comma
 black
 isort >= 5.0.0
 coverage

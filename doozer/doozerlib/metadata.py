@@ -11,8 +11,10 @@ from enum import Enum
 from typing import Dict, List, NamedTuple, Optional, Tuple, cast
 from defusedxml import ElementTree
 from dockerfile_parse import DockerfileParser
-from tenacity import (retry, retry_if_exception_type, stop_after_attempt,
-                      wait_fixed)
+from tenacity import (
+    retry, retry_if_exception_type, stop_after_attempt,
+    wait_fixed,
+)
 
 from artcommonlib import exectools
 from artcommonlib.assembly import assembly_metadata_config
@@ -38,7 +40,7 @@ class CgitAtomFeedEntry(NamedTuple):
 #
 DISTGIT_TYPES = {
     'image': ImageDistGitRepo,
-    'rpm': RPMDistGitRepo
+    'rpm': RPMDistGitRepo,
 }
 
 
@@ -71,8 +73,10 @@ class RebuildHint(NamedTuple):
 
 
 class Metadata(MetadataBase):
-    def __init__(self, meta_type: str, runtime: "doozerlib.Runtime", data_obj: Dict, commitish: Optional[str] = None,
-                 prevent_cloning: Optional[bool] = False):
+    def __init__(
+        self, meta_type: str, runtime: "doozerlib.Runtime", data_obj: Dict, commitish: Optional[str] = None,
+        prevent_cloning: Optional[bool] = False,
+    ):
         """
         :param meta_type - a string. Index to the sub-class <'rpm'|'image'>.
         :param runtime - a Runtime object.
@@ -133,8 +137,10 @@ class Metadata(MetadataBase):
                 build_obj = self.get_latest_brew_build(default=None, el_target=self.determine_rhel_targets()[0])
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
-                    self.logger.info('Pinning upstream source to commit of assembly selected build '
-                                     f'({build_obj["id"]}) -> commit {self.commitish}')
+                    self.logger.info(
+                        'Pinning upstream source to commit of assembly selected build '
+                        f'({build_obj["id"]}) -> commit {self.commitish}',
+                    )
                 else:
                     # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.
                     if 'unittest' not in sys.modules.keys():
@@ -244,7 +250,7 @@ class Metadata(MetadataBase):
                 title=et_entry.find('{http://www.w3.org/2005/Atom}title').text,
                 updated=dateutil.parser.parse(et_entry.find('{http://www.w3.org/2005/Atom}updated').text),
                 id=et_entry.find('{http://www.w3.org/2005/Atom}id').text,
-                content=et_entry.find('{http://www.w3.org/2005/Atom}content[@type="text"]').text
+                content=et_entry.find('{http://www.w3.org/2005/Atom}content[@type="text"]').text,
             )
             entry_list.append(entry)
 
@@ -283,7 +289,8 @@ class Metadata(MetadataBase):
         try:
             req = exectools.retry(
                 3, lambda: urllib.request.urlopen(url),
-                check_f=lambda req: req.code == 200)
+                check_f=lambda req: req.code == 200,
+            )
         except Exception as e:
             raise IOError(f"Failed to fetch {url}: {e}. Does branch {branch} exist?")
         return req.read()
@@ -339,10 +346,12 @@ class Metadata(MetadataBase):
         latest_build = self.get_latest_brew_build(default=None, el_target=el_target)
 
         if not latest_build:
-            return RebuildHint(code=RebuildHintCode.NO_LATEST_BUILD,
-                               reason=f'Component {component_name} has no latest build '
-                                      f'for assembly {self.runtime.assembly} '
-                                      f'and target {el_target}')
+            return RebuildHint(
+                code=RebuildHintCode.NO_LATEST_BUILD,
+                reason=f'Component {component_name} has no latest build '
+                       f'for assembly {self.runtime.assembly} '
+                       f'and target {el_target}',
+            )
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])
         latest_build_creation = latest_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC
@@ -369,29 +378,39 @@ class Metadata(MetadataBase):
             self.logger.debug(f'scan-sources coordinate: distgit_head_commit_datetime: {dg_commit_dt}')
 
             if latest_build_creation > dg_commit_dt:
-                return RebuildHint(code=RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER,
-                                   reason='Distgit only repo commit is older than most recent build')
+                return RebuildHint(
+                    code=RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER,
+                    reason='Distgit only repo commit is older than most recent build',
+                )
 
             # Two possible states here:
             # 1. A user has made a commit to this dist-git only branch and there has been no build attempt
             # 2. We've already tried a build and the build failed.
 
             # Check whether a build attempt for this assembly has failed.
-            last_failed_build = self.get_latest_brew_build(default=None,
-                                                           build_state=BuildStates.FAILED,
-                                                           el_target=el_target)  # How recent was the last failed build?
+            last_failed_build = self.get_latest_brew_build(
+                default=None,
+                build_state=BuildStates.FAILED,
+                el_target=el_target,
+            )  # How recent was the last failed build?
             if not last_failed_build:
-                return RebuildHint(code=RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER,
-                                   reason='Distgit only commit is newer than last successful build')
+                return RebuildHint(
+                    code=RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER,
+                    reason='Distgit only commit is newer than last successful build',
+                )
 
             last_failed_build_creation = dateutil.parser.parse(last_failed_build['creation_time'])
             last_failed_build_creation = last_failed_build_creation.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC
             if last_failed_build_creation + datetime.timedelta(hours=rebuild_interval) > now:
-                return RebuildHint(code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
-                                   reason=f'Waiting at least {rebuild_interval} hours after last failed build')
+                return RebuildHint(
+                    code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
+                    reason=f'Waiting at least {rebuild_interval} hours after last failed build',
+                )
 
-            return RebuildHint(code=RebuildHintCode.LAST_BUILD_FAILED,
-                               reason=f'Last build failed > {rebuild_interval} hours ago; making another attempt')
+            return RebuildHint(
+                code=RebuildHintCode.LAST_BUILD_FAILED,
+                reason=f'Last build failed > {rebuild_interval} hours ago; making another attempt',
+            )
 
         # Otherwise, we have source. In the case of git source, check the upstream with ls-remote.
         # In the case of alias (only legacy stuff afaik), check the cloned repo directory.
@@ -412,9 +431,11 @@ class Metadata(MetadataBase):
         git_component = f'.g*{upstream_commit_hash[:7]}'  # use .g*<commit> so it matches new form ".g0123456" and old ".git.0123456"
 
         # Scan for any build in this assembly which also includes the git commit.
-        upstream_commit_build = self.get_latest_brew_build(default=None,
-                                                           extra_pattern=f'*{git_component}*',
-                                                           el_target=el_target)  # Latest build for this commit.
+        upstream_commit_build = self.get_latest_brew_build(
+            default=None,
+            extra_pattern=f'*{git_component}*',
+            el_target=el_target,
+        )  # Latest build for this commit.
 
         if not upstream_commit_build:
             # There is no build for this upstream commit. Two options to assess:
@@ -422,15 +443,19 @@ class Metadata(MetadataBase):
             # 2. Previous attempts at building this commit have failed
 
             # Check whether a build attempt with this commit has failed before.
-            failed_commit_build = self.get_latest_brew_build(default=None,
-                                                             extra_pattern=f'*{git_component}*',
-                                                             build_state=BuildStates.FAILED,
-                                                             el_target=el_target)  # Have we tried before and failed?
+            failed_commit_build = self.get_latest_brew_build(
+                default=None,
+                extra_pattern=f'*{git_component}*',
+                build_state=BuildStates.FAILED,
+                el_target=el_target,
+            )  # Have we tried before and failed?
 
             # If not, this is a net-new upstream commit. Build it.
             if not failed_commit_build:
-                return RebuildHint(code=RebuildHintCode.NEW_UPSTREAM_COMMIT,
-                                   reason='A new upstream commit exists and needs to be built')
+                return RebuildHint(
+                    code=RebuildHintCode.NEW_UPSTREAM_COMMIT,
+                    reason='A new upstream commit exists and needs to be built',
+                )
 
             # Otherwise, there was a failed attempt at this upstream commit on record.
             # Make sure provide at least rebuild_interval hours between such attempts
@@ -438,18 +463,26 @@ class Metadata(MetadataBase):
             last_attempt_time = last_attempt_time.replace(tzinfo=datetime.timezone.utc)  # If time lacks timezone info, interpret as UTC
 
             if last_attempt_time + datetime.timedelta(hours=rebuild_interval) < now:
-                return RebuildHint(code=RebuildHintCode.LAST_BUILD_FAILED,
-                                   reason=f'It has been {rebuild_interval} hours since last failed build attempt')
+                return RebuildHint(
+                    code=RebuildHintCode.LAST_BUILD_FAILED,
+                    reason=f'It has been {rebuild_interval} hours since last failed build attempt',
+                )
 
-            return RebuildHint(code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
-                               reason=f'Last build of upstream commit {upstream_commit_hash} failed, but holding off for at least {rebuild_interval} hours before next attempt')
+            return RebuildHint(
+                code=RebuildHintCode.DELAYING_NEXT_ATTEMPT,
+                reason=f'Last build of upstream commit {upstream_commit_hash} failed, but holding off for at least {rebuild_interval} hours before next attempt',
+            )
 
         if latest_build['nvr'] != upstream_commit_build['nvr']:
-            return RebuildHint(code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
-                               reason=f'Latest build {latest_build["nvr"]} does not match upstream commit build {upstream_commit_build["nvr"]}; commit reverted?')
+            return RebuildHint(
+                code=RebuildHintCode.UPSTREAM_COMMIT_MISMATCH,
+                reason=f'Latest build {latest_build["nvr"]} does not match upstream commit build {upstream_commit_build["nvr"]}; commit reverted?',
+            )
 
-        return RebuildHint(code=RebuildHintCode.BUILD_IS_UP_TO_DATE,
-                           reason=f'Build already exists for current upstream commit {upstream_commit_hash}: {latest_build}')
+        return RebuildHint(
+            code=RebuildHintCode.BUILD_IS_UP_TO_DATE,
+            reason=f'Build already exists for current upstream commit {upstream_commit_hash}: {latest_build}',
+        )
 
     def get_jira_info(self) -> Tuple[str, str]:
         """

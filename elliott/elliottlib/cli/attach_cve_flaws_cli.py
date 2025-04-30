@@ -10,8 +10,10 @@ from artcommonlib.rpm_utils import parse_nvr
 
 from elliottlib import constants
 from elliottlib.bzutil import sort_cve_bugs
-from elliottlib.cli.common import (cli, click_coroutine, find_default_advisory,
-                                   use_default_advisory_option)
+from elliottlib.cli.common import (
+    cli, click_coroutine, find_default_advisory,
+    use_default_advisory_option,
+)
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -20,19 +22,27 @@ from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any
 LOGGER = logging.getLogger(__name__)
 
 
-@cli.command('attach-cve-flaws',
-             short_help='Attach corresponding flaw bugs for trackers in advisory (first-fix only)')
-@click.option('--advisory', '-a', 'advisory_id',
-              type=int,
-              help='Find tracker bugs in given advisory')
-@click.option("--noop", "--dry-run",
-              required=False,
-              default=False, is_flag=True,
-              help="Print what would change, but don't change anything")
+@cli.command(
+    'attach-cve-flaws',
+    short_help='Attach corresponding flaw bugs for trackers in advisory (first-fix only)',
+)
+@click.option(
+    '--advisory', '-a', 'advisory_id',
+    type=int,
+    help='Find tracker bugs in given advisory',
+)
+@click.option(
+    "--noop", "--dry-run",
+    required=False,
+    default=False, is_flag=True,
+    help="Print what would change, but don't change anything",
+)
 @use_default_advisory_option
-@click.option("--into-default-advisories",
-              is_flag=True,
-              help='Run for all advisories values defined in [group|releases].yml')
+@click.option(
+    "--into-default-advisories",
+    is_flag=True,
+    help='Run for all advisories values defined in [group|releases].yml',
+)
 @click.pass_obj
 @click_coroutine
 async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str, into_default_advisories: bool):
@@ -82,8 +92,10 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
                 _update_advisory(runtime, advisory, flaw_bugs, flaw_bug_tracker, noop)
                 # Associate builds with CVEs
                 LOGGER.info('Associating CVEs with builds')
-                await associate_builds_with_cves(errata_api, advisory, flaw_bugs, attached_trackers,
-                                                 tracker_flaws, noop)
+                await associate_builds_with_cves(
+                    errata_api, advisory, flaw_bugs, attached_trackers,
+                    tracker_flaws, noop,
+                )
             else:
                 pass  # TODO: convert RHSA back to RHBA
         except Exception as e:
@@ -103,8 +115,10 @@ def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker):
         return []
 
     attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(advisory_bug_ids)
-    LOGGER.info(f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
-                f'{sorted([b.id for b in attached_tracker_bugs])}')
+    LOGGER.info(
+        f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
+        f'{sorted([b.id for b in attached_tracker_bugs])}',
+    )
     return attached_tracker_bugs
 
 
@@ -116,10 +130,12 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(
         tracker_bugs,
         flaw_bug_tracker,
-        brew_api
+        brew_api,
     )
-    LOGGER.info(f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
-                f' {sorted(flaw_tracker_map.keys())}')
+    LOGGER.info(
+        f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
+        f' {sorted(flaw_tracker_map.keys())}',
+    )
 
     # current_target_release can be digit.digit.([z|0])?
     # if current_target_release is GA then run first-fix bug filtering

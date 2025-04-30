@@ -7,10 +7,14 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, cast
 from urllib.parse import urljoin
 
 import aiohttp
-from aiohttp.client_exceptions import (ClientResponseError,
-                                       ServerDisconnectedError)
-from tenacity import (before_sleep_log, retry, retry_if_exception_type,
-                      stop_after_attempt, wait_exponential)
+from aiohttp.client_exceptions import (
+    ClientResponseError,
+    ServerDisconnectedError,
+)
+from tenacity import (
+    before_sleep_log, retry, retry_if_exception_type,
+    stop_after_attempt, wait_exponential,
+)
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.exectools import limit_concurrency
@@ -24,8 +28,10 @@ class CVPInspector:
 
     CVP_TEST_CASE_SANITY = "cvp.rhproduct.default.sanity"
 
-    def __init__(self, group_config: Dict, image_metas: Iterable[ImageMetadata],
-                 logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self, group_config: Dict, image_metas: Iterable[ImageMetadata],
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self._resultsdb_api = ResultsDBAPI()
         self._group_config = group_config
         self._image_metas = list(image_metas)
@@ -46,7 +52,7 @@ class CVPInspector:
         """
         nvr_results = {}
         nvrs = set(nvrs)
-        results = await self._resultsdb_api.get_latest_results((self.CVP_TEST_CASE_SANITY, ), nvrs)
+        results = await self._resultsdb_api.get_latest_results((self.CVP_TEST_CASE_SANITY,), nvrs)
         for r in results:
             nvr = r["data"]["item"][0]
             if nvr in nvr_results:
@@ -80,9 +86,11 @@ class CVPInspector:
         return passed, failed, missing
 
     async def get_sanity_test_optional_results(self, test_results: Iterable[Dict]):
-        @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
-               retry=(retry_if_exception_type((ServerDisconnectedError, ClientResponseError))),
-               before_sleep=before_sleep_log(self._logger, logging.WARNING))
+        @retry(
+            reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=(retry_if_exception_type((ServerDisconnectedError, ClientResponseError))),
+            before_sleep=before_sleep_log(self._logger, logging.WARNING),
+        )
         @limit_concurrency(limit=32)
         async def _fetch(url):
             r = await session.get(url)

@@ -35,32 +35,32 @@ class TestUtil(unittest.TestCase):
                         "type": "standard",
                         "basis": {
                             "assembly": "4.12.98",
-                        }
-                    }
+                        },
+                    },
                 },
                 "4.12.98": {
                     "assembly": {
                         "type": "standard",
                         "basis": {
                             "event": 12345,
-                        }
-                    }
+                        },
+                    },
                 },
                 "art0000": {
                     "assembly": {
                         "type": "custom",
                         "basis": {
                             "assembly": "4.12.99",
-                        }
-                    }
+                        },
+                    },
                 },
                 "art0001": {
                     "assembly": {
                         "type": "custom",
                         "basis": {
                             "assembly": "art0000",
-                        }
-                    }
+                        },
+                    },
                 },
                 "art0002": {
                     "assembly": {
@@ -68,18 +68,18 @@ class TestUtil(unittest.TestCase):
                         "basis": {
                             "assembly": "art0001",
                             "patch_version": 23,
-                        }
-                    }
+                        },
+                    },
                 },
                 "art0003": {
                     "assembly": {
                         "type": "custom",
                         "basis": {
                             "assembly": "art0002",
-                        }
-                    }
+                        },
+                    },
                 },
-            }
+            },
         })
 
         actual = util.get_release_name_for_assembly("openshift-4.12", releases_config, "4.12.99")
@@ -112,7 +112,7 @@ class TestUtil(unittest.TestCase):
         util.oc_image_info_show_multiarch('pullspec')
         assert_mock.assert_called_once_with(
             ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'],
-            retries=3
+            retries=3,
         )
 
     @patch("artcommonlib.exectools.cmd_assert")
@@ -121,7 +121,7 @@ class TestUtil(unittest.TestCase):
         util.oc_image_info_show_multiarch__caching('pullspec')
         assert_mock.assert_called_once_with(
             ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--show-multiarch'],
-            retries=3
+            retries=3,
         )
 
     @patch("artcommonlib.exectools.cmd_assert")
@@ -130,7 +130,7 @@ class TestUtil(unittest.TestCase):
         util.oc_image_info_for_arch('pullspec')
         assert_mock.assert_called_once_with(
             ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'],
-            retries=3
+            retries=3,
         )
 
     @patch("artcommonlib.exectools.cmd_assert")
@@ -139,7 +139,7 @@ class TestUtil(unittest.TestCase):
         util.oc_image_info_for_arch__caching('pullspec')
         assert_mock.assert_called_once_with(
             ['oc', 'image', 'info', '-o', 'json', 'pullspec', '--filter-by-os=amd64'],
-            retries=3
+            retries=3,
         )
 
 

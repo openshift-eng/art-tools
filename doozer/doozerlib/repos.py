@@ -59,8 +59,10 @@ class Repo(object):
         includepkgs_str = conf.get('extra_options', {}).get('includepkgs', "")
         self.includepkgs = pkgs_to_list(includepkgs_str)
 
-        excludepkgs_str = (conf.get('extra_options', {}).get('exclude', "")
-                           or conf.get('extra_options', {}).get('excludepkgs', ""))
+        excludepkgs_str = (
+            conf.get('extra_options', {}).get('exclude', "")
+            or conf.get('extra_options', {}).get('excludepkgs', "")
+        )
         self.excludepkgs = pkgs_to_list(excludepkgs_str)
 
         self.cs_optional = self._data.content_set.get('optional', False)
@@ -245,8 +247,10 @@ class Repo(object):
         # includepkgs does not override excludepkgs
         # so apply it after excludepkgs
         if self.includepkgs:
-            LOGGER.info(f"Only including packages from {name} based on following patterns: {self.includepkgs}. "
-                        "All other packages will be excluded.")
+            LOGGER.info(
+                f"Only including packages from {name} based on following patterns: {self.includepkgs}. "
+                "All other packages will be excluded.",
+            )
             filtered_rpms = []
             for rpm in repodata.primary_rpms:
                 # rpm should match at least one include pattern to be included
@@ -399,34 +403,34 @@ class Repos(object):
             "criteria": {
                 "fields": [
                     "id",
-                    "notes"
+                    "notes",
                 ],
                 "filters": {
                     "notes.arch": {
                         "$in": [
-                            arch
-                        ]
+                            arch,
+                        ],
                     },
                     # per CLOUDWF-4852 content sets may now be specified as pulp repo names.
                     "$or": [
                         {
                             "notes.content_set": {
-                                "$in": names
-                            }
+                                "$in": names,
+                            },
                         }, {
                             "id": {
-                                "$in": names
-                            }
-                        }
-                    ]
-                }
-            }
+                                "$in": names,
+                            },
+                        },
+                    ],
+                },
+            },
         }
 
         headers = {
             'Content-Type': "application/json",
             'Authorization': "Basic cWE6cWE=",  # qa:qa
-            'Cache-Control': "no-cache"
+            'Cache-Control': "no-cache",
         }
 
         # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp

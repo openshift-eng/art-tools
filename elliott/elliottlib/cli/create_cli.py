@@ -16,42 +16,64 @@ LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("create", short_help="Create a new advisory")
-@click.option("--type", '-t', 'errata_type', required=True,
-              type=click.Choice(['RHBA', 'RHEA']),
-              help="Type of Advisory to create.")
-@click.option("--art-advisory-key", required=True,
-              help="Boilerplate for the advisory. This will be looked up from erratatool.yml")
-@click.option("--date",
-              callback=validate_release_date, default=None,
-              help="Release date for the advisory, only needed if --batch-id is not used. Format: YYYY-Mon-DD.")
-@click.option('--assigned-to', metavar="EMAIL_ADDR", required=True,
-              envvar="ELLIOTT_ASSIGNED_TO_EMAIL",
-              callback=validate_email_address,
-              help="The email address group to review and approve the advisory.")
-@click.option('--manager', metavar="EMAIL_ADDR", required=True,
-              envvar="ELLIOTT_MANAGER_EMAIL",
-              callback=validate_email_address,
-              help="The email address of the manager monitoring the advisory status.")
-@click.option('--package-owner', metavar="EMAIL_ADDR", required=True,
-              envvar="ELLIOTT_PACKAGE_OWNER_EMAIL",
-              callback=validate_email_address,
-              help="The email address of the person responsible managing the advisory.")
-@click.option('--with-placeholder', is_flag=True,
-              default=False, type=bool,
-              help="Create a placeholder bug and attach it to the advisory. Only valid if also using --yes.")
-@click.option('--with-liveid/--no-liveid', is_flag=True,
-              default=True, type=bool,
-              help="Request a Live ID for the advisory. Only valid if also using --yes.")
-@click.option('--batch-id', metavar="BATCH_ID", type=int,
-              help="Batch ID to use for the advisory.")
-@click.option('--yes', '-y', is_flag=True,
-              default=False, type=bool,
-              help="Create the advisory (by default only a preview is displayed)")
+@click.option(
+    "--type", '-t', 'errata_type', required=True,
+    type=click.Choice(['RHBA', 'RHEA']),
+    help="Type of Advisory to create.",
+)
+@click.option(
+    "--art-advisory-key", required=True,
+    help="Boilerplate for the advisory. This will be looked up from erratatool.yml",
+)
+@click.option(
+    "--date",
+    callback=validate_release_date, default=None,
+    help="Release date for the advisory, only needed if --batch-id is not used. Format: YYYY-Mon-DD.",
+)
+@click.option(
+    '--assigned-to', metavar="EMAIL_ADDR", required=True,
+    envvar="ELLIOTT_ASSIGNED_TO_EMAIL",
+    callback=validate_email_address,
+    help="The email address group to review and approve the advisory.",
+)
+@click.option(
+    '--manager', metavar="EMAIL_ADDR", required=True,
+    envvar="ELLIOTT_MANAGER_EMAIL",
+    callback=validate_email_address,
+    help="The email address of the manager monitoring the advisory status.",
+)
+@click.option(
+    '--package-owner', metavar="EMAIL_ADDR", required=True,
+    envvar="ELLIOTT_PACKAGE_OWNER_EMAIL",
+    callback=validate_email_address,
+    help="The email address of the person responsible managing the advisory.",
+)
+@click.option(
+    '--with-placeholder', is_flag=True,
+    default=False, type=bool,
+    help="Create a placeholder bug and attach it to the advisory. Only valid if also using --yes.",
+)
+@click.option(
+    '--with-liveid/--no-liveid', is_flag=True,
+    default=True, type=bool,
+    help="Request a Live ID for the advisory. Only valid if also using --yes.",
+)
+@click.option(
+    '--batch-id', metavar="BATCH_ID", type=int,
+    help="Batch ID to use for the advisory.",
+)
+@click.option(
+    '--yes', '-y', is_flag=True,
+    default=False, type=bool,
+    help="Create the advisory (by default only a preview is displayed)",
+)
 @click.pass_obj
 @click.pass_context
 @click_coroutine
-async def create_cli(ctx, runtime, errata_type, art_advisory_key, date, assigned_to, manager, package_owner,
-                     with_placeholder: bool, with_liveid: bool, batch_id: Optional[int], yes: bool):
+async def create_cli(
+    ctx, runtime, errata_type, art_advisory_key, date, assigned_to, manager, package_owner,
+    with_placeholder: bool, with_liveid: bool, batch_id: Optional[int], yes: bool,
+):
     """Create a new advisory. The boilerplate to use for the advisory must be specified with
 '--art-advisory-key'. This will be looked up from erratatool.yml.
 
@@ -113,7 +135,7 @@ advisory.
                 advisory_manager_email=manager,
                 advisory_assigned_to_email=assigned_to,
                 advisory_publish_date_override=date,
-                batch_id=batch_id
+                batch_id=batch_id,
             )
             advisory_info = next(iter(created_advisory["errata"].values()))
             advisory_name = advisory_info["fulladvisory"].rsplit("-", 1)[0]

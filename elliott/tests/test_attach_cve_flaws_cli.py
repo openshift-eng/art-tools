@@ -14,25 +14,25 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
             'synopsis': 'some synopsis',
             'description': 'some description with {CVES}',
             'topic': "some topic {IMPACT}",
-            'solution': 'some solution'
+            'solution': 'some solution',
         }
         advisory = Mock(
             errata_type="RHBA",
             cve_names="something",
             security_impact="Low",
             update=Mock(),
-            topic='some topic'
+            topic='some topic',
         )
 
         flaw_bugs = [
             Mock(alias=['CVE-2022-123'], severity='urgent', summary='CVE-2022-123 foo'),
-            Mock(alias=['CVE-2022-456'], severity='high', summary='CVE-2022-456 bar')
+            Mock(alias=['CVE-2022-456'], severity='high', summary='CVE-2022-456 bar'),
         ]
 
         attach_cve_flaws_cli.get_updated_advisory_rhsa(
             boilerplate,
             advisory,
-            flaw_bugs
+            flaw_bugs,
         )
 
         advisory.update.assert_any_call(
@@ -45,16 +45,16 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
 
         impact = 'Critical'
         advisory.update.assert_any_call(
-            topic=boilerplate['topic'].format(IMPACT=impact)
+            topic=boilerplate['topic'].format(IMPACT=impact),
         )
         advisory.update.assert_any_call(
-            cve_names='CVE-2022-123 CVE-2022-456'
+            cve_names='CVE-2022-123 CVE-2022-456',
         )
         advisory.update.assert_any_call(
-            security_impact=impact
+            security_impact=impact,
         )
         advisory.update.assert_any_call(
-            description='some description with * foo (CVE-2022-123)\n* bar (CVE-2022-456)'
+            description='some description with * foo (CVE-2022-123)\n* bar (CVE-2022-456)',
         )
 
     @patch("elliottlib.errata_async.AsyncErrataUtils.associate_builds_with_cves", autospec=True)
@@ -73,12 +73,12 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
                     "a-1.0.0-1.el7": {},
                     "e-1.0.0-1.el7": {},
                     "f-1.0.0-1.el7": {},
-                }
-            }
+                },
+            },
         )
         errata_api.get_builds_flattened.return_value = [
             "a-1.0.0-1.el8", "b-1.0.0-1.el8", "c-1.0.0-1.el8", "d-1.0.0-1.el8",
-            "a-1.0.0-1.el7", "e-1.0.0-1.el7", "f-1.0.0-1.el7"
+            "a-1.0.0-1.el7", "e-1.0.0-1.el7", "f-1.0.0-1.el7",
         ]
         tracker_flaws = {
             1: [101, 103],
@@ -101,16 +101,22 @@ class TestAttachCVEFlawsCLI(unittest.IsolatedAsyncioTestCase):
         }
         flaw_bugs = list(flaw_id_bugs.values())
         actual = await attach_cve_flaws_cli.associate_builds_with_cves(
-            errata_api, advisory, flaw_bugs, attached_tracker_bugs, tracker_flaws, dry_run=False)
-        expected_builds = ['a-1.0.0-1.el8', 'b-1.0.0-1.el8', 'c-1.0.0-1.el8',
-                           'd-1.0.0-1.el8', 'a-1.0.0-1.el7', 'e-1.0.0-1.el7',
-                           'f-1.0.0-1.el7']
-        expected_cve_component_mapping = {'CVE-2099-1': {'a', 'd', 'b'},
-                                          'CVE-2099-3': {'a', 'd', 'b', 'c'},
-                                          'CVE-2099-2': {'c', 'e'}}
+            errata_api, advisory, flaw_bugs, attached_tracker_bugs, tracker_flaws, dry_run=False,
+        )
+        expected_builds = [
+            'a-1.0.0-1.el8', 'b-1.0.0-1.el8', 'c-1.0.0-1.el8',
+            'd-1.0.0-1.el8', 'a-1.0.0-1.el7', 'e-1.0.0-1.el7',
+            'f-1.0.0-1.el7',
+        ]
+        expected_cve_component_mapping = {
+            'CVE-2099-1': {'a', 'd', 'b'},
+            'CVE-2099-3': {'a', 'd', 'b', 'c'},
+            'CVE-2099-2': {'c', 'e'},
+        }
         fake_urls_associate_builds_with_cves.assert_awaited_once_with(
             errata_api, 12345, expected_builds, expected_cve_component_mapping,
-            dry_run=False)
+            dry_run=False,
+        )
         self.assertEqual(actual, None)
 
 

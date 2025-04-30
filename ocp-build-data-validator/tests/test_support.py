@@ -14,14 +14,20 @@ group_cfg = {
 class TestSupport(unittest.TestCase):
 
     def test_fail_validation(self):
-        self.assertRaises(exceptions.ValidationFailedWIP,
-                          support.fail_validation, 'msg', {'mode': 'wip'})
+        self.assertRaises(
+            exceptions.ValidationFailedWIP,
+            support.fail_validation, 'msg', {'mode': 'wip'},
+        )
 
-        self.assertRaises(exceptions.ValidationFailed,
-                          support.fail_validation, 'msg', {'mode': 'other'})
+        self.assertRaises(
+            exceptions.ValidationFailed,
+            support.fail_validation, 'msg', {'mode': 'other'},
+        )
 
-        self.assertRaises(exceptions.ValidationFailed,
-                          support.fail_validation, 'msg', {})
+        self.assertRaises(
+            exceptions.ValidationFailed,
+            support.fail_validation, 'msg', {},
+        )
 
     def test_is_disabled(self):
         self.assertTrue(support.is_disabled({'mode': 'disabled'}))
@@ -100,36 +106,46 @@ class TestSupport(unittest.TestCase):
         self.assertEqual(streams, {'cobol', 'fortran'})
 
     def test_get_valid_member_references_for(self):
-        (flexmock(support.os)
+        (
+            flexmock(support.os)
             .should_receive('listdir')
             .with_args('./images')
-            .and_return({'image-a', 'image-b', 'image-c'}))
+            .and_return({'image-a', 'image-b', 'image-c'})
+        )
 
         references = support.get_valid_member_references_for('images/x.yml')
         self.assertEqual(references, {'image-a', 'image-b', 'image-c'})
 
     def test_resource_exists(self):
         for status_code in [200, 204, 302, 304, 307, 308]:
-            (flexmock(support.requests)
+            (
+                flexmock(support.requests)
                 .should_receive('head')
-                .and_return(flexmock(status_code=status_code)))
+                .and_return(flexmock(status_code=status_code))
+            )
             self.assertTrue(support.resource_exists('http://a.random/url'))
 
         for status_code in [400, 401, 403, 404, 405, 410]:
-            (flexmock(support.requests)
+            (
+                flexmock(support.requests)
                 .should_receive('head')
-                .and_return(flexmock(status_code=status_code)))
+                .and_return(flexmock(status_code=status_code))
+            )
             self.assertFalse(support.resource_exists('http://a.random/url'))
 
     def test_resource_is_reachable(self):
-        (flexmock(support.requests)
+        (
+            flexmock(support.requests)
             .should_receive('head')
-            .replace_with(lambda _: None))
+            .replace_with(lambda _: None)
+        )
         self.assertTrue(support.resource_is_reachable('http://a.random/url'))
 
-        (flexmock(support.requests)
+        (
+            flexmock(support.requests)
             .should_receive('head')
-            .and_raise(support.requests.exceptions.ConnectionError))
+            .and_raise(support.requests.exceptions.ConnectionError)
+        )
         self.assertFalse(support.resource_is_reachable('http://a.random/url'))
 
     def test_namespace(self):
@@ -150,9 +166,11 @@ class TestSupport(unittest.TestCase):
 def mock_builtin_open(file, contents):
     mock = flexmock(get_builtin_module())
     mock.should_call('open')
-    (mock.should_receive('open')
+    (
+        mock.should_receive('open')
         .with_args(file)
-        .and_return(flexmock(read=lambda: contents)))
+        .and_return(flexmock(read=lambda: contents))
+    )
 
 
 def get_builtin_module():

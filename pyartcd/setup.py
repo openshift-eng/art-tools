@@ -13,7 +13,7 @@ setup(
     author_email="aos-team-art@redhat.com",
     setup_requires=['setuptools>=65.5.1', 'setuptools_scm'],
     use_scm_version={
-        "root": ".."
+        "root": "..",
     },
     description="Python based pipeline library for managing and automating Red Hat OpenShift Container Platform releases",
     url="https://github.com/openshift-eng/art-tools/tree/main/pyartcd",
@@ -23,8 +23,8 @@ setup(
     install_requires=INSTALL_REQUIRES,
     entry_points={
         'console_scripts': [
-            'artcd = pyartcd.__main__:main'
-        ]
+            'artcd = pyartcd.__main__:main',
+        ],
     },
     test_suite='tests',
     dependency_links=[],
@@ -43,5 +43,5 @@ setup(
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Build Tools",
         "Natural Language :: English",
-    ]
+    ],
 )

@@ -21,24 +21,30 @@ class TestBrew(unittest.TestCase):
         """We can tell if a build is attached to any open erratum"""
         # Create Erratum(), create Build() using dict with all_errata
         # containing an object with 'id' matching Erratum.advisory_id
-        b = brew.Build(nvr='template-service-broker-docker-v3.7.36-2',
-                       body=test_structures.image_build_attached_open_json,
-                       product_version='rhaos-test-7')
+        b = brew.Build(
+            nvr='template-service-broker-docker-v3.7.36-2',
+            body=test_structures.image_build_attached_open_json,
+            product_version='rhaos-test-7',
+        )
         self.assertTrue(b.attached_to_open_erratum)
 
     def test_build_attached_to_closed_erratum(self):
         """We can tell if a build is attached to any closed erratum"""
         # Use filter #1991: (Active; Product: RHOSE; sorted by newest)
-        b = brew.Build(nvr='template-service-broker-docker-v3.7.36-2',
-                       body=test_structures.image_build_attached_closed_json,
-                       product_version='rhaos-test-7')
+        b = brew.Build(
+            nvr='template-service-broker-docker-v3.7.36-2',
+            body=test_structures.image_build_attached_closed_json,
+            product_version='rhaos-test-7',
+        )
         self.assertTrue(b.attached_to_closed_erratum)
 
     def test_good_attached_brew_image_build(self):
         """We can create and process an attached image Build object"""
-        b = brew.Build(nvr='template-service-broker-docker-v3.7.36-2',
-                       body=test_structures.image_build_attached_json,
-                       product_version='rhaos-test-7')
+        b = brew.Build(
+            nvr='template-service-broker-docker-v3.7.36-2',
+            body=test_structures.image_build_attached_json,
+            product_version='rhaos-test-7',
+        )
 
         self.assertEqual('template-service-broker-docker-v3.7.36-2', b.nvr)
         self.assertEqual('image', b.kind)
@@ -47,9 +53,11 @@ class TestBrew(unittest.TestCase):
 
     def test_good_unattached_brew_image_build(self):
         """We can create and process an unattached image Build object"""
-        b = brew.Build(nvr='cri-o-docker-v3.7.37-1',
-                       body=test_structures.image_build_unattached_json,
-                       product_version='rhaos-test-7')
+        b = brew.Build(
+            nvr='cri-o-docker-v3.7.37-1',
+            body=test_structures.image_build_unattached_json,
+            product_version='rhaos-test-7',
+        )
 
         self.assertEqual('cri-o-docker-v3.7.37-1', b.nvr)
         self.assertEqual('image', b.kind)
@@ -58,9 +66,11 @@ class TestBrew(unittest.TestCase):
 
     def test_good_attached_brew_rpm_build(self):
         """We can create and process an attached rpm Build object"""
-        b = brew.Build(nvr='coreutils-8.22-21.el7',
-                       body=test_structures.rpm_build_attached_json,
-                       product_version='rhaos-test-7')
+        b = brew.Build(
+            nvr='coreutils-8.22-21.el7',
+            body=test_structures.rpm_build_attached_json,
+            product_version='rhaos-test-7',
+        )
 
         self.assertEqual('coreutils-8.22-21.el7', b.nvr)
         self.assertEqual('rpm', b.kind)
@@ -69,9 +79,11 @@ class TestBrew(unittest.TestCase):
 
     def test_good_unattached_brew_rpm_build(self):
         """We can create and process an unattached rpm Build object"""
-        b = brew.Build(nvr='ansible-service-broker-1.0.21-1.el7',
-                       body=test_structures.rpm_build_unattached_json,
-                       product_version='rhaos-test-7')
+        b = brew.Build(
+            nvr='ansible-service-broker-1.0.21-1.el7',
+            body=test_structures.rpm_build_unattached_json,
+            product_version='rhaos-test-7',
+        )
 
         self.assertEqual('ansible-service-broker-1.0.21-1.el7', b.nvr)
         self.assertEqual('rpm', b.kind)
@@ -113,14 +125,16 @@ class TestBrew(unittest.TestCase):
         nvr = 'coreutils-8.22-21.el7'
         pv = 'rhaos-test-7'
 
-        b = brew.Build(nvr=nvr,
-                       body=test_structures.rpm_build_attached_json,
-                       product_version=pv)
+        b = brew.Build(
+            nvr=nvr,
+            body=test_structures.rpm_build_attached_json,
+            product_version=pv,
+        )
 
         expected_json = {
             'product_version': pv,
             'build': nvr,
-            'file_types': ['rpm']
+            'file_types': ['rpm'],
         }
 
         self.assertEqual(expected_json, b.to_json())
@@ -130,14 +144,16 @@ class TestBrew(unittest.TestCase):
         nvr = 'template-service-broker-docker-v3.7.36-2'
         pv = 'rhaos-test-7'
 
-        b = brew.Build(nvr=nvr,
-                       body=test_structures.image_build_attached_json,
-                       product_version=pv)
+        b = brew.Build(
+            nvr=nvr,
+            body=test_structures.image_build_attached_json,
+            product_version=pv,
+        )
 
         expected_json = {
             'product_version': pv,
             'build': nvr,
-            'file_types': ['tar']
+            'file_types': ['tar'],
         }
 
         self.assertEqual(expected_json, b.to_json())
@@ -155,7 +171,8 @@ class TestBrew(unittest.TestCase):
         mock_session.get.assert_called_once_with(
             constants.errata_get_build_url.format(id=nvr),
             verify="/my/cert.pem",
-            auth=mock.ANY)
+            auth=mock.ANY,
+        )
 
     @mock.patch("ssl.get_default_verify_paths", return_value=mock.MagicMock(openssl_cafile="/my/cert.pem"))
     @mock.patch("requests.Session")
@@ -170,7 +187,8 @@ class TestBrew(unittest.TestCase):
         mock_session.get.assert_called_once_with(
             constants.errata_get_build_url.format(id=nvr),
             verify="/my/cert.pem",
-            auth=mock.ANY)
+            auth=mock.ANY,
+        )
         MockSession.assert_not_called()
 
     @mock.patch("requests.Session")

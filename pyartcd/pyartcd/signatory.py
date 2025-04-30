@@ -94,7 +94,7 @@ class AsyncSignatory:
         # e.g. /queue/Consumer.openshift-art-bot.artcd.VirtualTopic.eng.robosignatory.art.sign
         consumer_queue = self.CONSUMER_QUEUE_TEMPLATE.format_map({
             "service_account": service_account,
-            "subscription": self.subscription_name
+            "subscription": self.subscription_name,
         })
         self._receiver = await self._umb.subscribe(consumer_queue, self.subscription_name)
         # Start a task to handle messages received from the consumer queue
@@ -185,7 +185,7 @@ class AsyncSignatory:
         return artifact_meta
 
     async def sign_json_digest(
-        self, product: str, release_name: str, pullspec: str, digest: str, sig_file: BinaryIO
+        self, product: str, release_name: str, pullspec: str, digest: str, sig_file: BinaryIO,
     ):
         """ Sign a JSON digest claim
         """
@@ -214,7 +214,7 @@ class AsyncSignatory:
         return signature_meta
 
     async def sign_message_digest(
-        self, product: str, release_name: str, artifact: BinaryIO, sig_file: BinaryIO
+        self, product: str, release_name: str, artifact: BinaryIO, sig_file: BinaryIO,
     ):
         """ Sign a message digest
         """
@@ -247,10 +247,12 @@ class SigstoreSignatory:
     # it's easier to set AWS_REGION for now than to create a whole AWS_CONFIG_FILE
     ENV["AWS_REGION"] = "us-east-1"
 
-    def __init__(self, logger, dry_run: bool, signing_creds: str,
-                 signing_key_ids: List[str], rekor_url: str,
-                 concurrency_limit: int, sign_release: bool, sign_components: bool,
-                 verify_release: bool) -> None:
+    def __init__(
+        self, logger, dry_run: bool, signing_creds: str,
+        signing_key_ids: List[str], rekor_url: str,
+        concurrency_limit: int, sign_release: bool, sign_components: bool,
+        verify_release: bool,
+    ) -> None:
         self._logger = logger
         self.dry_run = dry_run  # if true, run discovery but do not sign anything
         self.signing_key_ids = signing_key_ids  # key ids for signing
@@ -272,7 +274,7 @@ class SigstoreSignatory:
         return f"{pullspec}@{digest}"  # assume it was a bare registry/repo
 
     async def discover_pullspecs(
-            self, pullspecs: Iterable[str], release_name: str
+            self, pullspecs: Iterable[str], release_name: str,
     ) -> (Set[str], Dict[str, Exception]):
         """
         Recursively discover pullspecs that need signatures. Given manifest lists, examine the
@@ -304,7 +306,7 @@ class SigstoreSignatory:
         return need_signing, errors
 
     async def _examine_pullspec(
-            self, pullspec: str, release_name: str
+            self, pullspec: str, release_name: str,
     ) -> (Set[str], Set[str], Dict[str, Exception]):
         """
         Determine what a pullspec is (single manifest, manifest list, release image) and
@@ -333,11 +335,11 @@ class SigstoreSignatory:
             self._logger.info("%s is a release image with name %s", pullspec, this_rn)
             if release_name != this_rn:
                 errors[pullspec] = RuntimeError(
-                    f"release image at {pullspec} has release name {this_rn}, not the expected {release_name}"
+                    f"release image at {pullspec} has release name {this_rn}, not the expected {release_name}",
                 )
             elif self.verify_release and not await self.verify_legacy_signature(img_info):
                 errors[pullspec] = RuntimeError(
-                    f"release image at {pullspec} does not have a required legacy signature"
+                    f"release image at {pullspec} does not have a required legacy signature",
                 )
             else:
                 if self.sign_components:
@@ -378,7 +380,7 @@ class SigstoreSignatory:
         :param need_signing: Pullspecs to be signed
         :return: dict with any signing errors per pullspec
         """
-        args = [(ps, ) for ps in need_signing]
+        args = [(ps,) for ps in need_signing]
         results = await run_limited_unordered(self._sign_single_manifest, args, self.concurrency_limit)
         return {pullspec: err for result in results for pullspec, err in result.items()}
 
@@ -414,12 +416,13 @@ class SigstoreSignatory:
         """
         log = self._logger
         for signing_key_id in self.signing_key_ids:
-            cmd = ["cosign", "sign",
-                   "--yes",
-                   # https://issues.redhat.com/browse/ART-10052
-                   f"--sign-container-identity={pullspec}",
-                   "--key", f"awskms:///{signing_key_id}",
-                   ]
+            cmd = [
+                "cosign", "sign",
+                "--yes",
+                # https://issues.redhat.com/browse/ART-10052
+                f"--sign-container-identity={pullspec}",
+                "--key", f"awskms:///{signing_key_id}",
+            ]
 
             if self.rekor_url:
                 cmd.append(f"--rekor-url={self.rekor_url}")

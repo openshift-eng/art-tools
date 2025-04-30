@@ -104,6 +104,8 @@ def get_distgit_branch(data, group_cfg):
 
 
 def replace_vars(text, vars_map):
-    return (text
-            .replace('{MAJOR}', str(vars_map['MAJOR']))
-            .replace('{MINOR}', str(vars_map['MINOR'])))
+    return (
+        text
+        .replace('{MAJOR}', str(vars_map['MAJOR']))
+        .replace('{MINOR}', str(vars_map['MINOR']))
+    )

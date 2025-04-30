@@ -11,8 +11,10 @@ class TestBumpRelease(TestCase):
         if "specfile" not in sys.modules:
             self.skipTest("specfile is only available on Linux")
         runtime = MagicMock()
-        self.pipeline = RebuildGolangRPMsPipeline(runtime, ocp_version="4.17", go_nvrs=["go1.16"], art_jira="JIRA-123",
-                                                  cves=None)
+        self.pipeline = RebuildGolangRPMsPipeline(
+            runtime, ocp_version="4.17", go_nvrs=["go1.16"], art_jira="JIRA-123",
+            cves=None,
+        )
 
     def test_bump_up_case_1(self):
         fake_releases = "42.rhaos4.17.abcd"

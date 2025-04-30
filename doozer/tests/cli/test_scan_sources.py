@@ -12,7 +12,8 @@ class TestScanSourcesCli(TestCase):
     def test_tagged_rhcos_id(self, mock_cmd):
         mock_cmd.return_value = (
             '{"image": {"dockerImageMetadata": {"Config": {"Labels": {"org.opencontainers.image.version": "id-1"}}}}}',
-            "stderr")
+            "stderr",
+        )
 
         runtime = MagicMock(rpm_map=[], build_system='brew')
         cli = ConfigScanSources(runtime, "kc.conf", False)

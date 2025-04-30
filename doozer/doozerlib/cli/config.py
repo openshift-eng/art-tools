@@ -28,7 +28,7 @@ CONFIG_RUNTIME_OPTS = {
     'disabled': True,         # show all, including disabled/wip
     'prevent_cloning': True,  # raise exception is somehow we try to clone
     'config_only': True,      # only initialize config and nothing else
-    'group_only': False       # only initialize group, logging and nothing else
+    'group_only': False,       # only initialize group, logging and nothing else
 }
 
 option_config_commit_msg = click.option("--message", "-m", metavar='MSG', help="Commit message for config change.", default=None)
@@ -49,8 +49,10 @@ def _fix_runtime_mode(runtime):
 
 @cli.command("config:commit", help="Commit pending changes from config:new")
 @option_config_commit_msg
-@click.option('--push/--no-push', default=False, is_flag=True,
-              help='Push changes back to config repo. --no-push is default')
+@click.option(
+    '--push/--no-push', default=False, is_flag=True,
+    help='Push changes back to config repo. --no-push is default',
+)
 @pass_runtime
 def config_commit(runtime, message, push):
     """
@@ -295,8 +297,10 @@ def config_read_assemblies(runtime, default, as_len, as_yaml, out_file, key):
 
 @cli.command("config:update-mode", short_help="Update config(s) mode. enabled|disabled|wip")
 @click.argument("mode", nargs=1, metavar="MODE", type=click.Choice(CONFIG_MODES))  # new mode value
-@click.option('--push/--no-push', default=False, is_flag=True,
-              help='Push changes back to config repo. --no-push is default')
+@click.option(
+    '--push/--no-push', default=False, is_flag=True,
+    help='Push changes back to config repo. --no-push is default',
+)
 @option_config_commit_msg
 @pass_runtime
 def config_mode(runtime, mode, push, message):
@@ -337,8 +341,10 @@ def config_mode(runtime, mode, push, message):
 
 
 @cli.command("config:print", short_help="View config for given images / rpms")
-@click.option("-n", "--name-only", default=False, is_flag=True,
-              help="Just print name of matched configs. Overrides --key")
+@click.option(
+    "-n", "--name-only", default=False, is_flag=True,
+    help="Just print name of matched configs. Overrides --key",
+)
 @click.option("--key", help="Specific key in config to print", default=None)
 @click.option("--yaml", "as_yaml", default=False, is_flag=True, help='Print results in a yaml block')
 @pass_runtime
@@ -377,8 +383,10 @@ def config_print(runtime, key, name_only, as_yaml):
 
 
 @cli.command("config:gen-csv", short_help="Generate .csv file for given images/rpms")
-@click.option("--keys", help="Specific key in config to print, separated by commas: --keys key,name,owners",
-              default=None)
+@click.option(
+    "--keys", help="Specific key in config to print, separated by commas: --keys key,name,owners",
+    default=None,
+)
 @click.option("--type", "as_type", default=None, help='Write content type: image or rpm')
 @click.option("--output", "-o", default=None, help='Write csv data to FILE instead of STDOUT')
 @pass_runtime
@@ -413,10 +421,12 @@ def config_gencsv(runtime, keys, as_type, output):
 @click.option("--version", metavar="RHCOS_VER", help="RHCOS version for which to collection SRPMS (e.g. 413.92.202303212039-0).", required=True)
 @click.option("-o", "--output", metavar="DIR", help="Output directory to sync to", required=True)
 @click.option("--brew-root", metavar="DIR", default='/mnt/redhat/brewroot', help="Brewroot directory from which to source RPMs.", required=True)
-@click.option("-a", "--arch",
-              metavar='ARCH',
-              help="Arch for which the repo should be generated (if not specified, use all runtime arches).",
-              default=None, required=False)
+@click.option(
+    "-a", "--arch",
+    metavar='ARCH',
+    help="Arch for which the repo should be generated (if not specified, use all runtime arches).",
+    default=None, required=False,
+)
 @pass_runtime
 def config_rhcos_src(runtime: Runtime, version, output, brew_root, arch):
     runtime.initialize(clone_distgits=False)

@@ -4,31 +4,45 @@ from artcommonlib import rhcos, format_util, logutil
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import util, errata
-from elliottlib.cli.common import (cli, find_default_advisory,
-                                   use_default_advisory_option)
+from elliottlib.cli.common import (
+    cli, find_default_advisory,
+    use_default_advisory_option,
+)
 from elliottlib.cli.common import click_coroutine
 
 _LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("go", short_help="Get version of Go for advisory builds")
-@click.option("--release", "-r",
-              help="Release/nightly pullspec to inspect builds for")
-@click.option('--advisory', '-a', 'advisory_id', type=int,
-              help="The advisory ID to fetch builds from")
+@click.option(
+    "--release", "-r",
+    help="Release/nightly pullspec to inspect builds for",
+)
+@click.option(
+    '--advisory', '-a', 'advisory_id', type=int,
+    help="The advisory ID to fetch builds from",
+)
 @use_default_advisory_option
-@click.option('--nvrs', '-n',
-              help="Brew nvrs to show go version for. Comma separated")
-@click.option('--components', '-c',
-              help="Only show go versions for these components (rpms/images) in advisory. Comma separated")
-@click.option('-o', '--output',
-              type=click.Choice(['json', 'text']),
-              default='text', help='Output format')
+@click.option(
+    '--nvrs', '-n',
+    help="Brew nvrs to show go version for. Comma separated",
+)
+@click.option(
+    '--components', '-c',
+    help="Only show go versions for these components (rpms/images) in advisory. Comma separated",
+)
+@click.option(
+    '-o', '--output',
+    type=click.Choice(['json', 'text']),
+    default='text', help='Output format',
+)
 @click.option('--report', '-R', 'report', is_flag=True, default=False)
 @click.pass_obj
 @click_coroutine
-async def get_golang_versions_cli(runtime, release, advisory_id, default_advisory_type, nvrs, components, output,
-                                  report):
+async def get_golang_versions_cli(
+    runtime, release, advisory_id, default_advisory_type, nvrs, components, output,
+    report,
+):
     """
     Get the Go version for brew builds specified via nvrs / advisory / release
 

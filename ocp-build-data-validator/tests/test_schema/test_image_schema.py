@@ -17,8 +17,10 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 1234,
         }
-        self.assertIn("1234 is not of type 'string'",
-                      image_schema.validate('filename', invalid_data))
+        self.assertIn(
+            "1234 is not of type 'string'",
+            image_schema.validate('filename', invalid_data),
+        )
 
     def test_validate_with_invalid_content_source_git_url(self):
         url = 'https://github.com/openshift/csi-node-driver-registrar'
@@ -29,9 +31,9 @@ class TestImageSchema(unittest.TestCase):
                         'branch': {
                             'target': 'test',
                         },
-                        'url': url
-                    }
-                }
+                        'url': url,
+                    },
+                },
             },
             'name': '1234',
             'from': {},
@@ -47,9 +49,9 @@ class TestImageSchema(unittest.TestCase):
                         'branch': {
                             'target': 'test',
                         },
-                        'url': url
-                    }
-                }
+                        'url': url,
+                    },
+                },
             },
             'name': '1234',
             'from': {},
@@ -84,5 +86,5 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIn(
             "is not valid",
-            image_schema.validate('filename', data)
+            image_schema.validate('filename', data),
         )

@@ -6,12 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBundleBuildRecord)
+    KonfluxBuildOutcome, KonfluxBundleBuildRecord,
+)
 from artcommonlib.konflux.konflux_db import Engine
 
 from doozerlib import constants
-from doozerlib.backend.konflux_olm_bundler import (KonfluxOlmBundleBuilder,
-                                                   KonfluxOlmBundleRebaser)
+from doozerlib.backend.konflux_olm_bundler import (
+    KonfluxOlmBundleBuilder,
+    KonfluxOlmBundleRebaser,
+)
 
 
 class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
@@ -89,9 +92,9 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                         'release': '1',
                     },
                     'Env': {
-                        '__doozer_key=test-component'
-                    }
-                }
+                        '__doozer_key=test-component',
+                    },
+                },
             },
             'listDigest': 'sha256:1234567890abcdef',
             'contentDigest': 'sha256:abcdef1234567890',
@@ -114,11 +117,13 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         """
         self.assertEqual(new_content.strip(), expected_new_content.strip())
         self.assertIn('image', found_images)
-        self.assertEqual(found_images['image'], (
-            'registry.example.com/namespace/image:tag',
-            'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
-            'test-component-1.0-1'
-        ))
+        self.assertEqual(
+            found_images['image'], (
+                'registry.example.com/namespace/image:tag',
+                'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
+                'test-component-1.0-1',
+            ),
+        )
 
     def test_operator_index_mode(self):
         # Test when operator_index_mode is 'pre-release'
@@ -277,21 +282,23 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             mock_dockerfile_parser.assert_any_call(str(bundle_dir.joinpath('Dockerfile')))
 
             self.assertEqual(mock_bundle_df.content, 'FROM scratch\nCOPY ./manifests /manifests\nCOPY ./metadata /metadata')
-            self.assertEqual(mock_bundle_df.labels, {
-                'com.redhat.component': 'test-component',
-                'com.redhat.delivery.appregistry': False,
-                'name': 'test-image',
-                'version': '1.0.1',
-                'release': '1.0-1',
-                'com.redhat.delivery.operator.bundle': 'true',
-                'com.redhat.openshift.versions': '=v4.8',
-                'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
-                'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
-                'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-                'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-                'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-                'operators.operatorframework.io.bundle.package.v1': 'test-package',
-            })
+            self.assertEqual(
+                mock_bundle_df.labels, {
+                    'com.redhat.component': 'test-component',
+                    'com.redhat.delivery.appregistry': False,
+                    'name': 'test-image',
+                    'version': '1.0.1',
+                    'release': '1.0-1',
+                    'com.redhat.delivery.operator.bundle': 'true',
+                    'com.redhat.openshift.versions': '=v4.8',
+                    'operators.operatorframework.io.bundle.channel.default.v1': 'stable',
+                    'operators.operatorframework.io.bundle.channels.v1': 'test-channel,stable',
+                    'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
+                    'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
+                    'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
+                    'operators.operatorframework.io.bundle.package.v1': 'test-package',
+                },
+            )
 
     @patch("aiofiles.open")
     async def test_create_container_yaml(self, mock_open):
@@ -306,10 +313,12 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertIn('# metadata containers are not functional and do not need to be multiarch\n', written_lines)
         self.assertIn('\n', written_lines)
         yaml_content = yaml.safe_load(written_lines[2])
-        self.assertEqual(yaml_content, {
-            'platforms': {'only': ['x86_64']},
-            'operator_manifests': {'manifests_dir': 'manifests'},
-        })
+        self.assertEqual(
+            yaml_content, {
+                'platforms': {'only': ['x86_64']},
+                'operator_manifests': {'manifests_dir': 'manifests'},
+            },
+        )
 
     @patch("pathlib.Path.iterdir")
     @patch("aiofiles.open")
@@ -320,17 +329,19 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_dockerfile")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_container_yaml")
     @patch("doozerlib.backend.konflux_olm_bundler.KonfluxOlmBundleRebaser._create_oit_files")
-    async def test_rebase_dir(self, mock_create_oit_files, mock_create_container_yaml, mock_create_dockerfile,
-                              mock_replace_image_references, mock_dockerfile_parser, mock_glob, mock_mkdir, mock_open,
-                              mock_iterdir):
+    async def test_rebase_dir(
+        self, mock_create_oit_files, mock_create_container_yaml, mock_create_dockerfile,
+        mock_replace_image_references, mock_dockerfile_parser, mock_glob, mock_mkdir, mock_open,
+        mock_iterdir,
+    ):
         metadata = MagicMock()
         metadata.config = {
             'update-csv': {
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -349,7 +360,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump({
             'packageName': 'test-package',
-            'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}]
+            'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}],
         })
 
         new_content = """
@@ -362,9 +373,11 @@ spec:
   description: This is a test operator
   displayName: Test Operator
         """
-        mock_replace_image_references.return_value = (new_content, {
-            'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
-        })
+        mock_replace_image_references.return_value = (
+            new_content, {
+                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
+            },
+        )
 
         bundle_files = [
             Path("/path/to/operator/dir/manifests/bundle/file.yaml"),
@@ -382,20 +395,23 @@ spec:
         mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/another-file.yaml"), 'w')
         mock_open.assert_any_call(Path("/path/to/bundle/dir/manifests/test.clusterserviceversion.yaml"), 'w')
         mock_open.assert_any_call(Path("/path/to/bundle/dir/metadata/annotations.yaml"), 'w')
-        mock_create_dockerfile.assert_called_once_with(metadata, operator_dir, bundle_dir, {
-            'operators.operatorframework.io.bundle.channel.default.v1': 'test-channel',
-            'operators.operatorframework.io.bundle.channels.v1': 'test-channel',
-            'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
-            'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
-            'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
-            'operators.operatorframework.io.bundle.package.v1': 'test-package',
-        }, input_release)
+        mock_create_dockerfile.assert_called_once_with(
+            metadata, operator_dir, bundle_dir, {
+                'operators.operatorframework.io.bundle.channel.default.v1': 'test-channel',
+                'operators.operatorframework.io.bundle.channels.v1': 'test-channel',
+                'operators.operatorframework.io.bundle.manifests.v1': 'manifests/',
+                'operators.operatorframework.io.bundle.mediatype.v1': 'registry+v1',
+                'operators.operatorframework.io.bundle.metadata.v1': 'metadata/',
+                'operators.operatorframework.io.bundle.package.v1': 'test-package',
+            }, input_release,
+        )
         mock_create_container_yaml.assert_called_once_with(Path("/path/to/bundle/dir/container.yaml"))
         mock_create_oit_files.assert_called_once_with(
             'test-package', 'test-operator.v1.0.0',
             bundle_dir, 'test-distgit-key-1.0-1', {
-                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
-            })
+                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
+            },
+        )
 
     async def test_rebase_dir_no_update_csv(self):
         metadata = MagicMock()
@@ -415,8 +431,8 @@ spec:
             'update-csv': {
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -433,8 +449,8 @@ spec:
             'update-csv': {
                 'manifests-dir': 'manifests',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -451,8 +467,8 @@ spec:
             'update-csv': {
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -472,8 +488,8 @@ spec:
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -496,8 +512,8 @@ spec:
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/base/dir/operator/dir")
@@ -621,7 +637,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.status.results = [
             {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'}
+            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'},
         ]
         pipelinerun.metadata.name = "test-pipelinerun"
         pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
@@ -645,12 +661,14 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
-        await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
-                                              'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
+        await self.builder._update_konflux_db(
+            metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
+            'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+        )
 
         self.db.add_build.assert_called_once()
         build_record = self.db.add_build.call_args[0][0]
@@ -713,12 +731,14 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
-        await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.FAILURE,
-                                              'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
+        await self.builder._update_konflux_db(
+            metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.FAILURE,
+            'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+        )
 
         self.db.add_build.assert_called_once()
         build_record = self.db.add_build.call_args[0][0]
@@ -760,7 +780,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.status.results = [
             {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'}
+            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'},
         ]
         pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
@@ -783,15 +803,17 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
         self.builder._db = None
 
         with self.assertLogs(self.builder._logger, level='WARNING') as cm:
-            await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
-                                                  'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
+            await self.builder._update_konflux_db(
+                metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
+                'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+            )
             self.assertIn('Konflux DB connection is not initialized, not writing build record to the Konflux DB.', cm.output[0])
 
     @patch("aiofiles.open")
@@ -812,7 +834,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.status.results = [
             {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'}
+            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'},
         ]
         pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
@@ -835,13 +857,15 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
         self.db.add_build.side_effect = Exception("Test exception")
 
         with self.assertLogs(self.builder._logger, level='ERROR') as cm:
-            await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
-                                                  'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"])
+            await self.builder._update_konflux_db(
+                metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
+                'test-operator-1.0-1', ["operand1-1.0-1", "operand2-1.0-1"],
+            )
             self.assertIn('Failed writing record to the konflux DB: Test exception', cm.output[0])

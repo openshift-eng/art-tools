@@ -190,15 +190,17 @@ releases:
 
     def test_assembly_group_config(self):
 
-        group_config = Model(dict_to_model={
-            'arches': [
-                'x86_64'
-            ],
-            'advisories': {
-                'image': 1,
-                'extras': 1,
-            }
-        })
+        group_config = Model(
+            dict_to_model={
+                'arches': [
+                    'x86_64',
+                ],
+                'advisories': {
+                    'image': 1,
+                    'extras': 1,
+                },
+            },
+        )
 
         config = assembly_group_config(self.releases_config, 'ART_1', group_config)
         self.assertEqual(len(config.arches), 3)
@@ -247,15 +249,15 @@ releases:
                     "assembly": {
                         "basis": {
                             "assembly": "parent",
-                        }
-                    }
+                        },
+                    },
                 },
                 "parent": {
                     "assembly": {
-                        "type": "custom"
-                    }
+                        "type": "custom",
+                    },
                 },
-            }
+            },
         }
         actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
         self.assertEqual(actual, "custom")
@@ -267,15 +269,15 @@ releases:
                         "basis": {
                             "assembly": "parent",
                         },
-                        "type": "candidate"
-                    }
+                        "type": "candidate",
+                    },
                 },
                 "parent": {
                     "assembly": {
-                        "type": "custom"
-                    }
+                        "type": "custom",
+                    },
                 },
-            }
+            },
         }
         actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
         self.assertEqual(actual, "candidate")
@@ -287,13 +289,13 @@ releases:
                         "basis": {
                             "assembly": "parent",
                         },
-                    }
+                    },
                 },
                 "parent": {
                     "assembly": {
-                    }
+                    },
                 },
-            }
+            },
         }
         actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
         self.assertEqual(actual, "standard")
@@ -305,14 +307,14 @@ releases:
                         "basis": {
                             "assembly": "parent",
                         },
-                    }
+                    },
                 },
                 "parent": {
                     "assembly": {
-                        "type": None
+                        "type": None,
                     },
                 },
-            }
+            },
         }
         actual = assembly_config_struct(Model(release_configs), "child", "type", "standard")
         self.assertEqual(actual, None)
@@ -326,10 +328,10 @@ releases:
                         },
                         "foo": {
                             "a": 1,
-                            "b": 2
+                            "b": 2,
                         },
-                        "bar": [1, 2, 3]
-                    }
+                        "bar": [1, 2, 3],
+                    },
                 },
                 "parent": {
                     "assembly": {
@@ -337,37 +339,41 @@ releases:
                             "b": 3,
                             "c": 4,
                         },
-                        "bar": [0, 2, 4]
-                    }
+                        "bar": [0, 2, 4],
+                    },
                 },
-            }
+            },
         }
         actual = assembly_config_struct(Model(release_configs), "child", "foo", {})
-        self.assertEqual(actual, {
-            "a": 1,
-            "b": 2,
-            "c": 4,
-        })
+        self.assertEqual(
+            actual, {
+                "a": 1,
+                "b": 2,
+                "c": 4,
+            },
+        )
         actual = assembly_config_struct(Model(release_configs), "child", "bar", [])
         self.assertEqual(actual, [0, 1, 2, 3, 4])
 
     def test_asembly_metadata_config(self):
 
-        meta_config = Model(dict_to_model={
-            'owners': ['kuryr-team@redhat.com'],
-            'content': {
-                'source': {
-                    'git': {
-                        'url': 'git@github.com:openshift-priv/kuryr-kubernetes.git',
-                        'branch': {
-                            'target': 'release-4.8',
-                        }
+        meta_config = Model(
+            dict_to_model={
+                'owners': ['kuryr-team@redhat.com'],
+                'content': {
+                    'source': {
+                        'git': {
+                            'url': 'git@github.com:openshift-priv/kuryr-kubernetes.git',
+                            'branch': {
+                                'target': 'release-4.8',
+                            },
+                        },
+                        'specfile': 'openshift-kuryr-kubernetes-rhel8.spec',
                     },
-                    'specfile': 'openshift-kuryr-kubernetes-rhel8.spec'
-                }
+                },
+                'name': 'openshift-kuryr',
             },
-            'name': 'openshift-kuryr'
-        })
+        )
 
         config = assembly_metadata_config(self.releases_config, 'ART_1', 'rpm', 'openshift-kuryr', meta_config)
         # Ensure no loss
@@ -425,51 +431,51 @@ releases:
         # Dicts are additive
         self.assertEqual(
             _merger({'x': 5}, None),
-            {'x': 5}
+            {'x': 5},
         )
 
         self.assertEqual(
             _merger({'x': 5}, {'y': 6}),
-            {'x': 5, 'y': 6}
+            {'x': 5, 'y': 6},
         )
 
         # Depth does not matter
         self.assertEqual(
             _merger({'r': {'x': 5}}, {'r': {'y': 6}}),
-            {'r': {'x': 5, 'y': 6}}
+            {'r': {'x': 5, 'y': 6}},
         )
 
         self.assertEqual(
             _merger({'r': {'x': 5, 'y': 7}}, {'r': {'y': 6}}),
-            {'r': {'x': 5, 'y': 7}}
+            {'r': {'x': 5, 'y': 7}},
         )
 
         # ? key provides default only
         self.assertEqual(
             _merger({'r': {'x': 5, 'y?': 7}}, {'r': {'y': 6}}),
-            {'r': {'x': 5, 'y': 6}}
+            {'r': {'x': 5, 'y': 6}},
         )
 
         # ! key dominates completely
         self.assertEqual(
             _merger({'r!': {'x': 5}}, {'r': {'y': 6}}),
-            {'r': {'x': 5}}
+            {'r': {'x': 5}},
         )
 
         # Lists are combined, dupes eliminated, and results sorted
         self.assertEqual(
             _merger({'r': [1, 2]}, {'r': [1, 3, 4]}),
-            {'r': [1, 2, 3, 4]}
+            {'r': [1, 2, 3, 4]},
         )
 
         # ! key dominates completely
         self.assertEqual(
             _merger({'r!': [1, 2]}, {'r': [3, 4]}),
-            {'r': [1, 2]}
+            {'r': [1, 2]},
         )
 
         # - key removes itself entirely
         self.assertEqual(
             _merger({'r-': [1, 2]}, {'r': [3, 4]}),
-            {}
+            {},
         )

@@ -32,36 +32,36 @@ CLI_OPTS = {
     },
     'group': {
         'env': 'DOOZER_GROUP',
-        'help': 'Sub-group directory or branch to pull build data'
+        'help': 'Sub-group directory or branch to pull build data',
     },
     'working_dir': {
         'env': 'DOOZER_WORKING_DIR',
-        'help': 'Persistent working directory to use'
+        'help': 'Persistent working directory to use',
     },
     'user': {
         'env': 'DOOZER_USER',
-        'help': 'Username for running rhpkg / brew'
+        'help': 'Username for running rhpkg / brew',
     },
     'hosts': {
         'help': 'Mappings of host aliases to their internal hostnames',
-        'default': hosts_default_string()
+        'default': hosts_default_string(),
     },
     'global_opts': {
         'help': 'Global option overrides that can only be set from settings.yaml',
-        'default': global_opt_default_string()
+        'default': global_opt_default_string(),
     },
     'rhpkg_config': {
         'env': 'DOOZER_RHPKG_CONFIG',
-        'help': 'Config file path for rhpkg calls'
+        'help': 'Config file path for rhpkg calls',
     },
     'registry_config_dir': {
         'env': 'DOCKER_CONFIG',
-        'help': 'Config directory for the image registry'
+        'help': 'Config directory for the image registry',
     },
     'build_system': {
         'env': 'BUILD_SYSTEM',
-        'help': 'Weather we should look at Brew or at Konflux DB when searching for builds'
-    }
+        'help': 'Weather we should look at Brew or at Konflux DB when searching for builds',
+    },
 }
 
 

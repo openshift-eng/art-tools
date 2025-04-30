@@ -6,18 +6,25 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import click
 from artcommonlib.konflux.konflux_build_record import (
-    ArtifactType, Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome)
+    ArtifactType, Engine, KonfluxBuildRecord, KonfluxBundleBuildRecord, KonfluxBuildOutcome,
+)
 from artcommonlib.konflux.konflux_db import KonfluxDb
 from artcommonlib.telemetry import start_as_current_span_async
 from doozerlib import constants
-from doozerlib.backend.konflux_image_builder import (KonfluxImageBuilder,
-                                                     KonfluxImageBuilderConfig)
-from doozerlib.backend.konflux_olm_bundler import (KonfluxOlmBundleBuilder,
-                                                   KonfluxOlmBundleRebaser)
+from doozerlib.backend.konflux_image_builder import (
+    KonfluxImageBuilder,
+    KonfluxImageBuilderConfig,
+)
+from doozerlib.backend.konflux_olm_bundler import (
+    KonfluxOlmBundleBuilder,
+    KonfluxOlmBundleRebaser,
+)
 from doozerlib.backend.rebaser import KonfluxRebaser
-from doozerlib.cli import (cli, click_coroutine, option_commit_message,
-                           option_push, pass_runtime,
-                           validate_semver_major_minor_patch)
+from doozerlib.cli import (
+    cli, click_coroutine, option_commit_message,
+    option_push, pass_runtime,
+    validate_semver_major_minor_patch,
+)
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
@@ -38,7 +45,8 @@ class KonfluxRebaseCli:
             repo_type: str,
             image_repo: str,
             message: str,
-            push: bool):
+            push: bool,
+    ):
         self.runtime = runtime
         self.version = version
         self.release = release
@@ -69,14 +77,19 @@ class KonfluxRebaseCli:
         )
         tasks = []
         for image_meta in metas:
-            tasks.append(asyncio.create_task(rebaser.rebase_to(
-                image_meta,
-                self.version,
-                self.release,
-                force_yum_updates=self.force_yum_updates,
-                image_repo=self.image_repo,
-                commit_message=self.message,
-                push=self.push)))
+            tasks.append(
+                asyncio.create_task(
+                    rebaser.rebase_to(
+                    image_meta,
+                    self.version,
+                    self.release,
+                    force_yum_updates=self.force_yum_updates,
+                    image_repo=self.image_repo,
+                    commit_message=self.message,
+                    push=self.push,
+                    ),
+                ),
+            )
         results = await asyncio.gather(*tasks, return_exceptions=True)
         failed_images = []
         for index, result in enumerate(results):
@@ -91,22 +104,30 @@ class KonfluxRebaseCli:
 
 
 @cli.command("beta:images:konflux:rebase", short_help="Refresh a group's konflux source content from source content.")
-@click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
-              help="Version string to populate in Dockerfiles.")
+@click.option(
+    "--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
+    help="Version string to populate in Dockerfiles.",
+)
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
 @click.option("--embargoed", is_flag=True, help="Add .p3 to the release string for all images, which indicates those images have embargoed fixes")
-@click.option("--force-yum-updates", is_flag=True, default=False,
-              help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.")
-@click.option("--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
-              default="unsigned",
-              help="Repo group type to use (e.g. signed, unsigned).")
+@click.option(
+    "--force-yum-updates", is_flag=True, default=False,
+    help="Inject \"yum update -y\" in the final stage of an image build. This ensures the component image will be able to override RPMs it is inheriting from its parent image using RPMs in the rebuild plashet.",
+)
+@click.option(
+    "--repo-type", metavar="REPO_TYPE", envvar="OIT_IMAGES_REPO_TYPE",
+    default="unsigned",
+    help="Repo group type to use (e.g. signed, unsigned).",
+)
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Image repo for base images')
 @option_commit_message
 @option_push
 @pass_runtime
 @click_coroutine
-async def images_konflux_rebase(runtime: Runtime, version: str, release: str, embargoed: bool, force_yum_updates: bool,
-                                repo_type: str, image_repo: str, message: str, push: bool):
+async def images_konflux_rebase(
+    runtime: Runtime, version: str, release: str, embargoed: bool, force_yum_updates: bool,
+    repo_type: str, image_repo: str, message: str, push: bool,
+):
     """
     Refresh a group's konflux content from source content.
     """
@@ -161,7 +182,7 @@ class KonfluxBuildCli:
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
             dry_run=self.dry_run,
-            plr_template=self.plr_template
+            plr_template=self.plr_template,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         tasks = []
@@ -187,17 +208,21 @@ class KonfluxBuildCli:
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
-              help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template')
+@click.option(
+    '--plr-template', required=False, default=constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+    help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_build(
         runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-        konflux_namespace: str, image_repo: str, skip_checks: bool, dry_run: bool, plr_template: str):
+        konflux_namespace: str, image_repo: str, skip_checks: bool, dry_run: bool, plr_template: str,
+):
     cli = KonfluxBuildCli(
         runtime=runtime, konflux_kubeconfig=konflux_kubeconfig,
         konflux_context=konflux_context, konflux_namespace=konflux_namespace,
-        image_repo=image_repo, skip_checks=skip_checks, dry_run=dry_run, plr_template=plr_template)
+        image_repo=image_repo, skip_checks=skip_checks, dry_run=dry_run, plr_template=plr_template,
+    )
     await cli.run()
 
 
@@ -295,7 +320,8 @@ class KonfluxBundleCli:
             rebaser: KonfluxOlmBundleRebaser,
             builder: KonfluxOlmBundleBuilder,
             image_meta: ImageMetadata,
-            operator_build: KonfluxBuildRecord):
+            operator_build: KonfluxBuildRecord,
+    ):
         logger = LOGGER.getChild(f"[{image_meta.distgit_key}]")
         input_release = self.release
         if not self.force or not input_release:
@@ -384,28 +410,36 @@ class KonfluxBundleCli:
 
 @cli.command("beta:images:konflux:bundle", short_help="Rebase and build an OLM bundle for an operator with Konflux.")
 @click.argument('operator_nvrs', nargs=-1, required=False)
-@click.option("-f", "--force", required=False, is_flag=True,
-              help="Perform a build even if previous bundles for given NVRs already exist")
-@click.option('--dry-run', default=False, is_flag=True,
-              help='Do not push to build repo or build anything, but print what would be done.')
+@click.option(
+    "-f", "--force", required=False, is_flag=True,
+    help="Perform a build even if previous bundles for given NVRs already exist",
+)
+@click.option(
+    '--dry-run', default=False, is_flag=True,
+    help='Do not push to build repo or build anything, but print what would be done.',
+)
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option('--konflux-namespace', metavar='NAMESPACE', default=constants.KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_IMAGE_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
 @click.option("--release", metavar='RELEASE', help="Release string to populate in bundle's Dockerfiles.")
-@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
-              help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template')
+@click.option(
+    '--plr-template', required=False, default=constants.KONFLUX_DEFAULT_BUNDLE_BUILD_PLR_TEMPLATE_URL,
+    help='Use a custom PipelineRun template to build the bundle. Overrides the default template from openshift-priv/art-konflux-template',
+)
 @pass_runtime
 @click_coroutine
 async def images_konflux_bundle(
         runtime: Runtime, operator_nvrs: Tuple[str, ...], force: bool, dry_run: bool,
         konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
         konflux_namespace: str, image_repo: str, skip_checks: bool, release: Optional[str],
-        plr_template: str):
+        plr_template: str,
+):
     cli = KonfluxBundleCli(
         runtime=runtime, operator_nvrs=operator_nvrs, force=force, dry_run=dry_run,
         konflux_kubeconfig=konflux_kubeconfig, konflux_context=konflux_context,
         konflux_namespace=konflux_namespace, image_repo=image_repo, skip_checks=skip_checks,
-        release=release, plr_template=plr_template)
+        release=release, plr_template=plr_template,
+    )
     await cli.run()

@@ -60,15 +60,17 @@ class SlackClient:
         if self.dry_run:
             _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)
             return {"message": {"ts": "fake"}, "ts": "fake"}
-        response = await self._client.chat_postMessage(channel=self.channel, text=message, thread_ts=thread_ts,
-                                                       username=self.as_user, link_names=True, attachments=attachments,
-                                                       icon_emoji=self.icon_emoji, reply_broadcast=broadcast)
+        response = await self._client.chat_postMessage(
+            channel=self.channel, text=message, thread_ts=thread_ts,
+            username=self.as_user, link_names=True, attachments=attachments,
+            icon_emoji=self.icon_emoji, reply_broadcast=broadcast,
+        )
         # https://api.slack.com/methods/reactions.add
         if reaction:
             await self._client.reactions_add(
                 channel=response.data["channel"],
                 name=reaction,
-                timestamp=response.data["ts"]
+                timestamp=response.data["ts"],
             )
 
         return response.data
@@ -80,7 +82,8 @@ class SlackClient:
             filename=filename,
             initial_comment=initial_comment,
             channel=self.channel,
-            thread_ts=thread_ts)
+            thread_ts=thread_ts,
+        )
         return response.data
 
     async def upload_content(self, content, intro=None, filename=None, thread_ts: Optional[str] = None):
@@ -92,5 +95,6 @@ class SlackClient:
             channel=self.channel,
             content=content,
             filename=filename,
-            thread_ts=thread_ts)
+            thread_ts=thread_ts,
+        )
         return response.data

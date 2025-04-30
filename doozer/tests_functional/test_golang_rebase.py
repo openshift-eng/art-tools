@@ -34,7 +34,7 @@ class TestGoLangRebase(DoozerRunnerTestCase):
             'images:rebase',
             '--version', target_version,
             '--release', target_release,
-            '-m', 'test message'
+            '-m', 'test message',
         )
 
         dfp = DockerfileParser(str(self.distgit_image_path('openshift-golang-builder').joinpath('Dockerfile')))

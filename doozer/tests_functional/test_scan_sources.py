@@ -50,7 +50,7 @@ class TestScanSources(DoozerRunnerTestCase):
             '--lock-downstream', 'ose-machine-api-operator', '2e8d8a721126a876461b21fe0b0defdd2e3a560e',
             '--lock-upstream', 'ose-machine-api-operator', 'c1f0af99a394ea73daa3d4f25d1c325b2173251b',
             'config:scan-sources',
-            '--yaml'
+            '--yaml',
         )
 
         print(self.id() + 'results:\n' + results_yaml)
@@ -88,7 +88,7 @@ class TestScanSources(DoozerRunnerTestCase):
             '--lock-downstream', 'jenkins-agent-maven-35-rhel7', '950040a89294503f603576016e9d1598fc11c1e7',
             '--lock-upstream', 'jenkins-agent-maven-35-rhel7', 'bff850168142a6de2716bf14aa09bcfb40e5eb78',
             'config:scan-sources',
-            '--yaml'
+            '--yaml',
         )
 
         print(self.id() + 'results:\n' + results_yaml)
@@ -122,7 +122,7 @@ class TestScanSources(DoozerRunnerTestCase):
             '--lock-downstream', 'cluster-logging-operator', 'db34acea03c319dcd9bd731041dcd6333bbb025a',
             '--lock-upstream', 'cluster-logging-operator', '192886641823c745e9a7530d9f7ade18d60919b2',
             'config:scan-sources',
-            '--yaml'
+            '--yaml',
         )
 
         print(self.id() + 'results:\n' + results_yaml)
@@ -154,7 +154,7 @@ class TestScanSources(DoozerRunnerTestCase):
             '--lock-upstream', 'openshift-clients', '9aef6d2c56fb26083112368e877dca34bee161d4',  # coordinate "upstream_commit_hash:"
             '-i', 'vertical-pod-autoscaler-operator',  # up and downstream don't matter; at brew event, this image does not exist for 4.7
             'config:scan-sources',
-            '--yaml'
+            '--yaml',
         )
 
         print(self.id() + 'results:\n' + results_yaml)

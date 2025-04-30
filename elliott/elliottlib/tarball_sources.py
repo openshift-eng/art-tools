@@ -12,13 +12,16 @@ install_aliases()
 from urllib.parse import urldefrag
 
 # Exclude those files from the outputing tarball sources:
-TARBALL_IGNORES = {".gitignore", ".oit", "container.yaml",
-                   "content_sets.yml", "gating.yaml", "sources", "additional-tags"}
+TARBALL_IGNORES = {
+    ".gitignore", ".oit", "container.yaml",
+    "content_sets.yml", "gating.yaml", "sources", "additional-tags",
+}
 
 LOGGER = logutil.get_logger(__name__)
 
 BuildWithProductVersion = collections.namedtuple(
-    "BuildWithProductVersion", ["nvr", "product", "product_version"])
+    "BuildWithProductVersion", ["nvr", "product", "product_version"],
+)
 
 
 def find_builds_from_advisory(advisory_number, components):
@@ -34,13 +37,20 @@ def find_builds_from_advisory(advisory_number, components):
     """
 
     LOGGER.debug(
-        "Fetching advisory {} from Errata Tool...".format(advisory_number))
+        "Fetching advisory {} from Errata Tool...".format(advisory_number),
+    )
 
     advisory = errata_tool.Erratum(errata_id=advisory_number)
-    LOGGER.info("Got info for advisory {} - {} - {}: {} - {}".format(advisory_number, advisory.errata_state,
-                                                                     advisory.errata_name, advisory.synopsis, advisory.url()))
-    flattened_builds = [BuildWithProductVersion(nvr, advisory._product, product_version) for product_version,
-                        nvrs in advisory.errata_builds.items() for nvr in nvrs]
+    LOGGER.info(
+        "Got info for advisory {} - {} - {}: {} - {}".format(
+            advisory_number, advisory.errata_state,
+            advisory.errata_name, advisory.synopsis, advisory.url(),
+        ),
+    )
+    flattened_builds = [
+        BuildWithProductVersion(nvr, advisory._product, product_version) for product_version,
+        nvrs in advisory.errata_builds.items() for nvr in nvrs
+    ]
 
     def matches_components(build):
         for component in components:
@@ -48,7 +58,8 @@ def find_builds_from_advisory(advisory_number, components):
                 return True
         return False
     filtered_builds = [
-        build for build in flattened_builds if matches_components(build)]
+        build for build in flattened_builds if matches_components(build)
+    ]
     return filtered_builds
 
 
@@ -67,26 +78,34 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
     """
     source_repo_url, source_commit_hash = urldefrag(source_url)
     assert source_commit_hash
-    LOGGER.debug("Source is from repo {}, commit {}".format(
-        source_repo_url, source_commit_hash))
+    LOGGER.debug(
+        "Source is from repo {}, commit {}".format(
+        source_repo_url, source_commit_hash,
+        ),
+    )
 
     git_commit = None  # type: pygit2.Commit
 
     if os.path.isdir(local_repo_path) and os.listdir(local_repo_path):
         LOGGER.debug(
-            "Local Git repo {} exists. Examining...".format(local_repo_path))
+            "Local Git repo {} exists. Examining...".format(local_repo_path),
+        )
         discovered_repo = pygit2.discover_repository(
-            local_repo_path, False, os.path.abspath(os.path.dirname(local_repo_path)))
+            local_repo_path, False, os.path.abspath(os.path.dirname(local_repo_path)),
+        )
         if not discovered_repo:
             raise ValueError(
-                "{} exists but is not a valid Git repo.".format(local_repo_path))
+                "{} exists but is not a valid Git repo.".format(local_repo_path),
+            )
         repo = pygit2.Repository(discovered_repo)
         origin = repo.remotes["origin"]  # type: pygit2.Remote
         if origin.url != source_repo_url:
             raise ValueError(
-                "Found a different local Git repo in {}".format(discovered_repo))
+                "Found a different local Git repo in {}".format(discovered_repo),
+            )
         LOGGER.info(
-            "Use existing local Git repo {}.".format(local_repo_path))
+            "Use existing local Git repo {}.".format(local_repo_path),
+        )
         fetch = force_fetch
         if not force_fetch:
             try:
@@ -102,8 +121,11 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
 
     if not git_commit:
         git_commit = repo.revparse_single(source_commit_hash).peel(pygit2.Commit)
-    LOGGER.info("Generating source from commit {}, author: {} <{}> message:{}".format(
-        git_commit.id, git_commit.author.name, git_commit.author.email, git_commit.message))
+    LOGGER.info(
+        "Generating source from commit {}, author: {} <{}> message:{}".format(
+        git_commit.id, git_commit.author.name, git_commit.author.email, git_commit.message,
+        ),
+    )
 
     LOGGER.debug("Creating tarball {}...".format(tarball_file.name))
     with tarfile.open(fileobj=tarball_file, mode="w:gz") as archive:
@@ -115,7 +137,8 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
                 full_name = path + entry.name
                 if full_name in TARBALL_IGNORES:
                     LOGGER.info(
-                        "Excluded {} from source tarball.".format(full_name))
+                        "Excluded {} from source tarball.".format(full_name),
+                    )
                     continue
                 if entry.type_str == "tree":
                     stack.append((repo.get(entry.id), full_name + "/"))
@@ -126,8 +149,11 @@ def generate_tarball_source(tarball_file, prefix, local_repo_path, source_url, f
                 if entry.type_str == "commit":
                     info.type = tarfile.DIRTYPE
                     archive.addfile(info)
-                    LOGGER.warning("Created placeholder dir for submodule {}: {}. Dist-git repos usually don't use submodules!".format(
-                        full_name, entry.id))
+                    LOGGER.warning(
+                        "Created placeholder dir for submodule {}: {}. Dist-git repos usually don't use submodules!".format(
+                        full_name, entry.id,
+                        ),
+                    )
                 elif entry.type_str == "blob":
                     blob = repo.get(entry.id)  # type: pygit2.Blob
                     if entry.filemode == pygit2.GIT_FILEMODE_LINK:

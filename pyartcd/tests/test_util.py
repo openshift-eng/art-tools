@@ -19,14 +19,16 @@ class TestUtil(IsolatedAsyncioTestCase):
         self.assertEqual(util.isolate_el_version_in_branch('rhaos-4.9'), None)
 
     def test_nightlies_with_pullspecs(self):
-        nightly_tags = ['4.14.0-0.nightly-arm64-2023-09-15-082316', '4.14.0-0.nightly-ppc64le-2023-09-15-125921',
-                        '4.14.0-0.nightly-s390x-2023-09-15-114441', '4.14.0-0.nightly-2023-09-15-055234']
+        nightly_tags = [
+            '4.14.0-0.nightly-arm64-2023-09-15-082316', '4.14.0-0.nightly-ppc64le-2023-09-15-125921',
+            '4.14.0-0.nightly-s390x-2023-09-15-114441', '4.14.0-0.nightly-2023-09-15-055234',
+        ]
 
         expected = {
             'aarch64': 'registry.ci.openshift.org/ocp-arm64/release-arm64:4.14.0-0.nightly-arm64-2023-09-15-082316',
             'ppc64le': 'registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.14.0-0.nightly-ppc64le-2023-09-15-125921',
             's390x': 'registry.ci.openshift.org/ocp-s390x/release-s390x:4.14.0-0.nightly-s390x-2023-09-15-114441',
-            'x86_64': 'registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-09-15-055234'
+            'x86_64': 'registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-09-15-055234',
         }
         self.assertEqual(util.nightlies_with_pullspecs(nightly_tags), expected)
 
@@ -46,7 +48,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         url = util.dockerfile_url_for(
             url='https://github.com/openshift/ironic-image',
             branch='release-4.13',
-            sub_path='scripts'
+            sub_path='scripts',
         )
         self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/scripts')
 
@@ -54,7 +56,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         url = util.dockerfile_url_for(
             url='https://github.com/openshift/ironic-image',
             branch='release-4.13',
-            sub_path=''
+            sub_path='',
         )
         self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/')
 
@@ -62,7 +64,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         url = util.dockerfile_url_for(
             url='',
             branch='release-4.13',
-            sub_path=''
+            sub_path='',
         )
         self.assertEqual(url, '')
 
@@ -70,7 +72,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         url = util.dockerfile_url_for(
             url='https://github.com/openshift/ironic-image',
             branch='',
-            sub_path='scripts'
+            sub_path='scripts',
         )
         self.assertEqual(url, '')
 
@@ -78,7 +80,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         url = util.dockerfile_url_for(
             url='git@github.com:openshift/ironic-image.git',
             branch='release-4.13',
-            sub_path='scripts'
+            sub_path='scripts',
         )
         self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/scripts')
 
@@ -86,7 +88,7 @@ class TestUtil(IsolatedAsyncioTestCase):
         url = util.dockerfile_url_for(
             url='git@github.com:openshift/ironic-image.git',
             branch='release-4.13',
-            sub_path=''
+            sub_path='',
         )
         self.assertEqual(url, 'https///github.com/openshift/ironic-image/blob/release-4.13/')
 
@@ -95,23 +97,29 @@ class TestUtil(IsolatedAsyncioTestCase):
         cmd_gather_async.return_value = (0, '', '')
 
         await util.get_freeze_automation(
-            version='4.15'
+            version='4.15',
         )
         cmd_gather_async.assert_awaited_once_with(
-            ['doozer', '', '--assembly=stream', '--data-path=https://github.com/openshift-eng/ocp-build-data',
-             '--group=openshift-4.15', 'config:read-group', '--default=no', 'freeze_automation'])
+            [
+                'doozer', '', '--assembly=stream', '--data-path=https://github.com/openshift-eng/ocp-build-data',
+                '--group=openshift-4.15', 'config:read-group', '--default=no', 'freeze_automation',
+            ],
+        )
 
         cmd_gather_async.reset_mock()
         await util.get_freeze_automation(
             version='4.15',
             doozer_data_path='https://github.com/random-fork/ocp-build-data',
             doozer_working='doozer_working',
-            doozer_data_gitref='random-branch'
+            doozer_data_gitref='random-branch',
         )
         cmd_gather_async.assert_awaited_once_with(
-            ['doozer', '--working-dir=doozer_working', '--assembly=stream',
-             '--data-path=https://github.com/random-fork/ocp-build-data',
-             '--group=openshift-4.15@random-branch', 'config:read-group', '--default=no', 'freeze_automation'])
+            [
+                'doozer', '--working-dir=doozer_working', '--assembly=stream',
+                '--data-path=https://github.com/random-fork/ocp-build-data',
+                '--group=openshift-4.15@random-branch', 'config:read-group', '--default=no', 'freeze_automation',
+            ],
+        )
 
     @patch("pyartcd.util.get_weekday")
     @patch("pyartcd.util.is_manual_build")
@@ -187,16 +195,16 @@ class TestUtil(IsolatedAsyncioTestCase):
                 '4.11.1': {
                     'assembly': {
                         'basis': {'assembly': '4.11.0'},
-                    }
+                    },
                 },
                 '4.11.0': {
                     'assembly': {
                         'members': {
-                            'rpms': [{'distgit_key': 'foo', 'metadata': {'is': rpms}}]
-                        }
-                    }
-                }
-            }
+                            'rpms': [{'distgit_key': 'foo', 'metadata': {'is': rpms}}],
+                        },
+                    },
+                },
+            },
         }
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.0', 'foo'), rpms)
         self.assertEqual(util.get_rpm_if_pinned_directly(releases_config, '4.11.1', 'foo'), dict())

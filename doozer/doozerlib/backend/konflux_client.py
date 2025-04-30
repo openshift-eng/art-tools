@@ -107,8 +107,10 @@ class KonfluxClient:
         namespace = manifest["metadata"].get("namespace", self.default_namespace)
         return api_version, kind, name, namespace
 
-    async def _get(self, api_version: str, kind: str, name: str,
-                   namespace: Optional[str] = None, strict: bool = True):
+    async def _get(
+        self, api_version: str, kind: str, name: str,
+        namespace: Optional[str] = None, strict: bool = True,
+    ):
         """ Get a resource by name and namespace.
 
         :param api_version: The API version.
@@ -128,8 +130,10 @@ class KonfluxClient:
         return resource
 
     @alru_cache
-    async def _get__caching(self, api_version: str, kind: str, name: str,
-                            namespace: Optional[str] = None, strict: bool = True):
+    async def _get__caching(
+        self, api_version: str, kind: str, name: str,
+        namespace: Optional[str] = None, strict: bool = True,
+    ):
         """ Get a resource by name and namespace, with caching.
 
         :param api_version: The API version.
@@ -264,13 +268,13 @@ class KonfluxClient:
             "apiVersion": API_VERSION,
             "kind": KIND_APPLICATION,
             "metadata": {
-                "name": name
+                "name": name,
             },
             "spec": {
                 "displayName": display_name,
                 "appModelRepository": {"url": ""},
                 "gitOpsRepository": {"url": ""},
-            }
+            },
         }
         return obj
 
@@ -279,8 +283,10 @@ class KonfluxClient:
         return await self._create_or_patch(application)
 
     @staticmethod
-    def _new_component(name: str, application: str, component_name: str,
-                       image_repo: Optional[str], source_url: Optional[str], revision: Optional[str]) -> dict:
+    def _new_component(
+        name: str, application: str, component_name: str,
+        image_repo: Optional[str], source_url: Optional[str], revision: Optional[str],
+    ) -> dict:
         obj = {
             "apiVersion": API_VERSION,
             "kind": KIND_COMPONENT,
@@ -291,7 +297,7 @@ class KonfluxClient:
                     "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',  # will raise PRs to upstream repos (openshift-priv) if this is not set to false
                     # "build.appstudio.openshift.io/request": "configure-pac",
                     "mintmaker.appstudio.redhat.com/disabled": "true",  # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
-                }
+                },
             },
             "spec": {
                 "application": application,
@@ -300,9 +306,9 @@ class KonfluxClient:
                     "git": {
                         "url": source_url,
                         "revision": revision,
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
         if image_repo:
             obj["spec"]["containerImage"] = image_repo
@@ -312,8 +318,10 @@ class KonfluxClient:
             obj["spec"].setdefault("source", {}).setdefault("git", {})["revision"] = revision
         return obj
 
-    async def ensure_component(self, name: str, application: str, component_name: str,
-                               image_repo: Optional[str], source_url: Optional[str], revision: Optional[str]) -> resource.ResourceInstance:
+    async def ensure_component(
+        self, name: str, application: str, component_name: str,
+        image_repo: Optional[str], source_url: Optional[str], revision: Optional[str],
+    ) -> resource.ResourceInstance:
         component = self._new_component(name, application, component_name, image_repo, source_url, revision)
         return await self._create_or_replace(component)
 
@@ -332,13 +340,15 @@ class KonfluxClient:
                 template = jinja2.Template(template_text, autoescape=True)
                 return template
 
-    async def _new_pipelinerun_for_image_build(self, metadata: ImageMetadata, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
-                                               git_url: str, commit_sha: str, target_branch: str, output_image: str,
-                                               build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
-                                               additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
-                                               hermetic: Optional[bool] = None, sast: Optional[bool] = False,
-                                               dockerfile: Optional[str] = None,
-                                               pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL) -> dict:
+    async def _new_pipelinerun_for_image_build(
+        self, metadata: ImageMetadata, generate_name: str, namespace: Optional[str], application_name: str, component_name: str,
+        git_url: str, commit_sha: str, target_branch: str, output_image: str,
+        build_platforms: Sequence[str], prefetch: Optional[list] = None, git_auth_secret: str = "pipelines-as-code-secret",
+        additional_tags: Optional[Sequence[str]] = None, skip_checks: bool = False,
+        hermetic: Optional[bool] = None, sast: Optional[bool] = False,
+        dockerfile: Optional[str] = None,
+        pipelinerun_template_url: str = constants.KONFLUX_DEFAULT_IMAGE_BUILD_PLR_TEMPLATE_URL,
+    ) -> dict:
         if additional_tags is None:
             additional_tags = []
         https_url = art_util.convert_remote_git_to_https(git_url)
@@ -443,25 +453,25 @@ class KonfluxClient:
                     "name": "sbom-syft-generate",
                     "computeResources": {
                         "requests": {
-                            "memory": "5Gi"
+                            "memory": "5Gi",
                         },
                         "limits": {
-                            "memory": "10Gi"
-                        }
-                    }
-                }]
+                            "memory": "10Gi",
+                        },
+                    },
+                }],
             }]
         if has_sast_task:
             task_run_specs += [{
                 "pipelineTaskName": "sast-shell-check",
                 "computeResources": {
                     "requests": {
-                        "memory": "10Gi"
+                        "memory": "10Gi",
                     },
                     "limits": {
-                        "memory": "10Gi"
-                    }
-                }
+                        "memory": "10Gi",
+                    },
+                },
             }]
 
         obj["spec"]["taskRunSpecs"] = task_run_specs
@@ -539,7 +549,7 @@ class KonfluxClient:
             dockerfile=dockerfile,
             pipelinerun_template_url=pipelinerun_template_url,
             prefetch=prefetch,
-            sast=sast
+            sast=sast,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
@@ -560,14 +570,18 @@ class KonfluxClient:
         """
         pipelinerun_name = pipelinerun['metadata']['name']
         application = pipelinerun['metadata']['labels']['appstudio.openshift.io/application']
-        return (f"{constants.KONFLUX_UI_HOST}/ns/"
-                f"{constants.KONFLUX_DEFAULT_NAMESPACE}/"
-                f"applications/{application}/"
-                f"pipelineruns/{pipelinerun_name}")
+        return (
+            f"{constants.KONFLUX_UI_HOST}/ns/"
+            f"{constants.KONFLUX_DEFAULT_NAMESPACE}/"
+            f"applications/{application}/"
+            f"pipelineruns/{pipelinerun_name}"
+        )
 
-    async def wait_for_pipelinerun(self, pipelinerun_name: str, namespace: Optional[str] = None,
-                                   overall_timeout_timedelta: Optional[datetime.timedelta] = None,
-                                   pending_timeout_timedelta: Optional[datetime.timedelta] = None) -> (resource.ResourceInstance, List[Dict]):
+    async def wait_for_pipelinerun(
+        self, pipelinerun_name: str, namespace: Optional[str] = None,
+        overall_timeout_timedelta: Optional[datetime.timedelta] = None,
+        pending_timeout_timedelta: Optional[datetime.timedelta] = None,
+    ) -> (resource.ResourceInstance, List[Dict]):
         """
         Wait for a PipelineRun to complete.
 
@@ -590,7 +604,7 @@ class KonfluxClient:
                 "metadata": {"name": pipelinerun_name, "namespace": namespace},
                 "apiVersion": "tekton.dev/v1",
                 "kind": "PipelineRun",
-                "status": {"conditions": [{"status": "True"}]}
+                "status": {"conditions": [{"status": "True"}]},
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
             return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(self.dyn_client, api_version="v1", kind="Pod")
@@ -629,7 +643,7 @@ class KonfluxClient:
                         # while waiting for a long pipelinerun. If we somehow miss
                         # an event, it also ensures we will come back and check
                         # the object with an explicit get at least once per period.
-                        timeout_seconds=5 * 60
+                        timeout_seconds=5 * 60,
                     ):
                         assert isinstance(event, Dict)
                         cancel_pipelinerun = False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
@@ -706,7 +720,7 @@ class KonfluxClient:
                                                 log_response = corev1_client.read_namespaced_pod_log(
                                                     name=pod_name,
                                                     namespace=namespace,
-                                                    container=container_name
+                                                    container=container_name,
                                                 )
                                                 # stuff log information into the container_status, so that it can be
                                                 # included in the bigquery database.
@@ -733,10 +747,10 @@ class KonfluxClient:
                                     namespace=namespace,
                                     body={
                                         'spec': {
-                                            'status': 'Cancelled'
-                                        }
+                                            'status': 'Cancelled',
+                                        },
                                     },
-                                    content_type="application/merge-patch+json"
+                                    content_type="application/merge-patch+json",
                                 )
                             except:
                                 self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
@@ -756,8 +770,10 @@ class KonfluxClient:
 
         return await exectools.to_thread(_inner)
 
-    async def wait_for_release(self, release_name: str, namespace: Optional[str] = None,
-                               overall_timeout_timedelta: Optional[datetime.timedelta] = None) -> resource.ResourceInstance:
+    async def wait_for_release(
+        self, release_name: str, namespace: Optional[str] = None,
+        overall_timeout_timedelta: Optional[datetime.timedelta] = None,
+    ) -> resource.ResourceInstance:
         f"""
         Wait for a Release to complete.
 
@@ -779,7 +795,7 @@ class KonfluxClient:
                 "metadata": {"name": release_name, "namespace": namespace},
                 "apiVersion": API_VERSION,
                 "kind": KIND_RELEASE,
-                "status": {"conditions": [{"type": "Released", "status": "True", "reason": "Succeeded"}]}
+                "status": {"conditions": [{"type": "Released", "status": "True", "reason": "Succeeded"}]},
             }
             self._logger.info(f"[DRY RUN] Would have waited for Release {release_name} to complete")
             return resource.ResourceInstance(self.dyn_client, release)
@@ -798,7 +814,7 @@ class KonfluxClient:
                         namespace=namespace,
                         serialize=False,
                         field_selector=f"metadata.name={release_name}",
-                        timeout_seconds=5 * 60
+                        timeout_seconds=5 * 60,
                     )
                     for event in release_obj:
                         assert isinstance(event, Dict)
@@ -823,8 +839,10 @@ class KonfluxClient:
                             watcher.stop()
                             return obj
 
-                    self._logger.info("No updates for Release %s during watch timeout period; requerying",
-                                      release_name)
+                    self._logger.info(
+                        "No updates for Release %s during watch timeout period; requerying",
+                        release_name,
+                    )
                 except TimeoutError:
                     self._logger.error("Timeout waiting for Release %s to complete", release_name)
                     continue

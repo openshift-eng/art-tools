@@ -13,7 +13,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 "images": [],
                 "rpms": [],
             },
-            "group": {}
+            "group": {},
         })
 
         self.runtime = MagicMock(
@@ -25,9 +25,9 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         self.runtime.get_releases_config.return_value = Model({
             "releases": {
                 self.runtime.assembly: {
-                    "assembly": self.assembly_config
-                }
-            }
+                    "assembly": self.assembly_config,
+                },
+            },
         })
         self.runtime.konflux_db = MagicMock()
 
@@ -79,7 +79,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.image_nvr, self.rpm_nvr],
             pr=None,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -89,19 +89,19 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 "images": [{
                     "distgit_key": "image1",
                     "metadata": {
-                        "is": {"nvr": self.image_nvr}
+                        "is": {"nvr": self.image_nvr},
                     },
-                    "why": self.why
+                    "why": self.why,
                 }],
                 "rpms": [{
                     "distgit_key": "rpm1",
                     "metadata": {
-                        "is": {"el8": self.rpm_nvr}
+                        "is": {"el8": self.rpm_nvr},
                     },
-                    "why": self.why
-                }]
+                    "why": self.why,
+                }],
             },
-            "group": {}
+            "group": {},
         }
         self.assertEqual(changed, True)
         self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
@@ -113,33 +113,33 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 "images": [{
                     "distgit_key": "image1",
                     "metadata": {
-                        "is": {"nvr": self.image_nvr}
+                        "is": {"nvr": self.image_nvr},
                     },
-                    "why": self.why
+                    "why": self.why,
                 }],
                 "rpms": [{
                     "distgit_key": "rpm1",
                     "metadata": {
-                        "is": {"el8": self.rpm_nvr}
+                        "is": {"el8": self.rpm_nvr},
                     },
-                    "why": self.why
-                }]
+                    "why": self.why,
+                }],
             },
-            "group": {}
+            "group": {},
         }
         self.runtime.get_releases_config.return_value = Model({
             "releases": {
                 self.runtime.assembly: {
-                    "assembly": assembly_config
-                }
-            }
+                    "assembly": assembly_config,
+                },
+            },
         })
         cli = AssemblyPinBuildsCli(
             runtime=self.runtime,
             nvrs=[self.image_nvr, self.rpm_nvr],
             pr=None,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         _, changed = await cli.run()
         mock_validate_nvrs_brew.assert_called_once_with([self.image_nvr, self.rpm_nvr])
@@ -155,7 +155,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[],
             pr=self.pr,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -165,19 +165,19 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                 "images": [{
                     "distgit_key": "image1",
                     "metadata": {
-                        "is": {"nvr": self.image_nvr}
+                        "is": {"nvr": self.image_nvr},
                     },
-                    "why": self.why
+                    "why": self.why,
                 }],
                 "rpms": [{
                     "distgit_key": "rpm1",
                     "metadata": {
-                        "is": {"el8": self.rpm_nvr}
+                        "is": {"el8": self.rpm_nvr},
                     },
-                    "why": self.why
-                }]
+                    "why": self.why,
+                }],
             },
-            "group": {}
+            "group": {},
         }
         self.assertEqual(changed, True)
         self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
@@ -186,9 +186,11 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
     @patch("elliottlib.cli.pin_builds_cli.brew_arch_for_go_arch")
     @patch("elliottlib.cli.pin_builds_cli.get_container_pullspec")
     @patch("elliottlib.cli.pin_builds_cli.RHCOSBuildFinder")
-    async def test_run_with_rhcos_nvr(self, mock_rhcos_build_finder,
-                                      mock_get_container_pullspec, mock_brew_arch_for_go_arch,
-                                      mock_get_container_configs):
+    async def test_run_with_rhcos_nvr(
+        self, mock_rhcos_build_finder,
+        mock_get_container_pullspec, mock_brew_arch_for_go_arch,
+        mock_get_container_configs,
+    ):
         self.runtime.group_config = MagicMock()
         self.runtime.group_config.arches = ["x86_64", "aarch64"]
         mock_brew_arch_for_go_arch.side_effect = lambda arch: arch  # Return the input arch
@@ -211,15 +213,15 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.rhcos_nvr],
             pr=None,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
         mock_rhcos_build_finder.assert_any_call(
-            self.runtime, "4.18", "x86_64", False
+            self.runtime, "4.18", "x86_64", False,
         )
         mock_rhcos_build_finder.assert_any_call(
-            self.runtime, "4.18", "aarch64", False
+            self.runtime, "4.18", "aarch64", False,
         )
         parsed_build_id = self.rhcos_nvr.split('-', 1)[1]
         mock_finder_instance.rhcos_build_meta.assert_called_with(parsed_build_id)
@@ -227,17 +229,17 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         expected_assembly_config = {
             "members": {
                 "images": [],
-                "rpms": []
+                "rpms": [],
             },
             "group": {},
             "rhcos": {
                 "machine-os-content": {
                     "images": {
                         "x86_64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123",
-                        "aarch64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123"
-                    }
-                }
-            }
+                        "aarch64": "registry.example.com/rhel-coreos/machine-os-content@sha256:abc123",
+                    },
+                },
+            },
         }
         self.assertEqual(changed, True)
         self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
@@ -250,7 +252,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.non_art_rpm_nvr],
             pr=None,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         out, changed = await cli.run()
 
@@ -258,17 +260,17 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         expected_assembly_config = {
             "members": {
                 "images": [],
-                "rpms": []
+                "rpms": [],
             },
             "group": {
                 "dependencies": {
                     "rpms": [{
                         "el8": self.non_art_rpm_nvr,
                         "why": self.why,
-                        "non_gc_tag": "insert tag here if needed"
-                    }]
-                }
-            }
+                        "non_gc_tag": "insert tag here if needed",
+                    }],
+                },
+            },
         }
         self.assertEqual(changed, True)
         self.assertEqual(out["releases"][self.runtime.assembly]["assembly"], expected_assembly_config)
@@ -282,17 +284,19 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[],
             pr=self.pr,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         nvrs = await cli.get_nvrs_for_pr()
 
         mock_get_pr_merge_commit.assert_called_once_with(self.pr, self.github_token)
-        search_builds_mock.assert_called_once_with(where={
-            "group": self.runtime.group,
-            "commitish": "commit_hash",
-            "outcome": KonfluxBuildOutcome.SUCCESS.value,
-            "engine": self.runtime.build_system
-        })
+        search_builds_mock.assert_called_once_with(
+            where={
+                "group": self.runtime.group,
+                "commitish": "commit_hash",
+                "outcome": KonfluxBuildOutcome.SUCCESS.value,
+                "engine": self.runtime.build_system,
+            },
+        )
         self.assertEqual(nvrs, [self.image_nvr, self.rpm_nvr])
 
     @patch("elliottlib.cli.pin_builds_cli.requests.get")
@@ -300,7 +304,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "merge_commit_sha": "abc123def456",
-            "base": {"ref": "release-4.18"}
+            "base": {"ref": "release-4.18"},
         }
         mock_requests_get.return_value = mock_response
 
@@ -322,7 +326,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.rpm_nvr],  # Only passing the el8 NVR
             pr=None,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         cli.assembly_config = self.assembly_config
 
@@ -339,7 +343,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
             nvrs=[self.image_nvr, self.rpm_nvr],
             pr=None,
             why=self.why,
-            github_token=self.github_token
+            github_token=self.github_token,
         )
         await cli.run()
 

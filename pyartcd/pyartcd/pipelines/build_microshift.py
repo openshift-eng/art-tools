@@ -11,9 +11,11 @@ import click
 from artcommonlib import exectools
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.assembly import AssemblyTypes
-from artcommonlib.util import (get_assembly_release_date,
-                               get_ocp_version_from_group,
-                               new_roundtrip_yaml_handler)
+from artcommonlib.util import (
+    get_assembly_release_date,
+    get_ocp_version_from_group,
+    new_roundtrip_yaml_handler,
+)
 from doozerlib.util import isolate_nightly_name_components
 from ghapi.all import GhApi
 from semver import VersionInfo
@@ -24,10 +26,12 @@ from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.git import GitRepository
 from pyartcd.record import parse_record_log
 from pyartcd.runtime import Runtime
-from pyartcd.util import (default_release_suffix, get_assembly_type,
-                          get_microshift_builds, get_release_name_for_assembly,
-                          isolate_el_version_in_release, load_group_config,
-                          load_releases_config)
+from pyartcd.util import (
+    default_release_suffix, get_assembly_type,
+    get_microshift_builds, get_release_name_for_assembly,
+    isolate_el_version_in_release, load_group_config,
+    load_releases_config,
+)
 
 yaml = new_roundtrip_yaml_handler()
 
@@ -37,8 +41,10 @@ class BuildMicroShiftPipeline:
 
     SUPPORTED_ASSEMBLY_TYPES = {AssemblyTypes.STANDARD, AssemblyTypes.CANDIDATE, AssemblyTypes.PREVIEW, AssemblyTypes.STREAM, AssemblyTypes.CUSTOM}
 
-    def __init__(self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
-                 force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self, runtime: Runtime, group: str, assembly: str, payloads: Tuple[str, ...], no_rebase: bool,
+        force: bool, data_path: str, slack_client, logger: Optional[logging.Logger] = None,
+    ):
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -74,12 +80,14 @@ class BuildMicroShiftPipeline:
         advisories = group_config.get("advisories", {})
         self.releases_config = await load_releases_config(
             group=self.group,
-            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL
+            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         if self.assembly_type not in self.SUPPORTED_ASSEMBLY_TYPES:
-            raise ValueError(f"Building MicroShift for assembly type {self.assembly_type.value} is not currently "
-                             "supported.")
+            raise ValueError(
+                f"Building MicroShift for assembly type {self.assembly_type.value} is not currently "
+                "supported.",
+            )
 
         if self.assembly_type is AssemblyTypes.STREAM:
             await self._rebase_and_build_for_stream()
@@ -116,7 +124,7 @@ class BuildMicroShiftPipeline:
             create_cmd.append("--yes")
         _, out, _ = await exectools.cmd_gather_async(create_cmd, env=self._elliott_env_vars, stderr=None)
         match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", out
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", out,
         )
         assert match is not None
         advisory_num = int(match[1])
@@ -181,8 +189,10 @@ class BuildMicroShiftPipeline:
         if not self.force:
             pinned_nvrs = util.get_rpm_if_pinned_directly(self.releases_config, self.assembly, 'microshift')
             if pinned_nvrs:
-                message = (f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to "
-                           "rebuild.")
+                message = (
+                    f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to "
+                    "rebuild."
+                )
                 self._logger.info(message)
                 await self.slack_client.say_in_thread(message)
                 nvrs = list(pinned_nvrs.values())
@@ -264,7 +274,7 @@ class BuildMicroShiftPipeline:
             "find-builds",
             "-k", "rpm",
             "--member-only",
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -279,7 +289,7 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "find-bugs:sweep",
             "--permissive",  # this is so we don't error out on non-microshift bugs
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -293,7 +303,7 @@ class BuildMicroShiftPipeline:
             "--group", self.group,
             "--assembly", self.assembly,
             "attach-cve-flaws",
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -308,15 +318,17 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "verify-attached-bugs",
             "--verify-flaws",
-            str(advisory_id)
+            str(advisory_id),
         ]
         try:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
         except ChildProcessError as err:
             self._logger.warning("Error verifying attached bugs: %s", err)
             if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
-                await self.slack_client.say_in_thread("Attached bugs have some issues. Permitting since "
-                                                      f"assembly is of type {self.assembly_type}")
+                await self.slack_client.say_in_thread(
+                    "Attached bugs have some issues. Permitting since "
+                    f"assembly is of type {self.assembly_type}",
+                )
                 await self.slack_client.say_in_thread(str(err))
             else:
                 raise err
@@ -333,7 +345,7 @@ class BuildMicroShiftPipeline:
             "change-state",
             "-s", "QE",
             "--from", "NEW_FILES",
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -501,34 +513,51 @@ class BuildMicroShiftPipeline:
                 file=str(doozer_log_file),
                 filename="microshift-build.log",
                 initial_comment="Build logs",
-                thread_ts=slack_thread)
+                thread_ts=slack_thread,
+            )
         else:
             await slack_client.say("Logs are not available.", thread_ts=slack_thread)
 
 
 @cli.command("build-microshift")
-@click.option("--data-path", metavar='BUILD_DATA', default=None,
-              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly to rebase & build for. e.g. 4.9.1")
-@click.option("--payload", "payloads", metavar="PULLSPEC", multiple=True,
-              help="[Multiple] Release payload to rebase against; Can be a nightly name or full pullspec")
-@click.option("--no-rebase", is_flag=True,
-              help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose")
-@click.option("--force", is_flag=True,
-              help="(For named assemblies) Rebuild even if a build already exists")
+@click.option(
+    "--data-path", metavar='BUILD_DATA', default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly to rebase & build for. e.g. 4.9.1",
+)
+@click.option(
+    "--payload", "payloads", metavar="PULLSPEC", multiple=True,
+    help="[Multiple] Release payload to rebase against; Can be a nightly name or full pullspec",
+)
+@click.option(
+    "--no-rebase", is_flag=True,
+    help="Don't rebase microshift code; build the current source we have in the upstream repo for testing purpose",
+)
+@click.option(
+    "--force", is_flag=True,
+    help="(For named assemblies) Rebuild even if a build already exists",
+)
 @pass_runtime
 @click_coroutine
-async def build_microshift(runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
-                           no_rebase: bool, force: bool):
+async def build_microshift(
+    runtime: Runtime, data_path: str, group: str, assembly: str, payloads: Tuple[str, ...],
+    no_rebase: bool, force: bool,
+):
     # slack client is dry-run aware and will not send messages if dry-run is enabled
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     try:
-        pipeline = BuildMicroShiftPipeline(runtime=runtime, group=group, assembly=assembly, payloads=payloads,
-                                           no_rebase=no_rebase, force=force, data_path=data_path, slack_client=slack_client)
+        pipeline = BuildMicroShiftPipeline(
+            runtime=runtime, group=group, assembly=assembly, payloads=payloads,
+            no_rebase=no_rebase, force=force, data_path=data_path, slack_client=slack_client,
+        )
         await pipeline.run()
     except Exception as err:
         slack_message = f"build-microshift pipeline encountered error: {err}"

@@ -47,8 +47,10 @@ class JiraStatus(Enum):
 
 
 class ScanOshCli:
-    def __init__(self, runtime: Runtime, last_brew_event: int, dry_run: bool, check_triggered: Optional[bool],
-                 all_builds: Optional[bool], create_jira_tickets: Optional[bool]):
+    def __init__(
+        self, runtime: Runtime, last_brew_event: int, dry_run: bool, check_triggered: Optional[bool],
+        all_builds: Optional[bool], create_jira_tickets: Optional[bool],
+    ):
         self.tag_rhel_mapping = {}
         self.runtime = runtime
         self.last_brew_event = last_brew_event
@@ -321,8 +323,10 @@ class ScanOshCli:
 
         return False
 
-    def is_latest_scan_different_from_previous(self, latest_scan_id, latest_scan_nvr, previous_scan_id,
-                                               previous_scan_nvr):
+    def is_latest_scan_different_from_previous(
+        self, latest_scan_id, latest_scan_nvr, previous_scan_id,
+        previous_scan_nvr,
+    ):
         # If this is the first scan, then there won't be a previous one
         # Or there is no previous successful scan
         if not previous_scan_id:
@@ -333,8 +337,10 @@ class ScanOshCli:
 
         for defect in latest_scan_defects:
             if defect not in previous_scan_defects:
-                self.runtime.logger.info("Detected that the scan of the latest build has new issues, "
-                                         "compared to the previous one")
+                self.runtime.logger.info(
+                    "Detected that the scan of the latest build has new issues, "
+                    "compared to the previous one",
+                )
                 return True
 
         return False
@@ -463,11 +469,13 @@ class ScanOshCli:
 
         jira_commit_text = self.get_commit_text(upstream_repo_url, nvr)
 
-        description = MESSAGE.format(package_name=build["package_name"],
-                                     scan_id=task_id,
-                                     nvr=nvr,
-                                     brew_build_id=build["id"],
-                                     upstream_commit=jira_commit_text)
+        description = MESSAGE.format(
+            package_name=build["package_name"],
+            scan_id=task_id,
+            nvr=nvr,
+            brew_build_id=build["id"],
+            upstream_commit=jira_commit_text,
+        )
 
         fields = {
             "project": {"key": f"{self.jira_project}"},
@@ -498,8 +506,10 @@ class ScanOshCli:
                 if not self.dry_run:
                     _: Issue = self.jira_client.create_issue(fields)
                 else:
-                    self.runtime.logger.info(f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
-                                             f"JIRA project with fields {fields}")
+                    self.runtime.logger.info(
+                        f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
+                        f"JIRA project with fields {fields}",
+                    )
                     return
 
             # There are closed issues.
@@ -517,10 +527,13 @@ class ScanOshCli:
 
             # Not the same NVR
             # Pass the description from the previous NVR to be processed
-            self.runtime.logger.info("Retrieving OSH task ID and NVR, from the previous ticket: "
-                                     f"{previous_ticket.key}")
+            self.runtime.logger.info(
+                "Retrieving OSH task ID and NVR, from the previous ticket: "
+                f"{previous_ticket.key}",
+            )
             previous_task_id, previous_nvr = self.get_scan_details_from_ticket(
-                description=previous_ticket.fields.description)
+                description=previous_ticket.fields.description,
+            )
 
             # We should always be able to retrieve the scan ID from the ticket
             assert previous_task_id is not None
@@ -531,10 +544,12 @@ class ScanOshCli:
                 return
 
             # Check the diff
-            if not self.is_latest_scan_different_from_previous(latest_scan_id=task_id,
-                                                               latest_scan_nvr=nvr,
-                                                               previous_scan_id=previous_task_id,
-                                                               previous_scan_nvr=previous_nvr):
+            if not self.is_latest_scan_different_from_previous(
+                latest_scan_id=task_id,
+                latest_scan_nvr=nvr,
+                previous_scan_id=previous_task_id,
+                previous_scan_nvr=previous_nvr,
+            ):
                 # No diff
                 return
 
@@ -553,8 +568,10 @@ class ScanOshCli:
 
                 self.runtime.logger.info(f"Linked {previous_ticket.key} to {issue.key}")
             else:
-                self.runtime.logger.info(f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
-                                         f"JIRA project with fields {fields}")
+                self.runtime.logger.info(
+                    f"[DRY RUN]: Would have created a new bug in {self.jira_project} "
+                    f"JIRA project with fields {fields}",
+                )
                 if previous_ticket:
                     self.runtime.logger.info(f"Would have linked {previous_ticket.key} to the issue")
                 return
@@ -579,8 +596,10 @@ class ScanOshCli:
                 if int(build_on_ticket["build_id"]) > int(build["build_id"]):
                     # We do not want to update the ticket with an older build, even if its of a later OCP version
                     # A higher build ID will mean a newer build
-                    self.runtime.logger.info(f"Ticket {issue.key} has the newer build, "
-                                             f"compared to {build['nvr']}")
+                    self.runtime.logger.info(
+                        f"Ticket {issue.key} has the newer build, "
+                        f"compared to {build['nvr']}",
+                    )
                     return
 
             if not self.dry_run:
@@ -589,8 +608,10 @@ class ScanOshCli:
                 issue.update(fields={"description": fields["description"]}, notify=False)
                 self.runtime.logger.info(f"The fields of {issue.key} has been updated to {fields}")
             else:
-                self.runtime.logger.info(f"[DRY RUN]: Would have updated {issue.key} with new description: "
-                                         f"{fields['description']}")
+                self.runtime.logger.info(
+                    f"[DRY RUN]: Would have updated {issue.key} with new description: "
+                    f"{fields['description']}",
+                )
 
         else:
             self.runtime.logger.error(f"More than one JIRA ticket exists: {open_issues}")
@@ -621,8 +642,10 @@ class ScanOshCli:
                 #     else:
                 #         self.runtime.logger.info(f"Would have closed issue: {open_issue.key}")
                 for open_issue in open_issues:
-                    self.runtime.logger.info(f"Would have closed issue: {open_issue.key}, "
-                                             f"since no issues found in OSH task {osh_task_id}")
+                    self.runtime.logger.info(
+                        f"Would have closed issue: {open_issue.key}, "
+                        f"since no issues found in OSH task {osh_task_id}",
+                    )
 
         for c in components_with_issues:
             try:
@@ -711,7 +734,8 @@ class ScanOshCli:
             cprint(latest_event_id)
         else:
             self.runtime.logger.warning(
-                f"No new NVRs have been found since last brew event: {self.last_brew_event}")
+                f"No new NVRs have been found since last brew event: {self.last_brew_event}",
+            )
             return None
 
         return nvrs_for_scans
@@ -744,7 +768,7 @@ class ScanOshCli:
             for build in builds:
                 build_package_mapping[build["package_name"]] = {
                     "build": build,
-                    "tag": tag
+                    "tag": tag,
                 }
 
         # Get the list of excluded package names from group.yml
@@ -804,8 +828,10 @@ class ScanOshCli:
 
                 # Exclude components that are disabled in component metadata yml
                 if self.is_jira_workflow_component_disabled(metadata):
-                    self.runtime.logger.info(f"Skipping OCPBUGS creation for distgit {distgit_name} "
-                                             f"since disabled in component metadata")
+                    self.runtime.logger.info(
+                        f"Skipping OCPBUGS creation for distgit {distgit_name} "
+                        f"since disabled in component metadata",
+                    )
                     continue
 
             if kind == BuildType.IMAGE:
@@ -833,7 +859,8 @@ class ScanOshCli:
         # Check if the OCP version is enabled for raising Jira tickets
         if not self.is_jira_workflow_group_enabled():
             self.runtime.logger.info(
-                f"Skipping SAST workflow since not enabled in group.yml for {self.version}")
+                f"Skipping SAST workflow since not enabled in group.yml for {self.version}",
+            )
             return
 
         # Trigger scans workflow
@@ -865,21 +892,31 @@ class ScanOshCli:
 
 @cli.command("images:scan-osh", help="Trigger scans for builds with brew event IDs greater than the value specified")
 @click.option("--since", required=False, help="Builds after this brew event. If empty, latest builds will retrieved")
-@click.option("--dry-run", default=False, is_flag=True,
-              help="Do not trigger anything, but only print build operations.")
-@click.option("--check-triggered", required=False, is_flag=True, default=False,
-              help="Triggers scans for NVRs only after checking if they haven't already")
+@click.option(
+    "--dry-run", default=False, is_flag=True,
+    help="Do not trigger anything, but only print build operations.",
+)
+@click.option(
+    "--check-triggered", required=False, is_flag=True, default=False,
+    help="Triggers scans for NVRs only after checking if they haven't already",
+)
 @click.option("--all-builds", required=False, is_flag=True, default=False, help="Check all builds in candidate tags")
-@click.option("--create-jira-tickets", required=False, is_flag=True, default=False,
-              help="Create OCPBUGS ticket for a package if scan issues exist")
+@click.option(
+    "--create-jira-tickets", required=False, is_flag=True, default=False,
+    help="Create OCPBUGS ticket for a package if scan issues exist",
+)
 @pass_runtime
 @click_coroutine
-async def scan_osh(runtime: Runtime, since: str, dry_run: bool, check_triggered: bool, all_builds: bool,
-                   create_jira_tickets: bool):
-    cli_pipeline = ScanOshCli(runtime=runtime,
-                              last_brew_event=int(since) if since else None,
-                              dry_run=dry_run,
-                              check_triggered=check_triggered,
-                              all_builds=all_builds,
-                              create_jira_tickets=create_jira_tickets)
+async def scan_osh(
+    runtime: Runtime, since: str, dry_run: bool, check_triggered: bool, all_builds: bool,
+    create_jira_tickets: bool,
+):
+    cli_pipeline = ScanOshCli(
+        runtime=runtime,
+        last_brew_event=int(since) if since else None,
+        dry_run=dry_run,
+        check_triggered=check_triggered,
+        all_builds=all_builds,
+        create_jira_tickets=create_jira_tickets,
+    )
     await cli_pipeline.run()

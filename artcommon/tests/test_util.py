@@ -11,37 +11,53 @@ from artcommonlib.util import deep_merge, isolate_major_minor_in_group
 class TestUtil(unittest.TestCase):
     def test_convert_remote_git_to_https(self):
         # git@ to https
-        self.assertEqual(util.convert_remote_git_to_https('git@github.com:openshift/aos-cd-jobs.git'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('git@github.com:openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
         # https to https (no-op)
-        self.assertEqual(util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
         # https to https, remove suffix
-        self.assertEqual(util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs.git'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
         # ssh to https
-        self.assertEqual(util.convert_remote_git_to_https('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
     def test_convert_remote_git_to_ssh(self):
         # git@ to https
-        self.assertEqual(util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
         # https to https (no-op)
-        self.assertEqual(util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
         # https to https, remove suffix
-        self.assertEqual(util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
         # ssh to https
-        self.assertEqual(util.convert_remote_git_to_ssh('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
     def test_find_latest_builds(self):
         builds = [
@@ -81,7 +97,7 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.4.9.el700.hi', '4.9'),
             ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
             ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
-            ('1.2.3-y.el9.p1.assembly.test', 'test')
+            ('1.2.3-y.el9.p1.assembly.test', 'test'),
         ]
 
         for t in test_cases:
@@ -97,7 +113,7 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.4.9.el7', 7),
             ('1.2.3-y.p.p1.assembly.art12398.el199', 199),
             ('1.2.3-y.p.p1.assembly.art12398', None),
-            ('1.2.3-y.p.p1.assembly.4.7.e.8', None)
+            ('1.2.3-y.p.p1.assembly.4.7.e.8', None),
         ]
 
         for t in test_cases:

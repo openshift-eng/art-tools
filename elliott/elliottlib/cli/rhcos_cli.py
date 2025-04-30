@@ -13,17 +13,25 @@ LOGGER = logging.getLogger(__name__)
 
 
 @cli.command("rhcos", short_help="Show details of packages contained in OCP RHCOS builds")
-@click.option('--release', '-r', 'release',
-              help='Show details for this OCP release. Can be a full pullspec or a named release ex: 4.8.4')
-@click.option('--arch', 'arch',
-              default='x86_64',
-              type=click.Choice(BREW_ARCHES + ['all']),
-              help='Specify architecture. Default is x86_64. "all" to get all arches. aarch64 only works for 4.8+')
-@click.option('--packages', '-p', 'packages',
-              help='Show details for only these package names (comma-separated)')
-@click.option('--go', '-g', 'go',
-              is_flag=True,
-              help='Show go version for packages that are go binaries')
+@click.option(
+    '--release', '-r', 'release',
+    help='Show details for this OCP release. Can be a full pullspec or a named release ex: 4.8.4',
+)
+@click.option(
+    '--arch', 'arch',
+    default='x86_64',
+    type=click.Choice(BREW_ARCHES + ['all']),
+    help='Specify architecture. Default is x86_64. "all" to get all arches. aarch64 only works for 4.8+',
+)
+@click.option(
+    '--packages', '-p', 'packages',
+    help='Show details for only these package names (comma-separated)',
+)
+@click.option(
+    '--go', '-g', 'go',
+    is_flag=True,
+    help='Show go version for packages that are go binaries',
+)
 @click.pass_obj
 def rhcos_cli(runtime, release, packages, arch, go):
     """
@@ -98,8 +106,10 @@ def rhcos_cli(runtime, release, packages, arch, go):
         build_ids = [get_build_id_from_image_pullspec(runtime, p) for p in payload_pullspecs]
     elif named_assembly:
         rhcos_pullspecs = get_rhcos_pullspecs_from_assembly(runtime)
-        build_ids = [(get_build_id_from_rhcos_pullspec(p), arch) for arch, p in rhcos_pullspecs.items() if
-                     arch in target_arches]
+        build_ids = [
+            (get_build_id_from_rhcos_pullspec(p), arch) for arch, p in rhcos_pullspecs.items() if
+            arch in target_arches
+        ]
 
     for build, local_arch in build_ids:
         _via_build_id(runtime, build, local_arch, version, packages, go, logger)
@@ -117,8 +127,10 @@ def get_nightly_pullspec(release, arch):
 def get_rhcos_pullspecs_from_assembly(runtime):
     rhcos_def = runtime.releases_config.releases[runtime.assembly].assembly.rhcos
     if not rhcos_def:
-        raise click.BadParameter("only named assemblies with valid rhcos values are supported. If an assembly is "
-                                 "based on another, try using the original assembly")
+        raise click.BadParameter(
+            "only named assemblies with valid rhcos values are supported. If an assembly is "
+            "based on another, try using the original assembly",
+        )
 
     images = rhcos_def[get_primary_container_name(runtime)]['images']
     return images

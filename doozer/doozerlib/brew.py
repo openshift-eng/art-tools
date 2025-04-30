@@ -51,7 +51,8 @@ def watch_task(session, log_f, task_id, terminate_event):
     watcher = koji_cli.lib.TaskWatcher(
         task_id,
         session,
-        quiet=True)
+        quiet=True,
+    )
     error = None
     except_count = 0
     while error is None:
@@ -170,7 +171,7 @@ async def watch_task_async(session: koji.ClientSession, log_f: Callable, task_id
     terminate_event = threading.Event()
     try:
         error = await exectools.to_thread(
-            watch_task, session, log_f, task_id, terminate_event
+            watch_task, session, log_f, task_id, terminate_event,
         )
     except (asyncio.CancelledError, KeyboardInterrupt):
         terminate_event.set()
@@ -188,7 +189,7 @@ async def watch_tasks_async(session: koji.ClientSession, log_f: Callable, task_i
     terminate_event = threading.Event()
     try:
         errors = await exectools.to_thread(
-            watch_tasks, session, log_f, task_ids, terminate_event
+            watch_tasks, session, log_f, task_ids, terminate_event,
         )
     except (asyncio.CancelledError, KeyboardInterrupt):
         terminate_event.set()
@@ -204,7 +205,8 @@ def get_build_objects(ids_or_nvrs, session):
     :return: a list Koji/Brew build objects
     """
     logger.debug(
-        "Fetching build info for {} from Koji/Brew...".format(ids_or_nvrs))
+        "Fetching build info for {} from Koji/Brew...".format(ids_or_nvrs),
+    )
     # Use Koji multicall interface to boost performance. See https://pagure.io/koji/pull-request/957
     tasks = []
     with session.multicall(strict=True) as m:
@@ -357,8 +359,10 @@ def has_tag_changed_since_build(runtime, koji_client, build, tag, inherit=True) 
 
             found_in_tag_name = last_tagged_build['tag_name']  # If using inheritance, this can differ from tag
             # Example result of full queryHistory: https://gist.github.com/jupierce/943b845c07defe784522fd9fd76f4ab0
-            tag_listing = koji_client.queryHistory(table='tag_listing',
-                                                   tag=found_in_tag_name, build=last_tagged_build['build_id'])['tag_listing']
+            tag_listing = koji_client.queryHistory(
+                table='tag_listing',
+                tag=found_in_tag_name, build=last_tagged_build['build_id'],
+            )['tag_listing']
             tag_listing.sort(key=lambda event: event['create_event'])
             latest_tag_change_event = tag_listing[-1]
 
@@ -761,11 +765,13 @@ class KojiWrapper(koji.ClientSession):
                 if use_caching:
                     # We need a reproducible immutable key from a dict with nested dicts. json.dumps
                     # and sorting keys is a deterministic way of achieving this.
-                    caching_key = json.dumps({
-                        'method_name': name,
-                        'args': args,
-                        'kwargs': kwargs
-                    }, sort_keys=True)
+                    caching_key = json.dumps(
+                        {
+                            'method_name': name,
+                            'args': args,
+                            'kwargs': kwargs,
+                        }, sort_keys=True,
+                    )
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:
                         if logger:
@@ -807,5 +813,5 @@ def brew_event_from_datetime(datetime_obj: datetime, koji_api) -> int:
     """
     return koji_api.getLastEvent(
         KojiWrapperOpts(brew_event_aware=False),
-        before=datetime_obj.timestamp()
+        before=datetime_obj.timestamp(),
     )['id']

@@ -21,8 +21,10 @@ async def sync_repo_to_s3_mirror(local_dir: str, s3_path: str, dry_run: bool = F
         await sync_dir_to_s3_mirror(local_dir, s3_path, exclude='', include_only='', dry_run=dry_run, remove_old=True)
 
 
-async def sync_dir_to_s3_mirror(local_dir: str, s3_path: str, exclude: Optional[str] = None, include_only: Optional[str] = None,
-                                dry_run: bool = False, remove_old: bool = True):
+async def sync_dir_to_s3_mirror(
+    local_dir: str, s3_path: str, exclude: Optional[str] = None, include_only: Optional[str] = None,
+    dry_run: bool = False, remove_old: bool = True,
+):
     """
     Sync a directory to an s3 bucket.
 
@@ -40,7 +42,8 @@ async def sync_dir_to_s3_mirror(local_dir: str, s3_path: str, exclude: Optional[
             s3_path.startswith('/pub/openshift-v4/dependencies'):
         raise Exception(
             f'Invalid location on s3 ({s3_path}); these are virtual/read-only locations on the s3 '
-            'backed mirror. Qualify your path with /pub/openshift-v4/<brew_arch_name>/ instead.')
+            'backed mirror. Qualify your path with /pub/openshift-v4/<brew_arch_name>/ instead.',
+        )
 
     env = os.environ.copy()
     full_s3_path = f's3://art-srv-enterprise{s3_path}'  # Note that s3_path has / prefix.
@@ -58,7 +61,7 @@ async def sync_dir_to_s3_mirror(local_dir: str, s3_path: str, exclude: Optional[
     await retry(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
-        reraise=True
+        reraise=True,
     )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)
 
     full_command = base_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']] + options + [local_dir, full_s3_path]
@@ -66,5 +69,5 @@ async def sync_dir_to_s3_mirror(local_dir: str, s3_path: str, exclude: Optional[
     await retry(
         wait=wait_fixed(30),  # wait for 30 seconds between retries
         stop=(stop_after_attempt(3)),  # max 3 attempts
-        reraise=True
+        reraise=True,
     )(exectools.cmd_assert_async)(full_command, env=env, stdout=sys.stderr)

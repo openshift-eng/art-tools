@@ -88,8 +88,14 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
     def test_build_id_build_release_job_completes(self, rhcos_build_meta, mock_urlopen):  # XXX: Change name
         # If not all required attributes exist, which can happen if the rhcos release job did not successfully complete, take the previous
-        self.runtime.group_config.rhcos = Model(dict(payload_tags=[dict(name="spam", build_metadata_key="spam"),
-                                                                   dict(name="eggs", primary=True, build_metadata_key="eggs")]))
+        self.runtime.group_config.rhcos = Model(
+            dict(
+                payload_tags=[
+                    dict(name="spam", build_metadata_key="spam"),
+                    dict(name="eggs", primary=True, build_metadata_key="eggs"),
+                ],
+            ),
+        )
 
         def mock_rhcos_build_meta(build_id, arch=None):
             # arch1 of id-1 is complete, arch2 is incomplete
@@ -200,8 +206,10 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6.x86_64", rhcos_build.get_rpm_nvras())
         self.assertIn("kernel-rt-core-4.18.0-372.32.1.rt7.189.el8_6", rhcos_build.get_rpm_nvrs())
-        self.assertIn("qemu-img-6.2.0-11.module+el8.6.0+16538+01ea313d.6",
-                      rhcos_build.get_rpm_nvrs())  # epoch stripped
+        self.assertIn(
+            "qemu-img-6.2.0-11.module+el8.6.0+16538+01ea313d.6",
+            rhcos_build.get_rpm_nvrs(),
+        )  # epoch stripped
 
     @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
@@ -241,8 +249,10 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.repos.Repo.get_repodata_threadsafe")
     @patch('artcommonlib.exectools.cmd_assert')
     @patch('doozerlib.rhcos.RHCOSBuildFinder.rhcos_build_meta')
-    async def test_find_non_latest_rpms(self, rhcos_build_meta_mock: Mock, cmd_assert_mock: Mock,
-                                        get_repodata_threadsafe: AsyncMock, get_os_metadata_rpm_list: Mock):
+    async def test_find_non_latest_rpms(
+        self, rhcos_build_meta_mock: Mock, cmd_assert_mock: Mock,
+        get_repodata_threadsafe: AsyncMock, get_os_metadata_rpm_list: Mock,
+    ):
         # mock out the things RHCOSBuildInspector calls in __init__
         rhcos_meta = {"buildid": "412.86.bogus"}
         rhcos_commitmeta = {}
@@ -250,7 +260,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
         pullspecs = {'machine-os-content': 'spam@eggs'}
         self.runtime.group_config.rhcos = Model({
-            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]
+            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
         })
         repos = Repos(
             {
@@ -258,13 +268,13 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
                 "rhel-8-appstream-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
                 "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
             },
-            ["x86_64", "s390x", "ppc64le", "aarch64"]
+            ["x86_64", "s390x", "ppc64le", "aarch64"],
         )
         runtime = MagicMock(
             repos=repos,
             group_config=Model({
-                "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]}
-            })
+                "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]},
+            }),
         )
         runtime.get_major_minor_fields.return_value = 4, 12
         get_repodata_threadsafe.return_value = Repodata(
@@ -272,7 +282,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             primary_rpms=[
                 Rpm.from_dict({'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'}),
                 Rpm.from_dict({'name': 'bar', 'version': '1.1.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'bar-1.1.0-1.el9'}),
-            ]
+            ],
         )
         get_os_metadata_rpm_list.return_value = [
             ['foo', '0', '1.0.0', '1.el9', 'x86_64'],

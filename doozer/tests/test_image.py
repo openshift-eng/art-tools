@@ -84,7 +84,8 @@ class TestImageMetadata(unittest.TestCase):
         self.assertEqual(
             expected, actual,
             "logging lines - expected: {}, actual: {}".
-            format(expected, actual))
+            format(expected, actual),
+        )
 
     @unittest.skip("raising AttributeError: 'str' object has no attribute 'base_dir'")
     def test_base_only(self):
@@ -117,11 +118,13 @@ class TestImageMetadata(unittest.TestCase):
     def test_pull_url(self):
         fake_runtime = flexmock(
             get_latest_build_info=lambda: ('openshift-cli', '1.1.1', '8'),
-            group_config=flexmock(urls=flexmock(brew_image_namespace='rh-osbs', brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888')))
+            group_config=flexmock(urls=flexmock(brew_image_namespace='rh-osbs', brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888')),
+        )
 
         fake_image = flexmock(
             pull_url=image.ImageMetadata.pull_url(),
-            runtime=fake_runtime, config=flexmock(name='test'))
+            runtime=fake_runtime, config=flexmock(name='test'),
+        )
 
         self.assertEqual(fake_image.pull_url(), "brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888/rh-osbs/openshift-test")
 
@@ -135,11 +138,13 @@ class TestImageMetadata(unittest.TestCase):
         go-toolset-1.10-1.10.3-7.el7              devtools-2018.4-rhel-7  deparker
         """
 
-        (flexmock(exectools)
+        (
+            flexmock(exectools)
             .should_receive("cmd_gather")
             .with_args(expected_cmd)
             .once()
-            .and_return((0, latest_build_output)))
+            .and_return((0, latest_build_output))
+        )
 
         test_base_yml = open('test_pull.yml', 'w')
         test_base_yml.write(TEST_BASE_YAML)
@@ -172,28 +177,36 @@ class TestImageInspector(IsolatedAsyncioTestCase):
     @mock.patch("doozerlib.build_info.BrewImageInspector.image_arch")
     @mock.patch("doozerlib.build_info.BrewImageInspector.get_image_meta")
     @mock.patch("doozerlib.build_info.BrewImageInspector.get_build_id")
-    async def test_find_non_latest_rpms(self, get_build_id: mock.Mock, get_image_meta: mock.Mock,
-                                        image_arch: mock.Mock, get_installed_rpm_dicts: mock.Mock,
-                                        get_repodata_threadsafe: mock.AsyncMock):
-        runtime = mock.MagicMock(repos=Repos({
-            "rhel-8-baseos-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
-            "rhel-8-appstream-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
-            "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
-        }, ["x86_64", "s390x", "ppc64le", "aarch64"]))
+    async def test_find_non_latest_rpms(
+        self, get_build_id: mock.Mock, get_image_meta: mock.Mock,
+        image_arch: mock.Mock, get_installed_rpm_dicts: mock.Mock,
+        get_repodata_threadsafe: mock.AsyncMock,
+    ):
+        runtime = mock.MagicMock(
+            repos=Repos(
+                {
+                    "rhel-8-baseos-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
+                    "rhel-8-appstream-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
+                    "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
+                }, ["x86_64", "s390x", "ppc64le", "aarch64"],
+            ),
+        )
         archive = mock.MagicMock()
         brew_build_inspector = mock.MagicMock(autospec=build_info.BrewBuildRecordInspector)
         get_build_id.return_value = 12345
         brew_build_inspector.get_build_id.return_value = 12345
-        get_image_meta.return_value = mock.MagicMock(autospec=image.ImageMetadata, config={
-            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]
-        })
+        get_image_meta.return_value = mock.MagicMock(
+            autospec=image.ImageMetadata, config={
+                "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
+            },
+        )
         image_arch.return_value = "x86_64"
         get_repodata_threadsafe.return_value = Repodata(
             name='rhel-8-appstream-rpms',
             primary_rpms=[
                 Rpm.from_dict({'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'}),
                 Rpm.from_dict({'name': 'bar', 'version': '1.1.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'bar-1.1.0-1.el9'}),
-            ]
+            ],
         )
         get_installed_rpm_dicts.return_value = [
             {'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'},

@@ -119,7 +119,7 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
             "--all",
             "--include-content-set-check",
             "-o",
-            "json"
+            "json",
         ]
         _, out, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
         result = json.loads(out)
@@ -227,10 +227,14 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
 
 
 @cli.command("review-cvp")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly. e.g. 4.9.1")
+@click.option(
+    "-g", "--group", metavar='NAME', required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option(
+    "--assembly", metavar="ASSEMBLY_NAME", required=True,
+    help="The name of an assembly. e.g. 4.9.1",
+)
 @pass_runtime
 @click_coroutine
 async def reivew_cvp(runtime: Runtime, group: str, assembly: str):

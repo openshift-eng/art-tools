@@ -40,11 +40,11 @@ class QuayDoomsdaySync:
             "oc", "adm", "release", "mirror",
             f"quay.io/openshift-release-dev/ocp-release:{self.version}-{arch}",
             "--keep-manifest-list",
-            f"--to-dir={self.workdir}/{path}"
+            f"--to-dir={self.workdir}/{path}",
         ]
         aws_cmd = [
             "aws", "s3", "sync", f"{self.workdir}/{path}",
-            f"s3://ocp-doomsday-registry/release-image/{path}"
+            f"s3://ocp-doomsday-registry/release-image/{path}",
         ]
 
         # Setup tenacity retry behavior for calling mirror_cmd and aws_cmd
@@ -116,7 +116,9 @@ async def quay_doomsday_backup(runtime: Runtime, arches: str, version: str):
     if version.startswith("4.12") or version.startswith("4.13"):
         arches = "x86_64"
 
-    doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
-                                         arches=arches,
-                                         version=version)
+    doomsday_pipeline = QuayDoomsdaySync(
+        runtime=runtime,
+        arches=arches,
+        version=version,
+    )
     await doomsday_pipeline.run()

@@ -65,7 +65,7 @@ class BuildRhcosPipeline:
         for s in oc.selector('secrets'):
             if s.model.type == "kubernetes.io/service-account-token" and s.model.metadata.annotations["kubernetes.io/service-account.name"] == "jenkins" and s.model.metadata.annotations["kubernetes.io/service-account.uid"] == jenkins_uid:
                 secret_maybe = base64.b64decode(s.model.data.token).decode('utf-8')
-                r = self.request_session.get(f"{JENKINS_BASE_URL}/me/api/json", headers={"Authorization": f"Bearer {secret_maybe}"},)
+                r = self.request_session.get(f"{JENKINS_BASE_URL}/me/api/json", headers={"Authorization": f"Bearer {secret_maybe}"})
                 if r.status_code == 200:
                     secret = secret_maybe
                     break
@@ -89,7 +89,7 @@ class BuildRhcosPipeline:
                     for action in build["actions"]
                     if "parameters" in action
                     for param in action["parameters"]
-        )]
+                )]
 
     def get_stream(self):
         """Get rhcos job's stream parameter value, for 4.12+ it looks like 4.x-9.x for 4.12 is just 4.12"""
@@ -123,14 +123,22 @@ class BuildRhcosPipeline:
 
 
 @cli.command("build-rhcos")
-@click.option("--version", required=True, type=str,
-              help="The version to build, e.g. '4.13'")
-@click.option("--ignore-running", required=False, default=False, type=bool,
-              help="Ignore in-progress builds instead of just exiting like usual")
-@click.option("--new-build", required=False, default=False, type=bool,
-              help="Force a new build even if no changes were detected from the last build")
-@click.option("--job", required=False, type=click.Choice(['build', 'build-node-image']), default="build",
-              help="RHCOS pipeline job name")
+@click.option(
+    "--version", required=True, type=str,
+    help="The version to build, e.g. '4.13'",
+)
+@click.option(
+    "--ignore-running", required=False, default=False, type=bool,
+    help="Ignore in-progress builds instead of just exiting like usual",
+)
+@click.option(
+    "--new-build", required=False, default=False, type=bool,
+    help="Force a new build even if no changes were detected from the last build",
+)
+@click.option(
+    "--job", required=False, type=click.Choice(['build', 'build-node-image']), default="build",
+    help="RHCOS pipeline job name",
+)
 @pass_runtime
 def build_rhcos(runtime: Runtime, new_build: bool, ignore_running: bool, version: str, job: str):
     BuildRhcosPipeline(runtime, new_build, ignore_running, version, job).run()

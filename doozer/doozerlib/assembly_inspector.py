@@ -114,8 +114,10 @@ class AssemblyInspector:
                     continue
         return issues
 
-    def check_installed_rpms_in_image(self, dg_key: str, build_record_inspector: BuildRecordInspector,
-                                      package_rpm_finder: Optional[PackageRpmFinder]):
+    def check_installed_rpms_in_image(
+        self, dg_key: str, build_record_inspector: BuildRecordInspector,
+        package_rpm_finder: Optional[PackageRpmFinder],
+    ):
         """
         Analyzes an image build to check if installed packages are allowed to assemble.
         """
@@ -229,12 +231,14 @@ class AssemblyInspector:
         if self.runtime.assembly_type is AssemblyTypes.STREAM:
             # For stream alone, we want to verify that the very latest RPMs are installed.
             for installed_nvr, newest_nvr, repo in await rhcos_build.find_non_latest_rpms():
-                issues.append(AssemblyIssue(
-                    f"Found outdated RPM ({installed_nvr}) "
-                    f"installed in {rhcos_build.build_id} ({rhcos_build.brew_arch})"
-                    f" when {newest_nvr} is available in repo {repo}",
-                    component="rhcos", code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD
-                ))
+                issues.append(
+                    AssemblyIssue(
+                        f"Found outdated RPM ({installed_nvr}) "
+                        f"installed in {rhcos_build.build_id} ({rhcos_build.brew_arch})"
+                        f" when {newest_nvr} is available in repo {repo}",
+                        component="rhcos", code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD,
+                    ),
+                )
 
         return issues
 
@@ -296,8 +300,10 @@ class AssemblyInspector:
 
         return issues
 
-    def check_group_image_consistency(self, build_record_inspector: BuildRecordInspector,
-                                      package_rpm_finder: Optional[PackageRpmFinder]) -> List[AssemblyIssue]:
+    def check_group_image_consistency(
+        self, build_record_inspector: BuildRecordInspector,
+        package_rpm_finder: Optional[PackageRpmFinder],
+    ) -> List[AssemblyIssue]:
         """
         Evaluate the current assembly build and an image in the group and check whether they are consistent with
         :param build_record_inspector: The brew build to check
@@ -510,8 +516,10 @@ class AssemblyInspector:
 
             try:
                 version = self.runtime.get_minor_version()
-                build_id, pullspec = RHCOSBuildFinder(runtime, version, brew_arch, private,
-                                                      custom=custom).latest_container(container_conf)
+                build_id, pullspec = RHCOSBuildFinder(
+                    runtime, version, brew_arch, private,
+                    custom=custom,
+                ).latest_container(container_conf)
                 if not pullspec:
                     raise IOError(f"No RHCOS latest found for {version} / {brew_arch}")
                 pullspec_for_tag[container_conf.name] = pullspec

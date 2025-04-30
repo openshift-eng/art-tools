@@ -102,10 +102,10 @@ class Environments(StrictBaseModel):
     """ Environments to release the shipment to """
 
     stage: ShipmentEnv = Field(
-        ..., description='Config for releasing to stage environment'
+        ..., description='Config for releasing to stage environment',
     )
     prod: ShipmentEnv = Field(
-        ..., description='Config for releasing to prod environment'
+        ..., description='Config for releasing to prod environment',
     )
 
 

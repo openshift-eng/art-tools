@@ -27,19 +27,21 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         return runtime
 
     def _make_rpm_meta(self, runtime, source_sha, distgit_sha):
-        data_obj = gitdata.DataObj("foo", "/path/to/ocp-build-data/rpms/foo.yml", {
-            "name": "foo",
-            "content": {
-                "source": {
-                    "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
-                    "specfile": "foo.spec",
-                    "modifications": [
-                        {"action": "add", "command": ["my-command", "--my-arg"]}
-                    ],
-                }
+        data_obj = gitdata.DataObj(
+            "foo", "/path/to/ocp-build-data/rpms/foo.yml", {
+                "name": "foo",
+                "content": {
+                    "source": {
+                        "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
+                        "specfile": "foo.spec",
+                        "modifications": [
+                            {"action": "add", "command": ["my-command", "--my-arg"]},
+                        ],
+                    },
+                },
+                "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
             },
-            "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
-        })
+        )
 
         rpm = rpmcfg.RPMMetadata(runtime, data_obj, clone_source=False)
         rpm.clone_source = mock.MagicMock(return_value=source_sha)
@@ -65,8 +67,10 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
     @mock.patch("aiofiles.open")
     @mock.patch("artcommonlib.exectools.cmd_gather_async")
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_rebase(self, mocked_cmd_assert_async: mock.Mock, mocked_cmd_gather_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
-                          mocked_copy: mock.Mock, mocked_mkdir: mock.Mock):
+    async def test_rebase(
+        self, mocked_cmd_assert_async: mock.Mock, mocked_cmd_gather_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
+        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock,
+    ):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime()
@@ -91,13 +95,15 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         mocked_copy.assert_any_call(Path(rpm.source_path) / "a.diff", dg.dg_path / "a.diff", follow_symlinks=False)
         mocked_copy.assert_any_call(Path(rpm.source_path) / "b/c.diff", dg.dg_path / "b/c.diff", follow_symlinks=False)
         rpm._run_modifications.assert_called_once_with(f"{rpm.source_path}/foo.spec", rpm.source_path)
-        dg.commit.assert_called_once_with(f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
-                                          commit_attributes={
-                                              'version': '1.2.3',
-                                              'release': '202104070000.test.p0.g3f17b42',
-                                              'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
-                                              'io.openshift.build.source-location': None}
-                                          )
+        dg.commit.assert_called_once_with(
+            f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
+            commit_attributes={
+                'version': '1.2.3',
+                'release': '202104070000.test.p0.g3f17b42',
+                'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
+                'io.openshift.build.source-location': None,
+            },
+        )
         dg.push_async.assert_called_once()
 
     @mock.patch("doozerlib.rpm_builder.Path.mkdir")
@@ -106,8 +112,10 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
     @mock.patch("aiofiles.open")
     @mock.patch("artcommonlib.exectools.cmd_gather_async")
     @mock.patch("artcommonlib.exectools.cmd_assert_async")
-    async def test_rebase_with_assembly(self, mocked_cmd_assert_async: mock.Mock, mocked_cmd_gather_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
-                                        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock):
+    async def test_rebase_with_assembly(
+        self, mocked_cmd_assert_async: mock.Mock, mocked_cmd_gather_async: mock.Mock, mocked_open: mock.Mock, mocked_os_remove: mock.Mock,
+        mocked_copy: mock.Mock, mocked_mkdir: mock.Mock,
+    ):
         source_sha = "3f17b42b8aa7d294c0d2b6f946af5fe488f3a722"
         distgit_sha = "4cd7f576ad005aadd3c25ea56c7986bc6a7e7340"
         runtime = self._make_runtime(assembly='tester')
@@ -132,12 +140,15 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         mocked_copy.assert_any_call(Path(rpm.source_path) / "a.diff", dg.dg_path / "a.diff", follow_symlinks=False)
         mocked_copy.assert_any_call(Path(rpm.source_path) / "b/c.diff", dg.dg_path / "b/c.diff", follow_symlinks=False)
         rpm._run_modifications.assert_called_once_with(f'{rpm.source_path}/foo.spec', rpm.source_path)
-        dg.commit.assert_called_once_with(f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
-                                          commit_attributes={
-                                              'version': '1.2.3',
-                                              'release': '202104070000.test.p0.g3f17b42.assembly.tester',
-                                              'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
-                                              'io.openshift.build.source-location': None})
+        dg.commit.assert_called_once_with(
+            f"Automatic commit of package [{rpm.config.name}] release [{rpm.version}-{rpm.release}].",
+            commit_attributes={
+                'version': '1.2.3',
+                'release': '202104070000.test.p0.g3f17b42.assembly.tester',
+                'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
+                'io.openshift.build.source-location': None,
+            },
+        )
         dg.push_async.assert_called_once()
 
     @mock.patch("artcommonlib.exectools.cmd_gather_async")
@@ -151,12 +162,17 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         dg = rpm.distgit_repo()
         builder = RPMBuilder(runtime, scratch=False, dry_run=False)
         builder._golang_required = mock.AsyncMock(return_value=True)
-        builder._build_target_async = mock.AsyncMock(side_effect=lambda _, target: {
-            "rhaos-4.4-rhel-8-candidate": (10001, "https://brewweb.example.com/brew/taskinfo?taskID=10001"),
-            "rhaos-4.4-rhel-7-candidate": (10002, "https://brewweb.example.com/brew/taskinfo?taskID=10002"),
-        }[target])
-        builder._watch_tasks_async = mock.AsyncMock(side_effect=lambda task_ids, _: {
-            task_id: None for task_id in task_ids})
+        builder._build_target_async = mock.AsyncMock(
+            side_effect=lambda _, target: {
+                "rhaos-4.4-rhel-8-candidate": (10001, "https://brewweb.example.com/brew/taskinfo?taskID=10001"),
+                "rhaos-4.4-rhel-7-candidate": (10002, "https://brewweb.example.com/brew/taskinfo?taskID=10002"),
+            }[target],
+        )
+        builder._watch_tasks_async = mock.AsyncMock(
+            side_effect=lambda task_ids, _: {
+            task_id: None for task_id in task_ids
+            },
+        )
         mocked_cmd_gather_async.return_value = (0, "some stdout", "some stderr")
         dg.resolve_specfile_async = mock.AsyncMock(return_value=(dg.dg_path / "foo.spec", ("foo", "1.2.3", "1"), source_sha))
         koji_api = runtime.shared_koji_client_session.return_value.__enter__.return_value
@@ -188,12 +204,17 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         dg = rpm.distgit_repo()
         builder = RPMBuilder(runtime, scratch=False, dry_run=False)
         builder._golang_required = mock.AsyncMock(return_value=True)
-        builder._build_target_async = mock.AsyncMock(side_effect=lambda _, target: {
-            "rhaos-4.4-rhel-8-candidate": (10001, "https://brewweb.example.com/brew/taskinfo?taskID=10001"),
-            "rhaos-4.4-rhel-7-candidate": (10002, "https://brewweb.example.com/brew/taskinfo?taskID=10002"),
-        }[target])
-        builder._watch_tasks_async = mock.AsyncMock(side_effect=lambda task_ids, _: {
-            task_id: "Some error" for task_id in task_ids})
+        builder._build_target_async = mock.AsyncMock(
+            side_effect=lambda _, target: {
+                "rhaos-4.4-rhel-8-candidate": (10001, "https://brewweb.example.com/brew/taskinfo?taskID=10001"),
+                "rhaos-4.4-rhel-7-candidate": (10002, "https://brewweb.example.com/brew/taskinfo?taskID=10002"),
+            }[target],
+        )
+        builder._watch_tasks_async = mock.AsyncMock(
+            side_effect=lambda task_ids, _: {
+            task_id: "Some error" for task_id in task_ids
+            },
+        )
         mocked_cmd_gather_async.return_value = (0, "some stdout", "some stderr")
         dg.resolve_specfile_async = mock.AsyncMock(return_value=(dg.dg_path / "foo.spec", ("foo", "1.2.3", "1"), source_sha))
 
@@ -215,20 +236,24 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
 
     @mock.patch("doozerlib.rpm_builder.exectools.cmd_gather_async")
     async def test_golang_required(self, mocked_cmd_gather_async: mock.Mock):
-        mocked_cmd_gather_async.return_value = (0, """
+        mocked_cmd_gather_async.return_value = (
+            0, """
 git
 python3-devel
-        """, "")
+        """, "",
+        )
         builder = RPMBuilder(mock.Mock(), scratch=False, dry_run=False)
         actual = await builder._golang_required("./foo.spec")
         self.assertFalse(actual)
 
-        mocked_cmd_gather_async.return_value = (0, """
+        mocked_cmd_gather_async.return_value = (
+            0, """
 git
 python3-devel
 golang-1.2.3
 systemd-units
-        """, "")
+        """, "",
+        )
         builder = RPMBuilder(mock.Mock(), scratch=False, dry_run=False)
         actual = await builder._golang_required("./foo.spec")
         self.assertTrue(actual)
@@ -282,10 +307,12 @@ Some description
         runtime = self._make_runtime()
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
-        mocked_cmd_gather_async.return_value = (0, """
+        mocked_cmd_gather_async.return_value = (
+            0, """
 Created task: 123456
 Task info: https://brewweb.example.com/brew/taskinfo?taskID=123456
-        """, "")
+        """, "",
+        )
 
         # call with scratch=False
         builder = RPMBuilder(mock.Mock(), scratch=False, dry_run=False)

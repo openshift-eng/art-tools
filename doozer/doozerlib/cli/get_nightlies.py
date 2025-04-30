@@ -29,10 +29,12 @@ logger = logutil.get_logger(__name__)
 @click.option("--latest", is_flag=True, help="Just get the latest nightlies for all arches (accepted or not)")
 @click.pass_obj
 @click_coroutine
-async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arches: Tuple[str, ...],
-                        allow_inconsistency: bool,
-                        allow_pending: bool,
-                        allow_rejected: bool, limit: int, details: bool, latest: bool):
+async def get_nightlies(
+    runtime: Runtime, matching: Tuple[str, ...], exclude_arches: Tuple[str, ...],
+    allow_inconsistency: bool,
+    allow_pending: bool,
+    allow_rejected: bool, limit: int, details: bool, latest: bool,
+):
     """
     Find set(s) including a nightly for each arch with matching contents
     according to source commits and NVRs (or in the case of RHCOS containers,
@@ -113,11 +115,13 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
         exit(1)
 
     # retrieve release info for each nightly image (with concurrency)
-    await asyncio.gather(*[
-        nightly.populate_nightly_release_data()
-        for arch, nightlies in nightlies_for_arch.items()
-        for nightly in nightlies
-    ])
+    await asyncio.gather(
+        *[
+            nightly.populate_nightly_release_data()
+            for arch, nightlies in nightlies_for_arch.items()
+            for nightly in nightlies
+        ],
+    )
 
     # find sets of nightlies where all arches have equivalent content
     inconsistent_nightly_sets = []
@@ -208,7 +212,7 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
                 raise ValueError("Token empty, might not be logged in to correct cluster")
 
             headers = {
-                "Authorization": f"Bearer {token}"
+                "Authorization": f"Bearer {token}",
             }
 
         async with aiohttp.ClientSession() as session:
@@ -287,7 +291,8 @@ class Nightly:
 
     def __init__(
             self, nightly_info: Dict = None, release_image_info: Dict = None,
-            name: str = None, phase: str = None, pullspec: str = None):
+            name: str = None, phase: str = None, pullspec: str = None,
+    ):
 
         self.nightly_info = nightly_info or {}
         self.release_image_info = release_image_info or {}
@@ -373,10 +378,12 @@ class Nightly:
 
     async def populate_nightly_content(self, runtime, arch: str):
         """Retrieve image NVRs and RHCOS build data concurrently for deeper comparison"""
-        await asyncio.gather(*(
-            self.retrieve_image_info_async(self.pullspec_for_tag[tag])
-            for tag in self.commit_for_tag
-        ))
+        await asyncio.gather(
+            *(
+                self.retrieve_image_info_async(self.pullspec_for_tag[tag])
+                for tag in self.commit_for_tag
+            ),
+        )
         if not self.rhcos_inspector:
             ps4tag = {tag: self.pullspec_for_tag[tag] for tag in self.rhcos_tag_names}
             self.rhcos_inspector = RHCOSBuildInspector(runtime, ps4tag, arch)
@@ -488,10 +495,12 @@ class NightlySet:
 
     async def populate_nightly_content(self, runtime):
         """Prepare Nightlys for deeper (more expensive) comparison"""
-        await asyncio.gather(*(
-            nightly.populate_nightly_content(runtime, arch)
-            for arch, nightly in self.nightly_for_arch.items()
-        ))
+        await asyncio.gather(
+            *(
+                nightly.populate_nightly_content(runtime, arch)
+                for arch, nightly in self.nightly_for_arch.items()
+            ),
+        )
 
     async def deeper_equivalence(self) -> bool:
         """Check that all Nightlys have deeper equivalency"""
