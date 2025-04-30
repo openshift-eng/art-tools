@@ -5,7 +5,6 @@ from validator import cgit
 
 
 class TestCgit(unittest.TestCase):
-
     def setUp(self):
         self.group_cfg = {
             'urls': {'cgit': 'http://my.cgit.endpoint'},
@@ -50,7 +49,7 @@ class TestCgit(unittest.TestCase):
         self.assertEqual(url, 'http://my.cgit.endpoint/containers/my-img')
         self.assertEqual(
             err,
-            ('This validation must run from a network ' 'with access to http://my.cgit.endpoint'),
+            ('This validation must run from a network with access to http://my.cgit.endpoint'),
         )
 
     def test_cgit_repository_doesnt_exist(self):
@@ -100,7 +99,7 @@ class TestCgit(unittest.TestCase):
         self.assertIsNone(err)
 
     def test_branch_doesnt_exist(self):
-        branch_url = 'http://my.cgit.endpoint/containers/my-img/' 'log?h=rhaos-4.2-rhel-999'  # defined on setUp
+        branch_url = 'http://my.cgit.endpoint/containers/my-img/log?h=rhaos-4.2-rhel-999'  # defined on setUp
 
         (flexmock(cgit.support).should_receive('resource_exists').with_args(branch_url).and_return(False))
 

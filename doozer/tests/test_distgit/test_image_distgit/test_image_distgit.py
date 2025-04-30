@@ -18,7 +18,6 @@ from ..support import MockScanner, TestDistgit
 
 
 class TestImageDistGit(TestDistgit):
-
     def setUp(self):
         super(TestImageDistGit, self).setUp()
         self.img_dg = distgit.ImageDistGitRepo(self.md, autoclone=False)
@@ -333,7 +332,7 @@ class TestImageDistGit(TestDistgit):
         """
         Check the logic for matching a commit from cgit
         """
-        test_file = u"""
+        test_file = """
             from foo
             label "{}"="spam"
         """.format(
@@ -364,7 +363,7 @@ class TestImageDistGit(TestDistgit):
         # source specified and matches Dockerfile in dist-git
         self.img_dg.config.content.source = Model()
         self.img_dg.config.content.source.git = dict()
-        test_file = u"""
+        test_file = """
             from foo
             label "{}"="spam"
         """.format(

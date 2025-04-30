@@ -382,7 +382,6 @@ installonly_limit=3
         exectools.cmd_assert('yum clean all')  # clean the cache first to avoid outdated repomd.xml files
 
         for repo in repos.values():
-
             # If specific names were specified, only synchronize them.
             if names and repo.name not in names:
                 continue

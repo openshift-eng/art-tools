@@ -59,13 +59,13 @@ def releases_gen_assembly(ctx, name):
     metavar='4.y.z-ARCH',
     default=[],
     multiple=True,
-    help='The name and arch of an official release (e.g. 4.8.3-x86_64) ' 'where ARCH in [x86_64, s390x, ppc64le, aarch64].',
+    help='The name and arch of an official release (e.g. 4.8.3-x86_64) where ARCH in [x86_64, s390x, ppc64le, aarch64].',
 )
 @click.option(
     "--custom",
     default=False,
     is_flag=True,
-    help="If specified, weaker conformance criteria are applied " "(e.g. a nightly is not required for every arch).",
+    help="If specified, weaker conformance criteria are applied (e.g. a nightly is not required for every arch).",
 )
 @click.option(
     "--pre-ga-mode",
@@ -196,7 +196,6 @@ class GenAssemblyCli:
         suggestions_url: Optional[str] = None,
         gen_microshift: bool = False,
     ):
-
         self.runtime = runtime
         # The name of the assembly we are going to output
         self.gen_assembly_name = gen_assembly_name
@@ -312,7 +311,7 @@ class GenAssemblyCli:
             standard_pullspec = f'quay.io/openshift-release-dev/ocp-release:{standard_release_name}'
             if brew_cpu_arch in self.release_pullspecs:
                 raise ValueError(
-                    f'Cannot process {standard_release_name} since ' f'{self.release_pullspecs[brew_cpu_arch]} is already included',
+                    f'Cannot process {standard_release_name} since {self.release_pullspecs[brew_cpu_arch]} is already included',
                 )
             self.release_pullspecs[brew_cpu_arch] = standard_pullspec
 
@@ -377,19 +376,18 @@ class GenAssemblyCli:
                     if explicit:
                         if payload_name != payload_tag_name:
                             self.logger.warning(
-                                f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is ' 'explicitly defined in image config',
+                                f'Ignoring payload tag {payload_tag_name} since payload_name={payload_name} is explicitly defined in image config',
                             )
                             continue
                         else:
                             # override the build for this package
                             self.logger.warning(
-                                f'Selecting payload tag {payload_tag_name} since payload_name={payload_name} is '
-                                'explicitly defined in image config',
+                                f'Selecting payload tag {payload_tag_name} since payload_name={payload_name} is explicitly defined in image config',
                             )
                             self.component_image_builds[package_name] = build_inspector
                     else:
                         self._exit_with_error(
-                            'Found disparate nvrs between releases; ' f'{existing_nvr} in processed and {build_nvr} in {pullspec}',
+                            f'Found disparate nvrs between releases; {existing_nvr} in processed and {build_nvr} in {pullspec}',
                         )
             else:
                 # Otherwise, record the build as the first time we've seen an NVR for this
@@ -464,7 +462,6 @@ class GenAssemblyCli:
         """
 
         for image_meta in self.runtime.image_metas():
-
             if image_meta.base_only or not image_meta.for_release:
                 continue
 
@@ -534,8 +531,7 @@ class GenAssemblyCli:
 
             if basis_event_build_nvr != ref_nightlies_component_build_nvr:
                 self.logger.info(
-                    '%s build %s was selected by estimated basis event. That is not what is in the '
-                    'specified releases, so this image will be pinned.',
+                    '%s build %s was selected by estimated basis event. That is not what is in the specified releases, so this image will be pinned.',
                     dgk,
                     basis_event_build_nvr,
                 )
@@ -560,7 +556,7 @@ class GenAssemblyCli:
                 # This is permitted for custom assemblies which do not need to be assembled for every
                 # architecture. The customer may just need x86_64.
                 self.logger.info(
-                    'Did not find RHCOS "%s" image for active group architecture: %s; ' 'ignoring for custom assembly type.',
+                    'Did not find RHCOS "%s" image for active group architecture: %s; ignoring for custom assembly type.',
                     self.primary_rhcos_tag,
                     arch,
                 )
@@ -836,7 +832,7 @@ class GenAssemblyCli:
                 image_member_overrides.append(
                     {
                         'distgit_key': dgk,
-                        'why': 'Query from assembly basis event failed to replicate ' 'referenced nightly content exactly. Pinning to replicate.',
+                        'why': 'Query from assembly basis event failed to replicate referenced nightly content exactly. Pinning to replicate.',
                         'metadata': {
                             'is': {
                                 'nvr': build_inspector.get_nvr(),
@@ -849,7 +845,7 @@ class GenAssemblyCli:
                 rpm_member_overrides.append(
                     {
                         'distgit_key': dgk,
-                        'why': 'Query from assembly basis event failed to replicate ' 'referenced nightly content exactly. Pinning to replicate.',
+                        'why': 'Query from assembly basis event failed to replicate referenced nightly content exactly. Pinning to replicate.',
                         'metadata': {
                             'is': {
                                 f'el{el_ver}': self.component_rpm_builds[package_name][el_ver]['nvr']

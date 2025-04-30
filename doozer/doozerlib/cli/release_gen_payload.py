@@ -85,7 +85,7 @@ class RepositoryType(Enum):
     metavar="REPO",
     required=False,
     default="ocp-release-nightly",
-    help="Quay REPOSITORY in ORGANIZATION to push release payloads (used for multi-arch)\n" "default=ocp-release-nightly",
+    help="Quay REPOSITORY in ORGANIZATION to push release payloads (used for multi-arch)\ndefault=ocp-release-nightly",
 )
 @click.option(
     "--output-dir",
@@ -383,7 +383,6 @@ class GenPayloadCli:
         moist_run: bool = False,
         embargo_permit_ack: bool = False,
     ):
-
         self.runtime = runtime
         self.package_rpm_finder = PackageRpmFinder(runtime)
         self.payload_generator = PayloadGenerator(runtime, self.package_rpm_finder)
@@ -486,8 +485,7 @@ class GenPayloadCli:
         # check that we can produce a full multi nightly if requested
         if self.apply_multi_arch and (rt.images or rt.exclude or self.exclude_arch):
             raise DoozerFatalError(
-                "Cannot create a multi nightly without including the full set of images. "
-                "Either include all images/arches or omit --apply-multi-arch",
+                "Cannot create a multi nightly without including the full set of images. Either include all images/arches or omit --apply-multi-arch",
             )
 
     async def generate_assembly_report(self, assembly_inspector: AssemblyInspector) -> Dict:
@@ -736,7 +734,9 @@ class GenPayloadCli:
         return f"quay.io/{org}/{repo}"
 
     @TRACER.start_as_current_span("GenPayloadCli.generate_payload_entries")
-    async def generate_payload_entries(self, assembly_inspector: AssemblyInspector) -> (
+    async def generate_payload_entries(
+        self, assembly_inspector: AssemblyInspector
+    ) -> (
         Dict[str, Dict[str, PayloadEntry]],
         Dict[str, Dict[str, PayloadEntry]],
     ):
@@ -907,7 +907,7 @@ class GenPayloadCli:
             if rhcos_inconsistencies:
                 self.assembly_issues.append(
                     AssemblyIssue(
-                        f"Found RHCOS inconsistencies in builds {rhcos_builds} " f"(private={privacy_mode}): {rhcos_inconsistencies}",
+                        f"Found RHCOS inconsistencies in builds {rhcos_builds} (private={privacy_mode}): {rhcos_inconsistencies}",
                         component="rhcos",
                         code=AssemblyIssueCode.INCONSISTENT_RHCOS_RPMS,
                     ),
@@ -921,7 +921,7 @@ class GenPayloadCli:
                 if inconsistencies:
                     self.assembly_issues.append(
                         AssemblyIssue(
-                            f"Found kernel inconsistencies in RHCOS build {rhcos_build} " f"(private={privacy_mode}): {inconsistencies}",
+                            f"Found kernel inconsistencies in RHCOS build {rhcos_build} (private={privacy_mode}): {inconsistencies}",
                             component="rhcos",
                             code=AssemblyIssueCode.FAILED_CROSS_RPM_VERSIONS_REQUIREMENT,
                         ),
@@ -1040,7 +1040,7 @@ class GenPayloadCli:
                 await self.sync_heterogeneous_payloads(multi_specs)
             else:
                 self.logger.info(
-                    "--apply-multi-arch is enabled but the group config / assembly does " "not have group.multi_arch.enabled==true",
+                    "--apply-multi-arch is enabled but the group config / assembly does not have group.multi_arch.enabled==true",
                 )
 
     async def mirror_payload_content(
@@ -1174,7 +1174,7 @@ class GenPayloadCli:
         integration imagestream.
         """
 
-        filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}" f"{'-partial' if incomplete_payload_update else ''}.yaml"
+        filename = f"updated-tags-for.{imagestream_namespace}.{imagestream_name}{'-partial' if incomplete_payload_update else ''}.yaml"
         async with aiofiles.open(self.output_path.joinpath(filename), mode="w+", encoding="utf-8") as out_file:
             istream_spec = self.payload_generator.build_payload_imagestream(
                 imagestream_name,
@@ -1210,7 +1210,7 @@ class GenPayloadCli:
 
             if pruning_tags:
                 self.logger.warning(
-                    'The following tag names are no longer part of the release ' 'and will be pruned in %s:%s: %s',
+                    'The following tag names are no longer part of the release and will be pruned in %s:%s: %s',
                     imagestream_namespace,
                     imagestream_name,
                     pruning_tags,
@@ -1397,14 +1397,13 @@ class GenPayloadCli:
         """
 
         for private_mode in self.privacy_modes:
-
             if private_mode:
                 # The CI image registry does not support manifest lists. Thus, we need to publish
                 # our nightly release payloads to quay.io. As of this writing, we don't have a
                 # private quay repository into which we could push embargoed release heterogeneous
                 # release payloads.
                 red_print(
-                    "PRIVATE MODE MULTI PAYLOADS ARE CURRENTLY DISABLED. " "WE NEED A PRIVATE QUAY REPO FOR PRIVATE MULTI RELEASE PAYLOADS",
+                    "PRIVATE MODE MULTI PAYLOADS ARE CURRENTLY DISABLED. WE NEED A PRIVATE QUAY REPO FOR PRIVATE MULTI RELEASE PAYLOADS",
                 )
                 continue
 
@@ -1461,7 +1460,7 @@ class GenPayloadCli:
             # We are publicizing a nightly. Unlike single-arch payloads, the release controller does
             # not react to 4.x-art-latest updates and create a timestamp-based name. We create the
             # nightly name in doozer.
-            multi_release_istag = f"{self.runtime.get_minor_version()}.0-0.nightly" f"{go_suffix_for_arch('multi', private_mode)}-{multi_ts}"
+            multi_release_istag = f"{self.runtime.get_minor_version()}.0-0.nightly{go_suffix_for_arch('multi', private_mode)}-{multi_ts}"
             # Tag the release image with same name as release displayed in the release controller
             multi_release_manifest_list_tag = multi_release_istag
         else:
@@ -1470,9 +1469,7 @@ class GenPayloadCli:
             # image is to provide inputs to the promotion job, which looks at the imagestream
             # and not for this tag.
             multi_release_manifest_list_tag = (
-                f"{self.runtime.get_minor_version()}.0-0.art-assembly-"
-                f"{self.runtime.assembly}{go_suffix_for_arch('multi', private_mode)}-"
-                f"{multi_ts}"
+                f"{self.runtime.get_minor_version()}.0-0.art-assembly-{self.runtime.assembly}{go_suffix_for_arch('multi', private_mode)}-{multi_ts}"
             )
             # This will be the singular tag we create in an imagestream on app.ci. The actual name
             # does not matter, because it will not be visible in the release controller and will not
@@ -1535,7 +1532,7 @@ class GenPayloadCli:
         # directly on fedora. The format for input is https://github.com/estesp/manifest-tool
         # Let's create some yaml input files.
         component_manifest_path: Path = self.output_path.joinpath(
-            f"{imagestream_namespace}." f"{tag_name}.manifest-list.yaml",
+            f"{imagestream_namespace}.{tag_name}.manifest-list.yaml",
         )
         self.logger.info(f"Stitching {component_manifest_path} manifest-list spec for component {tag_name}")
         manifests: List[Dict] = []
@@ -1813,7 +1810,6 @@ class PayloadGenerator:
 
         mismatched_siblings: List[Tuple[BuildRecordInspector, BuildRecordInspector]] = []
         for build_record_inspector in build_record_inspectors:
-
             if not build_record_inspector:
                 # No build for this component at present.
                 continue
@@ -1955,7 +1951,7 @@ class PayloadGenerator:
             if not bbii:
                 issues.append(
                     AssemblyIssue(
-                        f"RHCOS consistency configuration specifies a payload tag '{payload_tag}'" " that does not exist",
+                        f"RHCOS consistency configuration specifies a payload tag '{payload_tag}' that does not exist",
                         payload_tag,
                         AssemblyIssueCode.IMPERMISSIBLE,
                     ),
@@ -1995,7 +1991,7 @@ class PayloadGenerator:
             build = member_nvrs[pkg]
         except KeyError:
             return AssemblyIssue(
-                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' " f"should install package '{pkg}', but it does not",
+                f"RHCOS consistency configuration specifies that payload tag '{payload_tag}' should install package '{pkg}', but it does not",
                 payload_tag,
                 AssemblyIssueCode.FAILED_CONSISTENCY_REQUIREMENT,
             )
@@ -2067,11 +2063,9 @@ class PayloadGenerator:
         arch: str,
         dest_repo: str,
     ) -> Dict[str, PayloadEntry]:
-
         # Maps release payload tag name to the PayloadEntry for the image.
         members: Dict[str, Optional[PayloadEntry]] = dict()
         for payload_tag, image_inspector in self.get_group_payload_tag_mapping(assembly_inspector, arch).items():
-
             if not image_inspector:
                 # There is no build for this payload tag for this CPU arch. This
                 # will be filled in later in this method for the final list.
@@ -2139,7 +2133,7 @@ class PayloadGenerator:
                     # Impermissible, need to be sure of having the primary container in the payload
                     issues.append(
                         AssemblyIssue(
-                            f"RHCOS build {rhcos_build} metadata lacks entry for primary container " f"{container_config.name}: {ex}",
+                            f"RHCOS build {rhcos_build} metadata lacks entry for primary container {container_config.name}: {ex}",
                             component=container_config.name,
                         ),
                     )
@@ -2147,7 +2141,7 @@ class PayloadGenerator:
                 else:
                     issues.append(
                         AssemblyIssue(
-                            f"RHCOS build {rhcos_build} metadata lacks entry for non-primary container " f"{container_config.name}: {ex}",
+                            f"RHCOS build {rhcos_build} metadata lacks entry for non-primary container {container_config.name}: {ex}",
                             component=container_config.name,
                             code=AssemblyIssueCode.MISSING_RHCOS_CONTAINER,
                         ),
@@ -2271,7 +2265,6 @@ class PayloadGenerator:
             Optional[ImageInspector],
         ] = dict()  # Maps release payload tag name to the archive which should populate it
         for dgk, build_inspector in assembly_inspector.get_group_release_images().items():
-
             if build_inspector is None:
                 # There was no build for this image found associated with the assembly.
                 # In this case, don't put the tag_name into the imagestream. This is not good,
@@ -2329,7 +2322,6 @@ class PayloadGenerator:
         nightly: str,
         arch: str,
     ) -> List[AssemblyIssue]:
-
         runtime = assembly_inspector.runtime
 
         def terminal_issue(msg: str) -> List[AssemblyIssue]:
@@ -2372,7 +2364,7 @@ class PayloadGenerator:
             if "@" not in payload_tag_pullspec:
                 # This speaks to an invalid nightly, so raise and exception
                 raise IOError(
-                    f"Expected pullspec in {nightly}:{payload_tag_name} to be sha digest " f"but found invalid: {payload_tag_pullspec}",
+                    f"Expected pullspec in {nightly}:{payload_tag_name} to be sha digest but found invalid: {payload_tag_pullspec}",
                 )
 
             pullspec_sha = payload_tag_pullspec.rsplit("@", 1)[-1]

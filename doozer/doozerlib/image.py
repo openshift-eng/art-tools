@@ -17,7 +17,6 @@ from doozerlib.metadata import Metadata, RebuildHint, RebuildHintCode
 
 
 class ImageMetadata(Metadata):
-
     def __init__(
         self,
         runtime: "doozerlib.Runtime",

@@ -212,7 +212,7 @@ class TagRPMsCli:
 
                     # e.g. kernel-5.14.0-284.28.1.el9_2, kernel-rt-5.14.0-284.28.1.rt14.313.el9_2
                     kernel_version = f"{kernel_build['version']}-{split_el_suffix_in_release(kernel_build['release'])[0]}"
-                    kernel_rt_version = f"{kernel_rt_build['version']}-" f"{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
+                    kernel_rt_version = f"{kernel_rt_build['version']}-{split_el_suffix_in_release(kernel_rt_build['release'])[0]}"
                     if kernel_version not in kernel_rt_version:
                         raise ValueError(f"Version mismatch for kernel ({kernel_version}) and kernel-rt ({kernel_rt_version})")
                     else:

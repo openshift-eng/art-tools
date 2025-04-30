@@ -75,7 +75,6 @@ class TestAdvisory(unittest.TestCase):
 
 
 class TestErrata(unittest.TestCase):
-
     def test_parse_date(self):
         """Verify we can parse the date string returned from Errata Tool"""
         d_expected = '2018-03-02 15:19:08'
@@ -121,7 +120,6 @@ class TestErrata(unittest.TestCase):
 
 
 class TestAdvisoryImages(unittest.TestCase):
-
     mocked_ocp3_response = {
         'kube-rbac-proxy-container-v3.11.154-1': {
             'docker': {

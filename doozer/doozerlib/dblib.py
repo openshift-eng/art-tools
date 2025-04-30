@@ -40,11 +40,9 @@ def try_connecting(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-
         db = args[0]
 
         if db.mysql_db_env_var_setup:
-
             if not db.connection or not db.connection.is_connected():
                 count = 1
 
@@ -71,7 +69,6 @@ def try_connecting(func):
 
 
 class DB(object):
-
     def __init__(self, runtime, environment, dry_run=False):
         """
         :param runtime: The runtime
@@ -108,7 +105,7 @@ class DB(object):
 
         if not (constants.DB_USER in os.environ and constants.DB_PWD_NAME in os.environ):
             self.runtime.logger.info(
-                "Environment variables required for db operation missing. Doozer will be running" "in no DB use mode.",
+                "Environment variables required for db operation missing. Doozer will be runningin no DB use mode.",
             )
             return False
 
@@ -276,7 +273,6 @@ class DB(object):
             payload_columns.add(column)
 
         if not self._table_column_cache[table_name]:
-
             # if the table's column cache is not updates, load the cache and return
             # the table columns
 
@@ -289,7 +285,6 @@ class DB(object):
                 existing_columns.add(data[0])
                 self._table_column_cache[table_name][data[0]] = True
         else:
-
             # otherwise if table column cache found, return cache value
 
             self.runtime.logger.info("Found table [{}] column cache.".format(table_name))
@@ -345,8 +340,7 @@ class DB(object):
                     self._table_column_cache[table_name][missing_column] = True
 
                     self.runtime.logger.info(
-                        "Added new column [{}] of identified type [{}] to table [{}] "
-                        "of database [{}].".format(
+                        "Added new column [{}] of identified type [{}] to table [{}] of database [{}].".format(
                             missing_column,
                             column_type,
                             table_name,
@@ -355,8 +349,7 @@ class DB(object):
                     )
                 except Exception as e:
                     self.runtime.logger.warning(
-                        "Could not add new column [{}] of identified type [{}] to table [{}] "
-                        "of database [{}]. Error: {}".format(
+                        "Could not add new column [{}] of identified type [{}] to table [{}] of database [{}]. Error: {}".format(
                             missing_column,
                             column_type,
                             table_name,
@@ -511,11 +504,9 @@ class Record(object):
     def __exit__(self, *args):
         try:
             with get_named_semaphore('dblib::mysql'):
-
                 attr_payload = {}
 
                 for k, v in self.attrs.items():
-
                     if v is None or v is Missing or v == '':
                         continue
                     else:

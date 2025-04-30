@@ -412,7 +412,6 @@ class KojiWrapperOpts(object):
 
 
 class KojiWrapperMetaReturn(object):
-
     def __init__(self, result, cache_hit=False):
         self.result = result
         self.cache_hit = cache_hit

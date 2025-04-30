@@ -8,7 +8,6 @@ from functional_tests import constants
 
 
 class TestVerifyAttachedOperators(unittest.TestCase):
-
     def setUp(self):
         self.patchers = [patch(f"elliottlib.cli.verify_attached_operators_cli.{it}", lambda x: x) for it in ["red_print", "green_print"]]
         for p in self.patchers:

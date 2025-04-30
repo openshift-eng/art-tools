@@ -124,7 +124,6 @@ def map_image_name(name, image_map):
 
 
 class DistGitRepo(object):
-
     def __init__(self, metadata: "Metadata", autoclone=True):
         self.metadata = metadata
         self.config: Model = metadata.config
@@ -181,7 +180,6 @@ class DistGitRepo(object):
             raise IOError(f'Attempt to clone downstream {self.metadata.distgit_key} after cloning disabled; a regression has been introduced.')
 
         with Dir(distgits_root_dir):
-
             namespace_dir = os.path.join(distgits_root_dir, self.metadata.namespace)
 
             # It is possible we have metadata for the same distgit twice in a group.
@@ -201,7 +199,6 @@ class DistGitRepo(object):
                         exectools.cmd_assert('git fetch --all', retries=3)
                         exectools.cmd_assert('git reset --hard @{upstream}', retries=3)
             else:
-
                 # Make a directory for the distgit namespace if it does not already exist
                 try:
                     os.mkdir(namespace_dir)
@@ -464,7 +461,6 @@ class DistGitRepo(object):
 
 
 class ImageDistGitRepo(DistGitRepo):
-
     source_labels = dict(
         old=dict(
             sha='io.openshift.source-repo-commit',
@@ -608,7 +604,7 @@ class ImageDistGitRepo(DistGitRepo):
                 cachito_enabled = True
             elif isinstance(self.config.content.source.pkg_managers, ListModel):
                 self.logger.warning(
-                    f"pkg_managers directive for {self.name} has no effect since cachito is not enabled in " "image meta or group config.",
+                    f"pkg_managers directive for {self.name} has no effect since cachito is not enabled in image meta or group config.",
                 )
         if cachito_enabled and not self.has_source():
             self.logger.warning("Cachito integration for distgit-only image %s is not supported.", self.name)
@@ -616,9 +612,7 @@ class ImageDistGitRepo(DistGitRepo):
         if cachito_enabled:
             if config_overrides.get("go", {}).get("modules"):
                 raise ValueError(f"Cachito integration is enabled for image {self.name}. Specifying `go.modules` in `container.yaml` is not allowed.")
-            pkg_managers = (
-                []
-            )  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
+            pkg_managers = []  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
             if isinstance(self.config.content.source.pkg_managers, ListModel):
                 # Use specified package managers
                 pkg_managers = self.config.content.source.pkg_managers.primitive()
@@ -870,12 +864,10 @@ class ImageDistGitRepo(DistGitRepo):
             registry_config_file = util.get_docker_config_json(registry_config_dir)
 
         with Dir(self.distgit_dir):
-
             if version_release_tuple:
                 version = version_release_tuple[0]
                 release = version_release_tuple[1]
             else:
-
                 # History
                 # We used to rely on the "release" label being set in the Dockerfile, but this is problematic for several reasons.
                 # (1) If 'release' is not set, OSBS will determine one automatically that does not conflict
@@ -1187,7 +1179,7 @@ class ImageDistGitRepo(DistGitRepo):
                                 comment_on_pr_obj.run()
                             except Exception as e:
                                 self.logger.error(
-                                    f"Error commenting on PR for build task id {task_id} for distgit" f"{self.metadata.name}: {e}",
+                                    f"Error commenting on PR for build task id {task_id} for distgit{self.metadata.name}: {e}",
                                 )
                         if not scratch:
                             push_version = build_info["version"]
@@ -1303,7 +1295,6 @@ class ImageDistGitRepo(DistGitRepo):
         return True
 
     def update_build_db(self, success_flag, task_id=None, scratch=False):
-
         if scratch:
             return
 
@@ -1573,7 +1564,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         # note: make changes working back from the end so that positions to splice don't change
         for subcmd in reversed(cmd_nodes):
-
             if subcmd.kind == "operator":
                 # we lose the line breaks in the original dockerfile,
                 # so try to format nicely around operators -- more readable git diffs.
@@ -1713,7 +1703,7 @@ class ImageDistGitRepo(DistGitRepo):
         if from_image_metadata is None:
             if not self.runtime.ignore_missing_base:
                 raise IOError(
-                    "Unable to find base image metadata [%s] in included images. " "Use --ignore-missing-base to ignore." % base,
+                    "Unable to find base image metadata [%s] in included images. Use --ignore-missing-base to ignore." % base,
                 )
             elif self.runtime.latest_parent_version or self.runtime.assembly_basis_event:
                 # If there is a basis event, we must look for latest; we can't just persist
@@ -1735,7 +1725,7 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 if from_image_metadata.private_fix is None:  # This shouldn't happen.
                     raise ValueError(
-                        f"Parent image {base} doesn't have .p? flag determined. " f"This indicates a bug in Doozer.",
+                        f"Parent image {base} doesn't have .p? flag determined. This indicates a bug in Doozer.",
                     )
                 # If the parent we are going to build is embargoed, this image should also be embargoed
                 if from_image_metadata.private_fix:
@@ -1756,7 +1746,7 @@ class ImageDistGitRepo(DistGitRepo):
         # consider using 'from!:' in the assembly metadata for this component. This will
         # allow you to fully pin the parent images (e.g. {'from!:' ['image': <pullspec>] })
         latest_build = self.metadata.get_latest_brew_build(default=None)
-        assembly_msg = f'{self.metadata.distgit_key} in assembly {self.runtime.assembly} ' f'with basis event {self.runtime.assembly_basis_event}'
+        assembly_msg = f'{self.metadata.distgit_key} in assembly {self.runtime.assembly} with basis event {self.runtime.assembly_basis_event}'
         if not latest_build:
             raise IOError(f'Unable to find latest build for {assembly_msg}')
         build_model = Model(dict_to_model=latest_build)
@@ -1764,7 +1754,7 @@ class ImageDistGitRepo(DistGitRepo):
             raise IOError(f'Unable to find latest build parent images in {latest_build} for {assembly_msg}')
         elif len(build_model.extra.image.parent_images) != len(parent_images):
             raise IOError(
-                f'Did not find the expected cardinality ({len(parent_images)} ' f'of parent images in {latest_build} for {assembly_msg}',
+                f'Did not find the expected cardinality ({len(parent_images)} of parent images in {latest_build} for {assembly_msg}',
             )
 
         # build_model.extra.image.parent_images is an array of tags
@@ -2171,7 +2161,6 @@ class ImageDistGitRepo(DistGitRepo):
             filtered_content = []
             in_mod_block = False
             for line in df_lines:
-
                 # Check for begin/end of mod block, skip any lines inside
                 if OIT_BEGIN in line:
                     in_mod_block = True
@@ -2434,7 +2423,7 @@ class ImageDistGitRepo(DistGitRepo):
                     content = f.read()
                     if content.count(spec):
                         content = content.replace(spec + '\n', replace + '\n')
-                        content = content.replace(spec + '\"', replace + '\"')
+                        content = content.replace(spec + '"', replace + '"')
                         f.seek(0)
                         f.truncate()
                         f.write(content)
@@ -2649,7 +2638,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         with df_path.open('w', encoding="utf-8") as df:
             for line in df_lines:
-
                 # Always remove the env line we update each time.
                 if env_update_line_flag in line:
                     continue
@@ -2747,7 +2735,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         dg_path = self.dg_path
         for ent in dg_path.iterdir():
-
             if ent.name in ignore_list:
                 continue
 
@@ -2975,7 +2962,6 @@ class ImageDistGitRepo(DistGitRepo):
 
 
 class RPMDistGitRepo(DistGitRepo):
-
     def __init__(self, metadata, autoclone=True):
         super(RPMDistGitRepo, self).__init__(metadata, autoclone)
         self.source = self.config.content.source

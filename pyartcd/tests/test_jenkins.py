@@ -83,10 +83,10 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(jenkins.get_build_path(), None)
 
         # Trailing slash will be removed
-        os.environ['BUILD_URL'] = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' 'job/aos-cd-builds/job/build%252Focp4/46870/'
+        os.environ['BUILD_URL'] = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/'
         self.assertEqual(
             jenkins.get_build_url(),
-            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' 'job/aos-cd-builds/job/build%252Focp4/46870',
+            'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870',
         )
 
         # Build path
@@ -94,8 +94,8 @@ class TestJenkinsStartBuild(unittest.TestCase):
         self.assertEqual(build_path, 'job/aos-cd-builds/job/build%252Focp4/46870')
 
     def test_get_build_id_from_url(self):
-        build_url = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' 'job/aos-cd-builds/job/build%252Focp4/46870/'
+        build_url = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870/'
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)
 
-        build_url = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/' 'job/aos-cd-builds/job/build%252Focp4/46870'
+        build_url = 'https://art-jenkins.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/job/aos-cd-builds/job/build%252Focp4/46870'
         self.assertEqual(jenkins.get_build_id_from_url(build_url), 46870)

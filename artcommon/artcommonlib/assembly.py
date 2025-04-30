@@ -14,7 +14,6 @@ class AssemblyTypes(Enum):
 
 
 class AssemblyIssueCode(Enum):
-
     # A class of issue so severe that we should not allow permits around it.
     IMPERMISSIBLE = 0
 

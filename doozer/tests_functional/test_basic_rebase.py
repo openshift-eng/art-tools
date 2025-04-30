@@ -7,7 +7,6 @@ from tests_functional import DoozerRunnerTestCase
 
 
 class TestBasicRebase(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

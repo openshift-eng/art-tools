@@ -26,7 +26,6 @@ from tenacity import (
 
 
 class CVPInspector:
-
     CVP_TEST_CASE_SANITY = "cvp.rhproduct.default.sanity"
 
     def __init__(

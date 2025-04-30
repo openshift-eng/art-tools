@@ -137,7 +137,7 @@ async def init_shipment_cli(
     """
     if advisory_key and for_fbc:
         raise ValueError(
-            "Cannot use --for-fbc and --advisory-key together. An fbc shipment is not expected to have " "an advisory",
+            "Cannot use --for-fbc and --advisory-key together. An fbc shipment is not expected to have an advisory",
         )
 
     pipeline = InitShipmentCli(

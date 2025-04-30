@@ -218,7 +218,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         #     self.fail(t)
         self.assertEqual(result.exit_code, 1)
         self.assertIn(
-            'Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status ' 'MODIFIED',
+            'Regression possible: ON_QA bug OCPBUGS-2 is a backport of bug OCPBUGS-3 which has status MODIFIED',
             result.output,
         )
 

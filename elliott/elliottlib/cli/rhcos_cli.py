@@ -132,7 +132,7 @@ def get_rhcos_pullspecs_from_assembly(runtime):
     rhcos_def = runtime.releases_config.releases[runtime.assembly].assembly.rhcos
     if not rhcos_def:
         raise click.BadParameter(
-            "only named assemblies with valid rhcos values are supported. If an assembly is " "based on another, try using the original assembly",
+            "only named assemblies with valid rhcos values are supported. If an assembly is based on another, try using the original assembly",
         )
 
     images = rhcos_def[get_primary_container_name(runtime)]['images']

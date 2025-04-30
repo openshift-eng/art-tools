@@ -12,14 +12,14 @@ class TestDistgitRecursiveOverwrite(unittest.TestCase):
     """
 
     def test_without_ignore_set(self):
-        expected_cmd = "rsync -av " " --exclude .git " " my-source/ my-dest/"
+        expected_cmd = "rsync -av  --exclude .git  my-source/ my-dest/"
 
         (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_cmd, retries=3).once())
 
         distgit.recursive_overwrite("my-source", "my-dest")
 
     def test_with_ignore_set(self):
-        expected_cmd = "rsync -av " " --exclude .git " " --exclude=\"ignore\" " " --exclude=\"me\" " " my-source/ my-dest/"
+        expected_cmd = "rsync -av  --exclude .git  --exclude=\"ignore\"  --exclude=\"me\"  my-source/ my-dest/"
 
         (flexmock(distgit.exectools).should_receive("cmd_assert").with_args(expected_cmd, retries=3).once())
 

@@ -17,7 +17,6 @@ CONCURRENCY_LIMIT = 100  # we run out of processes without a limit
 
 
 class SigstorePipeline:
-
     @classmethod
     async def create(cls, *args, **kwargs):
         self = cls(*args, **kwargs)

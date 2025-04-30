@@ -7,7 +7,6 @@ from tests_functional import DoozerRunnerTestCase
 
 
 class TestGoLangRebase(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -64,9 +63,7 @@ class TestGoLangRebase(DoozerRunnerTestCase):
         # Ensure that meta.content.set_build_variables == false  worked. Each of the following variables is
         # injected by doozer unless the set_build_variables is false. This is required for the golang builder
         # since if these variables are set, upstream builds tend to use them as their own version/commit information.
-        for (
-            env_var_name
-        ) in 'SOURCE_GIT_COMMIT OS_GIT_COMMIT SOURCE_GIT_URL SOURCE_GIT_TAG OS_GIT_VERSION SOURCE_DATE_EPOCH BUILD_VERSION BUILD_RELEASE SOURCE_GIT_TAG SOURCE_GIT_URL OS_GIT_MAJOR OS_GIT_MINOR OS_GIT_PATCH OS_GIT_TREE_STATE SOURCE_GIT_TREE_STATE'.split():
+        for env_var_name in 'SOURCE_GIT_COMMIT OS_GIT_COMMIT SOURCE_GIT_URL SOURCE_GIT_TAG OS_GIT_VERSION SOURCE_DATE_EPOCH BUILD_VERSION BUILD_RELEASE SOURCE_GIT_TAG SOURCE_GIT_URL OS_GIT_MAJOR OS_GIT_MINOR OS_GIT_PATCH OS_GIT_TREE_STATE SOURCE_GIT_TREE_STATE'.split():
             self.assertIsNone(dfp.envs.get(env_var_name, None))
 
         self.assertEqual(dfp.envs.get('VERSION'), '1.15')

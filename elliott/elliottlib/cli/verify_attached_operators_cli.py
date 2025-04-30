@@ -290,7 +290,9 @@ def _missing_references(runtime, bundles, available_shasums, omit_attached, gath
     # check that bundle references are all either shipped or shipping,
     # and that they will/did ship to the right repo on the registry
     references = [
-        [ref['image'], build] for build in bundles for ref in build['csv']['spec']['relatedImages']  # ref => the bundle build that references it
+        [ref['image'], build]
+        for build in bundles
+        for ref in build['csv']['spec']['relatedImages']  # ref => the bundle build that references it
     ]
     green_print(f"Found {len(bundles)} bundles with {len(references)} references")
     problems = set()

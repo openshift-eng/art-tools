@@ -130,7 +130,7 @@ class RPMBuilder:
                 "-czf",
                 str(tarball_path),
                 "--exclude=.git",
-                fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
+                rf"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
                 ".",
             ],
             cwd=rpm.source_path,
@@ -385,9 +385,7 @@ class RPMBuilder:
             elif line.startswith("%build"):
                 if go_compliance_shim:
                     rpm_builder_go_wrapper_sh = pathlib.Path(pathlib.Path(__file__).parent, 'rpm_builder_go_wrapper.sh').read_text()
-                    lines[
-                        i
-                    ] = f'''{line}
+                    lines[i] = f'''{line}
 export REAL_GO_PATH=$(which go || true)
 if [[ -n "$REAL_GO_PATH" ]]; then
     GOSHIM_DIR=/tmp/goshim

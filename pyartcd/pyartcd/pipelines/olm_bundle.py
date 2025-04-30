@@ -108,7 +108,7 @@ async def olm_bundle(
         for record in records:
             if record['status'] != '0':
                 raise RuntimeError(
-                    'record.log includes unexpected build_olm_bundle ' f'record with error message: {record["message"]}',
+                    f'record.log includes unexpected build_olm_bundle record with error message: {record["message"]}',
                 )
             bundle_nvrs.append(record['bundle_nvr'])
 
@@ -120,6 +120,6 @@ async def olm_bundle(
             slack_client = runtime.new_slack_client()
             slack_client.bind_channel(version)
             await slack_client.say(
-                '*:heavy_exclamation_mark: olm_bundle failed*\n' f'buildvm job: {os.environ["BUILD_URL"]}',
+                f'*:heavy_exclamation_mark: olm_bundle failed*\nbuildvm job: {os.environ["BUILD_URL"]}',
             )
             raise

@@ -400,7 +400,6 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
     entry: S3Path
     entry_count: int = 0
     for entry in s3_list_dir(s3_conn, bucket_name, str(path_top_dir)):
-
         # If the generator yields an exception, we can't continue
         if isinstance(entry, Exception):
             raise entry

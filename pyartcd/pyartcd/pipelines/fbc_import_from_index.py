@@ -72,7 +72,7 @@ class FbcImportPipeline:
         auth_file = os.environ.get('KONFLUX_OPERATOR_INDEX_AUTH_FILE')
         if not auth_file:
             self._logger.warning(
-                'KONFLUX_OPERATOR_INDEX_AUTH_FILE is not set. ' 'This may cause issues with operator index authentication.',
+                'KONFLUX_OPERATOR_INDEX_AUTH_FILE is not set. This may cause issues with operator index authentication.',
             )
         else:
             cmd.extend(['--registry-auth', auth_file])

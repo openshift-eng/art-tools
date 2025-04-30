@@ -10,7 +10,6 @@ from elliottlib.exceptions import BrewBuildException
 
 
 class TestVerifyAttachedOperators(unittest.TestCase):
-
     def setUp(self):
         self.respath = Path(os.path.dirname(__file__), 'resources')
 

@@ -73,15 +73,15 @@ class CreateReleaseCli:
         meta = config.shipment.metadata
         if meta.product != self.runtime.product:
             raise ValueError(
-                f"shipment.metadata.product={meta.product} is expected to be the " f"same as runtime.product={self.runtime.product}",
+                f"shipment.metadata.product={meta.product} is expected to be the same as runtime.product={self.runtime.product}",
             )
         elif meta.group != self.runtime.group:
             raise ValueError(
-                f"shipment.metadata.group={meta.group} is expected to be the " f"same as runtime.group={self.runtime.group}",
+                f"shipment.metadata.group={meta.group} is expected to be the same as runtime.group={self.runtime.group}",
             )
         elif meta.assembly != self.runtime.assembly:
             raise ValueError(
-                f"shipment.metadata.assembly={meta.assembly} is expected to be the " f"same as runtime.assembly={self.runtime.assembly}",
+                f"shipment.metadata.assembly={meta.assembly} is expected to be the same as runtime.assembly={self.runtime.assembly}",
             )
 
         # Ensure CRDs are accessible
@@ -102,14 +102,14 @@ class CreateReleaseCli:
 
         release_config = self.get_release_config(config.shipment, self.release_env)
         LOGGER.info(
-            f"Constructed release config with snapshot={release_config.snapshot}" f" releasePlan={release_config.release_plan}",
+            f"Constructed release config with snapshot={release_config.snapshot} releasePlan={release_config.release_plan}",
         )
 
         if not self.force:
             env_config: ShipmentEnv = getattr(config.shipment.environments, self.release_env)
             if env_config.shipped():
                 raise ValueError(
-                    f"existing release metadata is not empty for {self.release_env}: " f"{env_config.model_dump()}. Use --force to proceed",
+                    f"existing release metadata is not empty for {self.release_env}: {env_config.model_dump()}. Use --force to proceed",
                 )
 
         # verify snapshot
@@ -129,7 +129,7 @@ class CreateReleaseCli:
             missing = expected_nvrs - actual_nvrs
             extra = actual_nvrs - expected_nvrs
             raise ValueError(
-                f"snapshot includes missing or extra nvrs than what's defined in spec: {missing=} " f"{extra=}",
+                f"snapshot includes missing or extra nvrs than what's defined in spec: {missing=} {extra=}",
             )
 
         release_obj = await self.new_release(release_config)
@@ -197,7 +197,7 @@ def konflux_release_cli():
 
 @konflux_release_cli.command(
     "new",
-    short_help="Create a new Konflux Release in the given namespace for the given " "shipment-data configuration",
+    short_help="Create a new Konflux Release in the given namespace for the given shipment-data configuration",
 )
 @click.option('--konflux-kubeconfig', metavar='KUBECONF_PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
@@ -216,7 +216,7 @@ def konflux_release_cli():
     '--config',
     metavar='CONFIG_PATH',
     required=True,
-    help='Path of the shipment config file to use for creating release. The path should be from the root of the  ' 'given shipment-data repo.',
+    help='Path of the shipment config file to use for creating release. The path should be from the root of the  given shipment-data repo.',
 )
 @click.option(
     '--env',

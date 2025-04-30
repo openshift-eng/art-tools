@@ -5,7 +5,6 @@ from doozerlib import util
 
 
 class TestDistgitConvertSourceURLToHTTPS(unittest.TestCase):
-
     def test_conversion_from_ssh_source(self):
         source = "git@github.com:myorg/myproject.git"
 

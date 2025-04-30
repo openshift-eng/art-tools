@@ -67,8 +67,7 @@ async def gather_opm(
                 auth_content = json.dumps(
                     {
                         'auths': {
-                            auth.registry_url
-                            or "quay.io": {
+                            auth.registry_url or "quay.io": {
                                 'auth': auth_token,
                             },
                         },

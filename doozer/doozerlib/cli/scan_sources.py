@@ -51,7 +51,7 @@ class ConfigScanSources:
     async def run(self):
         with self.runtime.shared_koji_client_session() as koji_api:
             self.runtime.logger.info(
-                f'scan-sources coordinate: brew_event: ' f'{koji_api.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))}',
+                f'scan-sources coordinate: brew_event: {koji_api.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))}',
             )
             self.runtime.logger.info(f'scan-sources coordinate: emulated_brew_event: {self.runtime.brew_event}')
 
@@ -178,7 +178,7 @@ class ConfigScanSources:
             return True
 
         self.runtime.logger.info(
-            'Latest commits do not match on public and priv upstreams for %s: ' 'public SHA = %s, private SHA = %s',
+            'Latest commits do not match on public and priv upstreams for %s: public SHA = %s, private SHA = %s',
             public_url,
             pub_commit,
             priv_commit,
@@ -350,7 +350,7 @@ class ConfigScanSources:
                             'Oldest package rpm build was before buildroot change',
                         )
                         self.runtime.logger.info(
-                            f'{dgk} ({eldest_rpm_build}) in {package_name} ' f'is older than more recent buildroot change: {build_root_change}',
+                            f'{dgk} ({eldest_rpm_build}) in {package_name} is older than more recent buildroot change: {build_root_change}',
                         )
 
                 if rebuild_hint.rebuild:
@@ -392,7 +392,7 @@ class ConfigScanSources:
         await asyncio.gather(*[_inner(image_meta) for image_meta in self.runtime.image_metas()])
 
         self.runtime.logger.debug(
-            'Will be assessing tagging changes between ' 'newest_image_event_ts:%s and oldest_image_event_ts:%s',
+            'Will be assessing tagging changes between newest_image_event_ts:%s and oldest_image_event_ts:%s',
             self.newest_image_event_ts,
             self.oldest_image_event_ts,
         )
@@ -655,7 +655,7 @@ class ConfigScanSources:
             # don't let flakiness in rhcos lookups prevent us from scanning regular builds;
             # if anything else changed it will sync anyway.
             self.runtime.logger.warning(
-                f"could not determine RHCOS build for " f"{version}-{arch}{'-priv' if private else ''}: {ex}",
+                f"could not determine RHCOS build for {version}-{arch}{'-priv' if private else ''}: {ex}",
             )
             return None
 

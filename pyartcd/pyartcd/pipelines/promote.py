@@ -327,7 +327,7 @@ class PromotePipeline:
 
                     if assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                         await self._slack_client.say_in_thread(
-                            "Attached bugs have some issues. Permitting since " f"assembly is of type {assembly_type}",
+                            f"Attached bugs have some issues. Permitting since assembly is of type {assembly_type}",
                         )
                         await self._slack_client.say_in_thread(str(err))
                     else:
@@ -408,7 +408,7 @@ class PromotePipeline:
                     # Wait for release images to be accepted by the release controllers
                     self._logger.info("Waiting for release images for %s to be accepted by the release controller...", release_name)
                     await self._slack_client.say_in_thread(
-                        f"Release {release_name} has been tagged on release " "controller, but is not accepted yet. Waiting.",
+                        f"Release {release_name} has been tagged on release controller, but is not accepted yet. Waiting.",
                     )
                     tasks = []
                     for arch, release_info in release_infos.items():

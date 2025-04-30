@@ -187,7 +187,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
     metavar='STREAM_NAME',
     default=[],
     multiple=True,
-    help='If specified, ' 'only check these streams',
+    help='If specified, only check these streams',
 )
 @click.option('--live-test-mode', default=False, is_flag=True, help='Scan for live-test mode buildconfigs')
 @pass_runtime
@@ -200,7 +200,6 @@ def images_streams_check_upstream(runtime, streams, live_test_mode):
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
-
         upstream_dest = config.upstream_image
         _, dest_ns, dest_istag = upstream_dest.rsplit('/', maxsplit=2)
 
@@ -402,7 +401,6 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
     upstreaming_entries = _get_upstreaming_entries(runtime, streams)
 
     for upstream_entry_name, config in upstreaming_entries.items():
-
         transform = config.transform
         if transform is Missing:
             # No buildconfig is necessary
@@ -702,7 +700,7 @@ def prs():
     '--include-master',
     default=False,
     is_flag=True,
-    help='Also include master branch as base ref when checking for PRs, ' 'useful when master is fast forwarded to the release branch.',
+    help='Also include master branch as base ref when checking for PRs, useful when master is fast forwarded to the release branch.',
 )
 @pass_runtime
 def prs_list(runtime, as_user, include_master):
@@ -882,7 +880,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
                 fields,
             )
             # check depend issues and set depend to a higher version issue if ture
-            look_for_summary = f'Update {major}.{minor+1} {image_meta.name} image to be consistent with ART'
+            look_for_summary = f'Update {major}.{minor + 1} {image_meta.name} image to be consistent with ART'
             depend_issues = search_issues(f"project={project} AND summary ~ '{look_for_summary}'")
             # jira title search is fuzzy, so we need to check if an issue is really the one we want
             depend_issues = [i for i in depend_issues if i.fields.summary == look_for_summary]
@@ -1309,7 +1307,6 @@ open_prs: {open_prs}
                 or (desired_ci_build_root_coordinate and desired_ci_build_root_coordinate != fork_ci_build_root_coordinate)
                 or not open_prs
             ):
-
                 yellow_print('Found that fork branch is not in sync with public Dockerfile/.ci-operator.yaml changes')
                 yellow_print(diff_text)
 

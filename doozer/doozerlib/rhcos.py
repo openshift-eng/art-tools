@@ -27,7 +27,6 @@ class RHCOSNotFound(Exception):
 
 
 class RHCOSBuildFinder:
-
     def __init__(self, runtime, version: str, brew_arch: str = "x86_64", private: bool = False, custom: bool = False):
         """
         @param runtime  The Runtime object passed in from the CLI
@@ -119,7 +118,7 @@ class RHCOSBuildFinder:
         for arch in arches_building:
             if not self.meta_has_required_attributes(self.rhcos_build_meta(build_dict["id"], arch=arch)):
                 logger.warning(
-                    f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run " "rhcos release job?",
+                    f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run rhcos release job?",
                 )
                 return False
         return True
@@ -207,7 +206,6 @@ class RHCOSBuildFinder:
 
 
 class RHCOSBuildInspector:
-
     def __init__(self, runtime: Runtime, pullspec_for_tag: Dict[str, str], brew_arch: str, build_id: Optional[str] = None):
         self.runtime = runtime
         self.brew_arch = brew_arch
@@ -224,7 +222,7 @@ class RHCOSBuildInspector:
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
                     raise Exception(
-                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus' f' {self.build_id}',
+                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus {self.build_id}',
                     )
                 self.build_id = image_build_id
 

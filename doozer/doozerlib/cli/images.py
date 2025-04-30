@@ -659,7 +659,6 @@ def print_build_metrics(runtime):
 
     # If we successfully found timestamps in completed builds
     if watch_task_info:
-
         # For each minute which elapsed between the first build created (min_create_ts) to the
         # last build to complete (max_completion_ts), check whether there was any build that
         # was created but still waiting to start (i.e. in FREE state). If there is a build

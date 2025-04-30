@@ -31,13 +31,11 @@ distgit:
 
 
 class MockRuntime(object):
-
     def __init__(self, logger):
         self.logger = logger
 
 
 class TestImageMetadata(unittest.TestCase):
-
     def setUp(self):
         self.test_dir = tempfile.mkdtemp(prefix="ocp-cd-test-logs")
 
@@ -132,7 +130,7 @@ class TestImageMetadata(unittest.TestCase):
 
     @unittest.skip("AttributeError: 'str' object has no attribute 'filename'")
     def test_get_latest_build_info(self):
-        expected_cmd = ["brew", "latest-build", "rhaos-4.2-rhel-7-build" "go-toolset-1.10"]
+        expected_cmd = ["brew", "latest-build", "rhaos-4.2-rhel-7-buildgo-toolset-1.10"]
 
         latest_build_output = """
         Build                                     Tag                   Built by

@@ -51,4 +51,4 @@ class TestImagesHealth(TestCase):
 
         self.pipeline.url_markup = 'invalid'
         with self.assertRaises(IOError):
-            self.pipeline.url_text(url=ART_BUILD_HISTORY_URL, text='url'),
+            (self.pipeline.url_text(url=ART_BUILD_HISTORY_URL, text='url'),)

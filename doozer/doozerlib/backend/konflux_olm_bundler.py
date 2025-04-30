@@ -702,7 +702,7 @@ class KonfluxOlmBundleBuilder:
 
                     if not (image_pullspec and image_digest):
                         raise ValueError(
-                            f"[{metadata.distgit_key}] Could not find expected results in konflux " f"pipelinerun {pipelinerun_name}",
+                            f"[{metadata.distgit_key}] Could not find expected results in konflux pipelinerun {pipelinerun_name}",
                         )
 
                     start_time = pipelinerun.status.startTime

@@ -120,7 +120,7 @@ class MetaDataConfig(object):
 
         if image_list is None:
             print(
-                'Not correct --type specified (--type image or --type rpm). ' 'Or not consistent with global options: --images/-i and --rpms/-r',
+                'Not correct --type specified (--type image or --type rpm). Or not consistent with global options: --images/-i and --rpms/-r',
             )
             return
 

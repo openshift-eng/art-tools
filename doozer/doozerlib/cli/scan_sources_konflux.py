@@ -200,7 +200,7 @@ class ConfigScanSources:
             return True
 
         self.logger.info(
-            'Latest commits do not match on public and priv upstreams for %s: ' 'public SHA = %s, private SHA = %s',
+            'Latest commits do not match on public and priv upstreams for %s: public SHA = %s, private SHA = %s',
             public_url,
             pub_commit,
             priv_commit,
@@ -420,7 +420,7 @@ class ConfigScanSources:
                 image_meta,
                 RebuildHint(
                     code=RebuildHintCode.NO_LATEST_BUILD,
-                    reason=f'Component {image_meta.distgit_key} has no latest build ' f'for assembly {self.runtime.assembly}',
+                    reason=f'Component {image_meta.distgit_key} has no latest build for assembly {self.runtime.assembly}',
                 ),
             )
             return
@@ -803,7 +803,7 @@ class ConfigScanSources:
                     image_meta,
                     RebuildHint(
                         RebuildHintCode.BUILDER_CHANGING,
-                        f'A builder or parent image build {builder_build_nvr} is newer than latest ' f'{image_meta.distgit_key} build',
+                        f'A builder or parent image build {builder_build_nvr} is newer than latest {image_meta.distgit_key} build',
                     ),
                 )
                 return

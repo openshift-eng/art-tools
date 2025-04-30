@@ -97,16 +97,14 @@ class ImagesHealthPipeline:
         oldest_attempt_bi_dt = builds[-1].start_time
 
         if latest_success_idx != 0:
-            msg = (
-                f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} ' f'({self.url_text(latest_attempt_build_url, "jenkins job")}); '
-            )
+            msg = f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} ({self.url_text(latest_attempt_build_url, "jenkins job")}); '
 
             # The latest attempt was a failure
             if latest_success_idx == -1:
                 # No success record was found
                 msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
             elif latest_success_idx > 1:
-                msg += f'Last {self.url_text(latest_success_bi_task_url, "success")} ' f'was {latest_success_idx} attempts ago'
+                msg += f'Last {self.url_text(latest_success_bi_task_url, "success")} was {latest_success_idx} attempts ago'
             elif latest_success_idx == 1:
                 # Do nothing
                 return  # skipping notifications when only latest attempt failed

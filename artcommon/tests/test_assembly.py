@@ -13,7 +13,6 @@ from artcommonlib.model import Missing, Model
 
 
 class TestAssembly(TestCase):
-
     def setUp(self) -> None:
         releases_yml = """
 releases:
@@ -194,7 +193,6 @@ releases:
             self.fail(f'Expected ValueError on assembly infinite recursion but got: {type(e)}: {e}')
 
     def test_assembly_group_config(self):
-
         group_config = Model(
             dict_to_model={
                 'arches': [
@@ -361,7 +359,6 @@ releases:
         self.assertEqual(actual, [0, 1, 2, 3, 4])
 
     def test_asembly_metadata_config(self):
-
         meta_config = Model(
             dict_to_model={
                 'owners': ['kuryr-team@redhat.com'],

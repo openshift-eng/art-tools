@@ -7,7 +7,6 @@ from tests_functional import DoozerRunnerTestCase
 
 
 class TestScanSources(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -31,7 +30,6 @@ class TestScanSources(DoozerRunnerTestCase):
         raise IOError('Unable to find distgit name: ' + distgit_name)
 
     def test_detect_upstream_changes(self):
-
         # How do you find all these crazy numbers?
         # Grab the debug log for scan-sources run you are interested in replicating.
         # For every relevant value, cat debug.log | grep "scan-sources coordinate"
@@ -93,7 +91,6 @@ class TestScanSources(DoozerRunnerTestCase):
         self._assert_result(result_image_ose_cluster_config_operator, False)  # Control group; expect no change
 
     def test_detect_image_rpm_change(self):
-
         # How do you find all these crazy numbers?
         # Grab the debug log for scan-sources run you are interested in replicating.
         # For every relevant value, cat debug.log | grep "scan-sources coordinate"
@@ -139,7 +136,6 @@ class TestScanSources(DoozerRunnerTestCase):
         self._assert_result(r, True, ['rh-maven35-jackson-databind', 'rhscl-3.5-rhel-7'])
 
     def test_detect_parent_image_ripple(self):
-
         # At this exact moment, openshift-enterprise-cli had an upstream code change.
         # That should trigger images which depend on it to rebuild (cluster-logging-operator).
         results_yaml, _ = self.run_doozer(
@@ -194,7 +190,6 @@ class TestScanSources(DoozerRunnerTestCase):
         self._assert_result(r, True, ['openshift-enterprise-cli'])
 
     def test_detect_has_not_been_built(self):
-
         #
         results_yaml, _ = self.run_doozer(
             '--group',

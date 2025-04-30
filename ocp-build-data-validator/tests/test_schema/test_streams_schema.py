@@ -4,7 +4,6 @@ from validator.schema import streams_schema
 
 
 class TestStreamsSchema(unittest.TestCase):
-
     def test_validate_with_valid_data(self):
         valid_data = {
             'rhel': {

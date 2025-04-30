@@ -7,7 +7,6 @@ from doozerlib.cli.scan_sources import ConfigScanSources
 
 
 class TestScanSourcesCli(TestCase):
-
     @patch("artcommonlib.exectools.cmd_assert")
     def test_tagged_rhcos_id(self, mock_cmd):
         mock_cmd.return_value = (

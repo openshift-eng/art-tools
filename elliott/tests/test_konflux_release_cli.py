@@ -481,6 +481,6 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             await cli.run()
 
         self.assertIn(
-            "snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} " "extra={'test-nvr-3'}",
+            "snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} extra={'test-nvr-3'}",
             str(context.exception),
         )

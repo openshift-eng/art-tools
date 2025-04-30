@@ -238,7 +238,7 @@ class BuildMicroShiftBootcPipeline:
                 )
                 if not actual_nvr:
                     raise ValueError(
-                        f"Expected to find microshift package in plashet.yml at" f" {url}, but could not find it. Use --force to rebuild plashet.",
+                        f"Expected to find microshift package in plashet.yml at {url}, but could not find it. Use --force to rebuild plashet.",
                     )
 
                 microshift_nvrs = await get_microshift_builds(self.group, self.assembly, env=self._elliott_env_vars)

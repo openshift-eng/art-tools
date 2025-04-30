@@ -161,7 +161,6 @@ class TestInitialize(unittest.IsolatedAsyncioTestCase):
     @patch("artcommonlib.exectools.cmd_gather_async", return_value=(0, 'rhaos-4.12-rhel-8', ''))
     @patch("pyartcd.jenkins.update_title")
     async def test_initialize_version(self, *_):
-
         # Mock datetime.now()
         class MockedDatetime(datetime):
             @classmethod
@@ -865,7 +864,6 @@ class TestMirrorRpms(unittest.IsolatedAsyncioTestCase):
 
 
 class TestUtils(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self) -> None:
         self.ocp4 = self.default_ocp4_pipeline()
 

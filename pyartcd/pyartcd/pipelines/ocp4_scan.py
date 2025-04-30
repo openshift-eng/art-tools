@@ -12,7 +12,6 @@ from pyartcd.runtime import Runtime
 
 
 class Ocp4ScanPipeline:
-
     def __init__(self, runtime: Runtime, version: str, data_path: Optional[str] = None):
         self.runtime = runtime
         self.version = version

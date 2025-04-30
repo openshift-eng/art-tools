@@ -229,7 +229,7 @@ def get_inflight(assembly, group):
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
     release_schedules = requests.get(
-        f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks',
+        f'{RELEASE_SCHEDULES}/openshift-{major}.{minor - 1}.z/?fields=all_ga_tasks',
         headers={'Accept': 'application/json'},
     )
     for release in release_schedules.json()['all_ga_tasks']:
@@ -408,7 +408,7 @@ def is_cachito_enabled(metadata, group_config, logger):
             logger.info("cachito/cachi2 enabled from group config")
         elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
             logger.warning(
-                f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in " "image metadata or group config.",
+                f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in image metadata or group config.",
             )
     if cachito_enabled and not metadata.has_source():
         logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)

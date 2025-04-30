@@ -305,7 +305,6 @@ class Nightly:
         phase: str = None,
         pullspec: str = None,
     ):
-
         self.nightly_info = nightly_info or {}
         self.release_image_info = release_image_info or {}
 

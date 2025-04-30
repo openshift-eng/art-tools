@@ -289,7 +289,6 @@ class Runtime(GroupRuntime):
         group_only: bool = False,
         build_system: str = None,
     ):
-
         if self.initialized:
             return
 
@@ -481,7 +480,6 @@ class Runtime(GroupRuntime):
                     self.source_resolver.register_source_alias(key, val)
 
         with Dir(self.group_dir):
-
             # Flattens multiple comma/space delimited lists like [ 'x', 'y,z' ] into [ 'x', 'y', 'z' ]
             def flatten_list(names):
                 if not names:

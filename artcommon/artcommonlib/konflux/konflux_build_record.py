@@ -219,7 +219,6 @@ class KonfluxBuildRecord(KonfluxRecord):
         build_id: str = None,
         nvr: str = None,
     ):
-
         super().__init__(
             name,
             group,
@@ -285,7 +284,6 @@ class KonfluxBundleBuildRecord(KonfluxRecord):
         build_id: str = None,
         nvr: str = None,
     ):
-
         super().__init__(
             name,
             group,
@@ -346,7 +344,6 @@ class KonfluxFbcBuildRecord(KonfluxRecord):
         build_id: str = '',
         nvr: str = '',
     ):
-
         super().__init__(
             name,
             group,

@@ -20,9 +20,9 @@ class BuildStatusDetector:
         self.koji_session = runtime.build_retrying_koji_client()
         self.logger = logger
         self.shipping_statuses: Dict[int, bool] = {}  # a dict for caching build shipping statues. key is build id, value is True if shipped.
-        self.archive_lists: Dict[int, List[Dict]] = (
-            {}
-        )  # a dict for caching archive lists. key is build id, value is a list of archives associated with that build.
+        self.archive_lists: Dict[
+            int, List[Dict]
+        ] = {}  # a dict for caching archive lists. key is build id, value is a list of archives associated with that build.
 
     def find_embargoed_builds(self, builds: List[Dict], candidate_tags: Iterable[str]) -> Set[int]:
         """find embargoed builds in given list of koji builds

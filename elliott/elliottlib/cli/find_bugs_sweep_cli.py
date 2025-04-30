@@ -229,7 +229,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
         if sweep_cutoff_timestamp:
             utc_ts = datetime.utcfromtimestamp(sweep_cutoff_timestamp)
             logger.info(
-                f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the " f"cutoff time {utc_ts}...",
+                f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the cutoff time {utc_ts}...",
             )
             qualified_bugs = []
             unqualified_bugs = []
@@ -260,7 +260,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
     included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     if included_bug_ids & excluded_bug_ids:
         raise ValueError(
-            f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': " f"{included_bug_ids & excluded_bug_ids}",
+            f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': {included_bug_ids & excluded_bug_ids}",
         )
     if included_bug_ids:
         logger.warning(
@@ -279,8 +279,7 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
         bugs.extend(included_bugs)
     if excluded_bug_ids:
         logger.warning(
-            f"The following {bug_tracker.type} bugs will be excluded because they are explicitly "
-            f"defined in the assembly config: {excluded_bug_ids}",
+            f"The following {bug_tracker.type} bugs will be excluded because they are explicitly defined in the assembly config: {excluded_bug_ids}",
         )
         bugs = [bug for bug in bugs if bug.id not in excluded_bug_ids]
 
@@ -342,7 +341,7 @@ async def find_and_attach_bugs(
         if kind_bugs:
             if advisory_type not in advisory_ids:
                 logger.warning(
-                    f"Bugs were found for {advisory_type} but not attached because {advisory_type} advisory " "does not exist",
+                    f"Bugs were found for {advisory_type} but not attached because {advisory_type} advisory does not exist",
                 )
                 continue
             bug_tracker.attach_bugs(
@@ -437,7 +436,7 @@ def categorize_bugs_by_type(
 
     if not advisory_id_map:
         logger.info(
-            "Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to " "validate trackers.",
+            "Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to validate trackers.",
         )
         return bugs_by_type, issues
 
@@ -484,7 +483,7 @@ def categorize_bugs_by_type(
         still_not_found = not_found
         if permitted_bug_ids:
             logger.info(
-                'The following bugs will be attached because they are ' f'explicitly included in the assembly config: {permitted_bug_ids}',
+                f'The following bugs will be attached because they are explicitly included in the assembly config: {permitted_bug_ids}',
             )
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 

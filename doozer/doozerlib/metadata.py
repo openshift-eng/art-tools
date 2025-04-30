@@ -144,7 +144,7 @@ class Metadata(MetadataBase):
                 if build_obj:
                     self.commitish = isolate_git_commit_in_release(build_obj['nvr'])
                     self.logger.info(
-                        'Pinning upstream source to commit of assembly selected build ' f'({build_obj["id"]}) -> commit {self.commitish}',
+                        f'Pinning upstream source to commit of assembly selected build ({build_obj["id"]}) -> commit {self.commitish}',
                     )
                 else:
                     # If this is part of a unit test, don't make the caller's life more difficult than it already is; skip the exception.
@@ -353,7 +353,7 @@ class Metadata(MetadataBase):
         if not latest_build:
             return RebuildHint(
                 code=RebuildHintCode.NO_LATEST_BUILD,
-                reason=f'Component {component_name} has no latest build ' f'for assembly {self.runtime.assembly} ' f'and target {el_target}',
+                reason=f'Component {component_name} has no latest build for assembly {self.runtime.assembly} and target {el_target}',
             )
 
         latest_build_creation = dateutil.parser.parse(latest_build['creation_time'])

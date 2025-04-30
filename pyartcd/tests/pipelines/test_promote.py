@@ -279,7 +279,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         build_release_image: AsyncMock,
         _,
     ):
-
         runtime = MagicMock(
             config={
                 "build_config": {
@@ -1380,7 +1379,6 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
         tag_release: AsyncMock,
         _,
     ):
-
         runtime = MagicMock(
             config={
                 "build_config": {

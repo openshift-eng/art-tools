@@ -787,7 +787,7 @@ def remove_dependent_advisories(advisory_id):
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(
-                f'Failed to remove dependent {dependent} from {advisory_id}' f'with code {response.status_code} and error: {response.text}',
+                f'Failed to remove dependent {dependent} from {advisory_id}with code {response.status_code} and error: {response.text}',
             )
 
 
@@ -799,7 +799,7 @@ def remove_blocking_advisories_depends(advisory_id):
         response = ErrataConnector()._post(endpoint, json=data)
         if response.status_code != requests.codes.created:
             raise IOError(
-                f'Failed to remove blocking {advisory_id} from {blocking_advisory}' f'with code {response.status_code} and error: {response.text}',
+                f'Failed to remove blocking {advisory_id} from {blocking_advisory}with code {response.status_code} and error: {response.text}',
             )
 
 

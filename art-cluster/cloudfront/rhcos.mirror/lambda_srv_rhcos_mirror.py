@@ -423,7 +423,7 @@ def lambda_handler(event: Dict, context: Dict):
             'status': '404',
             'statusDescription': 'Not Found',
         }
-    uri = f"/{uri[len(prefix):]}"  # strip /art/storage/ prefix
+    uri = f"/{uri[len(prefix) :]}"  # strip /art/storage/ prefix
 
     request_ip = request['clientIp']
     if find_region(request_ip):

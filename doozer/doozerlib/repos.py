@@ -245,7 +245,7 @@ class Repo(object):
         # so apply it after excludepkgs
         if self.includepkgs:
             LOGGER.info(
-                f"Only including packages from {name} based on following patterns: {self.includepkgs}. " "All other packages will be excluded.",
+                f"Only including packages from {name} based on following patterns: {self.includepkgs}. All other packages will be excluded.",
             )
             filtered_rpms = []
             for rpm in repodata.primary_rpms:
@@ -351,7 +351,6 @@ class Repos(object):
 
         result = ''
         for r in self._repos.values():
-
             enabled = r.enabled  # If enabled in group.yml, it will always be enabled.
             if enabled_repos and (r.name in enabled_repos or '*' in enabled_repos):
                 enabled = True

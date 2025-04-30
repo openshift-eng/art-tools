@@ -8,7 +8,6 @@ from doozerlib.source_resolver import SourceResolver
 
 
 class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.runtime = mock.Mock(spec=Runtime)
         self.runtime.group_config.vars = Model({"MAJOR": 4, "MINOR": 17})

@@ -412,7 +412,7 @@ class KonfluxDb:
             where = where.copy()
             if "nvr" in where or "outcome" in where:
                 raise ValueError(
-                    "'nvr' and 'outcome' fields are reserved and should not be used in the 'where' " "parameter",
+                    "'nvr' and 'outcome' fields are reserved and should not be used in the 'where' parameter",
                 )
 
         async def _task(nvr):

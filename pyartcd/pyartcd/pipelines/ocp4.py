@@ -72,7 +72,6 @@ class Ocp4Pipeline:
         copy_links: bool = False,
         lock_identifier: str = None,
     ):
-
         self.runtime = runtime
         self.assembly = assembly
         self.build_rpms = build_rpms
@@ -573,7 +572,7 @@ class Ocp4Pipeline:
 
         if (ratio['total'] > 10 and ratio['ratio'] > 0.25) or (ratio['ratio'] > 1 and ratio['failed'] == ratio['total']):
             self.runtime.logger.warning(
-                "%s of %s image builds failed; probably not the owners' fault, " "will not spam",
+                "%s of %s image builds failed; probably not the owners' fault, will not spam",
                 {ratio['failed']},
                 {ratio['total']},
             )
@@ -756,7 +755,7 @@ class Ocp4Pipeline:
             self.runtime.logger.error(traceback.format_exc())
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(
-                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to " f"art-srv-enterprise S3",
+                f"Failed syncing {self.rpm_mirror.local_plashet_path} repo to art-srv-enterprise S3",
             )
             raise
 
@@ -937,7 +936,7 @@ class Ocp4Pipeline:
     '--rpm-list',
     required=False,
     default='',
-    help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS ' '(e.g. openshift,openshift-kuryr)',
+    help='(Optional) Comma/space-separated list to include/exclude per BUILD_RPMS (e.g. openshift,openshift-kuryr)',
 )
 @click.option(
     '--build-images',
@@ -949,7 +948,7 @@ class Ocp4Pipeline:
     '--image-list',
     required=False,
     default='',
-    help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES ' '(e.g. logging-kibana5,openshift-jenkins-2)',
+    help='(Optional) Comma/space-separated list to include/exclude per BUILD_IMAGES (e.g. logging-kibana5,openshift-jenkins-2)',
 )
 @click.option(
     '--skip-plashets',
@@ -994,7 +993,6 @@ async def ocp4(
     comment_on_pr: bool,
     copy_links: bool,
 ):
-
     lock_identifier = jenkins.get_build_path()
     if not lock_identifier:
         runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')

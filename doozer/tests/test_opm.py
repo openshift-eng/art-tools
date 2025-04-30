@@ -13,7 +13,6 @@ from doozerlib.opm import (
 
 
 class TestOpm(unittest.IsolatedAsyncioTestCase):
-
     @patch('doozerlib.opm.gather_opm', new_callable=AsyncMock)
     async def test_verify_opm(self, mock_gather_opm):
         mock_gather_opm.return_value = (0, 'OpmVersion:"v1.47.0"', '')

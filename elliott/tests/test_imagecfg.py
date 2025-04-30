@@ -2,6 +2,7 @@
 """
 Test the ImageMetadata class
 """
+
 import unittest
 
 from elliottlib import imagecfg
@@ -9,7 +10,6 @@ from flexmock import flexmock
 
 
 class TestImageMetadata(unittest.TestCase):
-
     def test_base_only(self):
         """
         Some images are used only as a base for other images.  These base images

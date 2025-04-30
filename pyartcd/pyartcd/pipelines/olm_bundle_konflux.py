@@ -126,7 +126,7 @@ async def olm_bundle_konflux(
             for record in records:
                 if record['status'] != '0':
                     raise RuntimeError(
-                        'record.log includes unexpected build_olm_bundle_konflux ' f'record with error message: {record["message"]}',
+                        f'record.log includes unexpected build_olm_bundle_konflux record with error message: {record["message"]}',
                     )
                 bundle_nvrs.append(record['bundle_nvr'])
 

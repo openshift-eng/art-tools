@@ -145,7 +145,7 @@ class OSBS2Builder:
         if not self.scratch and self._runtime.hotfix:
             # Tag the image so it won't get garbage collected.
             logger.info(
-                f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()}' f' to prevent garbage collection',
+                f'Tagging {image.get_component_name()} build {build_info["nvr"]} into {image.hotfix_brew_tag()} to prevent garbage collection',
             )
             if self.dry_run:
                 logger.warning("[DRY RUN] Build %s would have been tagged into %s", build_info["nvr"], image.hotfix_brew_tag())
@@ -170,7 +170,7 @@ class OSBS2Builder:
                 existence, repo_url = True, f"https://cgit.example.com/{repo_file}"
             if not existence:
                 raise FileNotFoundError(
-                    f"Repo file {repo_file} is not available on cgit; cgit cache may not be" f" reflecting distgit in a timely manner.",
+                    f"Repo file {repo_file} is not available on cgit; cgit cache may not be reflecting distgit in a timely manner.",
                 )
             repo_list = [repo_url]
 

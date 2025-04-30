@@ -587,7 +587,7 @@ class KonfluxImageBuilder:
 
             if not (image_pullspec and image_digest):
                 raise ValueError(
-                    f"[{metadata.distgit_key}] Could not find expected results in konflux " f"pipelinerun {pipelinerun_name}",
+                    f"[{metadata.distgit_key}] Could not find expected results in konflux pipelinerun {pipelinerun_name}",
                 )
 
             installed_packages = await self.get_installed_packages(

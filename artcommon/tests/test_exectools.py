@@ -3,7 +3,6 @@
 Test functions related to controlled command execution
 """
 
-
 import asyncio
 import subprocess
 import unittest
@@ -245,5 +244,4 @@ class TestExectools(IsolatedAsyncioTestCase):
 
 
 if __name__ == "__main__":
-
     unittest.main()

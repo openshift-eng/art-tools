@@ -11,7 +11,7 @@ def validate(file, data, group_cfg):
     if not support.resource_is_reachable(endpoint):
         return (
             url,
-            ('This validation must run from a network ' 'with access to {}'.format(endpoint)),
+            ('This validation must run from a network with access to {}'.format(endpoint)),
         )
 
     if not support.resource_exists(url):

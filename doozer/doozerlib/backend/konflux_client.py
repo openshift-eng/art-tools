@@ -614,12 +614,7 @@ class KonfluxClient:
         """
         pipelinerun_name = pipelinerun['metadata']['name']
         application = pipelinerun['metadata']['labels']['appstudio.openshift.io/application']
-        return (
-            f"{constants.KONFLUX_UI_HOST}/ns/"
-            f"{constants.KONFLUX_DEFAULT_NAMESPACE}/"
-            f"applications/{application}/"
-            f"pipelineruns/{pipelinerun_name}"
-        )
+        return f"{constants.KONFLUX_UI_HOST}/ns/{constants.KONFLUX_DEFAULT_NAMESPACE}/applications/{application}/pipelineruns/{pipelinerun_name}"
 
     async def wait_for_pipelinerun(
         self,
@@ -672,7 +667,6 @@ class KonfluxClient:
 
             while True:
                 try:
-
                     for event in watcher.stream(
                         api.get,
                         # Specifying resource_version=0 tells the API to pull the current

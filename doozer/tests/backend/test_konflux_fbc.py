@@ -19,7 +19,6 @@ from doozerlib.opm import OpmRegistryAuth, yaml
 
 
 class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc")
         self.group = "test-group"
@@ -211,7 +210,6 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc_rebaser")
         self.group = "test-group"
@@ -563,7 +561,6 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc_builder")
         self.group = "test-group"

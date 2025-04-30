@@ -12,13 +12,11 @@ from doozerlib.build_info import BrewBuildRecordInspector
 
 
 class MockRuntime(object):
-
     def __init__(self, logger):
         self.logger = logger
 
 
 class TestBrewBuildRecordInspector(unittest.TestCase):
-
     def setUp(self):
         self.logger = MagicMock(spec=logging.Logger)
 

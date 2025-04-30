@@ -723,7 +723,6 @@ async def rebuild(
     component: Optional[str],
     ignore_locks: bool,
 ):
-
     if type != "rhcos" and not component:
         raise click.BadParameter(f"'--component' is required for type {type}")
     elif type == "rhcos" and component:
@@ -750,7 +749,7 @@ async def rebuild(
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
             runtime.logger.warning(
-                'Env var BUILD_URL has not been defined: ' 'a random identifier will be used for the locks',
+                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks',
             )
 
         await asyncio.gather(

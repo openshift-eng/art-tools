@@ -31,7 +31,7 @@ def validate(data, group_cfg):
     if not branch_exists(target, url) and not branch_exists(fallback, url):
         return (
             url,
-            ('At least one of the following branches should exist: ' '{} or {}'.format(target, fallback)),
+            ('At least one of the following branches should exist: {} or {}'.format(target, fallback)),
         )
 
     branch = target if branch_exists(target, url) else fallback

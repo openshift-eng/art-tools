@@ -199,7 +199,6 @@ def get_needed_for_okd_payload_constructions(image_meta):
 
 
 class CiOperatorImageConfig:
-
     def __init__(self, image_meta: ImageMetadata, promotion_namespace: str, promotion_imagestream: str):
         self.image_meta = image_meta
         self.promotion_namespace = promotion_namespace
@@ -319,7 +318,6 @@ EOF
 
 
 class CiOperatorConfig:
-
     def __init__(self, org: GitHubOrgName, repo: GitHubRepoName, branch_name: str, promotion_namespace: str, promotion_imagestream: str):
         self.org = org
         self.repo = repo
@@ -726,7 +724,6 @@ async def images_okd_prs(
             priv_branches = priv_branches.splitlines()
 
             if non_master:
-
                 if [bl for bl in public_branches if bl.endswith(f'/release-{major}.{minor}')]:
                     public_branch = f'release-{major}.{minor}'
                 elif [bl for bl in public_branches if bl.endswith(f'/openshift-{major}.{minor}')]:

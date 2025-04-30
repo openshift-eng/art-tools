@@ -15,7 +15,6 @@ from doozerlib.repos import Repos
 
 
 class MockRuntime(object):
-
     def __init__(self, logger):
         self.logger = logger
         self.group_config = Model({})
@@ -33,7 +32,6 @@ def _urlopen_json_cm(mock_urlopen, content, rc=200):
 
 
 class TestRhcos(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.logger = MagicMock(spec=logging.Logger)
 

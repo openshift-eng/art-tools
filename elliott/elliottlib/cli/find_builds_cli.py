@@ -418,7 +418,7 @@ def _fetch_nvrps_by_nvr_or_id(
     nonexistent_builds = list(filter(lambda b: b[1] is None, zip(ids_or_nvrs, builds)))
     if nonexistent_builds:
         raise ValueError(
-            "The following builds are not found in Brew: " f"{' '.join(map(lambda b: b[0], nonexistent_builds))}",
+            f"The following builds are not found in Brew: {' '.join(map(lambda b: b[0], nonexistent_builds))}",
         )
 
     _ensure_accepted_tags(builds, brew_session, tag_pv_map)
@@ -515,7 +515,7 @@ async def _fetch_builds_by_kind_image(
         click.echo("Filtering out shipped builds...")
         shipped = _find_shipped_builds([b["id"] for b in brew_latest_builds], brew_session)
     unshipped = [b for b in brew_latest_builds if b["id"] not in shipped]
-    click.echo(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are new.')
+    click.echo(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are new.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     return nvrps
 
@@ -633,7 +633,7 @@ async def _fetch_builds_by_kind_rpm(
 
     if not_attachable_nvrs:
         LOGGER.warning(
-            f"The following NVRs will not be swept because they don't have allowed tags" f" {list(tag_pv_map.keys())}: {not_attachable_nvrs}",
+            f"The following NVRs will not be swept because they don't have allowed tags {list(tag_pv_map.keys())}: {not_attachable_nvrs}",
         )
 
     shipped = set()
@@ -643,7 +643,7 @@ async def _fetch_builds_by_kind_rpm(
         LOGGER.info("Filtering out shipped builds - except the ones that have been pinned in the assembly")
         shipped = _find_shipped_builds([b["id"] for b in qualified_builds if b["nvr"] not in pinned_nvrs], brew_session)
     unshipped = [b for b in qualified_builds if b["id"] not in shipped]
-    LOGGER.info(f'Found {len(shipped)+len(unshipped)} builds, of which {len(unshipped)} are qualified.')
+    LOGGER.info(f'Found {len(shipped) + len(unshipped)} builds, of which {len(unshipped)} are qualified.')
     nvrps = _gen_nvrp_tuples(unshipped, tag_pv_map)
     nvrps = sorted(set(nvrps))  # remove duplicates
     return nvrps

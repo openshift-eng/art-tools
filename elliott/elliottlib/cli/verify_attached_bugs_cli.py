@@ -90,8 +90,7 @@ async def verify_attached_bugs_cli(
     runtime.initialize()
     if advisories:
         logger.warning(
-            "Cannot verify advisory bug sorting. To verify that bugs are attached to the "
-            "correct release advisories, run with --assembly=<release>",
+            "Cannot verify advisory bug sorting. To verify that bugs are attached to the correct release advisories, run with --assembly=<release>",
         )
         advisory_id_map = {'?': a for a in advisories}
     else:
@@ -206,7 +205,6 @@ async def verify_bugs(runtime, verify_bug_status, output, no_verify_blocking_bug
 
 
 class BugValidator:
-
     def __init__(self, runtime: Runtime, output: str = 'text'):
         self.runtime = runtime
         self.target_releases: List[str] = runtime.get_bug_tracker('jira').config['target_release']
@@ -288,11 +286,11 @@ class BugValidator:
                 extra_bugs = actual - expected
                 if bugs_not_found:
                     self._complain(
-                        f'Expected Bugs not found in {kind} advisory ({advisory_id}):' f' {[b.id for b in bugs_not_found]}',
+                        f'Expected Bugs not found in {kind} advisory ({advisory_id}): {[b.id for b in bugs_not_found]}',
                     )
                 if extra_bugs:
                     self._complain(
-                        f'Unexpected Bugs found in {kind} advisory ({advisory_id}):' f' {[b.id for b in extra_bugs]}',
+                        f'Unexpected Bugs found in {kind} advisory ({advisory_id}): {[b.id for b in extra_bugs]}',
                     )
 
     async def verify_bugs_multiple_advisories(self, non_flaw_bugs: List[Bug]):
@@ -359,7 +357,7 @@ class BugValidator:
         if not first_fix_flaw_ids:
             if advisory_type == "RHSA":
                 self._complain(
-                    f"Advisory {advisory_id} is of type {advisory_type} " f"but has no first-fix flaw bugs. It should be converted to RHBA or RHEA.",
+                    f"Advisory {advisory_id} is of type {advisory_type} but has no first-fix flaw bugs. It should be converted to RHBA or RHEA.",
                 )
             return  # The remaining checks are not needed for a non-RHSA.
         if advisory_type != "RHSA":
@@ -468,7 +466,7 @@ class BugValidator:
                 filtered_bugs.append(b)
             elif complain:
                 self._complain(
-                    f"bug {b.id} target release {b.target_release} is not in " f"{self.target_releases}. Does it belong in this release?",
+                    f"bug {b.id} target release {b.target_release} is not in {self.target_releases}. Does it belong in this release?",
                 )
         return filtered_bugs
 
@@ -517,7 +515,7 @@ class BugValidator:
             if next_target:
                 blocking_bugs[bug.id] = bug
         logger.info(
-            f"Blocking bugs for next target release ({next_version[0]}.{next_version[1]}): " f"{list(blocking_bugs.keys())}",
+            f"Blocking bugs for next target release ({next_version[0]}.{next_version[1]}): {list(blocking_bugs.keys())}",
         )
 
         k = {bug: [blocking_bugs[b] for b in bug.depends_on if b in blocking_bugs] for bug in bugs}
@@ -544,7 +542,7 @@ class BugValidator:
                         )
                     elif self.output == 'slack':
                         message = (
-                            f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of " f"`{blocker.status}` bug <{blocker.weburl}|{blocker.id}>"
+                            f"`{bug.status}` bug <{bug.weburl}|{bug.id}> is a backport of `{blocker.status}` bug <{blocker.weburl}|{blocker.id}>"
                         )
                     self._complain(message)
                 if blocker.status in ['CLOSED', 'Closed'] and blocker.resolution not in [
@@ -569,8 +567,7 @@ class BugValidator:
                 ]:
                     if self.output == 'text':
                         message = (
-                            f"Regression possible: {bug.status} bug {bug.id} is a backport of bug "
-                            f"{blocker.id} which was CLOSED {blocker.resolution}"
+                            f"Regression possible: {bug.status} bug {bug.id} is a backport of bug {blocker.id} which was CLOSED {blocker.resolution}"
                         )
                     elif self.output == 'slack':
                         message = (

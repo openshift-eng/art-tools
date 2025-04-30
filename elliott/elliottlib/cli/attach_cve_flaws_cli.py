@@ -124,7 +124,7 @@ def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker):
 
     attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(advisory_bug_ids)
     LOGGER.info(
-        f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: ' f'{sorted([b.id for b in attached_tracker_bugs])}',
+        f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: {sorted([b.id for b in attached_tracker_bugs])}',
     )
     return attached_tracker_bugs
 
@@ -140,7 +140,7 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
         brew_api,
     )
     LOGGER.info(
-        f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:' f' {sorted(flaw_tracker_map.keys())}',
+        f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs: {sorted(flaw_tracker_map.keys())}',
     )
 
     # current_target_release can be digit.digit.([z|0])?

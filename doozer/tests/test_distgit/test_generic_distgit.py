@@ -73,7 +73,7 @@ class TestGenericDistGit(TestDistgit):
         # pretenting the directory exists (already cloned)
         flexmock(distgit.os.path).should_receive("isdir").and_return(True)
 
-        expected_log_msg = "Distgit directory already exists; " "skipping clone: my-root-dir/my-namespace/my-distgit-key"
+        expected_log_msg = "Distgit directory already exists; skipping clone: my-root-dir/my-namespace/my-distgit-key"
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
@@ -139,7 +139,7 @@ class TestGenericDistGit(TestDistgit):
         # pretenting the directory doesn't exist (not yet cloned)
         flexmock(distgit.os.path).should_receive("isdir").and_return(False)
 
-        expected_log_msg = "Creating local build dir: " "my-root-dir/my-namespace/my-distgit-key"
+        expected_log_msg = "Creating local build dir: my-root-dir/my-namespace/my-distgit-key"
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
@@ -174,7 +174,7 @@ class TestGenericDistGit(TestDistgit):
         # pretenting the directory doesn't exist (not yet cloned)
         flexmock(distgit.os.path).should_receive("isdir").and_return(False)
 
-        expected_log_msg = "Cloning distgit repository [branch:my-branch] " "into: my-root-dir/my-namespace/my-distgit-key"
+        expected_log_msg = "Cloning distgit repository [branch:my-branch] into: my-root-dir/my-namespace/my-distgit-key"
         logger = flexmock()
         logger.should_receive("info").with_args(expected_log_msg).once()
 
@@ -380,7 +380,7 @@ class TestGenericDistGit(TestDistgit):
             repo.merge_branch("my-target")
             self.fail()
         except IOError as e:
-            expected_msg = "Unable to continue merge. " "Dockerfile found in target branch. " "Use --allow-overwrite to force."
+            expected_msg = "Unable to continue merge. Dockerfile found in target branch. Use --allow-overwrite to force."
             self.assertEqual(expected_msg, str(e))
 
     def test_commit_local(self):
@@ -421,7 +421,7 @@ class TestGenericDistGit(TestDistgit):
             repo.commit("commit msg", log_diff=True)
             self.fail()
         except ChildProcessError as e:
-            expected_msg = "Command returned non-zero exit status: " "Failed fetching distgit diff"
+            expected_msg = "Command returned non-zero exit status: Failed fetching distgit diff"
             self.assertEqual(expected_msg, str(e))
 
     def test_commit_log_diff_succeeded(self):
@@ -551,7 +551,7 @@ class TestGenericDistGit(TestDistgit):
             repo.commit("commit msg")
             self.fail()
         except IOError as e:
-            expected_msg = "Command returned non-zero exit status: " "Failure fetching commit SHA for my-distgit-dir"
+            expected_msg = "Command returned non-zero exit status: Failure fetching commit SHA for my-distgit-dir"
             self.assertEqual(expected_msg, str(e))
 
     def test_tag_local(self):

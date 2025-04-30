@@ -10,7 +10,6 @@ from flexmock import flexmock
 
 
 class TestImageDistGitRepoPushImage(unittest.TestCase):
-
     @staticmethod
     def mock_runtime():
         return flexmock(

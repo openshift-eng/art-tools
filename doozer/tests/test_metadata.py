@@ -10,7 +10,6 @@ from doozerlib.metadata import CgitAtomFeedEntry, Metadata, RebuildHintCode
 
 
 class TestMetadata(TestCase):
-
     def setUp(self) -> None:
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
@@ -579,7 +578,6 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
 
     def test_konflux_network_mode_group_missing(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
@@ -601,7 +599,6 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
 
     def test_konflux_network_mode_image_missing(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
@@ -623,7 +620,6 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
 
     def test_konflux_network_mode_both_missing(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
@@ -643,7 +639,6 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.get_konflux_network_mode(), "open")
 
     def test_konflux_network_mode_both_set(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)

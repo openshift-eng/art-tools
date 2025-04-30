@@ -14,7 +14,6 @@ logging.basicConfig(filename='tests_functional.log', filemode='w+', level=loggin
 
 
 class DoozerRunnerTestCase(unittest.TestCase):
-
     def __init__(self, *args, **kwargs):
         super(DoozerRunnerTestCase, self).__init__(*args, **kwargs)
         self.dz_working_dir = os.environ.get('DOOZER_WORKING_DIR', None)

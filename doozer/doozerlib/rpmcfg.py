@@ -18,7 +18,6 @@ from .metadata import Metadata
 
 
 class RPMMetadata(Metadata):
-
     def __init__(
         self,
         runtime,

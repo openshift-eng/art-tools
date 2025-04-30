@@ -114,7 +114,7 @@ class TagRPMsPipeline:
         # Notify ART
         if fail_count % ART_NOTIFY_FREQUENCY == 0:
             await self.slack_client.say(
-                f'tag_rpms for {self.group} failed {fail_count} times. ' f'See <{self.job_run}|job> logs for details"',
+                f'tag_rpms for {self.group} failed {fail_count} times. See <{self.job_run}|job> logs for details"',
             )
 
 

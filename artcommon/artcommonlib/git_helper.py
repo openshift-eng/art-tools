@@ -20,7 +20,6 @@ def git_clone(
     timeout=0,
     git_cache_dir: Optional[str] = None,
 ):
-
     # Do not change the outer scope param list
     gitargs = copy.copy(gitargs)
 

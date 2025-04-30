@@ -133,7 +133,6 @@ def _assemble_repo(config, nvres: List[str]):
 
         # Each arch will have its own yum repo & thus needs its own rpm_list
         with open(rpm_list_path, mode='w+') as rl:
-
             for nvre in nvres:
                 nvr = strip_epoch(nvre)
                 matched_count = 0
@@ -213,7 +212,6 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
             _assemble_repo(config, nvres)
             success = True
         finally:
-
             packages = list()
             for nvre in sorted(nvres):
                 nvr = strip_epoch(nvre)
@@ -632,9 +630,9 @@ def from_tags(
                 released_package_nvre_obj[package_name] = parse_nvr(to_nvre(build))
 
         component_builds: Dict[str, Dict] = {}  # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
-        pinned_nvres: Dict[str, str] = (
-            {}
-        )  # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
+        pinned_nvres: Dict[
+            str, str
+        ] = {}  # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
 
         if runtime.assembly_basis_event:
             # If an assembly has a basis event, it will only query for artifacts from the "stream" assembly.
@@ -913,9 +911,9 @@ def for_assembly(
     desired_nvres = set()  # The final set of rpm build NVREs that will be included in the plashet repo
     nvr_product_version = {}  # Maps nvr to product_version for signing
 
-    component_builds: Dict[str, Dict] = (
-        {}
-    )  # This dict stores candidate rpm builds for plashet; keys are rpm component names, values are Brew build dicts
+    component_builds: Dict[
+        str, Dict
+    ] = {}  # This dict stores candidate rpm builds for plashet; keys are rpm component names, values are Brew build dicts
 
     # Honors pinned NVRs by "is"
     pinned_by_is = builder.from_pinned_by_is(el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map)

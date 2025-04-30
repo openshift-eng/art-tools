@@ -4,7 +4,6 @@ from validator.schema import rpm_schema
 
 
 class TestRpmSchema(unittest.TestCase):
-
     def test_validate_with_valid_data(self):
         valid_data = {
             'content': {},

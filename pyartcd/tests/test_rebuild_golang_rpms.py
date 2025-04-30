@@ -7,7 +7,6 @@ from pyartcd.pipelines.rebuild_golang_rpms import RebuildGolangRPMsPipeline
 
 
 class TestBumpRelease(TestCase):
-
     def setUp(self):
         if "specfile" not in sys.modules:
             self.skipTest("specfile is only available on Linux")

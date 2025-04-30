@@ -10,7 +10,6 @@ from doozerlib.rpm_builder import RPMBuilder
 
 
 class TestRPMBuilder(IsolatedAsyncioTestCase):
-
     def setUp(self) -> None:
         pass
 
@@ -101,7 +100,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
                 "-czf",
                 str(dg.dg_path / f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"),
                 "--exclude=.git",
-                fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
+                rf"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
                 ".",
             ],
             cwd=rpm.source_path,
@@ -161,7 +160,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
                 "-czf",
                 str(dg.dg_path / f"{rpm.config.name}-{rpm.version}-{rpm.release}.tar.gz"),
                 "--exclude=.git",
-                fr"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
+                rf"--transform=s,^\./,{rpm.config.name}-{rpm.version}/,",
                 ".",
             ],
             cwd=rpm.source_path,

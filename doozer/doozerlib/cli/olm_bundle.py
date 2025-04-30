@@ -320,8 +320,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
     get_branches_results = [bundle.does_bundle_branch_exist() for bundle in olm_bundles]
     if not all([result[0] for result in get_branches_results]):
         LOGGER.error(
-            'One or more bundle branches do not exist: '
-            f'{[result[1] for result in get_branches_results if not result[0]]}. Please create them first.',
+            f'One or more bundle branches do not exist: {[result[1] for result in get_branches_results if not result[0]]}. Please create them first.',
         )
         sys.exit(1)
 

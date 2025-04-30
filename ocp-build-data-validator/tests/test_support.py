@@ -12,7 +12,6 @@ group_cfg = {
 
 
 class TestSupport(unittest.TestCase):
-
     def test_fail_validation(self):
         self.assertRaises(
             exceptions.ValidationFailedWIP,

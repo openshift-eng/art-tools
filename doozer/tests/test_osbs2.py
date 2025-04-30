@@ -9,7 +9,6 @@ from doozerlib.osbs2_builder import OSBS2Builder
 
 
 class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
-
     def _make_image_meta(self, runtime):
         data_obj = DataObj(
             "foo",

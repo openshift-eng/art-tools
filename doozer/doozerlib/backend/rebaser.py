@@ -343,7 +343,7 @@ class KonfluxRebaser:
         else:
             if parent_metadata.private_fix is None:
                 raise IOError(
-                    f"Parent image {member} doesn't have .p? flag determined. " "This indicates a bug in Doozer. Please report this issue.",
+                    f"Parent image {member} doesn't have .p? flag determined. This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
             return f"{image_repo}:{parent_metadata.image_name_short}-{uuid_tag}", private_fix
@@ -428,7 +428,6 @@ class KonfluxRebaser:
         # ignore_list.extend(metadata.config.get('dist_git_ignore', []))
 
         for ent in dest_dir.iterdir():
-
             if ent.name in ignore_list:
                 continue
 
@@ -802,7 +801,6 @@ class KonfluxRebaser:
         filtered_content = []
         in_mod_block = False
         for line in df_lines:
-
             # Check for begin/end of mod block, skip any lines inside
             if OIT_BEGIN in line:
                 in_mod_block = True
@@ -1262,7 +1260,6 @@ class KonfluxRebaser:
 
         # note: make changes working back from the end so that positions to splice don't change
         for subcmd in reversed(cmd_nodes):
-
             if subcmd.kind == "operator":
                 # we lose the line breaks in the original dockerfile,
                 # so try to format nicely around operators -- more readable git diffs.
@@ -1359,9 +1356,7 @@ class KonfluxRebaser:
                 raise ValueError(
                     f"Cachito integration is enabled for image {metadata.name}. Specifying `go.modules` in `container.yaml` is not allowed.",
                 )
-            pkg_managers = (
-                []
-            )  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
+            pkg_managers = []  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
             if isinstance(metadata.config.content.source.pkg_managers, ListModel):
                 # Use specified package managers
                 pkg_managers = metadata.config.content.source.pkg_managers.primitive()
@@ -1722,7 +1717,6 @@ class KonfluxRebaser:
 
         with df_path.open('w', encoding="utf-8") as df:
             for line in df_lines:
-
                 # Always remove the env line we update each time.
                 if env_update_line_flag in line:
                     continue
@@ -1867,7 +1861,7 @@ class KonfluxRebaser:
             with io.open(csv_file, 'r+', encoding="utf-8") as f:
                 content = f.read()
                 content = content.replace(spec + '\n', replace + '\n')
-                content = content.replace(spec + '\"', replace + '\"')
+                content = content.replace(spec + '"', replace + '"')
                 f.seek(0)
                 f.truncate()
                 f.write(content)

@@ -273,7 +273,6 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.cli.pin_builds_cli.AssemblyPinBuildsCli.validate_nvrs_in_brew")
     async def test_run_with_non_art_rpm_nvr(self, mock_validate_nvrs_brew):
-
         cli = AssemblyPinBuildsCli(
             runtime=self.runtime,
             nvrs=[self.non_art_rpm_nvr],

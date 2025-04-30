@@ -32,7 +32,6 @@ rgp_cli.asyncio.sleep = no_sleep
 
 
 class TestGenPayloadCli(IsolatedAsyncioTestCase):
-
     def test_find_rhcos_payload_entries(self):
         rhcos_build = MagicMock()
         assembly_inspector = MagicMock()

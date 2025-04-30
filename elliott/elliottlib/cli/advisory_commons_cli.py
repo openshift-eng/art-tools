@@ -31,7 +31,7 @@ supported_update_fields = [
 )
 @click.option(
     "--new",
-    help="New value of field to update advisories with. --field should be one of" f" {supported_update_fields}",
+    help=f"New value of field to update advisories with. --field should be one of {supported_update_fields}",
 )
 @click.option(
     "--version-replace",

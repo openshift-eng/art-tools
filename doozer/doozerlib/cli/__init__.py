@@ -289,7 +289,7 @@ def cli(ctx, **kwargs):
     )
 
     if cli_opts.config_is_empty(cfg.full_path):
-        msg = ("It appears you may be using Doozer for the first time.\n" "Be sure to setup Doozer using the user config file:\n" "{}\n").format(
+        msg = ("It appears you may be using Doozer for the first time.\nBe sure to setup Doozer using the user config file:\n{}\n").format(
             cfg.full_path,
         )
         yellow_print(msg)

@@ -28,7 +28,6 @@ GEN_PAYLOAD_ARTIFACTS_OUT_DIR = 'gen-payload-artifacts'
 
 
 class BuildSyncPipeline:
-
     @classmethod
     async def create(cls, *args, **kwargs):
         self = cls(*args, **kwargs)
@@ -134,8 +133,7 @@ class BuildSyncPipeline:
 
             if self.runtime.dry_run:
                 self.logger.warning(
-                    f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} "
-                    f"with the message: \n {text_body}",
+                    f"[DRY RUN] Would have commented on PR {constants.GITHUB_OWNER}/{repository}/pull/{pr_number} with the message: \n {text_body}",
                 )
                 return
 
@@ -183,7 +181,7 @@ class BuildSyncPipeline:
             # Comment on the PR that the job succeeded
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) succeeded!")
             await self.slack_client.say(
-                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build-sync> " f"for assembly `{self.assembly}` succeeded!",
+                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build-sync> for assembly `{self.assembly}` succeeded!",
             )
 
         #  All good: delete fail counter
@@ -237,7 +235,7 @@ class BuildSyncPipeline:
             self.logger.info('Sleeping so that release controller has time to react...')
             await asyncio.sleep(120)
 
-            cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag ' f'{self.is_base_name}{suffix}:trigger-release-controller -d'
+            cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{suffix} tag {self.is_base_name}{suffix}:trigger-release-controller -d'
             (
                 _,
                 out,
@@ -307,7 +305,7 @@ class BuildSyncPipeline:
     async def _tag_into_ci_imagestream(self, arch_suffix, tag):
         # isolate the pullspec trom the ART imagestream tag
         # (e.g. quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:<sha>)
-        cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} ' f'get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json'
+        cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} get istag/{self.is_base_name}{arch_suffix}:{tag} -o=json'
         _, out, _ = await exectools.cmd_gather_async(cmd)
         tag_pullspec = json.loads(out)['tag']['from']['name']
 
@@ -319,10 +317,7 @@ class BuildSyncPipeline:
             tag,
             tag_pullspec,
         )
-        cmd = (
-            f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} '
-            f'tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
-        )
+        cmd = f'oc --kubeconfig {os.environ["KUBECONFIG"]} -n ocp{arch_suffix} tag {tag_pullspec} {self.version}:{tag} --import-mode=PreserveOriginal'
 
         if self.runtime.dry_run:
             self.logger.info('Would have executed: "%s"', cmd)
@@ -445,7 +440,7 @@ class BuildSyncPipeline:
             image = f'registry.ci.openshift.org/{namespace}/{reponame}:{name}'
 
             # Build new Openshift release image
-            cmd = f'oc adm release new --to-image={image} --name {name} ' f'--reference-mode=source -n {namespace} --from-image-stream {meta["name"]}'
+            cmd = f'oc adm release new --to-image={image} --name {name} --reference-mode=source -n {namespace} --from-image-stream {meta["name"]}'
 
             if self.runtime.dry_run:
                 self.logger.info('Would have created the release image as follows: %s', cmd)
@@ -489,7 +484,7 @@ class BuildSyncPipeline:
         if self.assembly != 'stream':
             await self.comment_on_assembly_pr(f"Build sync job [run]({self.job_run}) failed!")
             await self.slack_client.say(
-                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> " f"for assembly {self.assembly} failed!",
+                f"@release-artists `{self.build_system.capitalize()}` <{self.job_run}|build sync> for assembly {self.assembly} failed!",
             )
 
         # Increment failure count
@@ -581,12 +576,12 @@ class BuildSyncPipeline:
 @click.option(
     "--emergency-ignore-issues",
     is_flag=True,
-    help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. " "Do not use without approval.",
+    help="Ignore all issues with constructing payload. Only supported for assemblies of type: stream. Do not use without approval.",
 )
 @click.option(
     "--retrigger-current-nightly",
     is_flag=True,
-    help="Forces the release controller to re-run with existing images. No change will be made to payload" "images in the release",
+    help="Forces the release controller to re-run with existing images. No change will be made to payloadimages in the release",
 )
 @click.option(
     "--data-gitref",

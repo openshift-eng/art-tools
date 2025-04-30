@@ -309,7 +309,6 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
             nset.generate_equivalents_with("x86_64", make(nightlies[0]))
 
     def test_generate_nightly_sets(self):
-
         def make(ndict):
             nightly = subject.Nightly(release_image_info=ndict["releaseInfo"], nightly_info=ndict, phase="Accepted", pullspec="ignore")
             nightly.commit_for_tag["pod"] = ndict["equivalence"]  # set up comparison

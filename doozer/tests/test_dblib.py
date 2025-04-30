@@ -10,7 +10,6 @@ from doozerlib.dblib import DB, Record
 
 
 class FakeMetaData(object):
-
     def __init__(self):
         self.name = "test"
         self.namespace = "test_namespace"
@@ -24,7 +23,6 @@ class FakeRuntime(object):
     mutex = RLock()
 
     def __init__(self):
-
         self.logger = logging.getLogger(__name__)
 
         # Create a "uuid" which will be used in FROM fields during updates
@@ -41,7 +39,6 @@ class FakeRuntime(object):
 
 
 class DBLibTest(unittest.TestCase):
-
     def setUp(self):
         self.setup_failed = False
         try:
@@ -73,7 +70,6 @@ class DBLibTest(unittest.TestCase):
             self.skipTest(reason="DB setup failed for running test.")
 
     def test_record_with_metadata(self):
-
         if not self.setup_failed:
             try:
                 with self.db.record(operation="build", metadata=FakeMetaData()):

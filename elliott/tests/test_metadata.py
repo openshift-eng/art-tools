@@ -8,7 +8,6 @@ from elliottlib.metadata import Metadata
 
 
 class TestMetadata(unittest.TestCase):
-
     def setUp(self) -> None:
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()

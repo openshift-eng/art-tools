@@ -340,7 +340,7 @@ async def is_build_permitted(
     # Check for frozen scheduled automation
     if freeze_automation == "scheduled" and not is_manual_build():
         logger.info(
-            'Only manual runs are permitted according to freeze_automation in group.yml ' 'and this run appears to be non-manual.',
+            'Only manual runs are permitted according to freeze_automation in group.yml and this run appears to be non-manual.',
         )
         return False
 
@@ -501,7 +501,7 @@ def notify_bz_info_missing(version: str, doozer_working: str, mail_client: MailS
 
         public_upstream_url = bz_notify['public_upstream_url']
         distgit = bz_notify['distgit']
-        email_subject = f'[ACTION REQUIRED] Bugzilla component information ' f'missing for image {distgit} in OCP v{version}'
+        email_subject = f'[ACTION REQUIRED] Bugzilla component information missing for image {distgit} in OCP v{version}'
         explanation_body = f"""
 Why am I receiving this?
 ------------------------
@@ -573,16 +573,16 @@ def mail_build_failure_owners(failed_builds: dict, doozer_working: str, mail_cli
 --------------------------------------------------------------------------
 The following logs are just the container build portion of the OSBS build:
 --------------------------------------------------------------------------\n"""
-        container_log_file = f'{doozer_working}/brew-logs/{failure["distgit"]}/' f'noarch-{failure["task_id"]}/container-build-x86_64.log'
+        container_log_file = f'{doozer_working}/brew-logs/{failure["distgit"]}/noarch-{failure["task_id"]}/container-build-x86_64.log'
 
         try:
             with open(container_log_file) as f:
                 container_log += f.read()
 
         except:
-            container_log = "Unfortunately there were no container build logs; " "something else about the build failed."
+            container_log = "Unfortunately there were no container build logs; something else about the build failed."
             logger.warning(
-                'No container build log for failed %s build\n' '(task url %s)\n' 'at path %s',
+                'No container build log for failed %s build\n(task url %s)\nat path %s',
                 failure['distgit'],
                 failure['task_url'],
                 container_log,
@@ -599,7 +599,7 @@ The following logs are just the container build portion of the OSBS build:
             "and some in the domain of other groups. This message is only sent when the build fails "
             "consistently, so it is unlikely this failure will resolve itself without intervention.\n\n"
         )
-        explanation_body += f'The brew build task {failure["task_url"]} failed with error message:\n' f'{failure["message"]}\n' f'{container_log}'
+        explanation_body += f'The brew build task {failure["task_url"]} failed with error message:\n{failure["message"]}\n{container_log}'
 
         # Send email to owners of failed image builds
         # If art is the only owner of image (example for our ci golang builder images) send instead to our default automation email

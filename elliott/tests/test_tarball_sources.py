@@ -8,7 +8,6 @@ from elliottlib import tarball_sources
 
 
 class TarballSourcesTestCase(unittest.TestCase):
-
     def test_find_builds_from_advisory(self):
         with self.assertRaises(errata_tool.ErrataException), mock.patch("errata_tool.Erratum", side_effect=errata_tool.ErrataException):
             tarball_sources.find_builds_from_advisory(0, ["logging-fluentd-container"])

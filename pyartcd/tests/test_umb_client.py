@@ -37,7 +37,6 @@ class TestModuleFunctions(TestCase):
 
 
 class TestAsyncUMBClient(IsolatedAsyncioTestCase):
-
     @patch("stomp.StompConnection11", autospec=True)
     def test_create_connection(self, StompConnection11: MagicMock):
         uri = "failover:(stomp+ssl://stomp1.example.com:12345,stomp://stomp2.example.com:23456)"

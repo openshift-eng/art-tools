@@ -27,7 +27,6 @@ class MockContent(object):
 
 
 class MockConfig(dict):
-
     def __init__(self, *args, **kwargs):
         super(MockConfig, self).__init__(*args, **kwargs)
         self.distgit = MockDistgit()
@@ -37,7 +36,6 @@ class MockConfig(dict):
 
 
 class SimpleMockLock(object):
-
     def __enter__(self):
         pass
 
@@ -46,7 +44,6 @@ class SimpleMockLock(object):
 
 
 class MockRuntime(object):
-
     def __init__(self, logger):
         self.branch = None
         self.distgits_dir = "distgits_dir"
@@ -58,7 +55,6 @@ class MockRuntime(object):
 
 
 class MockMetadata(object):
-
     def __init__(self, runtime):
         self.config = MockConfig()
         self.runtime = runtime
@@ -82,7 +78,6 @@ class MockMetadata(object):
 
 
 class MockScanner(object):
-
     def __init__(self):
         self.matches = []
         self.files = []

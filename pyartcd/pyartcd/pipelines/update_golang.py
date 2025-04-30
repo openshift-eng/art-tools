@@ -67,7 +67,7 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     rc, _, _ = await exectools.cmd_gather_async(cmd, check=False)
     if rc != 0:
         _LOGGER.info(
-            f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to ' 'make the build available.',
+            f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to make the build available.',
         )
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
@@ -99,7 +99,7 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
             raise ValueError(f'Only `golang` nvrs are supported, found package name: {name}')
         if go_version and go_version != parsed_nvr['version']:
             raise ValueError(
-                f'All nvrs should have the same golang version, found: {go_version} and' f' {parsed_nvr["version"]}',
+                f'All nvrs should have the same golang version, found: {go_version} and {parsed_nvr["version"]}',
             )
         go_version = parsed_nvr['version']
 
@@ -110,11 +110,11 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
         el_version = int(el_version[2:])
         if el_version not in supported_els:
             raise ValueError(
-                f'Unsupported RHEL version detected for nvr {nvr}, supported versions are:' f' {supported_els}',
+                f'Unsupported RHEL version detected for nvr {nvr}, supported versions are: {supported_els}',
             )
         if el_version in el_nvr_map:
             raise ValueError(
-                f'Cannot have two nvrs for the same rhel version: {nvr},' f' {el_nvr_map[el_version]}',
+                f'Cannot have two nvrs for the same rhel version: {nvr}, {el_nvr_map[el_version]}',
             )
         el_nvr_map[el_version] = nvr
     return go_version, el_nvr_map
@@ -214,7 +214,7 @@ class UpdateGolangPipeline:
         if len(builder_nvrs) != len(el_nvr_map):  # builders not found for all rhel versions
             missing_in = el_nvr_map.keys() - builder_nvrs.keys()
             _LOGGER.info(
-                f"Builder images are missing for rhel versions: {missing_in}. " "Verifying builder branches are updated for building",
+                f"Builder images are missing for rhel versions: {missing_in}. Verifying builder branches are updated for building",
             )
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
@@ -523,7 +523,7 @@ class UpdateGolangPipeline:
 
         if expected != actual:
             raise ValueError(
-                f"Did not find repo {golang_repo} to have the expected urls. \nexpected=" f"{expected}\nactual={actual}",
+                f"Did not find repo {golang_repo} to have the expected urls. \nexpected={expected}\nactual={actual}",
             )
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")

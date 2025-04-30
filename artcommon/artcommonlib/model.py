@@ -1,5 +1,4 @@
 class ModelException(Exception):
-
     def __init__(self, msg, result=None, **kwargs):
         super().__init__(msg)
         self.msg = msg
@@ -23,7 +22,6 @@ class ModelException(Exception):
 
 
 class MissingModel(dict):
-
     def __init__(self):
         super().__init__()
         pass
@@ -70,7 +68,6 @@ def to_model_or_val(v):
 
 
 class ListModel(list):
-
     def __init__(self, list_to_model):
         super().__init__()
         if isinstance(list_to_model, ListModel):
@@ -117,7 +114,6 @@ class ListModel(list):
 
 
 class Model(dict):
-
     def __init__(self, dict_to_model=None):
         super(Model, self).__init__()
         if dict_to_model is not None:

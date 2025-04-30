@@ -117,7 +117,7 @@ class FindBugsGolangCli:
         flaw_bug = self.bz_tracker.get_bug(flaw_id)
         if not flaw_bug:
             self._logger.warning(
-                f"Could not find flaw bug {flaw_id} in bugzilla, please investigate. Ignoring " "flaw bug for now",
+                f"Could not find flaw bug {flaw_id} in bugzilla, please investigate. Ignoring flaw bug for now",
             )
             return None
         self.flaw_bugs[flaw_id] = flaw_bug
@@ -296,14 +296,14 @@ class FindBugsGolangCli:
                         fix_found = True
                         formatted_nvrs = [f'{n[0]}-{n[1]}-{n[2]}' for n in go_nvr_map[go_build_string]]
                         self._logger.info(
-                            f'NVRs found to be built with the desired golang build {go_build_string}: ' f'{formatted_nvrs}',
+                            f'NVRs found to be built with the desired golang build {go_build_string}: {formatted_nvrs}',
                         )
                         final_fixed_in_nvrs.append(nvr_string)
                         final_fixed_nvrs.extend(formatted_nvrs)
                         break
                 if not fix_found:
                     self._logger.info(
-                        f'NVRs found to be on different golang build {go_build_string}: ' f'{go_nvr_map[go_build_string]}',
+                        f'NVRs found to be on different golang build {go_build_string}: {go_nvr_map[go_build_string]}',
                     )
 
             fixed = len(final_fixed_nvrs) == len(nvrs)
@@ -338,7 +338,7 @@ class FindBugsGolangCli:
                 nvr_map = await get_nvrs_from_release(self.pullspec, rhcos_images)
             except Exception as e:
                 self._logger.error(
-                    "Does pullspec exist? To override use --pullspec. " f"Could not fetch go build nvrs for {self.pullspec}: {e}",
+                    f"Does pullspec exist? To override use --pullspec. Could not fetch go build nvrs for {self.pullspec}: {e}",
                 )
                 raise e
             nvrs = [(n, vr_tuple[0], vr_tuple[1]) for n, vr_tuple in nvr_map.items()]
@@ -361,7 +361,7 @@ class FindBugsGolangCli:
                         fixed_builds += len(self.go_nvr_map[builder_nvr])
                         fixed_in_builds.append((builder_nvr, go_build_string))
                         self._logger.info(
-                            f'Images in payload found to be built with the desired golang' f' {go_build_string}: {len(self.go_nvr_map[builder_nvr])}',
+                            f'Images in payload found to be built with the desired golang {go_build_string}: {len(self.go_nvr_map[builder_nvr])}',
                         )
 
             vuln_builds = total_builds - fixed_builds
@@ -405,7 +405,7 @@ class FindBugsGolangCli:
             target_release = self.jira_tracker.target_release()
             tr = ','.join(target_release)
             logger.info(
-                f"Searching for open security trackers with target version {tr}. " "Then will filter to just the golang CVEs and trackers",
+                f"Searching for open security trackers with target version {tr}. Then will filter to just the golang CVEs and trackers",
             )
 
             exclude_status_clause = f"and status not in ({', '.join(self.exclude_bug_statuses)}) " if self.exclude_bug_statuses else ""
@@ -463,7 +463,7 @@ class FindBugsGolangCli:
             go_vuln_id = get_cve_from_go_db(cve_id)
             if not go_vuln_id:
                 logger.info(
-                    f"Could not find {cve_id} in go vulnerability database. Assuming it's not a " "golang CVE. Skipping",
+                    f"Could not find {cve_id} in go vulnerability database. Assuming it's not a golang CVE. Skipping",
                 )
                 continue
             logger.info(f"Found {cve_id} in go vulnerability database: {go_vuln_id}")
@@ -476,7 +476,7 @@ class FindBugsGolangCli:
                 )
                 continue
             logger.info(
-                f"Found fixed in versions for {cve_id} in go vulnerability database: " f"{_fmt(fixed_in_version_go_db)}",
+                f"Found fixed in versions for {cve_id} in go vulnerability database: {_fmt(fixed_in_version_go_db)}",
             )
             golang_cves_fixed_in[cve_id] = fixed_in_version_go_db
 
@@ -622,7 +622,7 @@ class FindBugsGolangCli:
 @click.option(
     "--pullspec",
     default=None,
-    help="Pullspec of release payload to check against. If not provided, latest accepted nightly will be " "used",
+    help="Pullspec of release payload to check against. If not provided, latest accepted nightly will be used",
 )
 @click.option(
     "--cve-id",

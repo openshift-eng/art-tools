@@ -17,7 +17,6 @@ COVSCAN_WAIVED_FILENAME = 'waived.flag'
 
 
 class CoverityContext(object):
-
     def __init__(
         self,
         image,
@@ -399,10 +398,8 @@ stderr: {stderr}
 
 
 def run_covscan(cc: CoverityContext) -> bool:
-
     dg_path = cc.dg_path
     with Dir(dg_path):
-
         dockerfile_path = dg_path.joinpath('Dockerfile')
         if not dockerfile_path.exists():
             cc.logger.error('Dockerfile does not exist in distgit; not rebased yet?')
@@ -424,7 +421,6 @@ def run_covscan(cc: CoverityContext) -> bool:
         covscan_df = dg_path.joinpath('Dockerfile.covscan')
 
         with covscan_df.open(mode='w+') as df_out:
-
             df_line = 0
             stage_number = 0
             for entry in dfp.structure:

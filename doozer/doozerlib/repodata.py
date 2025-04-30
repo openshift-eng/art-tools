@@ -229,7 +229,6 @@ class RepodataLoader:
 
 
 class OutdatedRPMFinder:
-
     @staticmethod
     def _find_candidate_modular_rpms(all_modules, enabled_streams):
         """Finds all candidate modular rpms in enabled module streams"""

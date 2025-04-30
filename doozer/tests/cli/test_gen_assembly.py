@@ -8,7 +8,6 @@ from flexmock import flexmock
 
 
 class TestGenPayloadCli(TestCase):
-
     def test_initialize_assembly_type(self):
         """
         Check that the correct assembly type is set, according to

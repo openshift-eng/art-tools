@@ -10,7 +10,6 @@ from doozerlib.cli.rpms import _rpms_rebase_and_build
 
 
 class TestRPMsBuildCli(IsolatedAsyncioTestCase):
-
     def _make_runtime(self, assembly=None):
         runtime = MagicMock()
         runtime.group_config.public_upstreams = [{"private": "https://github.com/openshift-priv", "public": "https://github.com/openshift"}]

@@ -74,7 +74,6 @@ class Runtime:
 
 
 class GroupRuntime(runtime.GroupRuntime):
-
     @classmethod
     async def create(cls, *args, **kwargs):
         """Async instantiation that populates group_config"""
@@ -100,7 +99,6 @@ class GroupRuntime(runtime.GroupRuntime):
         doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
         doozer_data_gitref: str = '',
     ):
-
         self.config = config
         self.working_dir = working_dir
         self.group = group

@@ -397,7 +397,7 @@ class AsyncErrataUtils:
             # Make sure they are go builder nvrs (this should never happen)
             if builder_nvr['name'] != constants.GOLANG_BUILDER_CVE_COMPONENT:
                 raise ValueError(
-                    f"Unexpected `name` value for nvr {builder_nvr}. Expected " f"{constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.",
+                    f"Unexpected `name` value for nvr {builder_nvr}. Expected {constants.GOLANG_BUILDER_CVE_COMPONENT}. Please investigate.",
                 )
 
             if 'etcd' in list(go_nvr_map[builder_nvr_string])[0]:
@@ -427,7 +427,7 @@ class AsyncErrataUtils:
             for base_golang_builder in base_golang_builders:
                 nvrs.update({nvr[0] for nvr in go_nvr_map[base_golang_builder]})
             _LOGGER.info(
-                f"Associating golang {cve_name} with golang " f"images ({len(nvrs)})",
+                f"Associating golang {cve_name} with golang images ({len(nvrs)})",
             )
             expected_cve_components[cve_name] = nvrs
 

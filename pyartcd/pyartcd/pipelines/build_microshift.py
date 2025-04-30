@@ -96,7 +96,7 @@ class BuildMicroShiftPipeline:
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         if self.assembly_type not in self.SUPPORTED_ASSEMBLY_TYPES:
             raise ValueError(
-                f"Building MicroShift for assembly type {self.assembly_type.value} is not currently " "supported.",
+                f"Building MicroShift for assembly type {self.assembly_type.value} is not currently supported.",
             )
 
         if self.assembly_type is AssemblyTypes.STREAM:
@@ -201,7 +201,7 @@ class BuildMicroShiftPipeline:
         if not self.force:
             pinned_nvrs = util.get_rpm_if_pinned_directly(self.releases_config, self.assembly, 'microshift')
             if pinned_nvrs:
-                message = f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to " "rebuild."
+                message = f"For assembly {self.assembly} builds are already pinned: {pinned_nvrs}. Use FORCE to rebuild."
                 self._logger.info(message)
                 await self.slack_client.say_in_thread(message)
                 nvrs = list(pinned_nvrs.values())
@@ -352,7 +352,7 @@ class BuildMicroShiftPipeline:
             self._logger.warning("Error verifying attached bugs: %s", err)
             if self.assembly_type in [AssemblyTypes.PREVIEW, AssemblyTypes.CANDIDATE]:
                 await self.slack_client.say_in_thread(
-                    "Attached bugs have some issues. Permitting since " f"assembly is of type {self.assembly_type}",
+                    f"Attached bugs have some issues. Permitting since assembly is of type {self.assembly_type}",
                 )
                 await self.slack_client.say_in_thread(str(err))
             else:

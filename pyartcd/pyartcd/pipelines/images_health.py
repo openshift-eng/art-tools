@@ -54,7 +54,7 @@ class ImagesHealthPipeline:
                 await slack_client.say(f':white_check_mark: [{engine}] All images are healthy for openshift-{self.version}')
             return
 
-        msg = f':alert: [{engine}] There are some issues to look into for openshift-{self.version}. ' f'{len(engine_report)} components have failed!'
+        msg = f':alert: [{engine}] There are some issues to look into for openshift-{self.version}. {len(engine_report)} components have failed!'
 
         report = ''
         for image_name, concern in engine_report.items():

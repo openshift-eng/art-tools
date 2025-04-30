@@ -297,7 +297,7 @@ class PrepareReleasePipeline:
                 await self.remove_builds_all(advisories["metadata"])
             else:
                 _LOGGER.info(
-                    f"'advance' advisory {advisories['advance']} is not editable. Defaulting bundle advisory" " to 'metadata'",
+                    f"'advance' advisory {advisories['advance']} is not editable. Defaulting bundle advisory to 'metadata'",
                 )
 
         if "prerelease" in advisories.keys():
@@ -313,7 +313,7 @@ class PrepareReleasePipeline:
                 await self.remove_builds_all(advisories["metadata"])
             else:
                 _LOGGER.info(
-                    f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle " "advisory to 'metadata'",
+                    f"'prerelease' advisory {advisories['prerelease']} is not editable. Defaulting bundle advisory to 'metadata'",
                 )
 
         _LOGGER.info("Sweep builds into the the advisories...")
@@ -406,8 +406,7 @@ class PrepareReleasePipeline:
             if impetus in ("image", "extras", "metadata", "prerelease", "advance"):
                 if not is_greenwave_all_pass_on_advisory(advisory):
                     await self._slack_client.say_in_thread(
-                        "Some greenwave tests failed on "
-                        f"https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists",
+                        f"Some greenwave tests failed on https://errata.devel.redhat.com/advisory/{advisory}/test_run/greenwave_cvp @release-artists",
                     )
 
         # Move advisories to QE
@@ -662,8 +661,8 @@ class PrepareReleasePipeline:
                 group_config = f.read()
             for impetus, advisory in advisories.items():
                 new_group_config = re.sub(
-                    fr"^(\s+{impetus}:)\s*[0-9]+$",
-                    fr"\1 {advisory}",
+                    rf"^(\s+{impetus}:)\s*[0-9]+$",
+                    rf"\1 {advisory}",
                     group_config,
                     count=1,
                     flags=re.MULTILINE,
@@ -1084,7 +1083,7 @@ async def prepare_release(
     slack_client = runtime.new_slack_client()
     slack_client.bind_channel(group)
     await slack_client.say_in_thread(
-        f":construction: prepare-release for {name if name else assembly} " ":construction:",
+        f":construction: prepare-release for {name if name else assembly} :construction:",
     )
     try:
         # parse environment variables for credentials

@@ -415,7 +415,6 @@ class SourceResolver:
         remote_https = art_util.convert_remote_git_to_https(remote_git)
 
         if public_upstreams:
-
             # We prefer the longest match in the mapping, so iterate through the entire
             # map and keep track of the longest matching private remote.
             target_priv_prefix = None
@@ -436,7 +435,7 @@ class SourceResolver:
                         target_pub_branch = upstream.get("public_branch")
 
             if target_priv_prefix:
-                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix):]}', target_pub_branch, True
+                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix) :]}', target_pub_branch, True
 
         return remote_https, None, False
 

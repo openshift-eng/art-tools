@@ -292,7 +292,7 @@ class KonfluxOcp4Pipeline:
             jenkins.update_title(f'[{n_images} images]')
             if len(self.build_plan.images_excluded) <= 10:
                 jenkins.update_description(
-                    f'Images: building all images except ' f'{",".join(self.build_plan.images_excluded)}.<br/>',
+                    f'Images: building all images except {",".join(self.build_plan.images_excluded)}.<br/>',
                 )
             else:
                 jenkins.update_description(f'Images: building {n_images} images.<br/>')
@@ -413,7 +413,7 @@ class KonfluxOcp4Pipeline:
 @click.option(
     '--image-list',
     required=True,
-    help='Comma/space-separated list to include/exclude per BUILD_IMAGES ' '(e.g. logging-kibana5,openshift-jenkins-2)',
+    help='Comma/space-separated list to include/exclude per BUILD_IMAGES (e.g. logging-kibana5,openshift-jenkins-2)',
 )
 @click.option('--assembly', required=True, help='The name of an assembly to rebase & build for')
 @click.option(
