@@ -438,7 +438,7 @@ class ConfigScanSources:
         if str(network_mode == "hermetic").lower() != is_hermetic.lower():
             self.add_image_meta_change(
                 image_meta,
-                RebuildHint(code=RebuildHintCode.HERMETIC_MODE_CHANGED,
+                RebuildHint(code=RebuildHintCode.CONFIG_CHANGE,
                             reason=f"Latest build {build_record.image_pullspec} network mode was {is_hermetic} but we need {network_mode}"))
 
     @skip_check_if_changing
