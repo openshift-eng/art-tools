@@ -40,5 +40,5 @@ class TestFbcImportCli(unittest.IsolatedAsyncioTestCase):
             [
                 mock.call(self.runtime.ordered_image_metas()[0], "example.com/test/test-index-image:latest"),
                 mock.call(self.runtime.ordered_image_metas()[1], "example.com/test/test-index-image:latest"),
-            ]
+            ],
         )

@@ -545,7 +545,11 @@ def _ensure_accepted_tags(builds: List[Dict], brew_session: koji.ClientSession, 
 
 
 async def _fetch_builds_by_kind_rpm(
-    runtime: Runtime, tag_pv_map: Dict[str, str], brew_session: koji.ClientSession, include_shipped: bool, member_only: bool
+    runtime: Runtime,
+    tag_pv_map: Dict[str, str],
+    brew_session: koji.ClientSession,
+    include_shipped: bool,
+    member_only: bool,
 ):
     assembly = runtime.assembly
     if runtime.assembly_basis_event:
@@ -561,12 +565,12 @@ async def _fetch_builds_by_kind_rpm(
         ]
         if any(nvr for image_config in image_configs for dep in image_config.dependencies.rpms for _, nvr in dep.items()):
             raise ElliottFatalError(
-                f"Assembly {runtime.assembly} is not appliable for build sweep because it contains image member specific dependencies for a custom release."
+                f"Assembly {runtime.assembly} is not appliable for build sweep because it contains image member specific dependencies for a custom release.",
             )
         rhcos_config = assembly_rhcos_config(runtime.get_releases_config(), runtime.assembly)
         if any(nvr for dep in rhcos_config.dependencies.rpms for _, nvr in dep.items()):
             raise ElliottFatalError(
-                f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release."
+                f"Assembly {runtime.assembly} is not appliable for build sweep because it contains RHCOS specific dependencies for a custom release.",
             )
 
     builds: List[Dict] = []
@@ -607,7 +611,9 @@ async def _fetch_builds_by_kind_rpm(
 
                 # Honors group dependencies
                 group_deps = builder.from_group_deps(
-                    el_version, runtime.group_config, runtime.rpm_map
+                    el_version,
+                    runtime.group_config,
+                    runtime.rpm_map,
                 )  # the return value doesn't include any ART managed rpms
                 # Group dependencies should take precedence over anything previously determined except those pinned by "is".
                 for component, dep_build in group_deps.items():

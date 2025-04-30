@@ -91,7 +91,7 @@ class TestErrata(unittest.TestCase):
             [1685398, 1685399],
             errata.parse_exception_error_message(
                 '''Bug #1685398 The bug is filed already in RHBA-2019:1589.
-        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''
+        Bug #1685399 The bug is filed already in RHBA-2019:1589.''',
             ),
         )
 

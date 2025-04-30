@@ -148,7 +148,10 @@ class TagRPMsCli:
                 else [[] for _ in entry.packages]
             )
             for package, rhel_builds, candidate_builds, stop_ship_builds in zip(
-                entry.packages, builds_in_rhel_tag, builds_in_integration_tag, builds_in_stop_ship_tag
+                entry.packages,
+                builds_in_rhel_tag,
+                builds_in_integration_tag,
+                builds_in_stop_ship_tag,
             ):
                 stop_ship_nvrs = {b["nvr"] for b in stop_ship_builds}
                 rhel_build_nvrs = {b["nvr"] for b in rhel_builds}

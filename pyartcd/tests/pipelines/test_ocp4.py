@@ -742,7 +742,7 @@ class TestSyncImages(unittest.IsolatedAsyncioTestCase):
                         'OPERATOR_NVRS': 'nvr1,nvr5',
                     },
                 ),
-            ]
+            ],
         )
 
     @patch("os.path.abspath", return_value='doozer_working')

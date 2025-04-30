@@ -145,7 +145,8 @@ class TestJIRABug(unittest.TestCase):
         bug = flexmock(
             key='OCPBUGS1',
             fields=flexmock(
-                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')
+                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'],
+                issuetype=flexmock(name='Bug'),
             ),
         )
         expected = True

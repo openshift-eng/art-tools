@@ -348,7 +348,8 @@ gpgcheck=1
 plugins=1
 installonly_limit=3
 """.format(
-        cachedir, runtime.working_dir
+        cachedir,
+        runtime.working_dir,
     )
 
     optional_fails = []

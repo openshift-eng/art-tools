@@ -272,7 +272,10 @@ class OutdatedRPMFinder:
         return candidate_non_modular_rpms
 
     def find_non_latest_rpms(
-        self, rpms_to_check: List[Dict], repodatas: List[Repodata], logger: Optional[Logger] = None
+        self,
+        rpms_to_check: List[Dict],
+        repodatas: List[Repodata],
+        logger: Optional[Logger] = None,
     ) -> List[Tuple[str, str, str]]:
         """
         Finds non-latest rpms.

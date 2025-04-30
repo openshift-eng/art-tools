@@ -115,7 +115,7 @@ class SigstorePipeline:
                     For adequate paranoia, either supply pullspecs with shasums (all new releases
                     should do this), or use --verify-release to ensure release images that we look
                     up and retro-sign have legacy signatures.
-                """
+                """,
                 )
             self.pullspecs = self._lookup_release_images(release_name)
 

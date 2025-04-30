@@ -295,7 +295,7 @@ class KonfluxDb:
                 [
                     Column('end_time').isnot(None),
                     Column('end_time', DateTime) < completed_before,
-                ]
+                ],
             )
 
         if el_target:
@@ -320,7 +320,7 @@ class KonfluxDb:
                 [
                     Column('start_time', DateTime) >= start_window,
                     Column('start_time', DateTime) < end_window,
-                ]
+                ],
             )
 
             results = await self.bq_client.select(where_clauses, order_by_clause=order_by_clause, limit=1)
@@ -365,7 +365,10 @@ class KonfluxDb:
             raise
 
     async def get_build_record_by_nvr(
-        self, nvr: str, outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS, strict: bool = True
+        self,
+        nvr: str,
+        outcome: KonfluxBuildOutcome = KonfluxBuildOutcome.SUCCESS,
+        strict: bool = True,
     ) -> typing.Optional[KonfluxRecord]:
         """Get a build record by NVR.
         Note that this function only searches for the build record in the last 3 years.

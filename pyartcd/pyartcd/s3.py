@@ -70,7 +70,7 @@ async def sync_dir_to_s3_mirror(
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True,
     )(
-        exectools.cmd_assert_async
+        exectools.cmd_assert_async,
     )(full_command, env=env, stdout=sys.stderr)
 
     full_command = base_cmd + ['--profile', 'cloudflare', '--endpoint-url', os.environ['CLOUDFLARE_ENDPOINT']] + options + [local_dir, full_s3_path]
@@ -80,5 +80,5 @@ async def sync_dir_to_s3_mirror(
         stop=(stop_after_attempt(3)),  # max 3 attempts
         reraise=True,
     )(
-        exectools.cmd_assert_async
+        exectools.cmd_assert_async,
     )(full_command, env=env, stdout=sys.stderr)

@@ -23,7 +23,11 @@ logger = logutil.get_logger(__name__)
 @click.option("--allow-pending", is_flag=True, help="Include nightlies that have not completed tests")
 @click.option("--allow-rejected", is_flag=True, help="Include nightlies that have failed tests")
 @click.option(
-    "--exclude-arch", "exclude_arches", metavar="ARCH", multiple=True, help="Exclude arch(es) normally included in this version (multi,aarch64,...)"
+    "--exclude-arch",
+    "exclude_arches",
+    metavar="ARCH",
+    multiple=True,
+    help="Exclude arch(es) normally included in this version (multi,aarch64,...)",
 )
 @click.option("--limit", default=1, type=int, metavar='NUM', help="Number of sets of nightlies to print")
 @click.option("--details", is_flag=True, help="Print some nightly details including RHCOS build id")
@@ -183,7 +187,12 @@ class EmptyArchException(Exception):
 
 
 async def find_rc_nightlies(
-    runtime: Runtime, arches: Set[str], allow_pending: bool, allow_rejected: bool, matching: Sequence[str] = [], private_nightly: bool = False
+    runtime: Runtime,
+    arches: Set[str],
+    allow_pending: bool,
+    allow_rejected: bool,
+    matching: Sequence[str] = [],
+    private_nightly: bool = False,
 ) -> Dict[str, List[Dict]]:
     """
     Retrieve current nightly dicts for each arch, in order RC gives them (most

@@ -322,21 +322,21 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                         "name": "nightly1",
                         "equivalence": "digest1",  # represents the matching for this nightly
                         "releaseInfo": {"config": {"created": "2022-07-17"}},
-                    }
+                    },
                 ),
                 make(
                     {
                         "name": "nightly2",
                         "equivalence": "digest1",
                         "releaseInfo": {"config": {"created": "2022-07-18"}},
-                    }
+                    },
                 ),
                 make(
                     {
                         "name": "nightly3",
                         "equivalence": "digest2",
                         "releaseInfo": {"config": {"created": "2022-07-16"}},
-                    }
+                    },
                 ),
             ],
             "s390x": [
@@ -345,14 +345,14 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                         "name": "nightly4",
                         "equivalence": "digest1",  # matches two
                         "releaseInfo": {"config": {"created": "2022-07-17"}},
-                    }
+                    },
                 ),
                 make(
                     {
                         "name": "nightly5",
                         "equivalence": "digest2",  # matches one
                         "releaseInfo": {"config": {"created": "2022-07-15"}},
-                    }
+                    },
                 ),
             ],
         }
@@ -369,7 +369,7 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                     "name": "nightly6",
                     "equivalence": "digest3",  # incompatible with all
                     "releaseInfo": {"config": {"created": "2022-07-17"}},
-                }
+                },
             ),
         ]
         self.assertEqual(0, len(subject.generate_nightly_sets(nightlies_for_arch)))

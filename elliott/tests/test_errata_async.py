@@ -130,7 +130,10 @@ class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
 
         actual = await _call()
         _make_request.assert_awaited_with(
-            ANY, 'GET', '/api/v1/cve_package_exclusion', params={'filter[errata_id]': '1', 'page[number]': 3, 'page[size]': 1000}
+            ANY,
+            'GET',
+            '/api/v1/cve_package_exclusion',
+            params={'filter[errata_id]': '1', 'page[number]': 3, 'page[size]': 1000},
         )
         self.assertEqual(actual, [{'id': 1}, {'id': 2}, {'id': 3}, {'id': 4}, {'id': 5}])
 

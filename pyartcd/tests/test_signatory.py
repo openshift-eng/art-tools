@@ -29,14 +29,14 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
             x509.Name(
                 [
                     x509.NameAttribute(NameOID.USER_ID, expected),
-                ]
+                ],
             ),
         )
         builder = builder.issuer_name(
             x509.Name(
                 [
                     x509.NameAttribute(NameOID.COMMON_NAME, 'cryptography.io'),
-                ]
+                ],
             ),
         )
         builder = builder.not_valid_before(datetime.today() - one_day)
@@ -71,7 +71,8 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
         signatory = AsyncSignatory(uri, cert_file, key_file, sig_keyname="test", requestor="fake-requestor", subscription_name="fake-subscription")
         await signatory.start()
         umb.subscribe.assert_awaited_once_with(
-            "/queue/Consumer.fake-service-account.fake-subscription.VirtualTopic.eng.robosignatory.art.sign", "fake-subscription"
+            "/queue/Consumer.fake-service-account.fake-subscription.VirtualTopic.eng.robosignatory.art.sign",
+            "fake-subscription",
         )
 
     @patch("pyartcd.signatory.datetime", wraps=datetime)
@@ -194,7 +195,12 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
 
         await signatory.sign_message_digest("openshift", "4.0.1", artifact, sig_file)
         _sign_artifact.assert_awaited_once_with(
-            typ='message-digest', product='openshift', release_name='4.0.1', name='sha256sum.txt.gpg', artifact=artifact, sig_file=sig_file
+            typ='message-digest',
+            product='openshift',
+            release_name='4.0.1',
+            name='sha256sum.txt.gpg',
+            artifact=artifact,
+            sig_file=sig_file,
         )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')
 
@@ -211,6 +217,11 @@ class TestAsyncSignatory(IsolatedAsyncioTestCase):
 
         await signatory.sign_json_digest("openshift", "4.0.1", pullspec, "sha256:dead-beef", sig_file)
         _sign_artifact.assert_awaited_once_with(
-            typ='json-digest', product='openshift', release_name='4.0.1', name='sha256=dead-beef', artifact=ANY, sig_file=sig_file
+            typ='json-digest',
+            product='openshift',
+            release_name='4.0.1',
+            name='sha256=dead-beef',
+            artifact=ANY,
+            sig_file=sig_file,
         )
         self.assertEqual(sig_file.getvalue(), b'fake-signature')

@@ -75,7 +75,7 @@ class FindUnconsumedRpms:
                 if runtime_assembly_type is not AssemblyTypes.STREAM:
                     if container_conf.primary:
                         raise Exception(
-                            f'Assembly {self._runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid'
+                            f'Assembly {self._runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid',
                         )
                     # require the primary container at least to be specified, but
                     # allow the edge case where we add an RHCOS container type and

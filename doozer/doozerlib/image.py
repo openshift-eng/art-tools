@@ -343,7 +343,11 @@ class ImageMetadata(Metadata):
     builder_image_builds = dict()
 
     async def does_image_need_change(
-        self, changing_rpm_packages=None, buildroot_tag=None, newest_image_event_ts=None, oldest_image_event_ts=None
+        self,
+        changing_rpm_packages=None,
+        buildroot_tag=None,
+        newest_image_event_ts=None,
+        oldest_image_event_ts=None,
     ) -> Tuple[Metadata, RebuildHint]:
         """
         Answers the question of whether the latest built image needs to be rebuilt based on
@@ -386,7 +390,10 @@ class ImageMetadata(Metadata):
                     extra_package_brew_tag = package_details.tag
                     # Example of queryHistory: https://gist.github.com/jupierce/943b845c07defe784522fd9fd76f4ab0
                     extra_latest_tagging_infos = koji_api.queryHistory(
-                        table='tag_listing', tag=extra_package_brew_tag, package=extra_package_name, active=True
+                        table='tag_listing',
+                        tag=extra_package_brew_tag,
+                        package=extra_package_name,
+                        active=True,
                     )['tag_listing']
 
                     if extra_latest_tagging_infos:
@@ -396,7 +403,7 @@ class ImageMetadata(Metadata):
                         # made long ago, but only tagged into the relevant tag recently.
                         extra_latest_tagging_event = extra_latest_tagging_infos[-1]['create_event']
                         self.logger.debug(
-                            f'Checking image creation time against extra_packages {extra_package_name} in tag {extra_package_brew_tag} @ tagging event {extra_latest_tagging_event}'
+                            f'Checking image creation time against extra_packages {extra_package_name} in tag {extra_package_brew_tag} @ tagging event {extra_latest_tagging_event}',
                         )
                         if extra_latest_tagging_event > image_build_event_id:
                             return self, RebuildHint(
@@ -405,7 +412,7 @@ class ImageMetadata(Metadata):
                             )
                     else:
                         self.logger.warning(
-                            f'{dgk} unable to find tagging event for for extra_packages {extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error.'
+                            f'{dgk} unable to find tagging event for for extra_packages {extra_package_name} in tag {extra_package_brew_tag} ; Possible metadata error.',
                         )
 
             # Collect build times from any parent/builder images used to create this image
@@ -448,7 +455,8 @@ class ImageMetadata(Metadata):
                 if image_build_event_id < builder_brew_build['creation_event_id']:
                     self.logger.info(f'will be rebuilt because a builder or parent image changed: {builder_image_name}')
                     return self, RebuildHint(
-                        RebuildHintCode.BUILDER_CHANGING, f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built'
+                        RebuildHintCode.BUILDER_CHANGING,
+                        f'A builder or parent image {builder_image_name} has changed since {image_nvr} was built',
                     )
 
             self.logger.info("Getting RPMs contained in %s", image_nvr)
@@ -460,7 +468,8 @@ class ImageMetadata(Metadata):
             if target_arches != build_arches:
                 # The latest brew build does not exactly match the required arches as specified in group.yml
                 return self, RebuildHint(
-                    RebuildHintCode.ARCHES_CHANGE, f'Arches of {image_nvr}: ({build_arches}) does not match target arches {target_arches}'
+                    RebuildHintCode.ARCHES_CHANGE,
+                    f'Arches of {image_nvr}: ({build_arches}) does not match target arches {target_arches}',
                 )
 
             # Build up a map of RPMs built by this group. It is the 'latest' builds of these RPMs
@@ -496,7 +505,7 @@ class ImageMetadata(Metadata):
                         # The latest RPM build for this assembly is already installed and we know the RPM
                         # is not about to change. Ignore the installed package.
                         self.logger.debug(
-                            f'Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur'
+                            f'Found latest assembly specific build ({latest_assembly_build_nvr}) for group package {package_name} is already installed in {dgk} archive; no tagging change search will occur',
                         )
                         continue
                     # Add this rpm_entry to arch_rpms in order to chech whether it is latest in repos
@@ -595,7 +604,8 @@ class ImageMetadata(Metadata):
 
         if not isinstance(canonical_builders_from_upstream, bool):
             self.logger.warning(
-                'Invalid value provided for "canonical_builders_from_upstream": %s, defaulting to False', canonical_builders_from_upstream
+                'Invalid value provided for "canonical_builders_from_upstream": %s, defaulting to False',
+                canonical_builders_from_upstream,
             )
             return False
         return canonical_builders_from_upstream

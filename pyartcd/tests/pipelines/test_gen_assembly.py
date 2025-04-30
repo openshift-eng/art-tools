@@ -191,10 +191,10 @@ releases:
                         [
                             ("4.12.98", OrderedDict()),
                             ("4.12.97", OrderedDict()),
-                        ]
+                        ],
                     ),
                 ),
-            ]
+            ],
         )
         fn = MagicMock(
             return_value=OrderedDict(
@@ -206,10 +206,10 @@ releases:
                                 ("4.12.99", OrderedDict()),
                                 ("4.12.98", OrderedDict()),
                                 ("4.12.97", OrderedDict()),
-                            ]
+                            ],
                         ),
                     ),
-                ]
+                ],
             ),
         )
         git_repo.return_value.commit_push.return_value = True
@@ -286,7 +286,7 @@ releases:
         _gen_assembly_from_releases.return_value = OrderedDict(
             [
                 ("releases", OrderedDict([("4.12.99", OrderedDict())])),
-            ]
+            ],
         )
         await pipeline.run()
         get_nightlies.assert_awaited_once_with(pipeline)

@@ -546,7 +546,7 @@ class PrepareReleasePipeline:
             # Execute all API calls
             if not dry_run:
                 _LOGGER.info(
-                    f"Removing advisories {advisories_to_remove} from batch {batch['id']} and adding advisories {advisories_to_add} to batch {batch['id']}"
+                    f"Removing advisories {advisories_to_remove} from batch {batch['id']} and adding advisories {advisories_to_add} to batch {batch['id']}",
                 )
                 await asyncio.gather(*api_calls)
                 _LOGGER.info(f"Advisories updated in batch {batch['id']}")
@@ -823,7 +823,7 @@ class PrepareReleasePipeline:
                 raise ValueError(
                     f"""Failed to verify payload for nightly {pullspec_or_imagestream}.
 Please fix advisories and nightlies to match each other, manually verify them with `elliott verify-payload`,
-update JIRA accordingly, then notify QE and multi-arch QE for testing."""
+update JIRA accordingly, then notify QE and multi-arch QE for testing.""",
                 )
 
     def create_release_jira(self, template_vars: Dict):
@@ -896,7 +896,7 @@ update JIRA accordingly, then notify QE and multi-arch QE for testing."""
                 except Exception as ex:
                     _LOGGER.warning(f"Unable to set blocking advisories ({expected_blocking}) for {target_advisory_id}: {ex}")
                     await self._slack_client.say_in_thread(
-                        f"Unable to set blocking advisories ({expected_blocking}) for {target_advisory_id}. Details in log."
+                        f"Unable to set blocking advisories ({expected_blocking}) for {target_advisory_id}. Details in log.",
                     )
 
     def update_release_jira(self, issue: Issue, subtasks: List[Issue], template_vars: Dict[str, int]):

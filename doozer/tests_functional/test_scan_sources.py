@@ -84,7 +84,9 @@ class TestScanSources(DoozerRunnerTestCase):
         # expecting.. Distgit contains SOURCE_GIT_COMMIT hash c0534cccc5e282e68fda7a99c58e7678bbe32849
         #         different from upstream HEAD c1f0af99a394ea73daa3d4f25d1c325b2173251b
         self._assert_result(
-            result_image_ose_machine_api_operator, True, ['c0534cccc5e282e68fda7a99c58e7678bbe32849', 'c1f0af99a394ea73daa3d4f25d1c325b2173251b']
+            result_image_ose_machine_api_operator,
+            True,
+            ['c0534cccc5e282e68fda7a99c58e7678bbe32849', 'c1f0af99a394ea73daa3d4f25d1c325b2173251b'],
         )
 
         result_image_ose_cluster_config_operator = get_result_for('images', 'ose-cluster-config-operator')

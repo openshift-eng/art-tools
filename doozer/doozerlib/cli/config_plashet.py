@@ -92,7 +92,7 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
                 "product_version": nvr_product_version[nvr],
                 "build": nvr,
                 "file_types": ['rpm'],
-            }
+            },
         )
 
     if add_builds_payload:
@@ -671,7 +671,9 @@ def from_tags(
 
             # Honors group dependencies
             group_deps = builder.from_group_deps(
-                el_version, runtime.group_config, runtime.rpm_map
+                el_version,
+                runtime.group_config,
+                runtime.rpm_map,
             )  # the return value doesn't include any ART managed rpms
             # Group dependencies should take precedence over anything previously determined except those pinned by "is".
             for component, dep_build in group_deps.items():
@@ -728,7 +730,7 @@ def from_tags(
                     unembargoed_latest = next(find_latest_builds(tag_history, assembly), None)
                     if unembargoed_latest is None:
                         raise IOError(
-                            f'Unable to build unembargoed plashet. Lastest build of {package_name} ({nvre}) is embargoed but unable to find unembargoed version in history'
+                            f'Unable to build unembargoed plashet. Lastest build of {package_name} ({nvre}) is embargoed but unable to find unembargoed version in history',
                         )
 
                     unembargoed_nvre = to_nvre(unembargoed_latest)
@@ -755,7 +757,9 @@ def from_tags(
                 # The user has asked for non-latest entry for this package to be included in the plashet.
                 if package_name in pinned_nvres:
                     logger.warning(
-                        "Previous version of %s package will not be included because %s is required by the assembly config", package_name, nvre
+                        "Previous version of %s package will not be included because %s is required by the assembly config",
+                        package_name,
+                        nvre,
                     )
                     continue
 
@@ -778,7 +782,7 @@ def from_tags(
                         # pull in the historical nvr with a yum install. We can't allow that. Just give up -- this is
                         # not in line with the use case of history.
                         plashet_concerns.append(
-                            f'Unable to include previous for {package_name} because history {history_nvre} is newer than latest tagged {nvre}'
+                            f'Unable to include previous for {package_name} because history {history_nvre} is newer than latest tagged {nvre}',
                         )
                     if include_embargoed is False and is_embargoed(history_nvre):
                         # smh.. history is still under embargo. What you are guys doing?!
@@ -854,7 +858,10 @@ def from_tags(
 @config_plashet.command('for-assembly', short_help='Builds repositories of RPMs explicitly listed as dependencies in the assembly.')
 @click.pass_obj
 @click.option(
-    '--image', metavar='DISTGIT_KEY', required=False, help='Include any dependencies specified in the component overrides for the assembly.'
+    '--image',
+    metavar='DISTGIT_KEY',
+    required=False,
+    help='Include any dependencies specified in the component overrides for the assembly.',
 )
 @click.option('--rhcos', is_flag=True, help="Include any dependencies specified in the assembly's assembly.rhcos.dependencies.")
 @click.option('--el-version', metavar='NUMBER', type=click.INT, required=False, help="RHEL version")
@@ -947,20 +954,29 @@ def for_assembly(
             raise ValueError(f"Distgit repo {image} uses a distgit branch {image_meta.branch()} that is irrelevant to any RHEL version.")
         if image_el_version == el_version:
             image_deps = builder.from_image_member_deps(
-                image_el_version, runtime.assembly, runtime.get_releases_config(), image_meta, runtime.rpm_map
+                image_el_version,
+                runtime.assembly,
+                runtime.get_releases_config(),
+                image_meta,
+                runtime.rpm_map,
             )  # the return value doesn't include any ART managed rpms
             # image member dependencies should take precedence over anything previously determined except those pinned by "is".
             for component, dep_build in image_deps.items():
                 if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
                     logger.warning(
-                        "Swapping tagged nvr %s for image member dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"]
+                        "Swapping tagged nvr %s for image member dependency nvr %s...",
+                        component_builds[component]["nvr"],
+                        dep_build["nvr"],
                     )
             component_builds.update(image_deps)
 
     # If "--rhcos" argument is specified, the final list of package NVRs should include any dependencies specified in the assembly's assembly.rhcos.dependencies field.
     elif rhcos:
         rhcos_deps = builder.from_rhcos_deps(
-            el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map
+            el_version,
+            runtime.assembly,
+            runtime.get_releases_config(),
+            runtime.rpm_map,
         )  # the return value doesn't include any ART managed rpms
         # RHCOS dependencies should take precedence over anything previously determined except those pinned by "is".
         for component, dep_build in rhcos_deps.items():
@@ -1009,7 +1025,12 @@ def for_assembly(
 @config_plashet.command('from-images', short_help='Collects a set of RPMs attached to specified advisories.')
 @click.pass_obj
 @click.option(
-    '--image', 'images', metavar='IMAGE_NVR', multiple=True, required=True, help='Image NVRs which contain RPMs to include in the plashet [multiple].'
+    '--image',
+    'images',
+    metavar='IMAGE_NVR',
+    multiple=True,
+    required=True,
+    help='Image NVRs which contain RPMs to include in the plashet [multiple].',
 )
 @click.option(
     '--replace',
@@ -1134,7 +1155,7 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
                 nvr = build['nvr']
                 if package_name in package_nvrs and package_nvrs[package_name] != nvr:
                     raise IOError(
-                        f'Images contain inconsistent versions of {package_name}: {nvr} vs {package_nvrs[package_name]} . You must explicitly resolve this with --replace.'
+                        f'Images contain inconsistent versions of {package_name}: {nvr} vs {package_nvrs[package_name]} . You must explicitly resolve this with --replace.',
                     )
 
                 package_nvrs[package_name] = nvr

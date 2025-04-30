@@ -99,7 +99,10 @@ def print_version(ctx, param, value):
     help="The name of an assembly to rebase & build for. Assemblies must be enabled in group.yml or with --enable-assemblies.",
 )
 @click.option(
-    '--enable-assemblies', default=False, is_flag=True, help='Enable assemblies even if not enabled in group.yml. Primarily for testing purposes.'
+    '--enable-assemblies',
+    default=False,
+    is_flag=True,
+    help='Enable assemblies even if not enabled in group.yml. Primarily for testing purposes.',
 )
 @click.option(
     "--branch",
@@ -287,7 +290,7 @@ def cli(ctx, **kwargs):
 
     if cli_opts.config_is_empty(cfg.full_path):
         msg = ("It appears you may be using Doozer for the first time.\n" "Be sure to setup Doozer using the user config file:\n" "{}\n").format(
-            cfg.full_path
+            cfg.full_path,
         )
         yellow_print(msg)
 

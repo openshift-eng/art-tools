@@ -95,7 +95,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                         "target_tag": "test-target-tag",
                     },
                 ],
-            }
+            },
         )
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
@@ -174,7 +174,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                         "target_tag": "test-target-tag",
                     },
                 ],
-            }
+            },
         )
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
@@ -258,7 +258,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                         "target_tag": "test-target-tag",
                     },
                 ],
-            }
+            },
         )
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value

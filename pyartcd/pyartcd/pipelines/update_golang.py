@@ -438,7 +438,7 @@ class UpdateGolangPipeline:
             pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
             _LOGGER.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
             await self._slack_client.say_in_thread(
-                f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}"
+                f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}",
             )
         else:
             if self.tag_builds:

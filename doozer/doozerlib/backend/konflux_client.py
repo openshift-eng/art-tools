@@ -64,7 +64,11 @@ class KonfluxClient:
 
     @staticmethod
     def from_kubeconfig(
-        default_namespace: str, config_file: Optional[str], context: Optional[str], dry_run: bool = False, logger: logging.Logger = LOGGER
+        default_namespace: str,
+        config_file: Optional[str],
+        context: Optional[str],
+        dry_run: bool = False,
+        logger: logging.Logger = LOGGER,
     ) -> "KonfluxClient":
         """Create a KonfluxClient from a kubeconfig file.
 
@@ -391,7 +395,7 @@ class KonfluxClient:
                 "revision": commit_sha,
                 "target_branch": target_branch,
                 "git_auth_secret": git_auth_secret,
-            }
+            },
         )
         obj = yaml.load(rendered)
         # Those fields in the template are specific to an image. They need to be removed.
@@ -493,9 +497,9 @@ class KonfluxClient:
                                     "memory": "10Gi",
                                 },
                             },
-                        }
+                        },
                     ],
-                }
+                },
             ]
         if has_sast_task:
             task_run_specs += [
@@ -509,7 +513,7 @@ class KonfluxClient:
                             "memory": "10Gi",
                         },
                     },
-                }
+                },
             ]
 
         obj["spec"]["taskRunSpecs"] = task_run_specs
@@ -763,7 +767,7 @@ class KonfluxClient:
                                 pod_history[pod_name] = pod  # Update pod history with the final snapshot
                                 if pod_phase != 'Succeeded':
                                     self._logger.warning(
-                                        f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}'
+                                        f'PipelineRun {pipelinerun_name} finished with pod {pod_name} in unexpected phase: {pod_phase}',
                                     )
 
                                     # Now iterate through containers and record logs for unexpected exit_code values
@@ -784,12 +788,12 @@ class KonfluxClient:
                                                 # included in the bigquery database.
                                                 container_status['log_output'] = log_response
                                                 self._logger.warning(
-                                                    f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n'
+                                                    f'Pod {pod_name} container {container_name} exited with {exit_code}; logs:\n------START LOGS {pod_name}:{container_name}------\n{log_response}\n------END LOGS {pod_name}:{container_name}------\n',
                                                 )
                                             except:
                                                 e_str = traceback.format_exc()
                                                 self._logger.warning(
-                                                    f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}'
+                                                    f'Failed to retrieve logs for pod {pod_name} container {container_name}: {e_str}',
                                                 )
 
                             watcher.stop()
@@ -797,7 +801,9 @@ class KonfluxClient:
 
                         if datetime.datetime.now() > timeout_datetime:
                             self._logger.error(
-                                "PipelineRun %s has run longer than timeout %s; cancelling run", pipelinerun_name, str(overall_timeout_timedelta)
+                                "PipelineRun %s has run longer than timeout %s; cancelling run",
+                                pipelinerun_name,
+                                str(overall_timeout_timedelta),
                             )
                             cancel_pipelinerun = True
 

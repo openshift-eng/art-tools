@@ -89,11 +89,15 @@ class TestKojiWrapper(DoozerRunnerTestCase):
         k.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))
 
         results = k.listTagged(
-            test_tag, brew.KojiWrapperOpts(caching=True, logger=self.logger), package='openshift'
+            test_tag,
+            brew.KojiWrapperOpts(caching=True, logger=self.logger),
+            package='openshift',
         )  # This should be transparently locked in brew time by the wrapper
         self.assertEqual(results[0]['task_id'], 34774198)  # since we are locked in the time. this task_id is locked in time
         call_meta: brew.KojiWrapperMetaReturn = k.listTagged(
-            test_tag, brew.KojiWrapperOpts(caching=True, return_metadata=True), package='openshift'
+            test_tag,
+            brew.KojiWrapperOpts(caching=True, return_metadata=True),
+            package='openshift',
         )  # Test to ensure caching is working with a brew event constraint.
         self.assertTrue(call_meta.cache_hit)
         self.assertEqual(call_meta.result[0]['task_id'], 34774198)

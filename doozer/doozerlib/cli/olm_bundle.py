@@ -290,7 +290,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                         'build_id': str(build_info['id']),
                         'outcome': KonfluxBuildOutcome.SUCCESS,
                         'nvr': record['bundle_nvr'],
-                    }
+                    },
                 )
 
             else:
@@ -306,7 +306,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                         'start_time': dateutil.parser.parse(task_start_time).replace(tzinfo=timezone.utc),
                         'end_time': dateutil.parser.parse(task_end_time).replace(tzinfo=timezone.utc),
                         'nvr': 'n/a',
-                    }
+                    },
                 )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)

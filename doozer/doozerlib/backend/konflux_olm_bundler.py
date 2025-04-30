@@ -90,7 +90,7 @@ class KonfluxOlmBundleRebaser:
                 "group": self.group,
                 "assembly_name": self.assembly,
                 "distgit_key": metadata.distgit_key,
-            }
+            },
         )
         bundle_build_repo = BuildRepo(url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger)
         await bundle_build_repo.ensure_source(upcycle=self.upcycle)
@@ -184,7 +184,7 @@ class KonfluxOlmBundleRebaser:
         # Warn if the number of images found in the bundle doesn't match the image-references file
         if len(all_found_operands) != len(image_references):
             logger.warning(
-                f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} in the operator's image-references file"
+                f"Found {len(all_found_operands)} images in the bundle, but {len(image_references)} in the operator's image-references file",
             )
 
         # Generate bundle's operator-framework tags
@@ -238,7 +238,7 @@ class KonfluxOlmBundleRebaser:
                     }
                     for name, (old_pullspec, new_pullspec, nvr) in operands.items()
                 },
-            }
+            },
         )
         async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
             await f.write(content)
@@ -390,9 +390,9 @@ class KonfluxOlmBundleRebaser:
                         {
                             'platforms': {'only': ['x86_64']},
                             'operator_manifests': {'manifests_dir': 'manifests'},
-                        }
+                        },
                     ),
-                ]
+                ],
             )
 
 
@@ -436,7 +436,10 @@ class KonfluxOlmBundleBuilder:
         self._record_logger = record_logger
         self._logger = logger
         self._konflux_client = KonfluxClient.from_kubeconfig(
-            self.konflux_namespace, self.konflux_kubeconfig, self.konflux_context, dry_run=self.dry_run
+            self.konflux_namespace,
+            self.konflux_kubeconfig,
+            self.konflux_context,
+            dry_run=self.dry_run,
         )
 
     async def build(self, metadata: ImageMetadata):
@@ -475,7 +478,7 @@ class KonfluxOlmBundleBuilder:
                         "group": self.group,
                         "assembly_name": self.assembly,
                         "distgit_key": metadata.distgit_key,
-                    }
+                    },
                 )
                 logger.info("Cloning bundle repository...")
                 bundle_build_repo = BuildRepo(url=source.url, branch=bundle_build_branch, local_dir=bundle_dir, logger=self._logger)
@@ -520,7 +523,14 @@ class KonfluxOlmBundleBuilder:
                 outcome = KonfluxBuildOutcome.PENDING
                 if not self.dry_run:
                     await self._update_konflux_db(
-                        metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs
+                        metadata,
+                        bundle_build_repo,
+                        package_name,
+                        csv_name,
+                        pipelinerun,
+                        outcome,
+                        operator_nvr,
+                        operand_nvrs,
                     )
                 else:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
@@ -535,7 +545,14 @@ class KonfluxOlmBundleBuilder:
                 # Update the Konflux DB with the final outcome
                 if not self.dry_run:
                     await self._update_konflux_db(
-                        metadata, bundle_build_repo, package_name, csv_name, pipelinerun, outcome, operator_nvr, operand_nvrs
+                        metadata,
+                        bundle_build_repo,
+                        package_name,
+                        csv_name,
+                        pipelinerun,
+                        outcome,
+                        operator_nvr,
+                        operand_nvrs,
                     )
                 else:
                     logger.warning("Dry run: Would update Konflux DB for %s with outcome %s", pipelinerun_name, outcome)
@@ -697,7 +714,7 @@ class KonfluxOlmBundleBuilder:
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                             'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                             'image_tag': image_pullspec.split(':')[-1],
-                        }
+                        },
                     )
                 case KonfluxBuildOutcome.FAILURE:
                     start_time = pipelinerun.status.startTime
@@ -706,7 +723,7 @@ class KonfluxOlmBundleBuilder:
                         {
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                             'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        }
+                        },
                     )
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)

@@ -479,7 +479,8 @@ class BuildMicroShiftPipeline:
 
         if self.advisory_num:
             releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("group", {}).setdefault("advisories", {}).setdefault(
-                "microshift", self.advisory_num
+                "microshift",
+                self.advisory_num,
             )
         rpms_entry = releases_config["releases"][self.assembly].setdefault("assembly", {}).setdefault("members", {}).setdefault("rpms", [])
         microshift_entry = next(filter(lambda rpm: rpm.get("distgit_key") == dg_key, rpms_entry), None)

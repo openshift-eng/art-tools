@@ -144,7 +144,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
                   relatedImages:
                   - image: registry.redhat.io/openshift4/ose-kube-rbac-proxy@sha256:feedface
                     name: ose-kube-rbac-proxy
-        """
+        """,
         )  # obviously, much omitted
         mock_nvr.return_value = "operand-nvr-1-0"
         mock_gadids.return_value = set()

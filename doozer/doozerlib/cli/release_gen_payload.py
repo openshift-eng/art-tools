@@ -432,7 +432,7 @@ class GenPayloadCli:
                 "doozer.assembly_type": str(rt.assembly_type),
                 "doozer.brew_event": int(rt.brew_event) if rt.brew_event else 0,
                 "doozer.arches": sorted(rt.arches),
-            }
+            },
         )
 
         self.validate_parameters()
@@ -614,7 +614,7 @@ class GenPayloadCli:
                             (rpm_build_dict["id"], hotfix_tag)
                             for rpm_build_dict in assembly_inspector.get_group_rpm_build_dicts(el_ver=el_ver).values()
                             if rpm_build_dict
-                        ]
+                        ],
                     )
 
         # Tag builds for custom assemblies unless we have been told not to from the command line.
@@ -811,7 +811,7 @@ class GenPayloadCli:
                     )
 
                     self.logger.info(
-                        f'Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream'
+                        f'Replacing embargoed image {v.build_record_inspector.get_nvr()} with public image {public_bbi.get_nvr()} for public imagestream',
                     )
                     public_entries[k] = public_entry
                     # It's an embargoed build. Filter it out if its stream
@@ -984,7 +984,7 @@ class GenPayloadCli:
                 "doozer.result.viability": self.payload_permitted,
                 "doozer.result.apply": self.apply,
                 "doozer.result.apply_multi_arch": self.apply_multi_arch,
-            }
+            },
         )
 
     @start_as_current_span_async(TRACER, "GenPayloadCli.sync_payloads")
@@ -1260,7 +1260,7 @@ class GenPayloadCli:
                 "metadata": {
                     "name": imagestream_name,
                 },
-            }
+            },
         )
         return oc.selector(f"imagestream/{imagestream_name}").object()
 
@@ -1330,23 +1330,23 @@ class GenPayloadCli:
                     if revereted_tag_name not in incoming_tag_lookup:
                         if not incomplete_payload_update:
                             self.logger.warning(
-                                f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.'
+                                f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image} HOWEVER, the reverted tag is not in the incoming tags (which suggests it should be pruned). That is an unlikely series of events.',
                             )
                     else:
                         target_image = incoming_tag_lookup[revereted_tag_name]['from'].name
                         self.logger.warning(
-                            f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.'
+                            f'The tag {revereted_tag_name} was reverted by TRT from {reverted_from_image} to {reverted_to_image}. Incoming update wants to set target image {target_image}.',
                         )
                         if target_image == reverted_from_image:
                             self.logger.warning(
-                                f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}'
+                                f'The target image matches the reverted image; ART will persist the image TRT reverted to: {reverted_to_image}',
                             )
                             incoming_tag_lookup[revereted_tag_name]['from'].name = reverted_to_image
                             # We must also preserve the annotation to persist the revert for the next update
                             incoming_tag_lookup[revereted_tag_name]['annotations'] = existing_istag.annotations.primitive()
                         else:
                             self.logger.warning(
-                                f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}'
+                                f'The target image DOES NOT match the reverted image; ART will remove the revert and update to {target_image}',
                             )
 
             new_istags = list(istags)  # copy, don't update/embed list parameter
@@ -1552,7 +1552,7 @@ class GenPayloadCli:
                         "os": "linux",
                         "architecture": go_arch_for_brew_arch(arch),
                     },
-                }
+                },
             )
             manifest_list_hash.update(payload_entry.dest_pullspec.encode("utf-8"))
 
@@ -1608,7 +1608,7 @@ class GenPayloadCli:
                     f"--to-image={to_image}",
                     "--metadata",
                     json.dumps({"release.openshift.io/architecture": "multi"}),
-                ]
+                ],
             )
 
         # This will map arch names to a release payload pullspec we create for that arch
@@ -1738,7 +1738,7 @@ class GenPayloadCli:
 
                         if current_time < last_nightly_time + next_nightly_delay:
                             self.logger.info(
-                                f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update'
+                                f'The last nightly {last_nightly_tagname} is less than {next_nightly_delay}h old; skipping release controller update',
                             )
                             return
 
@@ -1775,7 +1775,7 @@ class GenPayloadCli:
                         },
                         **pipeline_metadata_annotations,
                     ),
-                }
+                },
             )
             return True
 
@@ -1916,7 +1916,7 @@ class PayloadGenerator:
                     {
                         "kernel-core": _to_nvr(rpms_dict["kernel-core"]),
                         "kernel-rt-core": _to_nvr(rpms_dict["kernel-rt-core"]),
-                    }
+                    },
                 )
         return inconsistencies
 
@@ -2122,7 +2122,7 @@ class PayloadGenerator:
         span.set_attributes(
             {
                 "doozer.param.arch": arch,
-            }
+            },
         )
         members: Dict[str, PayloadEntry] = dict()
         issues: List[AssemblyIssue] = list()

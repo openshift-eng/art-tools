@@ -115,7 +115,7 @@ class KonfluxRebaser:
                     "group": self._runtime.group,
                     "assembly_name": self._runtime.assembly,
                     "distgit_key": metadata.distgit_key,
-                }
+                },
             )
 
             self._logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
@@ -129,7 +129,14 @@ class KonfluxRebaser:
             # Rebase the image in the build repository
             self._logger.info("Rebasing image %s to %s in %s...", metadata.distgit_key, dest_branch, dest_dir)
             actual_version, actual_release, _ = await exectools.to_thread(
-                self._rebase_dir, metadata, source, build_repo, version, input_release, force_yum_updates, image_repo
+                self._rebase_dir,
+                metadata,
+                source,
+                build_repo,
+                version,
+                input_release,
+                force_yum_updates,
+                image_repo,
             )
 
             # Commit changes
@@ -231,7 +238,7 @@ class KonfluxRebaser:
             failed_parents = [parent.distgit_key for parent in parent_members if parent is not None and not parent.rebase_status]
             if failed_parents:
                 raise IOError(
-                    f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}"
+                    f"Couldn't rebase {metadata.distgit_key} because the following parent images failed to rebase: {', '.join(failed_parents)}",
                 )
             downstream_parents, parent_private_fix = self._resolve_parents(metadata, dfp, image_repo, uuid_tag)
             # If any of the parent images are private, this image is private
@@ -291,7 +298,7 @@ class KonfluxRebaser:
 
         if len(parents) != len(dfp.parent_images):
             raise ValueError(
-                f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile"
+                f"Build metadata for {metadata.distgit_key} expected {len(parents)} parent images, but found {len(dfp.parent_images)} in Dockerfile",
             )
 
         mapped_images: List[Tuple[str, bool]] = []
@@ -824,7 +831,7 @@ class KonfluxRebaser:
                     '',
                     '# RHEL version in final image must match the one in ART\'s config',
                     f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
-                ]
+                ],
             )
 
         df_content = "\n".join(df_lines)
@@ -1127,7 +1134,7 @@ class KonfluxRebaser:
                 updated_lines.append(f"#{line.strip()}\n")
                 line_commented = True
                 self._logger.info(
-                    "Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux"
+                    "Lines containing 'REMOTE_SOURCES' and 'REMOTE_SOURCES_DIR' have been commented out, since cachito is not supported on konflux",
                 )
             else:
                 if line_commented:
@@ -1350,7 +1357,7 @@ class KonfluxRebaser:
         if cachito_enabled:
             if config_overrides.get("go", {}).get("modules"):
                 raise ValueError(
-                    f"Cachito integration is enabled for image {metadata.name}. Specifying `go.modules` in `container.yaml` is not allowed."
+                    f"Cachito integration is enabled for image {metadata.name}. Specifying `go.modules` in `container.yaml` is not allowed.",
                 )
             pkg_managers = (
                 []
@@ -1363,7 +1370,7 @@ class KonfluxRebaser:
                 pkg_managers = detect_package_managers(metadata, dest_dir)
             else:
                 raise ValueError(
-                    f"Invalid content.source.pkg_managers config for image {metadata.name}: {metadata.config.content.source.pkg_managers}"
+                    f"Invalid content.source.pkg_managers config for image {metadata.name}: {metadata.config.content.source.pkg_managers}",
                 )
             # Configure Cachito flags
             # https://github.com/containerbuildsystem/cachito#flags
@@ -1401,7 +1408,7 @@ class KonfluxRebaser:
                             'remote_source': remote_source,
                         },
                     ],
-                }
+                },
             )
 
         if metadata.image_build_method is not Missing and metadata.image_build_method != "osbs2":
@@ -1799,8 +1806,9 @@ class KonfluxRebaser:
         elif len(csvs) > 1:
             raise IOError(
                 '{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(
-                    metadata.distgit_key, bundle_manifests_dir
-                )
+                    metadata.distgit_key,
+                    bundle_manifests_dir,
+                ),
             )
         return str(csvs[0]), image_refs
 
@@ -1938,7 +1946,7 @@ class KonfluxRebaser:
 
             if not olm_name.endswith(olm_version):
                 raise IOError(
-                    f'Expected {metadata.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.'
+                    f'Expected {metadata.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.',
                 )
 
             olm_name_prefix = olm_name[: -1 * len(olm_version)]  # "nfd."

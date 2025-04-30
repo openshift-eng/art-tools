@@ -429,7 +429,8 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
     @patch(
-        "doozerlib.metadata.exectools.cmd_assert", return_value=("296ac244f3e7fd2d937316639892f90f158718b0", "")
+        "doozerlib.metadata.exectools.cmd_assert",
+        return_value=("296ac244f3e7fd2d937316639892f90f158718b0", ""),
     )  # emulate response to ls-remote of openshift/release
     def test_needs_rebuild_with_upstream(self, mock_cmd_assert):
         runtime = self.runtime
@@ -506,7 +507,11 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(
-                now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE
+                now - datetime.timedelta(days=5),
+                git_commit='1234567',
+                assembly=runtime.assembly,
+                el_target=8,
+                build_state=BuildStates.COMPLETE,
             ),
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
         ]
@@ -516,10 +521,18 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(
-                now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE
+                now - datetime.timedelta(days=5),
+                git_commit='1234567',
+                assembly=runtime.assembly,
+                el_target=8,
+                build_state=BuildStates.COMPLETE,
             ),
             self.build_record(
-                now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED
+                now - datetime.timedelta(days=5),
+                assembly=runtime.assembly,
+                el_target=8,
+                git_commit=ls_remote_commit,
+                build_state=BuildStates.FAILED,
             ),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.LAST_BUILD_FAILED)
@@ -555,7 +568,11 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(
-                now - datetime.timedelta(days=5), git_commit=ls_remote_commit, assembly='stream', el_target=8, build_state=BuildStates.COMPLETE
+                now - datetime.timedelta(days=5),
+                git_commit=ls_remote_commit,
+                assembly='stream',
+                el_target=8,
+                build_state=BuildStates.COMPLETE,
             ),
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='123457'),
         ]

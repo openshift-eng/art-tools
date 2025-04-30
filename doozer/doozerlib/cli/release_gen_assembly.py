@@ -573,7 +573,8 @@ class GenAssemblyCli:
                         if not self.rhcos_node_id:
                             self._exit_with_error(f"Did not find RHCOS {self.primary_rhcos_tag} node image id for architecture: {arch}")
                         rhcos_info = util.oc_image_info_for_arch(
-                            tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'), go_arch_for_brew_arch(arch)
+                            tag.rhcos_index_tag.replace('node-image', f'{self.rhcos_node_id}-node-image'),
+                            go_arch_for_brew_arch(arch),
                         )
                         self.rhcos_by_tag[tag.name][arch] = f"quay.io/openshift-release-dev/ocp-v4.0-art-dev@{rhcos_info['digest']}"
                     else:
@@ -841,7 +842,7 @@ class GenAssemblyCli:
                                 'nvr': build_inspector.get_nvr(),
                             },
                         },
-                    }
+                    },
                 )
             elif package_name in self.component_rpm_builds:
                 dgk = self.package_rpm_meta[package_name].distgit_key
@@ -855,7 +856,7 @@ class GenAssemblyCli:
                                 for el_ver in self.component_rpm_builds[package_name]
                             },
                         },
-                    }
+                    },
                 )
 
         return image_member_overrides, rpm_member_overrides

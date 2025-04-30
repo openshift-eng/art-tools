@@ -336,7 +336,7 @@ EOF
     # Install Python 3.6
     yum -y install rh-python36
 fi
-'''
+''',
             )
 
         with df_parent_path.open(mode='w+', encoding='utf-8') as df_parent_out:
@@ -372,19 +372,20 @@ ADD {rhel_repo_gen_sh} .
 RUN chmod +x {rhel_repo_gen_sh} && ./{rhel_repo_gen_sh}
 
 RUN yum install -y cov-sa csmock csmock-plugin-coverity csdiff
-'''
+''',
             )
             df_parent_out.write('ENV PATH=/opt/coverity/bin:${PATH}\n')  # Ensure coverity is in the path
 
         # This will have prepared a parent image we can use during the actual covscan Dockerfile build
         rc, stdout, stderr = exectools.cmd_gather(
-            f'{cc.podman_cmd} build {mount_args} {cc.build_args()} -t {parent_tag} -f {str(df_parent_path)} {str(dg_path)}', set_env=cc.podman_env
+            f'{cc.podman_cmd} build {mount_args} {cc.build_args()} -t {parent_tag} -f {str(df_parent_path)} {str(dg_path)}',
+            set_env=cc.podman_env,
         )
         cc.logger.info(
             f'''Output from covscan build for {cc.image.distgit_key}
 stdout: {stdout}
 stderr: {stderr}
-'''
+''',
         )
         if rc != 0:
             cc.logger.error(f'Error preparing builder image derivative {parent_tag} from {parent_image_name} with {str(df_parent_path)}')
@@ -486,7 +487,7 @@ if ls {container_stage_cov_dir}/emit/*/config; then
 else
     echo "No units have been emitted for analysis by this stage; skipping analysis"
 fi
-'''
+''',
                         )
                     df_out.write(
                         f'''
@@ -495,7 +496,7 @@ RUN chmod +x /{analysis_script_name}
 # Finally, run the analysis step script.
 # Route stderr to stdout so everything is in one stream; otherwise, it is hard to correlate a command with its stderr.
 RUN /{analysis_script_name} 2>&1
-'''
+''',
                     )
 
                     # Before running cov-analyze, make sure that all_js doesn't exist (i.e. we haven't already run it
@@ -505,7 +506,7 @@ RUN /{analysis_script_name} 2>&1
                             f'''
 # Dockerfile steps run as root; chang permissions back to doozer user before leaving stage
 RUN chown -R {os.getuid()}:{os.getgid()} {container_stage_cov_dir}
-'''
+''',
                         )
 
                 df_line += 1
@@ -543,7 +544,7 @@ RUN chown -R {os.getuid()}:{os.getgid()} {container_stage_cov_dir}
 RUN mkdir -p {cc.container_stage_cov_path(stage_number)}
 # If we are reusing a workspace, coverity cannot pick up where it left off; clear anything already emitted
 RUN rm -rf {cc.container_stage_cov_path(stage_number)}/emit
-'''
+''',
                     )
 
                     # For each new stage, we also need to make sure we have the appropriate repos enabled for this image
@@ -551,7 +552,7 @@ RUN rm -rf {cc.container_stage_cov_path(stage_number)}/emit
                         f'''
 # Ensure that the build process can access the same RPMs that the build can during a brew build
 RUN curl {cc.image.cgit_file_url(".oit/" + cc.repo_type + ".repo")} --output /etc/yum.repos.d/oit.repo 2>&1
-'''
+''',
                     )
                     continue
 
@@ -574,7 +575,7 @@ set -o xtrace
 set -eo pipefail
 echo "Running build as hostname: $(hostname)"
 {command_to_run}
-'''
+''',
                         )
                     df_out.write(
                         f'''
@@ -585,7 +586,7 @@ RUN chmod +x {temp_script_name}
 # The hostname changes with each run, so reset-host-name before cov-build.
 # Route stderr to stdout so everything is in one stream; otherwise, it is hard to tell which command failed.
 RUN cov-manage-emit --dir={container_stage_cov_dir} reset-host-name; timeout 3h cov-build --dir={container_stage_cov_dir} ./{temp_script_name} 2>&1
-'''
+''',
                     )
                 else:  # e.g. COPY, ENV, WORKDIR...
                     # Just pass it straight through to the covscan Dockerfile
@@ -605,7 +606,7 @@ RUN cov-manage-emit --dir={container_stage_cov_dir} reset-host-name; timeout 3h 
 stdout: {stdout}
 stderr: {stderr}
 
-'''
+''',
         )
 
         _, cleanup_out, cleanup_err = exectools.cmd_gather(
@@ -616,7 +617,7 @@ stderr: {stderr}
             f'''Output from image clean up {cc.image.distgit_key}
 stdout: {cleanup_out}
 stderr: {cleanup_err}
-'''
+''',
         )
 
         if rc != 0:

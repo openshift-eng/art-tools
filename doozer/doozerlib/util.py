@@ -583,7 +583,7 @@ def oc_image_info(
                             'auth': auth,
                         },
                     },
-                }
+                },
             ),
         )
         registry_config_file.flush()
@@ -698,7 +698,7 @@ async def oc_image_info_async(
                             'auth': auth,
                         },
                     },
-                }
+                },
             ),
         )
         registry_config_file.flush()

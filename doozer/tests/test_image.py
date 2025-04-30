@@ -118,7 +118,7 @@ class TestImageMetadata(unittest.TestCase):
         fake_runtime = flexmock(
             get_latest_build_info=lambda: ('openshift-cli', '1.1.1', '8'),
             group_config=flexmock(
-                urls=flexmock(brew_image_namespace='rh-osbs', brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888')
+                urls=flexmock(brew_image_namespace='rh-osbs', brew_image_host='brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888'),
             ),
         )
 
@@ -157,14 +157,14 @@ class TestImageMetadata(unittest.TestCase):
         image_model = Model(
             {
                 'name': 'openshift/test',
-            }
+            },
         )
         data_obj = Model(
             {
                 'key': 'my-distgit',
                 'data': image_model,
                 'filename': 'my-distgit.yaml',
-            }
+            },
         )
         rt = mock.MagicMock()
         imeta = image.ImageMetadata(rt, data_obj)

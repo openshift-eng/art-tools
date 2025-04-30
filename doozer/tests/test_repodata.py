@@ -53,7 +53,7 @@ class TestRpm(TestCase):
                 "version": "1.2.3",
                 "release": "1.el9",
                 "arch": "x86_64",
-            }
+            },
         )
         self.assertEqual(rpm.nevra, "foo-1:1.2.3-1.el9.x86_64")
 
@@ -217,10 +217,12 @@ data:
         _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
         repodata = await loader.load(repo_name, repo_url)
         _fetch_remote_compressed.assert_any_await(
-            ANY, "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz"
+            ANY,
+            "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
         )
         _fetch_remote_compressed.assert_any_await(
-            ANY, "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz"
+            ANY,
+            "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz",
         )
         self.assertEqual(repodata.name, repo_name)
         self.assertEqual(

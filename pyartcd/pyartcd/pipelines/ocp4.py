@@ -362,7 +362,7 @@ class Ocp4Pipeline:
                 'rpms:rebase-and-build',
                 f'--version={self.version.stream}',
                 f'--release={self.version.release}',
-            ]
+            ],
         )
 
         if self.runtime.dry_run:
@@ -502,7 +502,7 @@ class Ocp4Pipeline:
                 f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
                 '--push',
                 f"--message='{os.environ['BUILD_URL']}'",
-            ]
+            ],
         )
 
         if self.runtime.dry_run:

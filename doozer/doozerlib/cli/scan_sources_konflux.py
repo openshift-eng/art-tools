@@ -136,7 +136,7 @@ class ConfigScanSources:
                 {
                     'name': metadata.distgit_key,
                     'issue': 'Could not rebase into -priv as it needs manual reconciliation',
-                }
+                },
             )
             return
 
@@ -159,7 +159,7 @@ class ConfigScanSources:
                 {
                     'name': metadata.distgit_key,
                     'issue': 'Failed pushing to openshift-priv',
-                }
+                },
             )
 
     def _do_shas_match(
@@ -226,7 +226,7 @@ class ConfigScanSources:
                     '--is-ancestor',
                     f'public_upstream/{pub_branch_name}',
                     f'origin/{priv_branch_name}',
-                ]
+                ],
             )
         if rc == 1:
             self.logger.info('Public upstream is ahead of private for %s: will need to rebase', repo_name)
@@ -377,7 +377,7 @@ class ConfigScanSources:
                     image_names,
                     latest_image_builds,
                 )
-            )
+            ),
         )
 
     async def scan_images(self, image_names: typing.List[str]):
@@ -961,7 +961,7 @@ class ConfigScanSources:
                     [
                         check_rpm_target(rpm_meta, f'el{artcommonlib.util.isolate_el_version_in_brew_tag(target)}')
                         for target in self.runtime.group_config.build_profiles.rpm.default.targets
-                    ]
+                    ],
                 )
         await asyncio.gather(*tasks)
 
@@ -1016,7 +1016,7 @@ class ConfigScanSources:
                         'name': dgk,
                         'changed': is_changing,
                         'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}'),
-                    }
+                    },
                 )
 
         results = dict(

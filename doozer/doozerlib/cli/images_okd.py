@@ -261,7 +261,7 @@ class CiOperatorImageConfig:
                         'sslverify = false',
                         'skip_if_unavailable = true',
                         '',
-                    ]
+                    ],
                 )
 
             repo_lines = '\n'.join(repo_def_lines)
@@ -346,7 +346,9 @@ class CiOperatorConfig:
     def get_image_config(self, image_meta: ImageMetadata) -> CiOperatorImageConfig:
         if image_meta.distgit_key not in self.ci_operator_image_configs:
             self.ci_operator_image_configs[image_meta.distgit_key] = CiOperatorImageConfig(
-                image_meta, self.promotion_namespace, self.promotion_imagestream
+                image_meta,
+                self.promotion_namespace,
+                self.promotion_imagestream,
             )
         return self.ci_operator_image_configs[image_meta.distgit_key]
 
@@ -439,7 +441,11 @@ class CiOperatorConfigs:
         config_key = f'{org}:{repo}:{branch_name}'
         if config_key not in self.configs_by_repo:
             self.configs_by_repo[config_key] = CiOperatorConfig(
-                org, repo, branch_name, promotion_namespace=self.promotion_namespace, promotion_imagestream=self.promotion_imagestream
+                org,
+                repo,
+                branch_name,
+                promotion_namespace=self.promotion_namespace,
+                promotion_imagestream=self.promotion_imagestream,
             )
         return self.configs_by_repo[config_key]
 
@@ -461,7 +467,7 @@ def image_from(from_value):
             \s+ AS \s+
             (?P<name> \S+ )
         )?
-        """
+        """,
     )
     match = re.match(regex, from_value)
     return match.group('image', 'name') if match else (None, None)
@@ -686,7 +692,7 @@ async def images_okd_prs(
                 Model(
                     {
                         'stream': 'rhel-9-golang',
-                    }
+                    },
                 ),
                 okd_version=okd_version,
             )
@@ -786,7 +792,7 @@ async def images_okd_prs(
             # of FROM statements in the upstream Dockerfile. ART's normal build process will alert
             # artists on this condition, so assume it will be handled and skip for now.
             yellow_print(
-                f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]'
+                f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]',
             )
             continue
 

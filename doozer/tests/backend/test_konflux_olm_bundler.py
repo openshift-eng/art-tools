@@ -372,7 +372,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
             {
                 'packageName': 'test-package',
                 'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}],
-            }
+            },
         )
 
         new_content = """
@@ -601,7 +601,12 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         self.konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipelinerun")
 
         pipelinerun, url = await self.builder._start_build(
-            metadata, bundle_build_repo, f"{self.image_repo}:test-component-1.0-1", self.konflux_namespace, self.skip_checks, additional_tags
+            metadata,
+            bundle_build_repo,
+            f"{self.image_repo}:test-component-1.0-1",
+            self.konflux_namespace,
+            self.skip_checks,
+            additional_tags,
         )
 
         self.konflux_client.ensure_application.assert_called_once_with(name="test-group", display_name="test-group")
@@ -686,7 +691,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                     'operand1': {'nvr': 'operand1-1.0-1'},
                     'operand2': {'nvr': 'operand2-1.0-1'},
                 },
-            }
+            },
         )
 
         await self.builder._update_konflux_db(
@@ -767,7 +772,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                     'operand1': {'nvr': 'operand1-1.0-1'},
                     'operand2': {'nvr': 'operand2-1.0-1'},
                 },
-            }
+            },
         )
 
         await self.builder._update_konflux_db(
@@ -847,7 +852,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                     'operand1': {'nvr': 'operand1-1.0-1'},
                     'operand2': {'nvr': 'operand2-1.0-1'},
                 },
-            }
+            },
         )
 
         self.builder._db = None
@@ -909,7 +914,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
                     'operand1': {'nvr': 'operand1-1.0-1'},
                     'operand2': {'nvr': 'operand2-1.0-1'},
                 },
-            }
+            },
         )
 
         self.db.add_build.side_effect = Exception("Test exception")

@@ -239,7 +239,7 @@ class CVPInspector:
                 # looking for lines in brew logs like
                 # `2020-07-18 10:52:00,888 - atomic_reactor.plugins.imagebuilder - INFO -  java-11-openjdk      i686   1:11.0.8.10-0.el7_8 rhel-server-rpms-x86_64  215 k`
                 pattern = re.compile(
-                    r"atomic_reactor\.(?:plugins\.imagebuilder|tasks\.binary_container_build) - INFO -\s+(?P<name>[\w.-]+)\s+(?P<arch>\w+)\s+(?P<VRE>[\w.:-]+)\s+(?P<repo>[\w.-]+)\s+(?P<size>[\d.]+\s+\w)"
+                    r"atomic_reactor\.(?:plugins\.imagebuilder|tasks\.binary_container_build) - INFO -\s+(?P<name>[\w.-]+)\s+(?P<arch>\w+)\s+(?P<VRE>[\w.:-]+)\s+(?P<repo>[\w.-]+)\s+(?P<size>[\d.]+\s+\w)",
                 )
                 self._build_log_cache[(nvr, arch)] = build_log = [line for line in orig_build_log.splitlines() if line and pattern.search(line)]
             return build_log
@@ -267,7 +267,7 @@ class CVPInspector:
                             {
                                 "action": "add_non_shipping_repos",
                                 "value": sorted(t),
-                            }
+                            },
                         )
                 else:
                     prescription.append(
@@ -275,7 +275,7 @@ class CVPInspector:
                             "action": "warn",
                             "note": "Inconsistent used repos among arches",
                             "value": {k: sorted(used_repos[k]) for k in sorted(used_repos)},
-                        }
+                        },
                     )
                 if all_same(unused_repos.values()):
                     t = next(iter(unused_repos.values()))
@@ -284,7 +284,7 @@ class CVPInspector:
                             {
                                 "action": "remove_repos",
                                 "value": sorted(t),
-                            }
+                            },
                         )
                 else:
                     prescription.append(
@@ -292,7 +292,7 @@ class CVPInspector:
                             "action": "warn",
                             "note": "Inconsistent unused repos among arches",
                             "value": {k: sorted(unused_repos[k]) for k in sorted(unused_repos)},
-                        }
+                        },
                     )
 
             elif test_name == "not_covered_rpms":
@@ -329,7 +329,7 @@ class CVPInspector:
                             {
                                 "action": "add_repos",
                                 "value": sorted(t),
-                            }
+                            },
                         )
                 else:
                     prescription.append(
@@ -337,7 +337,7 @@ class CVPInspector:
                             "action": "warn",
                             "note": "Inconsistent missing repos among arches",
                             "value": {k: sorted(missing_repos[k]) for k in sorted(missing_repos)},
-                        }
+                        },
                     )
                 if unknown_repos:
                     prescription.append(
@@ -345,7 +345,7 @@ class CVPInspector:
                             "action": "warn",
                             "note": "Repos used in build are unknown to ocp-build-data",
                             "value": {k: sorted(unknown_repos[k]) for k in sorted(unknown_repos)},
-                        }
+                        },
                     )
                 if any(map(lambda arch: rpms_not_found[arch], rpms_not_found)):
                     t = next(iter(rpms_not_found.values()))
@@ -354,7 +354,7 @@ class CVPInspector:
                             "action": "warn",
                             "note": "Didn't find rpms in build logs. CVP bug?",
                             "value": {k: sorted(rpms_not_found[k]) for k in sorted(rpms_not_found)},
-                        }
+                        },
                     )
 
             elif test_name == "not_covered_parent_image_rpms":
@@ -368,7 +368,7 @@ class CVPInspector:
                     {
                         "action": "see_parent_builds",
                         "value": parent_builds,
-                    }
+                    },
                 )
 
         return report

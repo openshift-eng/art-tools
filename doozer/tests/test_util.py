@@ -81,7 +81,7 @@ class TestUtil(unittest.TestCase):
                         },
                     },
                 },
-            }
+            },
         )
 
         actual = util.get_release_name_for_assembly("openshift-4.12", releases_config, "4.12.99")

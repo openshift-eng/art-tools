@@ -128,7 +128,9 @@ class RPMMetadata(Metadata):
 
         if self.runtime.assembly_type is not AssemblyTypes.STREAM:
             context["release_name"] = util.get_release_name_for_assembly(
-                self.runtime.group, self.runtime.get_releases_config(), self.runtime.assembly
+                self.runtime.group,
+                self.runtime.get_releases_config(),
+                self.runtime.assembly,
             )
 
         for modification in self.config.content.source.modifications:
@@ -214,7 +216,7 @@ class RPMMetadata(Metadata):
                     check_mode == "x.y" and nevr[2].split(".")[:2] != first_nevr[2].split(".")[:2]
                 ):
                     raise DoozerFatalError(
-                        f"Buildroot for target {target} has inconsistent golang compiler version {nevr[2]} while target {first_target} has {first_nevr[2]}."
+                        f"Buildroot for target {target} has inconsistent golang compiler version {nevr[2]} while target {first_target} has {first_nevr[2]}.",
                     )
 
     def get_package_name_from_spec(self):

@@ -124,7 +124,7 @@ class KonfluxOcp4Pipeline:
                 f'--version={version}',
                 f'--release={input_release}',
                 f"--message='Updating Dockerfile version and release {version}-{input_release}'",
-            ]
+            ],
         )
         if not self.runtime.dry_run:
             cmd.append('--push')
@@ -176,7 +176,7 @@ class KonfluxOcp4Pipeline:
                 self.image_param_from_build_plan(),
                 'beta:images:konflux:build',
                 "--konflux-namespace=ocp-art-tenant",
-            ]
+            ],
         )
         if self.kubeconfig:
             cmd.extend(['--konflux-kubeconfig', self.kubeconfig])
@@ -235,7 +235,7 @@ class KonfluxOcp4Pipeline:
                     'config:read-group',
                     'arches',
                     '--yaml',
-                ]
+                ],
             )
             exclude_arches = new_roundtrip_yaml_handler().load(out.strip())
             for arch in self.arches:

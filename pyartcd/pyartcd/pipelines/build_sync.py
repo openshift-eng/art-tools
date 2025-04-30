@@ -399,7 +399,7 @@ class BuildSyncPipeline:
             [
                 f'--working-dir={mirror_working}',
                 f'--data-path={self.data_path}',
-            ]
+            ],
         )
         group_param = f'--group=openshift-{self.version}'
         if self.doozer_data_gitref:
@@ -411,7 +411,7 @@ class BuildSyncPipeline:
                 'release:gen-payload',
                 f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
                 '--apply',
-            ]
+            ],
         )
         if self.emergency_ignore_issues:
             cmd.append('--emergency-ignore-issues')
@@ -671,7 +671,7 @@ async def build_sync(
             "pyartcd.param.dry_run": runtime.dry_run,
             "pyartcd.param.version": version,
             "pyartcd.param.assembly": assembly,
-        }
+        },
     )
     try:
         # Only for stream assembly, lock the build to avoid parallel runs

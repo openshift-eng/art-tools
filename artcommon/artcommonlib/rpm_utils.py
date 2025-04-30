@@ -118,7 +118,8 @@ def compare_nvr(nvr_dict1: NVR, nvr_dict2: NVR, ignore_epoch: bool = False):
         nvr2["epoch"] = ""
 
     return label_compare(
-        (str(nvr1["epoch"]), str(nvr1["version"]), str(nvr1["release"])), (str(nvr2["epoch"]), str(nvr2["version"]), str(nvr2["release"]))
+        (str(nvr1["epoch"]), str(nvr1["version"]), str(nvr1["release"])),
+        (str(nvr2["epoch"]), str(nvr2["version"]), str(nvr2["release"])),
     )
 
 

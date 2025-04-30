@@ -26,7 +26,7 @@ class TestBrew(unittest.TestCase):
                                 "brew-pulp-docker01.web.prod.ext.phx2.redhat.com:8888/openshift3/ose-logging-fluentd:v3.11.141-2",
                             ],
                             "digests": {
-                                "application/vnd.docker.distribution.manifest.list.v2+json": "sha256:1df5eacdd98923590afdc85330aaac0488de96e991b24a7f4cb60113b7a66e80"
+                                "application/vnd.docker.distribution.manifest.list.v2+json": "sha256:1df5eacdd98923590afdc85330aaac0488de96e991b24a7f4cb60113b7a66e80",
                             },
                             "tags": ["v3.11.141-2"],
                         },
@@ -36,7 +36,7 @@ class TestBrew(unittest.TestCase):
                         "parent_build_id": 955726,
                         "parent_images": ["openshift/ose-base:rhel7"],
                         "parent_image_builds": {
-                            "openshift/ose-base:rhel7": {"id": 955726, "nvr": "openshift-enterprise-base-container-v4.0-201908250221"}
+                            "openshift/ose-base:rhel7": {"id": 955726, "nvr": "openshift-enterprise-base-container-v4.0-201908250221"},
                         },
                     },
                     "container_koji_task_id": 23188768,
@@ -85,7 +85,7 @@ class TestBrew(unittest.TestCase):
                             ],
                             "floating_tags": ["latest", "v4.1.14", "v4.1.14.20190829.150756", "v4.1"],
                             "digests": {
-                                "application/vnd.docker.distribution.manifest.list.v2+json": "sha256:7503f828aaf80e04b2aaab0b88626b97a20e5600ba75fef8b764e02cc1164a7c"
+                                "application/vnd.docker.distribution.manifest.list.v2+json": "sha256:7503f828aaf80e04b2aaab0b88626b97a20e5600ba75fef8b764e02cc1164a7c",
                             },
                             "tags": ["v4.1.14-201908291507"],
                         },
@@ -145,7 +145,7 @@ class TestBrew(unittest.TestCase):
                             ],
                             "floating_tags": ["latest", "v4.1.15", "v4.1", "v4.1.15.20190904.160545"],
                             "digests": {
-                                "application/vnd.docker.distribution.manifest.list.v2+json": "sha256:1ce1555b58982a29354c293948ee6c788743a08f39a0c530be791cb9bdaf4189"
+                                "application/vnd.docker.distribution.manifest.list.v2+json": "sha256:1ce1555b58982a29354c293948ee6c788743a08f39a0c530be791cb9bdaf4189",
                             },
                             "tags": ["v4.1.15-201909041605"],
                         },

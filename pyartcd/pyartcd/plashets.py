@@ -317,7 +317,7 @@ async def build_plashet_from_tags(
             "--signing-advisory-mode",
             "clean",
             "--inherit",
-        ]
+        ],
     )
     if include_embargoed:
         cmd.append("--include-embargoed")
@@ -394,7 +394,7 @@ async def copy_to_remote(
             "--",
             f"{local_base_dir}/",
             f"{plashet_remote_host}:{remote_base_dir}",
-        ]
+        ],
     )
 
     if dry_run:

@@ -112,7 +112,10 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
         koji_api.tagBuild.assert_called_once_with('rhaos-4.12-rhel-8-hotfix', "foo-v4.12.0-12345.p0.assembly.test")
         runtime.build_retrying_koji_client.assert_called_once_with()
         _start_build.assert_called_once_with(
-            dg, 'rhaos-4.12-rhel-8-containers-candidate', {'signing_intent': 'release', 'repo_type': 'signed', 'repo_list': []}, koji_api
+            dg,
+            'rhaos-4.12-rhel-8-containers-candidate',
+            {'signing_intent': 'release', 'repo_type': 'signed', 'repo_list': []},
+            koji_api,
         )
         watch_task.assert_called_once_with(koji_api, ANY, 12345, ANY)
         cmd_gather.assert_called_once_with(['brew', 'download-logs', '--recurse', '-d', ANY, 12345])

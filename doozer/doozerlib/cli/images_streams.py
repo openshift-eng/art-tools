@@ -49,7 +49,7 @@ transforms = set(
         transform_rhel_7_ci_build_root,
         transform_rhel_8_ci_build_root,
         transform_rhel_9_ci_build_root,
-    ]
+    ],
 )
 
 
@@ -110,7 +110,7 @@ def images_streams_mirror(runtime, streams, only_if_missing, live_test_mode, for
                 rc, _, _ = exectools.cmd_gather(check_cmd)
                 if rc != 0:
                     print(
-                        f'upstream_image {config.upstream_image} could not be found (this can be normal if no attempt has been made to create this image yet). Ignoring upstream_image_mirror until it does.'
+                        f'upstream_image {config.upstream_image} could not be found (this can be normal if no attempt has been made to create this image yet). Ignoring upstream_image_mirror until it does.',
                     )
                 else:
                     for upstream_image_mirror_dest in config.upstream_image_mirror:
@@ -254,7 +254,12 @@ def get_eligible_buildconfigs(runtime, streams, live_test_mode):
 
 @images_streams.command('start-builds', short_help='Triggers a build for each buildconfig associated with this group.')
 @click.option(
-    '--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, only these stream names will be processed.'
+    '--stream',
+    'streams',
+    metavar='STREAM_NAME',
+    default=[],
+    multiple=True,
+    help='If specified, only these stream names will be processed.',
 )
 @click.option('--as', 'as_user', metavar='CLUSTER_USERNAME', required=False, default=None, help='Specify --as during oc start-build')
 @click.option('--live-test-mode', default=False, is_flag=True, help='Act on live-test mode buildconfigs')
@@ -335,7 +340,12 @@ def _get_upstreaming_entries(runtime, stream_names=None):
 
 @images_streams.command('gen-buildconfigs', short_help='Generates buildconfigs necessary to assemble ART equivalent images upstream.')
 @click.option(
-    '--stream', 'streams', metavar='STREAM_NAME', default=[], multiple=True, help='If specified, only these stream names will be processed.'
+    '--stream',
+    'streams',
+    metavar='STREAM_NAME',
+    default=[],
+    multiple=True,
+    help='If specified, only these stream names will be processed.',
 )
 @click.option(
     '-o',
@@ -400,14 +410,14 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
 
         if transform not in transforms:
             raise IOError(
-                f'Unable to render buildconfig for upstream config {upstream_entry_name} - transform {transform} not found within {transforms}'
+                f'Unable to render buildconfig for upstream config {upstream_entry_name} - transform {transform} not found within {transforms}',
             )
 
         upstream_dest = config.upstream_image
         upstream_intermediate_image = config.upstream_image_base
         if upstream_dest is Missing or upstream_intermediate_image is Missing:
             raise IOError(
-                f'Unable to render buildconfig for upstream config {upstream_entry_name} - you must define upstream_image_base AND upstream_image'
+                f'Unable to render buildconfig for upstream config {upstream_entry_name} - you must define upstream_image_base AND upstream_image',
             )
 
         # split a pullspec like registry.svc.ci.openshift.org/ocp/builder:rhel-8-golang-openshift-{MAJOR}.{MINOR}.art
@@ -472,14 +482,14 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
                     if not x86_64_url:
                         raise IOError(f'Expected x86_64 baseurl for repo {repo_name}')
                     dfp.add_lines(
-                        f"RUN echo -e '[{localdev_repo_name}]\\nname = {localdev_repo_name}\\nid = {localdev_repo_name}\\nbaseurl = {x86_64_url}\\nenabled = 1\\ngpgcheck = 0\\nsslverify=0\\n' > /etc/yum.repos.d/{localdev_repo_name}.repo"
+                        f"RUN echo -e '[{localdev_repo_name}]\\nname = {localdev_repo_name}\\nid = {localdev_repo_name}\\nbaseurl = {x86_64_url}\\nenabled = 1\\ngpgcheck = 0\\nsslverify=0\\n' > /etc/yum.repos.d/{localdev_repo_name}.repo",
                     )
 
         if transform == transform_rhel_9_base_repos or config.transform == transform_rhel_9_golang:
             # The repos transform create a build config that will layer the base image with CI appropriate yum
             # repository definitions.
             dfp.add_lines(
-                f'RUN rm -rf /etc/yum.repos.d/*.repo && curl http://base-{major}-{minor}-rhel9.ocp.svc > /etc/yum.repos.d/ci-rpm-mirrors.repo'
+                f'RUN rm -rf /etc/yum.repos.d/*.repo && curl http://base-{major}-{minor}-rhel9.ocp.svc > /etc/yum.repos.d/ci-rpm-mirrors.repo',
             )
 
             # Allow the base repos to be used BEFORE art begins mirroring 4.x to openshift mirrors.
@@ -492,7 +502,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
             # The repos transform create a build config that will layer the base image with CI appropriate yum
             # repository definitions.
             dfp.add_lines(
-                f'RUN rm -rf /etc/yum.repos.d/*.repo && curl http://base-{major}-{minor}-rhel8.ocp.svc > /etc/yum.repos.d/ci-rpm-mirrors.repo'
+                f'RUN rm -rf /etc/yum.repos.d/*.repo && curl http://base-{major}-{minor}-rhel8.ocp.svc > /etc/yum.repos.d/ci-rpm-mirrors.repo',
             )
 
             # Allow the base repos to be used BEFORE art begins mirroring 4.x to openshift mirrors.
@@ -563,7 +573,7 @@ def images_streams_gen_buildconfigs(runtime, streams, output, as_user, apply, li
                     {
                         'imageChange': {},
                         'type': 'ImageChange',
-                    }
+                    },
                 ],
             },
         }
@@ -713,10 +723,11 @@ def prs_list(runtime, as_user, include_master):
         branch = current_pr.head.ref  # forked branch name art-consistency-{runtime.group_config.name}-{dgk}
         if runtime.group_config.name in branch:
             owners_email = next(
-                (image_meta.config['owners'][0] for image_meta in runtime.ordered_image_metas() if image_meta.distgit_key in branch), None
+                (image_meta.config['owners'][0] for image_meta in runtime.ordered_image_metas() if image_meta.distgit_key in branch),
+                None,
             )
             retdata.setdefault(owners_email, {}).setdefault(current_pr.base.repo.html_url, []).append(
-                dict(pr_url=pr.html_url, created_at=pr.created_at)
+                dict(pr_url=pr.html_url, created_at=pr.created_at),
             )
     print(yaml.dump(retdata, default_flow_style=False, width=10000))
 
@@ -737,7 +748,7 @@ def connect_issue_with_pr(pr: PullRequest.PullRequest, issue: str):
                 return  # an exist comment already have the issue
         pr.create_issue_comment(
             f"ART wants to connect issue [{issue}](https://issues.redhat.com/browse/{issue}) to this PR, \
-                                but found it is currently hooked up to {exist_issues}. Please consult with #forum-ocp-art if it is not clear what there is to do."
+                                but found it is currently hooked up to {exist_issues}. Please consult with #forum-ocp-art if it is not clear what there is to do.",
         )
     else:  # update pr title
         pr.edit(title=f"{issue}: {pr.title}")
@@ -858,7 +869,7 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
             'labels': ['art:reconciliation', f'art:package:{image_meta.get_component_name()}'],
             'versions': [{'name': release_version}],  # Affects Version/s
             'customfield_12319940': [
-                {'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]}
+                {'name': Model(runtime.gitdata.load_data(key='bug').data).target_release[-1]},
             ],  # customfield_12319940 is Target Version in jira
             'components': [{'name': component}],
             'summary': summary,
@@ -915,7 +926,10 @@ This ticket was created by ART pipline run [sync-ci-images|{jenkins_build_url}]
 @click.option('--bug', metavar='BZ#', required=False, default=None, help='Title with Bug #: prefix')
 @click.option('--interstitial', metavar='SECONDS', default=120, required=False, help='Delay after each new PR to prevent flooding CI')
 @click.option(
-    '--ignore-ci-master', default=False, is_flag=True, help='Do not consider what is in master branch when determining what branch to target'
+    '--ignore-ci-master',
+    default=False,
+    is_flag=True,
+    help='Do not consider what is in master branch when determining what branch to target',
 )
 @click.option('--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.')
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
@@ -1065,7 +1079,7 @@ def images_streams_prs(
             # releases. In this case, only open a reconciliation PR for when the current
             # group matches what release CI is tracking in master.
             logger.info(
-                f'Skipping PR for {runtime.group} : {dgk} / {public_repo_url} since associated public branch is {public_branch} but CI is tracking {master_major}.{master_minor} in that branch.'
+                f'Skipping PR for {runtime.group} : {dgk} / {public_repo_url} since associated public branch is {public_branch} but CI is tracking {master_major}.{master_minor} in that branch.',
             )
             continue
 
@@ -1184,7 +1198,7 @@ def images_streams_prs(
             source_branch_ci_build_root_coordinate = None
             if ci_operator_config_path.exists():
                 source_branch_ci_operator_config = yaml.safe_load(
-                    ci_operator_config_path.read_text(encoding='utf-8')
+                    ci_operator_config_path.read_text(encoding='utf-8'),
                 )  # Read in content from public source
                 source_branch_ci_build_root_coordinate = source_branch_ci_operator_config.get('build_root_image', None)
 
@@ -1199,7 +1213,7 @@ Source parents: {source_branch_parents} ({source_branch_parent_digest})
 Source build_root (in .ci-operator.yaml): {source_branch_ci_build_root_coordinate}
 
 Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
-'''
+''',
             )
             if desired_parent_digest == source_branch_parent_digest and (
                 desired_ci_build_root_coordinate is None or desired_ci_build_root_coordinate == source_branch_ci_build_root_coordinate
@@ -1248,7 +1262,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
                             '# URGENT! ART metadata configuration has a different number of FROMs\n',
                             '# than this Dockerfile. ART will be unable to build your component or\n',
                             '# reconcile this Dockerfile until that disparity is addressed.\n',
-                        ]
+                        ],
                     )
                 handle.write(dfp.content)
 
@@ -1277,7 +1291,7 @@ Fork build_root (in .ci-operator.yaml): {fork_ci_build_root_coordinate}
 Desired Dockerfile digest: {desired_df_digest}
 Fork Dockerfile digest: {fork_branch_df_digest}
 open_prs: {open_prs}
-'''
+''',
             )
 
             # A note on why the following `if` cares about whether there is a PR open.
@@ -1397,7 +1411,7 @@ If you have any questions about this pull request, please reach out to `@release
                     if parent_meta.config.content.source.ci_alignment.streams_prs.merge_first:
                         skipping_dgks.add(image_meta.distgit_key)
                         yellow_print(
-                            f'Image has parent {parent_meta.distgit_key} open PR ({parent_pr_urls[0]}) and streams_prs.merge_first==True; skipping PR opening for this image {image_meta.distgit_key}'
+                            f'Image has parent {parent_meta.distgit_key} open PR ({parent_pr_urls[0]}) and streams_prs.merge_first==True; skipping PR opening for this image {image_meta.distgit_key}',
                         )
                         continue
 
@@ -1430,7 +1444,7 @@ If you have any questions about this pull request, please reach out to `@release
                 if moist_run:
                     if existing_pr.base.sha != public_branch_commit:
                         yellow_print(
-                            f'Would have changed PR {existing_pr.html_url} to use base {public_branch} ({public_branch_commit}) vs existing {existing_pr.base.sha}'
+                            f'Would have changed PR {existing_pr.html_url} to use base {public_branch} ({public_branch_commit}) vs existing {existing_pr.base.sha}',
                         )
                     if existing_pr.body != pr_body:
                         yellow_print(f'Would have changed PR {existing_pr.html_url} to use body "{pr_body}" vs existing "{existing_pr.body}"')

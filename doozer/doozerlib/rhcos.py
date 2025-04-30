@@ -156,7 +156,7 @@ class RHCOSBuildFinder:
             if meta_type == "commitmeta":
                 with tempfile.TemporaryDirectory() as temp_dir:
                     stdout, _ = exectools.cmd_assert(
-                        f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
+                        f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm",
                     )
                     with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
                         meta_data = json.load(f)
@@ -164,7 +164,7 @@ class RHCOSBuildFinder:
             elif meta_type == "meta":
                 with tempfile.TemporaryDirectory() as temp_dir:
                     stdout, _ = exectools.cmd_assert(
-                        f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
+                        f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm",
                     )
                     with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
                         extensions_data = json.load(f)

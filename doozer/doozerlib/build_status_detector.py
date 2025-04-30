@@ -100,7 +100,9 @@ class BuildStatusDetector:
         if build_ids:
             self.logger and self.logger.info(f"Fetching image archives for {len(build_ids)} builds...")
             archive_lists = brew.list_archives_by_builds(
-                build_ids, "image", self.koji_session
+                build_ids,
+                "image",
+                self.koji_session,
             )  # if a build is not an image (e.g. rpm), Brew will return an empty archive list for that build
             for build_id, archive_list in zip(build_ids, archive_lists):
                 self.archive_lists[build_id] = archive_list  # save to cache

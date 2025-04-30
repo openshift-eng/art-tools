@@ -101,7 +101,7 @@ class Ocp4ScanPipeline:
             [
                 'beta:config:konflux:scan-sources',
                 '--yaml',
-            ]
+            ],
         )
         if self.runtime.dry_run:
             cmd.append('--dry-run')

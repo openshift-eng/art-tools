@@ -72,7 +72,7 @@ async def gather_opm(
                                 'auth': auth_token,
                             },
                         },
-                    }
+                    },
                 )
 
     if not auth_content:

@@ -82,7 +82,7 @@ class KonfluxFbcImporter:
                 "group": self.group,
                 "assembly_name": self.assembly,
                 "distgit_key": metadata.distgit_key,
-            }
+            },
         )
         logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_git_repo, build_branch, repo_dir)
         build_repo = BuildRepo(url=self.fbc_git_repo, branch=build_branch, local_dir=repo_dir, logger=logger)
@@ -270,7 +270,7 @@ class KonfluxFbcRebaser:
                     "group": self.group,
                     "assembly_name": self.assembly,
                     "distgit_key": metadata.distgit_key,
-                }
+                },
             )
             logger.info("Cloning FBC repo %s branch %s into %s", self.fbc_repo, fbc_build_branch, repo_dir)
             build_repo = BuildRepo(url=self.fbc_repo, branch=fbc_build_branch, local_dir=repo_dir, logger=logger)
@@ -605,7 +605,7 @@ class KonfluxFbcBuilder:
                         "group": self.group,
                         "assembly_name": self.assembly,
                         "distgit_key": metadata.distgit_key,
-                    }
+                    },
                 )
                 logger.info("Cloning bundle repository %s branch %s into %s", self.fbc_repo, build_branch, repo_dir)
                 build_repo = BuildRepo(
@@ -825,7 +825,7 @@ class KonfluxFbcBuilder:
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                             'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                             'image_tag': image_pullspec.split(':')[-1],
-                        }
+                        },
                     )
                 case KonfluxBuildOutcome.FAILURE:
                     start_time = pipelinerun.status.startTime
@@ -834,7 +834,7 @@ class KonfluxFbcBuilder:
                         {
                             'start_time': datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
                             'end_time': datetime.strptime(end_time, '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc),
-                        }
+                        },
                     )
 
             build_record = KonfluxFbcBuildRecord(**build_record_params)

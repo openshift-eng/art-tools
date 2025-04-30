@@ -91,7 +91,7 @@ class QuayDoomsdaySync:
 
         if not self.runtime.dry_run:
             slack_response = await self.slack_client.say_in_thread(
-                f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:"
+                f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:",
             )
             slack_channel_id = slack_response["channel"]
             main_message_ts = slack_response["message"]["ts"]

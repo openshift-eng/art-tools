@@ -28,7 +28,10 @@ logger = logutil.get_logger(__name__)
 
 
 def get_tagged_builds(
-    tag_component_tuples: Iterable[Tuple[str, Optional[str]]], build_type: Optional[str], event: Optional[int], session: koji.ClientSession
+    tag_component_tuples: Iterable[Tuple[str, Optional[str]]],
+    build_type: Optional[str],
+    event: Optional[int],
+    session: koji.ClientSession,
 ) -> List[Optional[List[Dict]]]:
     """Get tagged builds  for multiple Brew tags (and components) as of the given event
 
@@ -52,7 +55,9 @@ def get_tagged_builds(
 
 
 def get_latest_builds(
-    tag_component_tuples: List[Tuple[str, str]], session: koji.ClientSession, event: Optional[int] = None
+    tag_component_tuples: List[Tuple[str, str]],
+    session: koji.ClientSession,
+    event: Optional[int] = None,
 ) -> List[Optional[List[Dict]]]:
     """Get latest builds for multiple Brew components
 
@@ -465,7 +470,7 @@ class KojiWrapper(koji.ClientSession):
             'listTaggedArchives',
             'listTaggedRPMS',
             'newRepo',
-        ]
+        ],
     )
 
     # Methods which cannot be constrained, but are considered safe to allow even when brew-event is set.
@@ -557,7 +562,7 @@ class KojiWrapper(koji.ClientSession):
             'winEnabled',
             'winBuild',
             'uploadFile',
-        ]
+        ],
     )
 
     def __init__(self, koji_session_args, brew_event=None, force_instance_caching=False):
@@ -657,7 +662,7 @@ class KojiWrapper(koji.ClientSession):
                 # If --brew-event has been specified and non-constrainable API call is invoked, raise
                 # an exception if the caller has not made clear that are ok with that via brew_event_aware option.
                 raise IOError(
-                    f'Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True'
+                    f'Non-constrainable koji api call ({method_name}) with --brew-event set; you must use KojiWrapperOpts with brew_event_aware=True',
                 )
 
         return kwargs

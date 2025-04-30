@@ -266,7 +266,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
                 'rpm': 123,
                 'extras': 123,
                 'metadata': 123,
-            }
+            },
         )
 
         # bz mocks

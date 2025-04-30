@@ -205,7 +205,14 @@ async def create_cli(
             green_prefix("Would have created advisory: ")
             click.echo("")
             print_advisory(
-                0, "(unassigned)", boilerplate['synopsis'], package_owner, assigned_to, et_data['quality_responsibility_name'], date, batch_id
+                0,
+                "(unassigned)",
+                boilerplate['synopsis'],
+                package_owner,
+                assigned_to,
+                et_data['quality_responsibility_name'],
+                date,
+                batch_id,
             )
     finally:
         await errata_api.close()
@@ -234,5 +241,5 @@ def print_advisory(
   bugs:        []
   jira issues: []
   builds:
-"""
+""",
     )

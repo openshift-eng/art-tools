@@ -316,7 +316,7 @@ class OLMBundle(object):
                     {
                         'platforms': {'only': ['x86_64']},
                         'operator_manifests': {'manifests_dir': 'manifests'},
-                    }
+                    },
                 ),
             )
 

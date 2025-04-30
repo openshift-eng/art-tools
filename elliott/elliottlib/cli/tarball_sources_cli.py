@@ -33,7 +33,10 @@ def tarball_sources_cli(ctx):
     help="Layout of output directory.",
 )
 @click.option(
-    "--component", "components", multiple=True, help="Koji/Brew component names or build NVRs to filter on. Can be specified multiple times."
+    "--component",
+    "components",
+    multiple=True,
+    help="Koji/Brew component names or build NVRs to filter on. Can be specified multiple times.",
 )
 @click.option("-f", "--force", is_flag=True, help="Force overwrite existing files.")
 @click.pass_context
@@ -48,7 +51,7 @@ def create(ctx, advisories, out_dir, out_layout, components, force):
         format_util.red_print(
             "Output directory {} is not empty.\n\
 Use --force to add new tarball sources to an existing directory.".format(
-                os.path.abspath(out_dir)
+                os.path.abspath(out_dir),
             ),
         )
         exit(1)
@@ -225,6 +228,7 @@ Then notify RCM (https://projects.engineering.redhat.com/projects/RCM/issues) th
 
 {}
     """.format(
-            pipes.quote(os.path.abspath(out_dir) + "/"), "\n".join(relative_paths)
+            pipes.quote(os.path.abspath(out_dir) + "/"),
+            "\n".join(relative_paths),
         ),
     )

@@ -57,7 +57,8 @@ class TestGoLangRebase(DoozerRunnerTestCase):
         self.assertEqual(dfp.labels['io.openshift.build.commit.id'], target_ocp_build_data_commitish)
         self.assertEqual(dfp.labels['io.openshift.build.source-location'], "https://github.com/openshift-eng/ocp-build-data")
         self.assertEqual(
-            dfp.labels['io.openshift.build.commit.url'], f"https://github.com/openshift-eng/ocp-build-data/commit/{target_ocp_build_data_commitish}"
+            dfp.labels['io.openshift.build.commit.url'],
+            f"https://github.com/openshift-eng/ocp-build-data/commit/{target_ocp_build_data_commitish}",
         )
 
         # Ensure that meta.content.set_build_variables == false  worked. Each of the following variables is

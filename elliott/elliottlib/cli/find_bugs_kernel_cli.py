@@ -95,7 +95,7 @@ class FindBugsKernelCli:
                         "status": bug.status,
                         "summary": bug.summary,
                         "tracker": tracker,
-                    }
+                    },
                 )
             if self.update_tracker:
                 self._update_tracker(jira_client, tracker, koji_api, config.target_jira)
@@ -266,7 +266,7 @@ class FindBugsKernelCli:
             f"{JIRABugTracker.field_target_version}": [
                 {
                     "name": ocp_target_version,
-                }
+                },
             ],
             "labels": ["art:cloned-kernel-bug", f"art:bz#{bug.id}"],
         }

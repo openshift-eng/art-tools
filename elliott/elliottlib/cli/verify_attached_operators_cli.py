@@ -171,7 +171,7 @@ def _analyze_image_builds(
             Some references had problems (see notes above):
               {problem_str}
             Ensure all bundle references are configured with the necessary repos.
-        """
+        """,
         )
 
     invalid = _validate_csvs(bundles)
@@ -182,7 +182,7 @@ def _analyze_image_builds(
             The following bundles failed CSV validation:
               {invalid_str}
             Check art.yaml substitutions for failing matches.
-        """
+        """,
         )
 
     return problems, invalid, unshipped_builds_by_advisory

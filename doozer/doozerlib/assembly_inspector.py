@@ -54,7 +54,8 @@ class AssemblyInspector:
             latest_build_obj = await image_meta.get_latest_build(default=None, el_target=image_meta.branch_el_target())
             if latest_build_obj:
                 self._release_build_record_inspectors[image_meta.distgit_key] = BuildRecordInspector.get_build_record_inspector(
-                    self.runtime, latest_build_obj
+                    self.runtime,
+                    latest_build_obj,
                 )
             else:
                 self._release_build_record_inspectors[image_meta.distgit_key] = None
@@ -113,7 +114,7 @@ class AssemblyInspector:
                             f'{component_description} has {rpm_build["nvr"]}, which has been tagged into the stop-ship tag: {rpm_delivery_config.stop_ship_tag}',
                             component=component,
                             code=AssemblyIssueCode.UNSHIPPABLE_KERNEL,
-                        )
+                        ),
                     )
                     continue
         return issues
@@ -130,7 +131,7 @@ class AssemblyInspector:
         issues: List[AssemblyIssue] = []
         self.runtime.logger.info("Getting rpms in image build %s...", build_record_inspector.get_nvr())
         installed_packages = build_record_inspector.get_all_installed_package_build_dicts(
-            package_rpm_finder
+            package_rpm_finder,
         )  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
 
         # If rpm_deliveries is configured, check if the image build has rpms respecting the stop-ship/ship-ok tag
@@ -165,8 +166,10 @@ class AssemblyInspector:
         # If rpm_deliveries is configured, check if the RHCOS build has rpms with the stop-ship/ship-ok tag
         issues.extend(
             self._check_installed_packages_for_rpm_delivery(
-                'rhcos', f'RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch})', installed_packages
-            )
+                'rhcos',
+                f'RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch})',
+                installed_packages,
+            ),
         )
 
         # If the assembly has a basis event, check if all external rpms in rhaos tag match those installed in RHCOS
@@ -226,7 +229,7 @@ class AssemblyInspector:
                     AssemblyIssue(
                         f'Expected assembly defined rhcos dependency {desired_nvr} to be installed in {rhcos_build.build_id} ({rhcos_build.brew_arch}) but that package was not installed',
                         component='rhcos',
-                    )
+                    ),
                 )
 
             if package_name in installed_packages:
@@ -240,7 +243,7 @@ class AssemblyInspector:
                             f'Expected {desired_nvr} to be installed in RHCOS build {rhcos_build.build_id} ({rhcos_build.brew_arch}) but found {installed_nvr}',
                             component='rhcos',
                             code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY,
-                        )
+                        ),
                     )
 
         """
@@ -261,7 +264,7 @@ class AssemblyInspector:
                             f'Expected {rhcos_build.build_id}/{rhcos_build.brew_arch} image to contain assembly selected RPM build {assembly_nvr} but found {installed_nvr} installed',
                             component='rhcos',
                             code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED,
-                        )
+                        ),
                     )
 
         if self.runtime.assembly_type is AssemblyTypes.STREAM:
@@ -331,7 +334,7 @@ class AssemblyInspector:
                                     AssemblyIssue(
                                         f'{dgk} build for rhel-{el_ver} did not find git commit {target_branch[:7]} in package RPM NVR {build_nvr}',
                                         component=dgk,
-                                    )
+                                    ),
                                 )
                     except ValueError:
                         # The meta's target branch a normal branch name
@@ -359,7 +362,7 @@ class AssemblyInspector:
         required_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at image-specific level
         desired_packages: Dict[str, str] = dict()  # Dict[package_name] -> nvr  # Dependency specified at group level
         installed_packages = build_record_inspector.get_all_installed_package_build_dicts(
-            package_rpm_finder
+            package_rpm_finder,
         )  # Dict[package_name] -> build dict  # rpms installed in the rhcos image
         dgk = build_record_inspector.get_image_meta().distgit_key
 
@@ -395,7 +398,11 @@ class AssemblyInspector:
                         desired_packages[package_name] = build_dict["nvr"]
                     else:
                         image_meta.logger.warning(
-                            "Found newer rpm %s in image %s than the rpm %s in Brew tag %s", installed_rpm["nvr"], dgk, build_dict["nvr"], brew_tag
+                            "Found newer rpm %s in image %s than the rpm %s in Brew tag %s",
+                            installed_rpm["nvr"],
+                            dgk,
+                            build_dict["nvr"],
+                            brew_tag,
                         )
                         desired_packages[package_name] = installed_rpm["nvr"]
                 else:
@@ -428,7 +435,7 @@ class AssemblyInspector:
                         f'Expected image to contain assembly member override dependencies NVR {desired_nvr} but it was not installed',
                         component=dgk,
                         code=AssemblyIssueCode.MISSING_INHERITED_DEPENDENCY,
-                    )
+                    ),
                 )
 
             if package_name in installed_packages:
@@ -441,7 +448,7 @@ class AssemblyInspector:
                                 f'Expected image to contain assembly override dependencies NVR {desired_nvr} but found {installed_nvr} installed',
                                 component=dgk,
                                 code=AssemblyIssueCode.CONFLICTING_INHERITED_DEPENDENCY,
-                            )
+                            ),
                         )
                     else:
                         issues.append(
@@ -449,7 +456,7 @@ class AssemblyInspector:
                                 f'Expected image to contain assembly RPM build {desired_nvr} but found {installed_nvr} installed',
                                 component=dgk,
                                 code=AssemblyIssueCode.CONFLICTING_GROUP_RPM_INSTALLED,
-                            )
+                            ),
                         )
 
         """
@@ -468,7 +475,7 @@ class AssemblyInspector:
                     AssemblyIssue(
                         f'Expected image git source from metadata {content_git_url} but found {build_git_url} as the upstream source of the brew build',
                         component=dgk,
-                    )
+                    ),
                 )
 
             try:
@@ -482,7 +489,9 @@ class AssemblyInspector:
                     if target_branch != build_commit:
                         # Impermissible as artist can just fix the assembly definition.
                         issues.append(
-                            AssemblyIssue(f'Expected image build git commit {target_branch} but {build_commit} was found in the build', component=dgk)
+                            AssemblyIssue(
+                                f'Expected image build git commit {target_branch} but {build_commit} was found in the build', component=dgk
+                            ),
                         )
             except ValueError:
                 # The meta's target branch a normal branch name
@@ -581,7 +590,7 @@ class AssemblyInspector:
             if self.runtime.assembly_type != AssemblyTypes.STREAM:
                 if container_conf.primary:
                     raise Exception(
-                        f'Assembly {runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid'
+                        f'Assembly {runtime.assembly} is not type STREAM but no assembly.rhcos.{container_conf.name} image data for {brew_arch}; all RHCOS image data must be populated for this assembly to be valid',
                     )
                 # require the primary container at least to be specified, but
                 # allow the edge case where we add an RHCOS container type and

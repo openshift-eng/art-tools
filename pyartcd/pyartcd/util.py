@@ -61,7 +61,7 @@ def is_greenwave_all_pass_on_advisory(advisory_id: int) -> bool:
     """
     logger.info(f"Check failed greenwave tests on {advisory_id}")
     result = ErrataConnector()._get(
-        f'/api/v1/external_tests?filter[test_type]=greenwave_cvp&filter[status]=FAILED&filter[active]=true&page[size]=1000&filter[errata_id]={advisory_id}'
+        f'/api/v1/external_tests?filter[test_type]=greenwave_cvp&filter[status]=FAILED&filter[active]=true&page[size]=1000&filter[errata_id]={advisory_id}',
     )
     if result.get('data', []):
         logger.warning(f"Some greenwave tests on {advisory_id} failed with {result}")
@@ -636,7 +636,9 @@ async def mirror_to_s3(source: Union[str, Path], dest: str, exclude: Optional[st
 
     # Mirror to Cloudflare as well
     await exectools.cmd_assert_async(
-        cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]] + paths, env=os.environ.copy(), stdout=sys.stderr
+        cmd + ["--profile", "cloudflare", "--endpoint-url", os.environ["CLOUDFLARE_ENDPOINT"]] + paths,
+        env=os.environ.copy(),
+        stdout=sys.stderr,
     )
 
 
@@ -669,7 +671,10 @@ async def get_signing_mode(
         assert group, 'Group must be specified in order to load group config'
         assert assembly, 'Assembly must be specified in order to load group config'
         group_config = await load_group_config(
-            group=group, assembly=assembly, doozer_data_path=doozer_data_path, doozer_data_gitref=doozer_data_gitref
+            group=group,
+            assembly=assembly,
+            doozer_data_path=doozer_data_path,
+            doozer_data_gitref=doozer_data_gitref,
         )
 
     phase = SoftwareLifecyclePhase.from_name(group_config['software_lifecycle']['phase'])

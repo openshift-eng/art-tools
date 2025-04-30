@@ -203,10 +203,20 @@ class TestExectools(IsolatedAsyncioTestCase):
             proc.communicate.return_value = (fake_stdout, fake_stderr)
 
             rc, out, err = await exectools.cmd_gather_async(
-                cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL
+                cmd,
+                cwd=fake_cwd,
+                env=None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
             )
             create_subprocess_exec.assert_awaited_once_with(
-                *cmd, cwd=fake_cwd, env=None, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, stdin=asyncio.subprocess.DEVNULL
+                *cmd,
+                cwd=fake_cwd,
+                env=None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.DEVNULL,
             )
             self.assertEqual(rc, 0)
             self.assertEqual(out, fake_stdout.decode("utf-8"))

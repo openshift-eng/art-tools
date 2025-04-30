@@ -7,11 +7,12 @@ venv:
 	cd elliott && uv pip install '.[tests]'
 
 format:
-	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma
+	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma --exit-zero-even-if-changed
 	uv run -m black --target-version py311 --skip-string-normalization . --line-length 150
 	uv run -m isort --profile black --line-length 150 .
 
 format-check:
+	git ls-files -z '*.py' | xargs -0 uv run -m add_trailing_comma
 	uv run -m black --check --target-version py311 --skip-string-normalization . --line-length 150
 	uv run -m isort --check-only --profile black --line-length 150 .
 

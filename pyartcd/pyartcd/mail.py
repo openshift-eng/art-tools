@@ -22,7 +22,12 @@ class MailService:
         self.cc = cc
 
     def send_mail(
-        self, to: Union[str, List[str]], subject: str, content: str, archive_dir: Optional[str] = None, dry_run: bool = False
+        self,
+        to: Union[str, List[str]],
+        subject: str,
+        content: str,
+        archive_dir: Optional[str] = None,
+        dry_run: bool = False,
     ) -> EmailMessage:
         msg = EmailMessage()
         msg["Subject"] = subject

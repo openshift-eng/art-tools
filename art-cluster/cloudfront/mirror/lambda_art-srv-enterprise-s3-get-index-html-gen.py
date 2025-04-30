@@ -467,7 +467,7 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
             <td class="hideable"><time datetime="{last_modified_iso}">{last_modified_human_readable}</time></td>
             <td class="hideable"></td>
         </tr>
-"""
+""",
         )
         if index_file.tell() > 1000000:
             body_top += f'<tr><td></td><td><b>Listing truncated...</b> <a href="?entry={entry_count + 1}">Next Page</a></td><td></td><td></td><td></td></tr>\n'
@@ -480,7 +480,7 @@ def process_dir(s3_conn, bucket_name: str, path_top_dir: str, entry_offset=0):
     </div>
 </main>
 </body>
-</html>"""
+</html>""",
     )
     return body_top + index_file.getvalue(), entry_count
 

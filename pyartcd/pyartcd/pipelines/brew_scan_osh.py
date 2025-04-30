@@ -104,11 +104,19 @@ class OshScan:
 @click.option("--email", required=False, help="Additional email to which the results of the scan should be sent out to")
 @click.option("--nvrs", required=False, help="Comma separated list to trigger scans specifically. Will not check candidate tags")
 @click.option(
-    "--check-triggered", required=False, is_flag=True, default=False, help="Triggers scans for NVRs only after checking if they haven't already"
+    "--check-triggered",
+    required=False,
+    is_flag=True,
+    default=False,
+    help="Triggers scans for NVRs only after checking if they haven't already",
 )
 @click.option("--all-builds", required=False, is_flag=True, default=False, help="Check all builds in candidate tags")
 @click.option(
-    "--create-jira-tickets", required=False, is_flag=True, default=False, help="Create OCPBUGS ticket for a package if vulnerabilities exist"
+    "--create-jira-tickets",
+    required=False,
+    is_flag=True,
+    default=False,
+    help="Create OCPBUGS ticket for a package if vulnerabilities exist",
 )
 @pass_runtime
 @click_coroutine

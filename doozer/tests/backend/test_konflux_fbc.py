@@ -122,7 +122,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
                 call(parents=True, exist_ok=True),
                 call(parents=True, exist_ok=True),
                 call(parents=True, exist_ok=True),
-            ]
+            ],
         )
         mock_opm.generate_basic_template.assert_called_once()
         mock_opm.render_catalog_from_template.assert_called_once()
@@ -131,7 +131,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             [
                 call(self.base_dir.joinpath("catalog-migrate")),
                 call(self.base_dir.joinpath("catalog-templates")),
-            ]
+            ],
         )
 
     @patch("doozerlib.backend.konflux_fbc.opm.render")
@@ -310,7 +310,13 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
     async def test_rebase_dir(
-        self, mock_fetch_olm_bundle_blob, mock_fetch_olm_bundle_image_info, mock_open, mock_is_file, mock_mkdir, MockDockerfileParser
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
     ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
@@ -355,7 +361,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                                 "olm.skipRange": ">=4.8.0 <4.17.0",
                             },
                         },
-                    }
+                    },
                 ],
                 "relatedImages": [
                     {"name": "", "image": "example.com/test-bundle@1"},
@@ -505,7 +511,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                 "name": "test-bundle-name",
                 "package": "test-package",
                 "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}],
-            }
+            },
         ]
         actual = await self.rebaser._fetch_olm_bundle_blob(bundle_build)
         self.assertEqual(
@@ -537,18 +543,22 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(actual["test-package"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
         self.assertEqual(actual["test-package"]["olm.package"]["test-package"], {"schema": "olm.package", "name": "test-package"})
         self.assertEqual(
-            actual["test-package"]["olm.channel"]["test-channel"], {"schema": "olm.channel", "name": "test-channel", "package": "test-package"}
+            actual["test-package"]["olm.channel"]["test-channel"],
+            {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
         )
         self.assertEqual(
-            actual["test-package"]["olm.bundle"]["test-bundle"], {"schema": "olm.bundle", "name": "test-bundle", "package": "test-package"}
+            actual["test-package"]["olm.bundle"]["test-bundle"],
+            {"schema": "olm.bundle", "name": "test-bundle", "package": "test-package"},
         )
         self.assertEqual(actual["test-package2"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
         self.assertEqual(actual["test-package2"]["olm.package"]["test-package2"], {"schema": "olm.package", "name": "test-package2"})
         self.assertEqual(
-            actual["test-package2"]["olm.channel"]["test-channel2"], {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"}
+            actual["test-package2"]["olm.channel"]["test-channel2"],
+            {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
         )
         self.assertEqual(
-            actual["test-package2"]["olm.bundle"]["test-bundle2"], {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"}
+            actual["test-package2"]["olm.bundle"]["test-bundle2"],
+            {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
         )
 
 
@@ -600,7 +610,11 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         )
 
         result = await self.builder._start_build(
-            metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger
+            metadata,
+            build_repo,
+            output_image="test-image-pullspec",
+            arches=["x86_64", "s390x"],
+            logger=self.logger,
         )
         kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group-foo", display_name="fbc-test-group-foo")
         kube_client.ensure_component.assert_awaited_once_with(
@@ -665,7 +679,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             [
                 call(metadata, build_repo, mock_start_build.return_value[0], KonfluxBuildOutcome.PENDING, all_arches, logger=ANY),
                 call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
-            ]
+            ],
         )
         mock_konflux_client.wait_for_pipelinerun.assert_called_once_with("test-pipelinerun-name", namespace="test-namespace")
         self.builder._record_logger.add_record.assert_called_once_with(
@@ -686,7 +700,12 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
     async def test_build_with_existing_repo(
-        self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
+        self,
+        MockDockerfileParser,
+        MockBuildRepo,
+        mock_start_build,
+        mock_update_konflux_db: AsyncMock,
+        mock_exists,
     ):
         mock_konflux_client = self.kube_client
         metadata = MagicMock(spec=ImageMetadata)
@@ -711,7 +730,7 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             [
                 call(metadata, build_repo, mock_start_build.return_value[0], KonfluxBuildOutcome.PENDING, all_arches, logger=ANY),
                 call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
-            ]
+            ],
         )
         mock_konflux_client.wait_for_pipelinerun.assert_called_once_with("test-pipelinerun-name", namespace="test-namespace")
         self.builder._record_logger.add_record.assert_called_once_with(

@@ -16,7 +16,7 @@ class BigQueryClient:
             self.client = bigquery.Client(project=constants.GOOGLE_CLOUD_PROJECT)
         except:
             raise EnvironmentError(
-                f'Unable to access {constants.GOOGLE_CLOUD_PROJECT}. Initialize default application context or set GOOGLE_APPLICATION_CREDENTIALS'
+                f'Unable to access {constants.GOOGLE_CLOUD_PROJECT}. Initialize default application context or set GOOGLE_APPLICATION_CREDENTIALS',
             )
 
         self._table_ref = None

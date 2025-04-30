@@ -30,7 +30,7 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
                     "candidate_brew_tag": "rhaos-4.14-rhel-9-candidate",
                     "prod_brew_tag": "rhaos-4.14-rhel-9",
                 },
-            }
+            },
         )
 
     def test_get_jira_bugs(self):

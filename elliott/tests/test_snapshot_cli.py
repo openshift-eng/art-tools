@@ -96,7 +96,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                             },
                         ],
                     },
-                }
+                },
             )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -176,7 +176,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
                         'containerImage': 'registry/image@sha256:digest1',
                         'name': 'ose-4-18-component1',
                         'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}},
-                    }
+                    },
                 ],
             },
         }

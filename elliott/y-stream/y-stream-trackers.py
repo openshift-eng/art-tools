@@ -76,7 +76,7 @@ for y_stream_tracker in y_stream_trackers:
                 component + ":" in tracker.summary,
                 version.parse(tracker_tr) <= version.parse(TARGET_RELEASE),
                 version.parse(tracker_tr) > version.parse("4.0.0"),
-            ]
+            ],
         ):
             return True
         return False

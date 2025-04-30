@@ -539,7 +539,7 @@ class Runtime(GroupRuntime):
                     self._logger.info("Using branch from group.yml: %s" % self.branch)
                 else:
                     self._logger.info(
-                        "No branch specified either in group.yml or on the command line; all included images will need to specify their own."
+                        "No branch specified either in group.yml or on the command line; all included images will need to specify their own.",
                     )
             else:
                 self._logger.info("Using branch from command line: %s" % self.branch)
@@ -582,7 +582,7 @@ class Runtime(GroupRuntime):
             def _register_name_in_bundle(name_in_bundle: str, distgit_key: str):
                 if name_in_bundle in self.name_in_bundle_map:
                     raise ValueError(
-                        f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}"
+                        f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}",
                     )
                 self.name_in_bundle_map[name_in_bundle] = img.key
 
@@ -628,7 +628,11 @@ class Runtime(GroupRuntime):
                 for i in image_data.values():
                     if i.key not in self.image_map:
                         metadata = ImageMetadata(
-                            self, i, self.upstream_commitish_overrides.get(i.key), clone_source=clone_source, prevent_cloning=prevent_cloning
+                            self,
+                            i,
+                            self.upstream_commitish_overrides.get(i.key),
+                            clone_source=clone_source,
+                            prevent_cloning=prevent_cloning,
                         )
                         self.image_map[metadata.distgit_key] = metadata
                         self.component_map[metadata.get_component_name()] = metadata
@@ -652,7 +656,11 @@ class Runtime(GroupRuntime):
                         # Historically, clone_source defaulted to True for rpms.
                         clone_source = True
                     metadata = RPMMetadata(
-                        self, r, self.upstream_commitish_overrides.get(r.key), clone_source=clone_source, prevent_cloning=prevent_cloning
+                        self,
+                        r,
+                        self.upstream_commitish_overrides.get(r.key),
+                        clone_source=clone_source,
+                        prevent_cloning=prevent_cloning,
                     )
                     self.rpm_map[metadata.distgit_key] = metadata
                     self.component_map[metadata.get_component_name()] = metadata
@@ -667,8 +675,10 @@ class Runtime(GroupRuntime):
             if key in no_collide_check:
                 raise IOError(
                     'Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}'.format(
-                        key, meta.config_filename, no_collide_check[key].config_filename
-                    )
+                        key,
+                        meta.config_filename,
+                        no_collide_check[key].config_filename,
+                    ),
                 )
             no_collide_check[key] = meta
 
@@ -783,8 +793,8 @@ class Runtime(GroupRuntime):
         if self.freeze_automation == FREEZE_AUTOMATION_YES:
             raise DoozerFatalError(
                 'Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.'.format(
-                    FREEZE_AUTOMATION_YES
-                )
+                    FREEZE_AUTOMATION_YES,
+                ),
             )
 
     def image_metas(self) -> List[ImageMetadata]:
@@ -889,7 +899,7 @@ class Runtime(GroupRuntime):
                 """
                 if not image_meta.image_name_short.startswith("ose-"):
                     raise ValueError(
-                        f"{image_meta.distgit_key} does not conform to payload naming convention with image name: {image_meta.image_name_short}"
+                        f"{image_meta.distgit_key} does not conform to payload naming convention with image name: {image_meta.image_name_short}",
                     )
 
                 payload_images.append(image_meta)
@@ -1024,7 +1034,7 @@ class Runtime(GroupRuntime):
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
 
         matched_streams = list(
-            itertools.islice(((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2)
+            itertools.islice(((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2),
         )
         if len(matched_streams) == 0:
             raise IOError(f"Unable to find definition for stream '{stream_name}'")

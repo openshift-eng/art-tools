@@ -80,7 +80,10 @@ class KonfluxImageBuilder:
         self._logger = logger or LOGGER
         self._record_logger = record_logger
         self._konflux_client = KonfluxClient.from_kubeconfig(
-            default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run
+            default_namespace=config.namespace,
+            config_file=config.kubeconfig,
+            context=config.context,
+            dry_run=config.dry_run,
         )
 
         if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
@@ -121,7 +124,8 @@ class KonfluxImageBuilder:
                 if metadata.has_source():
                     logger.info(f"Resolving source for {metadata.qualified_key}")
                     source = cast(
-                        SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True)
+                        SourceResolution,
+                        await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True),
                     )
                 else:
                     raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
@@ -130,7 +134,7 @@ class KonfluxImageBuilder:
                         "group": metadata.runtime.group,
                         "assembly_name": metadata.runtime.assembly,
                         "distgit_key": metadata.distgit_key,
-                    }
+                    },
                 )
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
@@ -168,7 +172,7 @@ class KonfluxImageBuilder:
             ]
             if failed_parents:
                 raise IOError(
-                    f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}"
+                    f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}",
                 )
 
             # Start the build
@@ -198,7 +202,9 @@ class KonfluxImageBuilder:
                     timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
 
                 pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(
-                    pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta
+                    pipelinerun_name,
+                    namespace=self._config.namespace,
+                    overall_timeout_timedelta=timeout_timedelta,
                 )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
@@ -242,7 +248,7 @@ class KonfluxImageBuilder:
         uuid_tag = df.envs.get("__doozer_uuid_tag")
         if not uuid_tag:
             raise ValueError(
-                f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?"
+                f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?",
             )
         version = df.labels.get("version")
         if not version:
@@ -512,7 +518,13 @@ class KonfluxImageBuilder:
         return sorted(installed_packages)
 
     async def update_konflux_db(
-        self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
+        self,
+        metadata,
+        build_repo,
+        pipelinerun,
+        outcome,
+        building_arches,
+        pod_list: Optional[List[Dict]] = None,
     ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
@@ -590,7 +602,7 @@ class KonfluxImageBuilder:
                     'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
                     'installed_packages': installed_packages,
                     'image_tag': image_pullspec.split(':')[-1],
-                }
+                },
             )
 
         if pipelinerun.status:
@@ -721,7 +733,8 @@ class KonfluxImageBuilder:
 
                 try:
                     taskrun_db_client.client.insert_rows_json(
-                        f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}', rows
+                        f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}',
+                        rows,
                     )
                 except:
                     logger.warning('Error inserting taskrun information in bigquery')

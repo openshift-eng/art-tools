@@ -199,7 +199,7 @@ class PromotePipeline:
             upgrades_str: Optional[str] = group_config.get("upgrades")
             if upgrades_str is None and assembly_type not in [AssemblyTypes.CUSTOM]:
                 raise ValueError(
-                    f"Group config for assembly {self.assembly} is missing the required `upgrades` field. If no upgrade edges are expected, please explicitly set the `upgrades` field to empty string."
+                    f"Group config for assembly {self.assembly} is missing the required `upgrades` field. If no upgrade edges are expected, please explicitly set the `upgrades` field to empty string.",
                 )
             previous_list = list(map(lambda s: s.strip(), upgrades_str.split(","))) if upgrades_str else []
             # Ensure all versions in previous list are valid semvers.
@@ -724,7 +724,7 @@ class PromotePipeline:
                 exclude="*",
                 include="sha256=*",
                 dry_run=self.runtime.dry_run,
-            )
+            ),
         )
         if mirror_release_path == "release":
             tasks.append(
@@ -734,7 +734,7 @@ class PromotePipeline:
                     exclude="*",
                     include="sha256=*",
                     dry_run=self.runtime.dry_run,
-                )
+                ),
             )
             tasks.append(
                 util.mirror_to_s3(
@@ -743,29 +743,31 @@ class PromotePipeline:
                     exclude="*",
                     include="sha256=*",
                     dry_run=self.runtime.dry_run,
-                )
+                ),
             )
 
         # mirror to google storage
         google_storage_path = "official" if env == "prod" else "test-1"
         tasks.append(
             util.mirror_to_google_cloud(
-                f"{local_dir}/*", f"gs://openshift-release/{google_storage_path}/signatures/openshift/release", dry_run=self.runtime.dry_run
-            )
+                f"{local_dir}/*",
+                f"gs://openshift-release/{google_storage_path}/signatures/openshift/release",
+                dry_run=self.runtime.dry_run,
+            ),
         )
         tasks.append(
             util.mirror_to_google_cloud(
                 f"{local_dir}/*",
                 f"gs://openshift-release/{google_storage_path}/signatures/openshift-release-dev/ocp-release",
                 dry_run=self.runtime.dry_run,
-            )
+            ),
         )
         tasks.append(
             util.mirror_to_google_cloud(
                 f"{local_dir}/*",
                 f"gs://openshift-release/{google_storage_path}/signatures/openshift-release-dev/ocp-release-nightly",
                 dry_run=self.runtime.dry_run,
-            )
+            ),
         )
 
         await asyncio.gather(*tasks)
@@ -773,7 +775,11 @@ class PromotePipeline:
     async def _publish_message_digest_signatures(self, local_dir: Union[str, Path]):
         # mirror to S3
         await util.mirror_to_s3(
-            local_dir, "s3://art-srv-enterprise/pub/openshift-v4/", exclude="*", include="*/sha256sum.txt.gpg", dry_run=self.runtime.dry_run
+            local_dir,
+            "s3://art-srv-enterprise/pub/openshift-v4/",
+            exclude="*",
+            include="*/sha256sum.txt.gpg",
+            dry_run=self.runtime.dry_run,
         )
 
     async def publish_client(self, base_to_mirror_dir: str, pullspec, release_name, build_arch, client_type):
@@ -869,7 +875,9 @@ class PromotePipeline:
 
         # Publish the clients to our S3 bucket.
         await util.mirror_to_s3(
-            f"{base_to_mirror_dir}/{build_arch}", f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}", dry_run=self.runtime.dry_run
+            f"{base_to_mirror_dir}/{build_arch}",
+            f"s3://art-srv-enterprise/pub/openshift-v4/{build_arch}",
+            dry_run=self.runtime.dry_run,
         )
 
         await util.invalidate_cloudfront_cache("/pub/openshift-v4/clients/ocp-dev-preview/latest/*")
@@ -1069,7 +1077,7 @@ class PromotePipeline:
             raise IOError(f"Could determine whether this release has blocker bugs. Elliott printed unexpected message: {stdout}")
         if int(match[1]) != 0:
             raise VerificationError(
-                f"{int(match[1])} blocker Bug(s) found for release; do not proceed without resolving. See https://art-docs.engineering.redhat.com/release/4.y.z-stream/#handling-blocker-bugs. To permit this validation error, see https://art-docs.engineering.redhat.com/jenkins/build-promote-assembly-readme/#permit-certain-validation-failures. Elliott output: {stdout}"
+                f"{int(match[1])} blocker Bug(s) found for release; do not proceed without resolving. See https://art-docs.engineering.redhat.com/release/4.y.z-stream/#handling-blocker-bugs. To permit this validation error, see https://art-docs.engineering.redhat.com/jenkins/build-promote-assembly-readme/#permit-certain-validation-failures. Elliott output: {stdout}",
             )
 
     async def get_advisory_info(self, advisory: int) -> Dict:
@@ -1326,8 +1334,8 @@ class PromotePipeline:
                 go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
                 dest_image_info["references"]["metadata"] = {
                     "annotations": {
-                        "release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}"
-                    }
+                        "release.openshift.io/from-image-stream": f"fake{go_arch_suffix}/{major}.{minor}-art-assembly-{self.assembly}{go_arch_suffix}",
+                    },
                 }
 
         if not tag_stable:
@@ -1449,7 +1457,7 @@ class PromotePipeline:
                             'os': 'linux',
                             'architecture': arch,
                         },
-                    }
+                    },
                 )
                 # Add task to build arch-specific heterogeneous payload
                 metadata = metadata.copy() if metadata else {}
@@ -1596,7 +1604,7 @@ class PromotePipeline:
             stop=stop_after_attempt(10),  # retry 10 times
             wait=wait_fixed(30),  # wait for 30 seconds between retries
         )(
-            exectools.cmd_gather_async
+            exectools.cmd_gather_async,
         )(cmd, env=env)
 
     @staticmethod

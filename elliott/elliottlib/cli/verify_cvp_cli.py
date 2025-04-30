@@ -141,7 +141,8 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
             LOGGER.info("Processing CVP optional test results...")
             included_checks = {"content_set_check"}
             passed_optional, failed_optional, missing_optional = inspector.categorize_sanity_test_optional_results(
-                dict(zip(completed, optional_check_results)), included_checks=included_checks
+                dict(zip(completed, optional_check_results)),
+                included_checks=included_checks,
             )
 
             async def _reconstruct_optional_test_results(test_results: Dict):
@@ -165,7 +166,9 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                             LOGGER.info("Examining content_set_check for %s", nvr)
                             failed_checks = [check for check in result["checks"] if check["name"] in failed]
                             tasks[nvr] = inspector.diagnostic_sanity_test_optional_checks(
-                                nvr_builds[nvr], failed_checks, included_checks=included_checks
+                                nvr_builds[nvr],
+                                failed_checks,
+                                included_checks=included_checks,
                             )
                 if tasks:
                     for nvr, diagnostic_report in zip(tasks.keys(), await asyncio.gather(*tasks.values())):

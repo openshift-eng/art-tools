@@ -112,7 +112,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "AWS_SHARED_CREDENTIALS_FILE": "/path/to/credentials/file",
                 "CLOUDFLARE_ENDPOINT": "fake-cloudflare-endpoint",
                 "ART_CLUSTER_ART_CD_PIPELINE_KUBECONFIG": "/path/to/kube/config",
-            }
+            },
         )
 
     @patch("pyartcd.jira.JIRAClient.from_url", return_value=None)
@@ -601,7 +601,7 @@ class TestPromotePipeline(IsolatedAsyncioTestCase):
                 "advisories": {"rpm": 1, "image": 2, "extras": 3, "metadata": 4},
                 "description": "whatever",
                 "arches": ["x86_64", "s390x", "ppc64le", "aarch64"],
-            }
+            },
         ),
     )
     @patch("pyartcd.pipelines.promote.PromotePipeline.get_image_stream")

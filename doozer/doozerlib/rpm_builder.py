@@ -116,7 +116,7 @@ class RPMBuilder:
 
         if rpm.get_package_name_from_spec() != rpm.get_package_name():
             raise IOError(
-                f'RPM package name in .spec file ({rpm.get_package_name_from_spec()}) does not match doozer metadata name {rpm.get_package_name()}'
+                f'RPM package name in .spec file ({rpm.get_package_name_from_spec()}) does not match doozer metadata name {rpm.get_package_name()}',
             )
 
         rpm.specfile = str(dg_specfile_path)

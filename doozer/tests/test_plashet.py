@@ -102,7 +102,7 @@ class TestPlashetBuilder(TestCase):
                         {"el7": "fake2-1.2.3-1.el7"},
                     ],
                 },
-            }
+            },
         )
         builder._get_builds = MagicMock(
             return_value=[
@@ -127,7 +127,7 @@ class TestPlashetBuilder(TestCase):
                         {"el7": "fake2-1.2.3-1.el7"},
                     ],
                 },
-            }
+            },
         )
         builder._get_builds = MagicMock(
             return_value=[
@@ -155,14 +155,14 @@ class TestPlashetBuilder(TestCase):
                     "is": {
                         "el8": "fake1-1.2.3-1.el8",
                     },
-                }
+                },
             ),
             "fake2": Model(
                 {
                     "is": {
                         "el8": "fake2-1.2.3-1.el8",
                     },
-                }
+                },
             ),
         }
         builder._get_builds = MagicMock(
@@ -230,12 +230,12 @@ class TestPlashetBuilder(TestCase):
                         {"el7": "fake2-1.2.3-1.el7"},
                     ],
                 },
-            }
+            },
         )
         image_meta = Model(
             {
                 "distgit_key": "fake-image",
-            }
+            },
         )
         actual = builder.from_image_member_deps(8, "art1", Model(), image_meta, {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8", "fake3-1.2.3-1.el8"])
@@ -264,7 +264,7 @@ class TestPlashetBuilder(TestCase):
                         {"el7": "fake2-1.2.3-1.el7"},
                     ],
                 },
-            }
+            },
         )
         actual = builder.from_rhcos_deps(8, "art1", Model(), {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8", "fake3-1.2.3-1.el8"])

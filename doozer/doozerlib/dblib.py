@@ -218,7 +218,8 @@ class DB(object):
             FROM information_schema.tables
             WHERE table_schema ='{0}' and table_name = '{1}'
             """.format(
-                self.db, table_name.replace('\'', '\'\'')
+                self.db,
+                table_name.replace('\'', '\'\''),
             ),
         )
         if cursor.fetchone()[0] != 0:
@@ -403,7 +404,8 @@ class DB(object):
 
         except Exception as e:
             self.runtime.logger.error(
-                "Something went wrong creating payload entry in the database. Payload is {}. Exception is {}.".format(payload, e), exc_info=True
+                "Something went wrong creating payload entry in the database. Payload is {}. Exception is {}.".format(payload, e),
+                exc_info=True,
             )
             return 1
 

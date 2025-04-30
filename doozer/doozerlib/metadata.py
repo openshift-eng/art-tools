@@ -373,7 +373,7 @@ class Metadata(MetadataBase):
             atom_entries = self.cgit_atom_feed(commit_hash=distgit_commitish, branch=self.branch())
             if not atom_entries:
                 raise IOError(
-                    f'No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?'
+                    f'No atom feed entries exist for distgit-only repo {dgr.name} ({component_name}) in {self.branch()}. Does branch exist?',
                 )
 
             latest_entry = atom_entries[0]  # Most recent commit's information
@@ -406,7 +406,7 @@ class Metadata(MetadataBase):
 
             last_failed_build_creation = dateutil.parser.parse(last_failed_build['creation_time'])
             last_failed_build_creation = last_failed_build_creation.replace(
-                tzinfo=datetime.timezone.utc
+                tzinfo=datetime.timezone.utc,
             )  # If time lacks timezone info, interpret as UTC
             if last_failed_build_creation + datetime.timedelta(hours=rebuild_interval) > now:
                 return RebuildHint(
@@ -425,7 +425,9 @@ class Metadata(MetadataBase):
         use_source_fallback_branch = cast(str, self.runtime.group_config.use_source_fallback_branch or "yes")
         if "git" in self.config.content.source:
             _, upstream_commit_hash = SourceResolver.detect_remote_source_branch(
-                self.config.content.source.git, self.runtime.stage, use_source_fallback_branch
+                self.config.content.source.git,
+                self.runtime.stage,
+                use_source_fallback_branch,
             )
         elif (
             self.config.content.source.alias
@@ -553,13 +555,13 @@ class Metadata(MetadataBase):
 
         use_path = None
         path_4x = upstream_source_path.joinpath(
-            'openshift-hack/images/hyperkube/Dockerfile.rhel'
+            'openshift-hack/images/hyperkube/Dockerfile.rhel',
         )  # for >= 4.6: https://github.com/openshift/kubernetes/blob/fcff70a54d3f0bde19e879062e8f1489ba5d0cb0/openshift-hack/images/hyperkube/Dockerfile.rhel#L16
         if path_4x.exists():
             use_path = path_4x
 
         path_3_11 = upstream_source_path.joinpath(
-            'images/hyperkube/Dockerfile'
+            'images/hyperkube/Dockerfile',
         )  # for 3.11: https://github.com/openshift/ose/blob/enterprise-3.11/images/hyperkube/Dockerfile
         if not use_path and path_3_11.exists():
             use_path = path_3_11
@@ -601,7 +603,7 @@ class Metadata(MetadataBase):
             envs['KUBE_GIT_TREE_STATE'] = 'clean'
         elif self.name in ('openshift-enterprise-hyperkube', 'openshift', 'atomic-openshift'):
             self.logger.critical(
-                f'Unable to acquire KUBE vars for {self.name}. This must be fixed or platform addons can break: https://bugzilla.redhat.com/show_bug.cgi?id=1861097'
+                f'Unable to acquire KUBE vars for {self.name}. This must be fixed or platform addons can break: https://bugzilla.redhat.com/show_bug.cgi?id=1861097',
             )
             raise IOError(f'Unable to determine KUBE vars for {self.name}')
 

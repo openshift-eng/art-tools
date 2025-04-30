@@ -170,7 +170,8 @@ class SourceResolver:
             has_public_upstream = False
             if self._group_config.public_upstreams:
                 meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(
-                    url, self._group_config.public_upstreams
+                    url,
+                    self._group_config.public_upstreams,
                 )
 
             if no_clone:
@@ -363,7 +364,8 @@ class SourceResolver:
             if branch != 'HEAD' and self._group_config.public_upstreams:
                 # If branch == HEAD, our source is a detached HEAD.
                 public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(
-                    url, self._group_config.public_upstreams
+                    url,
+                    self._group_config.public_upstreams,
                 )
                 if public_upstream_branch_override:
                     public_upstream_branch = public_upstream_branch_override

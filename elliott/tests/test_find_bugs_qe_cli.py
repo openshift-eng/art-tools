@@ -19,7 +19,7 @@ class FindBugsQETestCase(unittest.TestCase):
             {
                 'target_release': ['4.6.z'],
                 'server': "server",
-            }
+            },
         )
         client = flexmock()
         flexmock(client).should_receive("fields").and_return([])
@@ -40,7 +40,7 @@ class FindBugsQETestCase(unittest.TestCase):
             {
                 'target_release': ['4.6.z'],
                 'server': "bugzilla.redhat.com",
-            }
+            },
         )
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(BugzillaBugTracker).should_receive("search").and_return([bz_bug])

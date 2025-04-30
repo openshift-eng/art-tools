@@ -194,7 +194,11 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             group_config["signing_advisory"],
         )
         _build_plashet_for_assembly.assert_awaited_once_with(
-            'plashet-rebuild-overrides', 'art0001-202107160000-rhcos-overrides', 8, group_config["arches"], group_config["signing_advisory"]
+            'plashet-rebuild-overrides',
+            'art0001-202107160000-rhcos-overrides',
+            8,
+            group_config["arches"],
+            group_config["signing_advisory"],
         )
         self.assertEqual(
             actual,
@@ -244,7 +248,11 @@ class TestRebuildPipeline(IsolatedAsyncioTestCase):
             group_config["signing_advisory"],
         )
         _build_plashet_for_assembly.assert_awaited_once_with(
-            'plashet-rebuild-overrides', 'art0001-202107160000-image-foo-overrides', 8, group_config["arches"], group_config["signing_advisory"]
+            'plashet-rebuild-overrides',
+            'art0001-202107160000-image-foo-overrides',
+            8,
+            group_config["arches"],
+            group_config["signing_advisory"],
         )
         self.assertEqual(
             actual,
@@ -445,7 +453,7 @@ images:
         )
         release = "202107160000.p?"
         open.return_value.__enter__.return_value = StringIO(
-            "build_rpm|nvrs=foo-v1.2.3-202107160000.p0.assembly.art0001.el8,foo-v1.2.3-202107160000.p0.assembly.art0001.el7|"
+            "build_rpm|nvrs=foo-v1.2.3-202107160000.p0.assembly.art0001.el8,foo-v1.2.3-202107160000.p0.assembly.art0001.el7|",
         )
         nvrs = await pipeline._rebase_and_build_rpm(release)
         self.assertEqual(nvrs, ["foo-v1.2.3-202107160000.p0.assembly.art0001.el8", "foo-v1.2.3-202107160000.p0.assembly.art0001.el7"])
@@ -482,7 +490,7 @@ images:
                                             "el7": "foo-v1.2.3-1.el7",
                                         },
                                     },
-                                }
+                                },
                             ],
                         },
                     },
@@ -516,7 +524,7 @@ images:
                                             "nvr": "foo-container-v1.2.3-1",
                                         },
                                     },
-                                }
+                                },
                             ],
                         },
                     },

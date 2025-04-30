@@ -148,7 +148,8 @@ class FindBugsKernelClonesCli:
                 raise ValueError(f"Jira clone {bug.key} doesn't have the required `art:bz#N` label")
             # extract KMAINT tracker key from labels: ["art:kmaint:KMAINT-1"] -> KMAINT-1
             tracker_key = next(
-                map(lambda m: str(m[1]), filter(bool, map(lambda label: re.fullmatch(r"art:kmaint:(\S+)", label), bug.fields.labels))), None
+                map(lambda m: str(m[1]), filter(bool, map(lambda label: re.fullmatch(r"art:kmaint:(\S+)", label), bug.fields.labels))),
+                None,
             )
             if not tracker_key:
                 raise ValueError(f"Jira clone {bug.key} doesn't have the required `art:kmaint:*` label")

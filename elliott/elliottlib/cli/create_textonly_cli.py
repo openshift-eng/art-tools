@@ -93,7 +93,19 @@ LOGGER = logutil.get_logger(__name__)
 )
 @click.pass_obj
 def create_textonly_cli(
-    runtime, errata_type, date, assigned_to, manager, package_owner, topic, synopsis, description, solution, bugtitle, bugdescription, yes
+    runtime,
+    errata_type,
+    date,
+    assigned_to,
+    manager,
+    package_owner,
+    topic,
+    synopsis,
+    description,
+    solution,
+    bugtitle,
+    bugdescription,
+    yes,
 ):
     """
     Create a text only advisory with all required input passed from args, need to manually decide the statement for each release.

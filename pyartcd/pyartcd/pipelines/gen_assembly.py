@@ -395,10 +395,18 @@ class GenAssemblyPipeline:
 @click.option('--previous', 'previous_list', metavar='EDGES', default=[], multiple=True, help='A list of releases that can upgrade to this release')
 @click.option('--auto-previous', 'auto_previous', is_flag=True, help='If specified, previous list is calculated from Cincinnati graph')
 @click.option(
-    '--skip-get-nightlies', 'skip_get_nightlies', is_flag=True, default=False, help='Skip get_nightlies_function (Use only for special cases)'
+    '--skip-get-nightlies',
+    'skip_get_nightlies',
+    is_flag=True,
+    default=False,
+    help='Skip get_nightlies_function (Use only for special cases)',
 )
 @click.option(
-    '--ignore-non-x86-nightlies', 'ignore_non_x86_nightlies', is_flag=True, default=False, help='Ignore non-x86 nightlies, only use x86 nightly'
+    '--ignore-non-x86-nightlies',
+    'ignore_non_x86_nightlies',
+    is_flag=True,
+    default=False,
+    help='Ignore non-x86 nightlies, only use x86 nightly',
 )
 @click.option("--gen-microshift", 'gen_microshift', default=False, is_flag=True, help="Create microshift entry for assembly release.")
 @pass_runtime

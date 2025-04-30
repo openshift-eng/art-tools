@@ -101,7 +101,8 @@ class TestBasicRebase(DoozerRunnerTestCase):
         self.assertEqual(ced_dfp.labels['io.openshift.build.commit.id'], upstream_commit_ced)
         self.assertEqual(ced_dfp.labels['io.openshift.build.source-location'], 'https://github.com/openshift/cluster-etcd-operator')
         self.assertEqual(
-            ced_dfp.labels['io.openshift.build.commit.url'], f'https://github.com/openshift/cluster-etcd-operator/commit/{upstream_commit_ced}'
+            ced_dfp.labels['io.openshift.build.commit.url'],
+            f'https://github.com/openshift/cluster-etcd-operator/commit/{upstream_commit_ced}',
         )
         self.assertEqual(ced_dfp.labels['io.openshift.maintainer.product'], 'OpenShift Container Platform')
         self.assertEqual(ced_dfp.labels['io.openshift.maintainer.component'], 'Etcd')

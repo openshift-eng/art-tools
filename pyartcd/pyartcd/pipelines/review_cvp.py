@@ -64,7 +64,7 @@ class ReviewCVPPipeline:
                 sanity_test_optional_checks["missing"],
             )
             messages.append(
-                f"CVP sanity_test_optional_checks - PASSED: {len(passed_optional)}, FAILED: {len(failed_optional)}, MISSING: {len(missing_optional)}"
+                f"CVP sanity_test_optional_checks - PASSED: {len(passed_optional)}, FAILED: {len(failed_optional)}, MISSING: {len(missing_optional)}",
             )
             self._logger.info(messages[-1])
             if failed_optional:
@@ -87,7 +87,12 @@ class ReviewCVPPipeline:
                         raise ValueError(f"Couldn't create a pull request: {ocp_build_data_repo_push_url} is not a valid github repo")
                     pr_head = f"{match[1]}:{branch}"
                     result = await self._create_or_update_pull_request(
-                        owner=constants.GITHUB_OWNER, repo="ocp-build-data", base=self.group, head=pr_head, title=title, body=body
+                        owner=constants.GITHUB_OWNER,
+                        repo="ocp-build-data",
+                        base=self.group,
+                        head=pr_head,
+                        title=title,
+                        body=body,
                     )
                     pr_html_url = result.html_url
                     messages.append("")
@@ -108,13 +113,13 @@ class ReviewCVPPipeline:
 
         messages.append("")
         messages.append(
-            f"""Check <{jenkins.get_build_url()}/consoleFull|build logs> and <{jenkins.get_build_url()}/artifact/artcd_working/cvp-test-results.yaml/*view*/|cvp-test-results.yaml> for detailed CVP test results."""
+            f"""Check <{jenkins.get_build_url()}/consoleFull|build logs> and <{jenkins.get_build_url()}/artifact/artcd_working/cvp-test-results.yaml/*view*/|cvp-test-results.yaml> for detailed CVP test results.""",
         )
         self._logger.info(messages[-1])
 
         messages.append(
             """For more information about content_set_check, see https://docs.engineering.redhat.com/x/a05iEQ.
-If you have any questions or encounter a CVP bug, drop a message to CVP gchat channel."""
+If you have any questions or encounter a CVP bug, drop a message to CVP gchat channel.""",
         )
         self._logger.info(messages[-1])
 
@@ -227,7 +232,11 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
                             for b in builds:
                                 build_url = f"https://brewweb.devel.redhat.com/buildinfo?buildID={b['id']}"
                                 self._logger.warning(
-                                    "[%s]See CVP test result for parent build %s (dg_key: %s): %s ", dg_key, b["nvr"], b.get("dg_key", "?"), build_url
+                                    "[%s]See CVP test result for parent build %s (dg_key: %s): %s ",
+                                    dg_key,
+                                    b["nvr"],
+                                    b.get("dg_key", "?"),
+                                    build_url,
                                 )
                         elif action_name == "warn":
                             detail = action.get("value", {})

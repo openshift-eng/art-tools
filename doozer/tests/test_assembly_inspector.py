@@ -22,7 +22,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                             "target_tag": "my-target-tag",
                         },
                     ],
-                }
+                },
             ),
         )
         brew_session = MagicMock()
@@ -62,7 +62,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                             "target_tag": "my-target-tag",
                         },
                     ],
-                }
+                },
             ),
         )
         brew_session = MagicMock()

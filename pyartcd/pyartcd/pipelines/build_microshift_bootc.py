@@ -249,7 +249,7 @@ class BuildMicroShiftBootcPipeline:
                     raise ValueError(message)
                 if actual_nvr != expected_microshift_nvr:
                     self._logger.info(
-                        f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed."
+                        f"Found nvr {actual_nvr} in plashet.yml is different from expected {expected_microshift_nvr}. Plashet build is needed.",
                     )
                     return True
                 self._logger.info(f"Plashet has the expected microshift nvr {expected_microshift_nvr}")

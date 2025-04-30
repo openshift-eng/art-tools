@@ -57,7 +57,7 @@ class SlackClient:
                 {
                     "title": f"Job: {self.job_name} <{self.build_url}/consoleFull|{self.build_id}>",
                     "color": "#439FE0",
-                }
+                },
             )
         if self.dry_run:
             _LOGGER.warning("[DRY RUN] Would have sent slack message to %s: %s %s", self.channel, message, attachments)

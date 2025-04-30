@@ -171,7 +171,10 @@ def snapshot_cli():
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option(
-    '--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.'
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    default=KONFLUX_DEFAULT_NAMESPACE,
+    help='The namespace to use for Konflux cluster connections.',
 )
 @click.option(
     '--pull-secret',
@@ -370,7 +373,10 @@ class GetSnapshotCli:
 @click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
 @click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
 @click.option(
-    '--konflux-namespace', metavar='NAMESPACE', default=KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.'
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    default=KONFLUX_DEFAULT_NAMESPACE,
+    help='The namespace to use for Konflux cluster connections.',
 )
 @click.option(
     '--pull-secret',

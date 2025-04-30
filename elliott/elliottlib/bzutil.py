@@ -1370,7 +1370,8 @@ async def approximate_cutoff_timestamp(basis_event: int, koji_api: ClientSession
     builds: List[Dict] = await asyncio.gather(*tasks)
     nvrs = [b["nvr"] for b in builds if b]
     rebase_timestamp_strings = filter(
-        None, [isolate_timestamp_in_release(nvr) for nvr in nvrs]
+        None,
+        [isolate_timestamp_in_release(nvr) for nvr in nvrs],
     )  # the timestamp in the release field of NVR is the approximate rebase time
     # convert to UNIX timestamps
     rebase_timestamps = [datetime.strptime(ts, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).timestamp() for ts in rebase_timestamp_strings]

@@ -341,7 +341,7 @@ class TestGenPayloadCli(TestCase):
                         },
                     },
                 },
-            }
+            },
         )
         runtime.get_major_minor_fields.return_value = (4, 12)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')

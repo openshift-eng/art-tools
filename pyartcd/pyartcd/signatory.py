@@ -94,7 +94,7 @@ class AsyncSignatory:
             {
                 "service_account": service_account,
                 "subscription": self.subscription_name,
-            }
+            },
         )
         self._receiver = await self._umb.subscribe(consumer_queue, self.subscription_name)
         # Start a task to handle messages received from the consumer queue

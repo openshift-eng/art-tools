@@ -87,7 +87,7 @@ class BuildFinder:
             nvre_obj = parse_nvr(str(nvr))
             if nvre_obj["name"] != rpm_meta.rpm_name:
                 raise ValueError(
-                    f"RPM {nvr} is pinned to assembly {assembly} for distgit key {distgit_key}, but its package name is not {rpm_meta.rpm_name}."
+                    f"RPM {nvr} is pinned to assembly {assembly} for distgit key {distgit_key}, but its package name is not {rpm_meta.rpm_name}.",
                 )
             pinned_nvrs[nvre_obj["name"]] = nvr
         if pinned_nvrs:
@@ -129,7 +129,12 @@ class BuildFinder:
         return component_builds
 
     def from_image_member_deps(
-        self, el_version: int, assembly: str, releases_config: Model, image_meta: ImageMetadata, rpm_map: Dict[str, RPMMetadata]
+        self,
+        el_version: int,
+        assembly: str,
+        releases_config: Model,
+        image_meta: ImageMetadata,
+        rpm_map: Dict[str, RPMMetadata],
     ) -> Dict[str, Dict]:
         """Returns RPM builds defined in image member dependencies
         :param el_version: RHEL version

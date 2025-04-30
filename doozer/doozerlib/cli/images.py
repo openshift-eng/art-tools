@@ -339,7 +339,7 @@ def images_rebase(
 
     if runtime.group_config.public_upstreams and (release is None or release != "+" and not release.endswith(".p?")):
         raise click.BadParameter(
-            "You must explicitly specify a `release` ending with `.p?` (or '+') when there is a public upstream mapping in ocp-build-data."
+            "You must explicitly specify a `release` ending with `.p?` (or '+') when there is a public upstream mapping in ocp-build-data.",
         )
 
     # This is ok to run if automation is frozen as long as you are not pushing
@@ -803,7 +803,7 @@ def images_build_image(runtime, repo_type, repo, push_to_defaults, push_to, scra
         # filter out failed images and their children
         failed = runtime.filter_failed_image_trees(failed)
         yellow_print(
-            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format('\n'.join(failed))
+            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format('\n'.join(failed)),
         )
         # reload after fail filtered
         items = [m.distgit_repo() for m in runtime.ordered_image_metas()]
@@ -969,7 +969,7 @@ def images_push(runtime, tag, version_release, to_defaults, late_only, to, filte
         # filter out failed images and their children
         failed = runtime.filter_failed_image_trees(pre_failed)
         yellow_print(
-            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format('\n'.join(failed))
+            'The following images failed the last step (or are children of failed images) and will be skipped:\n{}'.format('\n'.join(failed)),
         )
         # reload after fail filtered
         items = runtime.ordered_image_metas()

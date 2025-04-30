@@ -15,7 +15,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                     "rpms": [],
                 },
                 "group": {},
-            }
+            },
         )
 
         self.runtime = MagicMock(
@@ -31,7 +31,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                         "assembly": self.assembly_config,
                     },
                 },
-            }
+            },
         )
         self.runtime.konflux_db = MagicMock()
 
@@ -98,7 +98,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "is": {"nvr": self.image_nvr},
                         },
                         "why": self.why,
-                    }
+                    },
                 ],
                 "rpms": [
                     {
@@ -107,7 +107,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "is": {"el8": self.rpm_nvr},
                         },
                         "why": self.why,
-                    }
+                    },
                 ],
             },
             "group": {},
@@ -126,7 +126,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "is": {"nvr": self.image_nvr},
                         },
                         "why": self.why,
-                    }
+                    },
                 ],
                 "rpms": [
                     {
@@ -135,7 +135,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "is": {"el8": self.rpm_nvr},
                         },
                         "why": self.why,
-                    }
+                    },
                 ],
             },
             "group": {},
@@ -147,7 +147,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                         "assembly": assembly_config,
                     },
                 },
-            }
+            },
         )
         cli = AssemblyPinBuildsCli(
             runtime=self.runtime,
@@ -184,7 +184,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "is": {"nvr": self.image_nvr},
                         },
                         "why": self.why,
-                    }
+                    },
                 ],
                 "rpms": [
                     {
@@ -193,7 +193,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "is": {"el8": self.rpm_nvr},
                         },
                         "why": self.why,
-                    }
+                    },
                 ],
             },
             "group": {},
@@ -296,7 +296,7 @@ class TestAssemblyPinBuildsCli(IsolatedAsyncioTestCase):
                             "el8": self.non_art_rpm_nvr,
                             "why": self.why,
                             "non_gc_tag": "insert tag here if needed",
-                        }
+                        },
                     ],
                 },
             },

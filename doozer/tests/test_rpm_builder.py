@@ -83,7 +83,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
         mocked_cmd_gather_async.side_effect = lambda cmd, **kwargs: {
-            "spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", "")
+            "spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", ""),
         }.get(cmd[0], (0, "fake_stdout", "fake_stderr"))
 
         builder = RPMBuilder(runtime, scratch=False, dry_run=False)
@@ -143,7 +143,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
         rpm = self._make_rpm_meta(runtime, source_sha, distgit_sha)
         dg = rpm.distgit_repo()
         mocked_cmd_gather_async.side_effect = lambda cmd, **kwargs: {
-            "spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", "")
+            "spectool": (0, "Source0: 1.tar.gz\nSource1: a.diff\nPatch0: b/c.diff\n", ""),
         }.get(cmd[0], (0, "fake_stdout", "fake_stderr"))
 
         builder = RPMBuilder(runtime, scratch=False, dry_run=False)

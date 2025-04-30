@@ -101,7 +101,7 @@ class TestUtil(unittest.TestCase):
                             },
                         },
                     },
-                }
+                },
             ],
         )
         expected = {'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca': {nvrs[0]}}
@@ -117,7 +117,7 @@ class TestUtil(unittest.TestCase):
                     'name': 'openshift-golang-builder-container',
                     'release': '202204191948.sha1patch.el8.g4d4caca',
                     'version': 'v1.18.0',
-                }
+                },
             ],
         )
         go_version = '1.18.0-2.module+el8.7.0+14880+f5e30240'

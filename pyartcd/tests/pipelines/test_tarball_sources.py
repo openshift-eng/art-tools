@@ -45,7 +45,7 @@ OSE-4.6-RHEL-8/84693/release/logging-fluentd-container-v4.6.0-202111191944.p0.gf
                 '--no-group',
                 'fake-working/sources',
                 ANY,
-            ]
+            ],
         )
 
     def test_create_jira(self):

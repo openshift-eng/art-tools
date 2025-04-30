@@ -201,7 +201,8 @@ class TestImageDistGit(TestDistgit):
         flexmock(distgit).should_receive("Dir").and_return(flexmock(__exit__=None))
 
         flexmock(distgit.exectools).should_receive("cmd_assert").with_args(
-            "timeout 999 git push --set-upstream origin _irrelevant_", retries=3
+            "timeout 999 git push --set-upstream origin _irrelevant_",
+            retries=3,
         ).ordered()
 
         flexmock(distgit.exectools).should_receive("cmd_assert").with_args("timeout 999 git push --tags", retries=3).ordered()
@@ -336,7 +337,7 @@ class TestImageDistGit(TestDistgit):
             from foo
             label "{}"="spam"
         """.format(
-            distgit.ImageDistGitRepo.source_labels['now']['sha']
+            distgit.ImageDistGitRepo.source_labels['now']['sha'],
         )
         flexmock(self.md).should_receive("fetch_cgit_file").and_return(test_file)
         flexmock(self.img_dg).should_receive("_built_or_recent").and_return(None)  # hit this on match
@@ -367,7 +368,7 @@ class TestImageDistGit(TestDistgit):
             from foo
             label "{}"="spam"
         """.format(
-            distgit.ImageDistGitRepo.source_labels['now']['sha']
+            distgit.ImageDistGitRepo.source_labels['now']['sha'],
         )
         flexmock(self.md).should_receive("fetch_cgit_file").and_return(test_file)
         flexmock(self.img_dg).should_receive("_built_or_recent").and_return(None)  # hit this on match
@@ -390,7 +391,7 @@ class TestImageDistGit(TestDistgit):
                         'distgit': {'branch': 'fake-branch-rhel-8'},
                         "enabled_repos": ["repo-a", "repo-b"],
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -428,7 +429,7 @@ COPY --from=builder /some/path/a /some/path/b
                         "enabled_repos": ["repo-a", "repo-b"],
                         "final_stage_user": 1002,
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -469,7 +470,7 @@ COPY --from=builder /some/path/a /some/path/b
                         'distgit': {'branch': 'fake-branch-rhel-8'},
                         "enabled_repos": ["repo-a", "repo-b"],
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -514,7 +515,7 @@ COPY --from=builder /some/path/a /some/path/b
                         'distgit': {'branch': 'fake-branch-rhel-8'},
                         "enabled_repos": [],
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -560,7 +561,7 @@ COPY --from=builder /some/path/a /some/path/b
                         'distgit': {'branch': 'fake-branch-rhel-8'},
                         "additional_tags": ["tag_a", "tag_b"],
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -589,7 +590,7 @@ COPY --from=builder /some/path/a /some/path/b
                         'distgit': {'branch': 'fake-branch-rhel-8'},
                         "additional_tags": ["tag_a", "tag_b"],
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -613,7 +614,7 @@ COPY --from=builder /some/path/a /some/path/b
                         'distgit': {'branch': 'fake-branch-rhel-8'},
                         "additional_tags": ["tag_a", "tag_b"],
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -644,7 +645,7 @@ COPY --from=builder /some/path/a /some/path/b
                         },
                         "cachito": {"enabled": True, "flags": ["gomod-vendor-check"]},
                     },
-                }
+                },
             ),
         )
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)

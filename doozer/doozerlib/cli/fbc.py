@@ -264,7 +264,9 @@ class FbcRebaseCli:
         return dgk_records
 
     async def _get_bundle_builds(
-        self, operator_builds: Sequence[KonfluxBuildRecord], strict: bool = True
+        self,
+        operator_builds: Sequence[KonfluxBuildRecord],
+        strict: bool = True,
     ) -> List[Optional[KonfluxBundleBuildRecord]]:
         """Get bundle build records for the given operator builds.
 

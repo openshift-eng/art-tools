@@ -447,7 +447,7 @@ def unauthorized():
                 {
                     'key': 'WWW-Authenticate',
                     'value': 'Basic',
-                }
+                },
             ],
         },
     }
@@ -462,7 +462,7 @@ def redirect(uri: str, code: int = 302, description="Found"):
                 {
                     'key': 'Location',
                     "value": str(uri),
-                }
+                },
             ],
         },
     }

@@ -264,7 +264,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         self.runtime.group_config.rhcos = Model(
             {
                 "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
-            }
+            },
         )
         repos = Repos(
             {
@@ -279,7 +279,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             group_config=Model(
                 {
                     "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]},
-                }
+                },
             ),
         )
         runtime.get_major_minor_fields.return_value = 4, 12

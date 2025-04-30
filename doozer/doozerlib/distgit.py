@@ -672,7 +672,7 @@ class ImageDistGitRepo(DistGitRepo):
                             'remote_source': remote_source,
                         },
                     ],
-                }
+                },
             )
 
         if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
@@ -1392,7 +1392,7 @@ class ImageDistGitRepo(DistGitRepo):
                                     Record.set(f'build.{idx}.{build_datum}', build_info.get(build_datum, ''))
 
                                 archives = ListModel(
-                                    kcs.listArchives(int(build_id))
+                                    kcs.listArchives(int(build_id)),
                                 )  # https://gist.github.com/jupierce/6f27ebf35e88ed5a9a2c8e66fdcd34b4
                                 for archive in archives:
                                     archive_shas = archive.extra.docker.digests
@@ -1460,7 +1460,7 @@ class ImageDistGitRepo(DistGitRepo):
                     {
                         'start_time': build_info.start_time,
                         'end_time': build_info.end_time,
-                    }
+                    },
                 )
 
             else:
@@ -1476,7 +1476,7 @@ class ImageDistGitRepo(DistGitRepo):
                         'image_pullspec': image_pullspec,
                         'image_tag': build_info['extra']['image']['index']['tags'][0],
                         'build_id': str(build_info['id']),
-                    }
+                    },
                 )
 
             build_record = KonfluxBuildRecord(**build_record_params)
@@ -2095,10 +2095,10 @@ class ImageDistGitRepo(DistGitRepo):
                     # This is better than us doing it, so let it.
                     if self.runtime.group_config.public_upstreams:
                         raise ValueError(
-                            "Failed to bump the release: Neither 'release' is specified in the Dockerfile nor we can use OSBS auto-bumping when a public upstream mapping is defined in ocp-build-data."
+                            "Failed to bump the release: Neither 'release' is specified in the Dockerfile nor we can use OSBS auto-bumping when a public upstream mapping is defined in ocp-build-data.",
                         )
                     self.logger.info(
-                        "No release label found in Dockerfile; bumping unnecessary -- osbs will automatically select unique release value at build time"
+                        "No release label found in Dockerfile; bumping unnecessary -- osbs will automatically select unique release value at build time",
                     )
                     release = None
 
@@ -2115,7 +2115,7 @@ class ImageDistGitRepo(DistGitRepo):
                         )
                     if self.metadata.private_fix is None:
                         raise ValueError(
-                            "metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream"
+                            "metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream",
                         )
                     if self.metadata.private_fix:
                         pval = f'.{get_visibility_suffix(self.runtime.build_system, BuildVisibility.PRIVATE)}'
@@ -2200,7 +2200,7 @@ class ImageDistGitRepo(DistGitRepo):
                         '',
                         '# RHEL version in final image must match the one in ART\'s config',
                         f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
-                    ]
+                    ],
                 )
 
             df_content = "\n".join(df_lines)
@@ -2380,7 +2380,7 @@ class ImageDistGitRepo(DistGitRepo):
             raise DoozerFatalError('{}: did not find a *.clusterserviceversion.yaml file @ {}'.format(self.metadata.distgit_key, manifests))
         elif len(csvs) > 1:
             raise DoozerFatalError(
-                '{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(self.metadata.distgit_key, manifests)
+                '{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(self.metadata.distgit_key, manifests),
             )
         return str(csvs[0]), image_refs
 
@@ -2422,7 +2422,7 @@ class ImageDistGitRepo(DistGitRepo):
                 if self.metadata.distgit_key != meta.distgit_key:
                     if self.metadata.distgit_key not in meta.config.dependents:
                         raise DoozerFatalError(
-                            f'Related image contains {meta.distgit_key} but this does not have {self.metadata.distgit_key} in dependents'
+                            f'Related image contains {meta.distgit_key} but this does not have {self.metadata.distgit_key} in dependents',
                         )
 
                 namespace = self.runtime.group_config.get('csv_namespace', None)
@@ -2525,7 +2525,7 @@ class ImageDistGitRepo(DistGitRepo):
 
             if not olm_name.endswith(olm_version):
                 raise IOError(
-                    f'Expected {self.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.'
+                    f'Expected {self.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.',
                 )
 
             olm_name_prefix = olm_name[: -1 * len(olm_version)]  # "nfd."

@@ -114,7 +114,7 @@ class ConfigScanSources:
                 {
                     'name': metadata.distgit_key,
                     'issue': 'Could not rebase into -priv as it needs manual reconciliation',
-                }
+                },
             )
             return
 
@@ -137,7 +137,7 @@ class ConfigScanSources:
                 {
                     'name': metadata.distgit_key,
                     'issue': 'Failed pushing to openshift-priv',
-                }
+                },
             )
 
     def _do_shas_match(
@@ -204,7 +204,7 @@ class ConfigScanSources:
                     '--is-ancestor',
                     f'public_upstream/{pub_branch_name}',
                     f'origin/{priv_branch_name}',
-                ]
+                ],
             )
         if rc == 1:
             self.runtime.logger.info('Public upstream is ahead of private for %s: will need to rebase', repo_name)
@@ -333,7 +333,7 @@ class ConfigScanSources:
                             eldest_rpm_build = latest_rpm_build
 
                     self.runtime.logger.info(
-                        f'Determining build root changes for package {package_name} in tag {tag} and its eldest rpm {eldest_rpm_build}'
+                        f'Determining build root changes for package {package_name} in tag {tag} and its eldest rpm {eldest_rpm_build}',
                     )
                     # Detect if our buildroot changed since the oldest rpm of the package latest build of was built.
                     build_root_change = brew.has_tag_changed_since_build(
@@ -591,7 +591,7 @@ class ConfigScanSources:
                         'name': dgk,
                         'changed': is_changing,
                         'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}'),
-                    }
+                    },
                 )
 
         rpm_results = []
@@ -605,7 +605,7 @@ class ConfigScanSources:
                         'name': dgk,
                         'changed': is_changing,
                         'reason': self.assessment_reason.get(f'{rpm_meta.qualified_key}+{is_changing}'),
-                    }
+                    },
                 )
 
         results = dict(

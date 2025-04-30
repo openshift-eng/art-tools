@@ -38,7 +38,7 @@ targets:
             data=yaml.safe_load(TestRPMMetadata.FOO_RPM_CONFIG),
         )
         koji_session.multicall.return_value.__enter__.return_value.getBuildTarget.side_effect = lambda target: MagicMock(
-            result={"build_tag_name": target.replace("-candidate", "-build")}
+            result={"build_tag_name": target.replace("-candidate", "-build")},
         )
         metadata = RPMMetadata(runtime, data_obj, clone_source=False)
         metadata.targets = ["rhaos-4.7-rhel-7-candidate", "rhaos-4.7-rhel-8-candidate"]
@@ -50,7 +50,7 @@ targets:
                 results = {
                     ('rhaos-4.7-rhel-7-build', 'golang'): [{"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}],
                     ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
-                        {"name": "golang-scl-shim", "version": "1.4.0", "release": "2.el7", "epoch": None}
+                        {"name": "golang-scl-shim", "version": "1.4.0", "release": "2.el7", "epoch": None},
                     ],
                     ('rhaos-4.7-rhel-8-build', 'golang'): [{"name": "golang", "version": "1.4.5", "release": "3.el8", "epoch": None}],
                     ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
@@ -70,7 +70,7 @@ targets:
                 results = {
                     ('rhaos-4.7-rhel-7-build', 'golang'): [{"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}],
                     ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
-                        {"name": "golang-scl-shim", "version": "1.4.6", "release": "2.el7", "epoch": None}
+                        {"name": "golang-scl-shim", "version": "1.4.6", "release": "2.el7", "epoch": None},
                     ],
                     ('rhaos-4.7-rhel-8-build', 'golang'): [{"name": "golang", "version": "1.4.6", "release": "3.el8", "epoch": None}],
                     ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
@@ -90,7 +90,7 @@ targets:
                 results = {
                     ('rhaos-4.7-rhel-7-build', 'golang'): [{"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}],
                     ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
-                        {"name": "golang-scl-shim", "version": "1.4.5", "release": "2.el7", "epoch": None}
+                        {"name": "golang-scl-shim", "version": "1.4.5", "release": "2.el7", "epoch": None},
                     ],
                     ('rhaos-4.7-rhel-8-build', 'golang'): [{"name": "golang", "version": "1.4.6", "release": "3.el8", "epoch": None}],
                     ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
@@ -109,7 +109,7 @@ targets:
                 results = {
                     ('rhaos-4.7-rhel-7-build', 'golang'): [{"name": "golang", "version": "1.2.3", "release": "1.el7", "epoch": None}],
                     ('rhaos-4.7-rhel-7-build', 'golang-scl-shim'): [
-                        {"name": "golang-scl-shim", "version": "1.4.5", "release": "2.el7", "epoch": None}
+                        {"name": "golang-scl-shim", "version": "1.4.5", "release": "2.el7", "epoch": None},
                     ],
                     ('rhaos-4.7-rhel-8-build', 'golang'): [{"name": "golang", "version": "1.5.6", "release": "3.el8", "epoch": None}],
                     ('rhaos-4.7-rhel-8-build', 'golang-scl-shim'): [],
