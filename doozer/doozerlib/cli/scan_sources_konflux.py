@@ -356,6 +356,9 @@ class ConfigScanSources:
         # Check for changes in image arches
         await self.scan_arch_changes(image_meta)
 
+        # Check for changes in the network mode
+        await self.scan_network_mode_changes(image_meta)
+
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
 
@@ -373,9 +376,6 @@ class ConfigScanSources:
 
         # Check for changes in extra packages
         await self.scan_extra_packages(image_meta)
-
-        # Check for changes in the network mode
-        # await self.scan_network_mode_changes(image_meta)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
