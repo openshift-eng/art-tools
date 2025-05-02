@@ -19,6 +19,8 @@ def validate(file, data):
 
 
 def err(*_):
-    return ('Could not determine a schema\n'
-            'Supported schemas: image, rpm\n'
-            'Make sure the file is placed in either dir "images" or "rpms"')
+    return (
+        'Could not determine a schema\n'
+        'Supported schemas: image, rpm\n'
+        'Make sure the file is placed in either dir "images" or "rpms"'
+    )

@@ -11,24 +11,26 @@ LOGGER = logutil.get_logger(__name__)
 
 @cli.command('move-builds', short_help='Move builds from one advisory to another')
 @click.option(
-    '--from', 'from_advisory', metavar='ADVISORY_ID',
-    type=int, required=True,
-    help='Source advisory to remove attached builds from')
+    '--from',
+    'from_advisory',
+    metavar='ADVISORY_ID',
+    type=int,
+    required=True,
+    help='Source advisory to remove attached builds from',
+)
 @click.option(
-    '--to', 'to_advisory', metavar='ADVISORY_ID',
-    type=int, required=True,
-    help='Target advisory to attach builds to')
+    '--to', 'to_advisory', metavar='ADVISORY_ID', type=int, required=True, help='Target advisory to attach builds to'
+)
 @click.option(
-    '--kind', '-k', metavar='KIND', required=True,
+    '--kind',
+    '-k',
+    metavar='KIND',
+    required=True,
     type=click.Choice(['rpm', 'image']),
-    help='Builds of the given KIND [rpm, image]')
-@click.option(
-    '--only', metavar='NVR',
-    help='Only move these builds. Comma separated Build NVRs')
-@click.option(
-    "--noop", "--dry-run",
-    is_flag=True, default=False,
-    help="Don't change anything")
+    help='Builds of the given KIND [rpm, image]',
+)
+@click.option('--only', metavar='NVR', help='Only move these builds. Comma separated Build NVRs')
+@click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
 def move_builds_cli(runtime, from_advisory, to_advisory, kind, only, noop):
     """

@@ -66,8 +66,11 @@ def rpms_clone(runtime):
 
 
 @cli.command("rpms:clone-sources", help="Clone a group's rpm source repos locally and add to sources yaml.")
-@click.option("--output-yml", metavar="YAML_PATH",
-              help="Output yml file to write sources dict to. Can be same as --sources option but must be explicitly specified.")
+@click.option(
+    "--output-yml",
+    metavar="YAML_PATH",
+    help="Output yml file to write sources dict to. Can be same as --sources option but must be explicitly specified.",
+)
 @pass_runtime
 def rpms_clone_sources(runtime, output_yml):
     runtime.initialize(mode='rpms')
@@ -79,29 +82,43 @@ def rpms_clone_sources(runtime, output_yml):
 
 
 @cli.command("rpms:rebase-and-build", help="Rebase and build rpms in the group or given by --rpms.")
-@click.option("--version", metavar='VERSION', default=None, callback=validate_rpm_version,
-              help="Version string to populate in specfile.", required=True)
-@click.option("--release", metavar='RELEASE', default=None,
-              help="Release label to populate in specfile.", required=True)
-@click.option("--embargoed", default=False, is_flag=True,
-              help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes")
+@click.option(
+    "--version",
+    metavar='VERSION',
+    default=None,
+    callback=validate_rpm_version,
+    help="Version string to populate in specfile.",
+    required=True,
+)
+@click.option(
+    "--release", metavar='RELEASE', default=None, help="Release label to populate in specfile.", required=True
+)
+@click.option(
+    "--embargoed",
+    default=False,
+    is_flag=True,
+    help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes",
+)
 @click.option('--scratch', default=False, is_flag=True, help='Perform a scratch build.')
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
 @pass_runtime
 @click_coroutine
-async def rpms_rebase_and_build(runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool,
-                                dry_run: bool):
+async def rpms_rebase_and_build(
+    runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool, dry_run: bool
+):
     """
     Attempts to rebase and build rpms for all of the defined rpms
     in a group.
     """
-    exit_code = await _rpms_rebase_and_build(runtime, version=version, release=release, embargoed=embargoed,
-                                             scratch=scratch, dry_run=dry_run)
+    exit_code = await _rpms_rebase_and_build(
+        runtime, version=version, release=release, embargoed=embargoed, scratch=scratch, dry_run=dry_run
+    )
     exit(exit_code)
 
 
-async def _rpms_rebase_and_build(runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool,
-                                 dry_run: bool):
+async def _rpms_rebase_and_build(
+    runtime: Runtime, version: str, release: str, embargoed: bool, scratch: bool, dry_run: bool
+):
     if version.startswith('v'):
         version = version[1:]
 
@@ -110,7 +127,8 @@ async def _rpms_rebase_and_build(runtime: Runtime, version: str, release: str, e
         raise DoozerFatalError("Local RPM build is not currently supported.")
     if runtime.group_config.public_upstreams and (release is None or not release.endswith(".p?")):
         raise click.BadParameter(
-            "You must explicitly specify a `release` ending with `.p?` when there is a public upstream mapping in ocp-build-data.")
+            "You must explicitly specify a `release` ending with `.p?` when there is a public upstream mapping in ocp-build-data."
+        )
 
     runtime.assert_mutation_is_permitted()
 
@@ -146,15 +164,27 @@ async def _rpms_rebase_and_build(runtime: Runtime, version: str, release: str, e
 
 
 @cli.command("rpms:rebase", help="Rebase rpms in the group or given by --rpms.")
-@click.option("--version", metavar='VERSION', default=None, callback=validate_rpm_version,
-              help="Version string to populate in specfile.", required=True)
-@click.option("--release", metavar='RELEASE', default=None,
-              help="Release label to populate in specfile.", required=True)
-@click.option("--embargoed", default=False, is_flag=True,
-              help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes")
+@click.option(
+    "--version",
+    metavar='VERSION',
+    default=None,
+    callback=validate_rpm_version,
+    help="Version string to populate in specfile.",
+    required=True,
+)
+@click.option(
+    "--release", metavar='RELEASE', default=None, help="Release label to populate in specfile.", required=True
+)
+@click.option(
+    "--embargoed",
+    default=False,
+    is_flag=True,
+    help="Add .p1/p3 to the release string for all rpms, which indicates those rpms have embargoed fixes",
+)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--push/--no-push', default=False, is_flag=True,
-              help='Push changes back to config repo. --no-push is default')
+@click.option(
+    '--push/--no-push', default=False, is_flag=True, help='Push changes back to config repo. --no-push is default'
+)
 @pass_runtime
 @click_coroutine
 async def rpms_rebase(runtime: Runtime, version: str, release: str, embargoed: bool, push: bool, dry_run: bool):
@@ -167,8 +197,9 @@ async def rpms_rebase(runtime: Runtime, version: str, release: str, embargoed: b
     This operation will also set the version and release in the file according to the
     command line arguments provided.
     """
-    exit_code = await _rpms_rebase(runtime, version=version, release=release, embargoed=embargoed, push=push,
-                                   dry_run=dry_run)
+    exit_code = await _rpms_rebase(
+        runtime, version=version, release=release, embargoed=embargoed, push=push, dry_run=dry_run
+    )
     exit(exit_code)
 
 
@@ -181,7 +212,8 @@ async def _rpms_rebase(runtime: Runtime, version: str, release: str, embargoed: 
         raise DoozerFatalError("Local RPM build is not currently supported.")
     if runtime.group_config.public_upstreams and (release is None or not release.endswith(".p?")):
         raise click.BadParameter(
-            "You must explicitly specify a `release` ending with `.p?` when there is a public upstream mapping in ocp-build-data.")
+            "You must explicitly specify a `release` ending with `.p?` when there is a public upstream mapping in ocp-build-data."
+        )
 
     runtime.assert_mutation_is_permitted()
 

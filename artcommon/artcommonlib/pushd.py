@@ -24,6 +24,7 @@ class Dir(object):
 
     The exectools library honors these contexts automatically.
     """
+
     _tl = threading.local()
 
     def __init__(self, newdir):

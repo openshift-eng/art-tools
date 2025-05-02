@@ -37,13 +37,19 @@ class QuayDoomsdaySync:
         path = f"{major_minor}/{self.version}/{arch}"
 
         mirror_cmd = [
-            "oc", "adm", "release", "mirror",
+            "oc",
+            "adm",
+            "release",
+            "mirror",
             f"quay.io/openshift-release-dev/ocp-release:{self.version}-{arch}",
             "--keep-manifest-list",
             f"--to-dir={self.workdir}/{path}",
         ]
         aws_cmd = [
-            "aws", "s3", "sync", f"{self.workdir}/{path}",
+            "aws",
+            "s3",
+            "sync",
+            f"{self.workdir}/{path}",
             f"s3://ocp-doomsday-registry/release-image/{path}",
         ]
 
@@ -84,7 +90,9 @@ class QuayDoomsdaySync:
         mkdirs(self.workdir)
 
         if not self.runtime.dry_run:
-            slack_response = await self.slack_client.say_in_thread(f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:")
+            slack_response = await self.slack_client.say_in_thread(
+                f":construction: Syncing arches {', '.join(self.arches)} of {self.version} to AWS S3 Bucket :construction:"
+            )
             slack_channel_id = slack_response["channel"]
             main_message_ts = slack_response["message"]["ts"]
         else:
@@ -98,25 +106,27 @@ class QuayDoomsdaySync:
         # Report the results to Slack
         if not self.runtime.dry_run:
             if all(results):
-                await self.slack_client._client.reactions_add(channel=slack_channel_id, timestamp=main_message_ts, name="done_it_is")
+                await self.slack_client._client.reactions_add(
+                    channel=slack_channel_id, timestamp=main_message_ts, name="done_it_is"
+                )
             else:
                 await self.slack_client.say_in_thread(":x: Failed to sync some arches", broadcast=True)
         else:
             self.runtime.logger.info("[DRY RUN] Would have messaged Slack")
 
 
-@cli.command("quay-doomsday-backup", help="Run doomsday pipeline for the specified version and all arches unless --arches is specified")
+@cli.command(
+    "quay-doomsday-backup",
+    help="Run doomsday pipeline for the specified version and all arches unless --arches is specified",
+)
 @click.option("--arches", required=False, help="Comma separated list of arches to sync")
 @click.option("--version", required=True, help="Release to sync, e.g. 4.15.3")
 @pass_runtime
 @click_coroutine
 async def quay_doomsday_backup(runtime: Runtime, arches: str, version: str):
-
     # In 4.12 and 4.13 we sync only x86_64
     if version.startswith("4.12") or version.startswith("4.13"):
         arches = "x86_64"
 
-    doomsday_pipeline = QuayDoomsdaySync(runtime=runtime,
-                                         arches=arches,
-                                         version=version)
+    doomsday_pipeline = QuayDoomsdaySync(runtime=runtime, arches=arches, version=version)
     await doomsday_pipeline.run()

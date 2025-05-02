@@ -16,6 +16,7 @@ class MetaDataConfig(object):
     Holds common functions for managing the MetaData configs
     Mostly is a class to hold runtime
     """
+
     def __init__(self, runtime):
         self.runtime = runtime
         if self.runtime.remove_tmp_working_dir:
@@ -35,7 +36,12 @@ class MetaDataConfig(object):
         Convenience function for deleting meta keys
         """
 
-        self.runtime.logger.info('{}: Delete [{}]'.format(meta.config_filename, k, ))
+        self.runtime.logger.info(
+            '{}: Delete [{}]'.format(
+                meta.config_filename,
+                k,
+            )
+        )
         meta.config.pop(k, None)
         meta.save()
 
@@ -118,8 +124,10 @@ class MetaDataConfig(object):
             image_list = self.runtime.rpm_metas()
 
         if image_list is None:
-            print('Not correct --type specified (--type image or --type rpm). '
-                  'Or not consistent with global options: --images/-i and --rpms/-r')
+            print(
+                'Not correct --type specified (--type image or --type rpm). '
+                'Or not consistent with global options: --images/-i and --rpms/-r'
+            )
             return
 
         def _write_rows(w):
@@ -140,15 +148,18 @@ class MetaDataConfig(object):
                 sys.stdout,
                 delimiter=bytes_to_native_str(b','),
                 quotechar=bytes_to_native_str(b'"'),
-                quoting=csv.QUOTE_MINIMAL)
+                quoting=csv.QUOTE_MINIMAL,
+            )
             _write_rows(writer)
             return
 
         with io.open(output, mode='w', encoding="utf-8") as csv_file:
-            writer = csv.writer(csv_file,
-                                delimiter=bytes_to_native_str(b','),
-                                quotechar=bytes_to_native_str(b'"'),
-                                quoting=csv.QUOTE_MINIMAL)
+            writer = csv.writer(
+                csv_file,
+                delimiter=bytes_to_native_str(b','),
+                quotechar=bytes_to_native_str(b'"'),
+                quoting=csv.QUOTE_MINIMAL,
+            )
             _write_rows(writer)
 
     def commit(self, msg):

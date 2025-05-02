@@ -4,7 +4,6 @@ from validator import format
 
 
 class TestFormat(unittest.TestCase):
-
     def test_invalid_yaml(self):
         invalid_yaml = """
         key: value

@@ -2,13 +2,18 @@ from unittest import TestCase
 
 import yaml
 
-from artcommonlib.assembly import assembly_rhcos_config, assembly_basis_event, assembly_group_config, \
-    assembly_config_struct, assembly_metadata_config, _merger
+from artcommonlib.assembly import (
+    assembly_rhcos_config,
+    assembly_basis_event,
+    assembly_group_config,
+    assembly_config_struct,
+    assembly_metadata_config,
+    _merger,
+)
 from artcommonlib.model import Model, Missing
 
 
 class TestAssembly(TestCase):
-
     def setUp(self) -> None:
         releases_yml = """
 releases:
@@ -189,16 +194,17 @@ releases:
             self.fail(f'Expected ValueError on assembly infinite recursion but got: {type(e)}: {e}')
 
     def test_assembly_group_config(self):
-
-        group_config = Model(dict_to_model={
-            'arches': [
-                'x86_64',
-            ],
-            'advisories': {
-                'image': 1,
-                'extras': 1,
-            },
-        })
+        group_config = Model(
+            dict_to_model={
+                'arches': [
+                    'x86_64',
+                ],
+                'advisories': {
+                    'image': 1,
+                    'extras': 1,
+                },
+            }
+        )
 
         config = assembly_group_config(self.releases_config, 'ART_1', group_config)
         self.assertEqual(len(config.arches), 3)
@@ -290,8 +296,7 @@ releases:
                     },
                 },
                 "parent": {
-                    "assembly": {
-                    },
+                    "assembly": {},
                 },
             },
         }
@@ -343,31 +348,35 @@ releases:
             },
         }
         actual = assembly_config_struct(Model(release_configs), "child", "foo", {})
-        self.assertEqual(actual, {
-            "a": 1,
-            "b": 2,
-            "c": 4,
-        })
+        self.assertEqual(
+            actual,
+            {
+                "a": 1,
+                "b": 2,
+                "c": 4,
+            },
+        )
         actual = assembly_config_struct(Model(release_configs), "child", "bar", [])
         self.assertEqual(actual, [0, 1, 2, 3, 4])
 
     def test_asembly_metadata_config(self):
-
-        meta_config = Model(dict_to_model={
-            'owners': ['kuryr-team@redhat.com'],
-            'content': {
-                'source': {
-                    'git': {
-                        'url': 'git@github.com:openshift-priv/kuryr-kubernetes.git',
-                        'branch': {
-                            'target': 'release-4.8',
+        meta_config = Model(
+            dict_to_model={
+                'owners': ['kuryr-team@redhat.com'],
+                'content': {
+                    'source': {
+                        'git': {
+                            'url': 'git@github.com:openshift-priv/kuryr-kubernetes.git',
+                            'branch': {
+                                'target': 'release-4.8',
+                            },
                         },
+                        'specfile': 'openshift-kuryr-kubernetes-rhel8.spec',
                     },
-                    'specfile': 'openshift-kuryr-kubernetes-rhel8.spec',
                 },
-            },
-            'name': 'openshift-kuryr',
-        })
+                'name': 'openshift-kuryr',
+            }
+        )
 
         config = assembly_metadata_config(self.releases_config, 'ART_1', 'rpm', 'openshift-kuryr', meta_config)
         # Ensure no loss

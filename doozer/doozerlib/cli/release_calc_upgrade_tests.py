@@ -3,15 +3,16 @@ from doozerlib.cli import cli
 from doozerlib import util
 
 
-@cli.command("release:calc-upgrade-tests",
-             short_help="Returns a list of recommended upgrade tests for an OCP release version")
+@cli.command(
+    "release:calc-upgrade-tests", short_help="Returns a list of recommended upgrade tests for an OCP release version"
+)
 @click.option("--version", required=True, help="The release version to calculate upgrade tests for (e.g. 4.6.31)")
 def release_calc_upgrade_tests(version):
     arch = 'x86_64'
     versions = util.get_release_calc_previous(version, arch)
     major, minor = util.extract_version_fields(version, at_least=2)[:2]
     curr_versions = [x for x in versions if f'{major}.{minor}' in x]
-    prev_versions = [x for x in versions if f'{major}.{minor-1}' in x]
+    prev_versions = [x for x in versions if f'{major}.{minor - 1}' in x]
 
     def get_test_edges(version_list):
         test_edges = []

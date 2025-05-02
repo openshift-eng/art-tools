@@ -2,6 +2,7 @@
 """
 Test the Repo class
 """
+
 import unittest
 from unittest.mock import Mock, patch
 from doozerlib.repos import Repo
@@ -36,7 +37,6 @@ gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
 
 
 class MockRuntime(object):
-
     def __init__(self, logger):
         self.logger = logger
 

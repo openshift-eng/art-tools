@@ -1,6 +1,7 @@
 """
 Test errata models/controllers
 """
+
 import datetime
 from unittest import mock
 import json
@@ -13,9 +14,14 @@ from tests import test_structures
 from elliottlib import errata, constants, brew, exceptions
 
 unshipped_builds = [
-    Mock(product_version='OSE-4.7-RHEL-8', build='image1-container-123', nvr='image1-container-123', file_types=['tar']),
-    Mock(product_version='OSE-4.7-RHEL-8', build='image2-container-456', nvr='image2-container-456', file_types=['tar']),
-    Mock(product_version='ANOTHER_PV', build='image3-container-789', nvr='image3-container-789', file_types=['tar'])]
+    Mock(
+        product_version='OSE-4.7-RHEL-8', build='image1-container-123', nvr='image1-container-123', file_types=['tar']
+    ),
+    Mock(
+        product_version='OSE-4.7-RHEL-8', build='image2-container-456', nvr='image2-container-456', file_types=['tar']
+    ),
+    Mock(product_version='ANOTHER_PV', build='image3-container-789', nvr='image3-container-789', file_types=['tar']),
+]
 
 
 class TestAdvisory(unittest.TestCase):
@@ -64,29 +70,43 @@ class TestAdvisory(unittest.TestCase):
 
         self.assertEqual(addBuilds.call_count, 2)
 
-        addBuilds.assert_any_call(buildlist=['image1-container-123', 'image2-container-456'], file_types={'image1-container-123': ['tar'], 'image2-container-456': ['tar']}, release='OSE-4.7-RHEL-8')
-        addBuilds.assert_any_call(buildlist=['image3-container-789'], file_types={'image3-container-789': ['tar']}, release='ANOTHER_PV')
+        addBuilds.assert_any_call(
+            buildlist=['image1-container-123', 'image2-container-456'],
+            file_types={'image1-container-123': ['tar'], 'image2-container-456': ['tar']},
+            release='OSE-4.7-RHEL-8',
+        )
+        addBuilds.assert_any_call(
+            buildlist=['image3-container-789'], file_types={'image3-container-789': ['tar']}, release='ANOTHER_PV'
+        )
 
 
 class TestErrata(unittest.TestCase):
-
     def test_parse_date(self):
         """Verify we can parse the date string returned from Errata Tool"""
         d_expected = '2018-03-02 15:19:08'
-        d_out = datetime.datetime.strptime(test_structures.example_erratum['errata']['rhba']['created_at'], '%Y-%m-%dT%H:%M:%SZ')
+        d_out = datetime.datetime.strptime(
+            test_structures.example_erratum['errata']['rhba']['created_at'], '%Y-%m-%dT%H:%M:%SZ'
+        )
         self.assertEqual(str(d_out), d_expected)
 
     def test_parse_exception_error_message(self):
-        self.assertEqual([1685398], errata.parse_exception_error_message('Bug #1685398 The bug is filed already in RHBA-2019:1589.'))
+        self.assertEqual(
+            [1685398], errata.parse_exception_error_message('Bug #1685398 The bug is filed already in RHBA-2019:1589.')
+        )
 
         self.assertEqual([], errata.parse_exception_error_message('invalid format'))
 
-        self.assertEqual([1685398, 1685399], errata.parse_exception_error_message('''Bug #1685398 The bug is filed already in RHBA-2019:1589.
-        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''))
+        self.assertEqual(
+            [1685398, 1685399],
+            errata.parse_exception_error_message('''Bug #1685398 The bug is filed already in RHBA-2019:1589.
+        Bug #1685399 The bug is filed already in RHBA-2019:1589.'''),
+        )
 
     def test_get_advisories_for_bug(self):
         bug = 123456
-        advisories = [{"advisory_name": "RHBA-2019:3151", "status": "NEW_FILES", "type": "RHBA", "id": 47335, "revision": 3}]
+        advisories = [
+            {"advisory_name": "RHBA-2019:3151", "status": "NEW_FILES", "type": "RHBA", "id": 47335, "revision": 3}
+        ]
         with mock.patch("requests.Session") as MockSession:
             session = MockSession()
             response = session.get.return_value
@@ -110,7 +130,6 @@ class TestErrata(unittest.TestCase):
 
 
 class TestAdvisoryImages(unittest.TestCase):
-
     mocked_ocp3_response = {
         'kube-rbac-proxy-container-v3.11.154-1': {
             'docker': {

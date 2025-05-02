@@ -1,4 +1,3 @@
-
 import os
 import pathlib
 import shutil
@@ -8,8 +7,7 @@ import unittest
 from unittest import mock
 import yaml.scanner
 
-from doozerlib.source_modifications import (AddModifier, RemoveModifier,
-                                            SourceModifierFactory)
+from doozerlib.source_modifications import AddModifier, RemoveModifier, SourceModifierFactory
 
 
 class SourceModifierFactoryTestCase(unittest.TestCase):
@@ -102,11 +100,14 @@ class TestRemoveModifier(unittest.TestCase):
             "distgit_path": distgit_path,
         }
         with mock.patch.object(pathlib.Path, "rglob") as rglob, mock.patch.object(pathlib.Path, "unlink") as unlink:
-            rglob.return_value = map(lambda path: distgit_path.joinpath(path), [
-                "1.txt",
-                "a/2.txt",
-                "b/c/d/e/3.txt",
-            ])
+            rglob.return_value = map(
+                lambda path: distgit_path.joinpath(path),
+                [
+                    "1.txt",
+                    "a/2.txt",
+                    "b/c/d/e/3.txt",
+                ],
+            )
             modifier.act(context=context, ceiling_dir=str(distgit_path))
             unlink.assert_called()
 
@@ -120,11 +121,14 @@ class TestRemoveModifier(unittest.TestCase):
             "distgit_path": distgit_path,
         }
         with mock.patch.object(pathlib.Path, "rglob") as rglob:
-            rglob.return_value = map(lambda path: pathlib.Path("/some/other/path").joinpath(path), [
-                "1.txt",
-                "a/2.txt",
-                "b/c/d/e/3.txt",
-            ])
+            rglob.return_value = map(
+                lambda path: pathlib.Path("/some/other/path").joinpath(path),
+                [
+                    "1.txt",
+                    "a/2.txt",
+                    "b/c/d/e/3.txt",
+                ],
+            )
             with self.assertRaises(PermissionError):
                 modifier.act(context=context, ceiling_dir=str(distgit_path))
 

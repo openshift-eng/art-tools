@@ -10,10 +10,12 @@ from doozerlib.cli import get_nightlies as subject
 class TestGetNightlies(IsolatedAsyncioTestCase):
     def setUp(self):
         self.runtime = MagicMock(
-            group_config=Model(dict(
-                arches=["x86_64", "s390x", "ppc64le", "aarch64"],
-                multi_arch=dict(enabled=True),
-            )),
+            group_config=Model(
+                dict(
+                    arches=["x86_64", "s390x", "ppc64le", "aarch64"],
+                    multi_arch=dict(enabled=True),
+                )
+            ),
             arches=["x86_64", "s390x", "ppc64le", "aarch64"],
         )
         subject.image_info_cache = {}
@@ -68,7 +70,8 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         nightlies = await subject.find_rc_nightlies(self.runtime, {"x86_64"}, True, True)
         self.assertEqual(3, len(nightlies["x86_64"]))
         nightlies = await subject.find_rc_nightlies(
-            self.runtime, {"x86_64"}, True, True, ["4.12.0-0.nightly-2022-07-15-132344"])
+            self.runtime, {"x86_64"}, True, True, ["4.12.0-0.nightly-2022-07-15-132344"]
+        )
         self.assertEqual(1, len(nightlies["x86_64"]))
 
         with self.assertRaises(subject.NoMatchingNightlyException):
@@ -82,16 +85,23 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
     def vanilla_nightly(release_image_info=None, name=None):
         # just give me an instance to test (default supplies "pod" entry)
         nightly = subject.Nightly(
-            release_image_info=release_image_info or {
-                "references": {"spec": {"tags": [
-                    {
-                        "name": "pod",
-                        "annotations": {"io.openshift.build.commit.id": "pod-commit"},
-                        "from": {"name": "pod-pullspec"},
-                    },
-                ]}},
+            release_image_info=release_image_info
+            or {
+                "references": {
+                    "spec": {
+                        "tags": [
+                            {
+                                "name": "pod",
+                                "annotations": {"io.openshift.build.commit.id": "pod-commit"},
+                                "from": {"name": "pod-pullspec"},
+                            },
+                        ]
+                    }
+                },
             },
-            name=name or "name", phase="Accepted", pullspec="nightly-pullspec",
+            name=name or "name",
+            phase="Accepted",
+            pullspec="nightly-pullspec",
         )
         nightly._process_nightly_release_data()
         return nightly
@@ -185,11 +195,19 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
     async def test_retrieve_nvr_for_tag(self):
         nightly = self.vanilla_nightly()
         nightly.retrieve_image_info_async = AsyncMock()
-        nightly.retrieve_image_info_async.return_value = Model(dict(config=dict(config=dict(Labels={
-            "com.redhat.component": "spam",
-            "version": "1.0",
-            "release": "1.el8",
-        }))))
+        nightly.retrieve_image_info_async.return_value = Model(
+            dict(
+                config=dict(
+                    config=dict(
+                        Labels={
+                            "com.redhat.component": "spam",
+                            "version": "1.0",
+                            "release": "1.el8",
+                        }
+                    )
+                )
+            )
+        )
         self.assertEqual(("spam", "1.0", "1.el8"), await nightly.retrieve_nvr_for_tag("pod"))
 
         nightly.retrieve_image_info_async.return_value = Exception()  # should be cached from last call
@@ -287,41 +305,52 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
             nset.generate_equivalents_with("x86_64", make(nightlies[0]))
 
     def test_generate_nightly_sets(self):
-
         def make(ndict):
-            nightly = subject.Nightly(release_image_info=ndict["releaseInfo"], nightly_info=ndict, phase="Accepted", pullspec="ignore")
+            nightly = subject.Nightly(
+                release_image_info=ndict["releaseInfo"], nightly_info=ndict, phase="Accepted", pullspec="ignore"
+            )
             nightly.commit_for_tag["pod"] = ndict["equivalence"]  # set up comparison
             return nightly
 
         nightlies_for_arch = {
             "x86_64": [
-                make({
-                    "name": "nightly1",
-                    "equivalence": "digest1",  # represents the matching for this nightly
-                    "releaseInfo": {"config": {"created": "2022-07-17"}},
-                }),
-                make({
-                    "name": "nightly2",
-                    "equivalence": "digest1",
-                    "releaseInfo": {"config": {"created": "2022-07-18"}},
-                }),
-                make({
-                    "name": "nightly3",
-                    "equivalence": "digest2",
-                    "releaseInfo": {"config": {"created": "2022-07-16"}},
-                }),
+                make(
+                    {
+                        "name": "nightly1",
+                        "equivalence": "digest1",  # represents the matching for this nightly
+                        "releaseInfo": {"config": {"created": "2022-07-17"}},
+                    }
+                ),
+                make(
+                    {
+                        "name": "nightly2",
+                        "equivalence": "digest1",
+                        "releaseInfo": {"config": {"created": "2022-07-18"}},
+                    }
+                ),
+                make(
+                    {
+                        "name": "nightly3",
+                        "equivalence": "digest2",
+                        "releaseInfo": {"config": {"created": "2022-07-16"}},
+                    }
+                ),
             ],
             "s390x": [
-                make({
-                    "name": "nightly4",
-                    "equivalence": "digest1",  # matches two
-                    "releaseInfo": {"config": {"created": "2022-07-17"}},
-                }),
-                make({
-                    "name": "nightly5",
-                    "equivalence": "digest2",  # matches one
-                    "releaseInfo": {"config": {"created": "2022-07-15"}},
-                }),
+                make(
+                    {
+                        "name": "nightly4",
+                        "equivalence": "digest1",  # matches two
+                        "releaseInfo": {"config": {"created": "2022-07-17"}},
+                    }
+                ),
+                make(
+                    {
+                        "name": "nightly5",
+                        "equivalence": "digest2",  # matches one
+                        "releaseInfo": {"config": {"created": "2022-07-15"}},
+                    }
+                ),
             ],
         }
         sets = subject.generate_nightly_sets(nightlies_for_arch)
@@ -332,10 +361,12 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
 
         # check that an incompatible nightly torpedoes set creation
         nightlies_for_arch["ppc64le"] = [
-            make({
-                "name": "nightly6",
-                "equivalence": "digest3",  # incompatible with all
-                "releaseInfo": {"config": {"created": "2022-07-17"}},
-            }),
+            make(
+                {
+                    "name": "nightly6",
+                    "equivalence": "digest3",  # incompatible with all
+                    "releaseInfo": {"config": {"created": "2022-07-17"}},
+                }
+            ),
         ]
         self.assertEqual(0, len(subject.generate_nightly_sets(nightlies_for_arch)))

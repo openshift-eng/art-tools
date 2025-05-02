@@ -9,9 +9,10 @@ from elliottlib import brew
 
 
 def get_tracker_builds_and_tags(
-        logger, tracker: Issue,
-        koji_api: koji.ClientSession,
-        config: KernelBugSweepConfig.TargetJiraConfig,
+    logger,
+    tracker: Issue,
+    koji_api: koji.ClientSession,
+    config: KernelBugSweepConfig.TargetJiraConfig,
 ) -> Tuple[List[str], str, str]:
     """
     Determine NVRs (e.g. ["kernel-5.14.0-284.14.1.el9_2"]) from the summary,
@@ -49,30 +50,42 @@ def _advisories_for_builds(nvrs: List[str]) -> List[Erratum]:
 
 
 def _link_tracker_advisories(
-        logger, dry_run: bool, jira_client: JIRA,
-        advisories: List[Erratum], nvrs: List[str], tracker: Issue,
+    logger,
+    dry_run: bool,
+    jira_client: JIRA,
+    advisories: List[Erratum],
+    nvrs: List[str],
+    tracker: Issue,
 ) -> List[str]:
     tracker_messages = []
-    links = set(link.raw['object']['url'] for link in jira_client.remote_links(tracker))  # check if we already linked advisories
+    links = set(
+        link.raw['object']['url'] for link in jira_client.remote_links(tracker)
+    )  # check if we already linked advisories
     for advisory in advisories:
         if advisory.url() in links:
             logger.info(f"Tracker {tracker.id} already links {advisory.url()} ({advisory.synopsis})")
             continue
-        tracker_messages.append(f"Build(s) {nvrs} shipped in advisory {advisory.url()} with title:\n{advisory.synopsis}")
+        tracker_messages.append(
+            f"Build(s) {nvrs} shipped in advisory {advisory.url()} with title:\n{advisory.synopsis}"
+        )
         if dry_run:
-            logger.info(f"[DRY RUN] Tracker {tracker.id} would have added link {advisory.url()} ({advisory.errata_name}: {advisory.synopsis})")
+            logger.info(
+                f"[DRY RUN] Tracker {tracker.id} would have added link {advisory.url()} ({advisory.errata_name}: {advisory.synopsis})"
+            )
         else:
             jira_client.add_simple_link(
-                tracker, dict(
-                    url=advisory.url(),
-                    title=f"{advisory.errata_name}: {advisory.synopsis}"))
+                tracker, dict(url=advisory.url(), title=f"{advisory.errata_name}: {advisory.synopsis}")
+            )
     return tracker_messages
 
 
 def process_shipped_tracker(
-        logger, dry_run: bool,
-        jira_client: JIRA, tracker: Issue,
-        nvrs: List[str], shipped_tag: str,
+    logger,
+    dry_run: bool,
+    jira_client: JIRA,
+    tracker: Issue,
+    nvrs: List[str],
+    shipped_tag: str,
 ) -> List[str]:
     # when NVRs are shipped, ensure the associated tracker is closed with a comment
     # and a link to any advisory that shipped them
@@ -95,9 +108,12 @@ def process_shipped_tracker(
 
 
 def move_jira(
-        logger, dry_run: bool,
-        jira_client: JIRA, issue: Issue,
-        new_status: str, comment: str = None,
+    logger,
+    dry_run: bool,
+    jira_client: JIRA,
+    issue: Issue,
+    new_status: str,
+    comment: str = None,
 ):
     current_status: str = issue.fields.status.name
     if dry_run:
@@ -112,9 +128,11 @@ def move_jira(
 
 
 def comment_on_tracker(
-        logger, dry_run: bool,
-        jira_client: JIRA, tracker: Issue,
-        comments: List[str],
+    logger,
+    dry_run: bool,
+    jira_client: JIRA,
+    tracker: Issue,
+    comments: List[str],
 ):
     # wording NOTE: commenting is intended to avoid duplicates, but this logic may re-comment on old
     # trackers if the wording changes after previously commented. think long and hard before

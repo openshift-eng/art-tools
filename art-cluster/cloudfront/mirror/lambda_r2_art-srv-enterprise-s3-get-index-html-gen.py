@@ -11,12 +11,12 @@ DEFAULT_OUTPUT_FILE = 'index.html'
 
 # bytes pretty-printing
 UNITS_MAPPING = [
-    (1024 ** 5, ' PB'),
-    (1024 ** 4, ' TB'),
-    (1024 ** 3, ' GB'),
-    (1024 ** 2, ' MB'),
-    (1024 ** 1, ' KB'),
-    (1024 ** 0, (' byte', ' bytes')),
+    (1024**5, ' PB'),
+    (1024**4, ' TB'),
+    (1024**3, ' GB'),
+    (1024**2, ' MB'),
+    (1024**1, ' KB'),
+    (1024**0, (' byte', ' bytes')),
 ]
 
 
@@ -120,7 +120,8 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
         print(f'Traversing dir {str(path_top_dir)}')
 
     index_file = StringIO()
-    body_top = """<!DOCTYPE html>
+    body_top = (
+        """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
@@ -364,7 +365,9 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
     </defs>
     </svg>
 <header>
-    <h1>""" f'{path_top_dir.name}' """</h1>
+    <h1>"""
+        f'{path_top_dir.name}'
+        """</h1>
              </header>
                  <main>
                  <div class="listing">
@@ -390,13 +393,13 @@ def process_dir(s3_client, bucket_name: str, path_top_dir: str, entry_offset=0):
                              <td class="hideable"></td>
                          </tr>
     """
+    )
 
     # sort dirs first
 
     entry: S3Path
     entry_count: int = 0
     for entry in s3_list_dir(s3_client, bucket_name, str(path_top_dir)):
-
         # If the generator yields an exception, we can't continue
         if isinstance(entry, Exception):
             raise entry

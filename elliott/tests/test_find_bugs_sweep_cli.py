@@ -152,12 +152,15 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
     @patch('elliottlib.bzutil.BugzillaBugTracker.filter_attached_bugs')
     def test_find_bugs_sweep_advisory_jira(self, bugzilla_filter_mock, jira_filter_mock):
         runner = CliRunner()
-        bugs = [flexmock(
-            id='BZ1',
-            is_tracker_bug=lambda: False,
-            is_invalid_tracker_bug=lambda: False,
-            component='whatever',
-            sub_component='whatever')]
+        bugs = [
+            flexmock(
+                id='BZ1',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='whatever',
+                sub_component='whatever',
+            )
+        ]
         advisory_id = 123
 
         # common mocks
@@ -172,16 +175,18 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(client).should_receive("fields").and_return([])
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
-        flexmock(JIRABugTracker).should_receive("attach_bugs").with_args([b.id for b in bugs], advisory_id=advisory_id,
-                                                                         noop=False, verbose=False)
+        flexmock(JIRABugTracker).should_receive("attach_bugs").with_args(
+            [b.id for b in bugs], advisory_id=advisory_id, noop=False, verbose=False
+        )
         jira_filter_mock.return_value = []
 
         # bz mocks
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
         flexmock(BugzillaBugTracker).should_receive("login").and_return(None)
         flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
-        flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args([b.id for b in bugs], advisory_id=advisory_id,
-                                                                             noop=False, verbose=False)
+        flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(
+            [b.id for b in bugs], advisory_id=advisory_id, noop=False, verbose=False
+        )
         bugzilla_filter_mock.return_value = []
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--add', str(advisory_id)])
@@ -218,8 +223,9 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(BugzillaBugTracker).should_receive("login")
         flexmock(BugzillaBugTracker).should_receive("search").and_return(bugs)
         bugzilla_filter_mock.return_value = []
-        flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(['BZ1'], advisory_id=123, noop=False,
-                                                                             verbose=False)
+        flexmock(BugzillaBugTracker).should_receive("attach_bugs").with_args(
+            ['BZ1'], advisory_id=123, noop=False, verbose=False
+        )
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', 'find-bugs:sweep', '--use-default-advisory', 'image'])
         if result.exit_code != 0:
@@ -239,13 +245,17 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(Runtime).should_receive("initialize").and_return(None)
         flexmock(Runtime).should_receive("get_major_minor").and_return(4, 6)
         flexmock(sweep_cli).should_receive("get_assembly_bug_ids").and_return(set(), set())
-        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({
-            "image": set(image_bugs),
-            "rpm": set(rpm_bugs),
-            "extras": set(extras_bugs),
-        }, [])
-        flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123, 'rpm': 123, 'extras': 123,
-                                                                              'metadata': 123})
+        flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return(
+            {
+                "image": set(image_bugs),
+                "rpm": set(rpm_bugs),
+                "extras": set(extras_bugs),
+            },
+            [],
+        )
+        flexmock(Runtime).should_receive("get_default_advisories").and_return(
+            {'image': 123, 'rpm': 123, 'extras': 123, 'metadata': 123}
+        )
 
         # bz mocks
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -273,11 +283,34 @@ class TestCategorizeBugsByType(unittest.TestCase):
     def test_categorize_bugs_by_type(self):
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         bugs = [
-            flexmock(id='OCPBUGS-0', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False, whiteboard_component='foo', component=''),
-            flexmock(id='OCPBUGS-1', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False, whiteboard_component='bar', component=''),
-            flexmock(id='OCPBUGS-2', is_tracker_bug=lambda: True, is_invalid_tracker_bug=lambda: False, whiteboard_component='buzz', component=''),
+            flexmock(
+                id='OCPBUGS-0',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                whiteboard_component='foo',
+                component='',
+            ),
+            flexmock(
+                id='OCPBUGS-1',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                whiteboard_component='bar',
+                component='',
+            ),
+            flexmock(
+                id='OCPBUGS-2',
+                is_tracker_bug=lambda: True,
+                is_invalid_tracker_bug=lambda: False,
+                whiteboard_component='buzz',
+                component='',
+            ),
             flexmock(id='OCPBUGS-3', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component=''),
-            flexmock(id='OCPBUGS-4', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False, component='MicroShift'),
+            flexmock(
+                id='OCPBUGS-4',
+                is_tracker_bug=lambda: False,
+                is_invalid_tracker_bug=lambda: False,
+                component='MicroShift',
+            ),
         ]
         builds_map = {
             'image': {bugs[2].whiteboard_component: None},
@@ -289,7 +322,8 @@ class TestCategorizeBugsByType(unittest.TestCase):
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[3]})
         for kind in advisory_id_map.keys():
             flexmock(errata).should_receive("get_advisory_nvrs").with_args(advisory_id_map[kind]).and_return(
-                builds_map[kind])
+                builds_map[kind]
+            )
         expected = {
             'rpm': {bugs[1].id},
             'image': {bugs[2].id},
@@ -307,7 +341,9 @@ class TestCategorizeBugsByType(unittest.TestCase):
             self.assertEqual(actual, expected[adv])
 
     def test_raise_fake_trackers(self):
-        bugs = [flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: True, component='')]
+        bugs = [
+            flexmock(id='OCPBUGS-5', is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: True, component='')
+        ]
         advisory_id_map = {'image': 1, 'rpm': 2, 'extras': 3, 'microshift': 4}
         flexmock(sweep_cli).should_receive("extras_bugs").and_return({bugs[0]})
         with self.assertRaisesRegex(ElliottFatalError, 'look like CVE trackers'):
@@ -317,8 +353,9 @@ class TestCategorizeBugsByType(unittest.TestCase):
 class TestGenAssemblyBugIDs(unittest.TestCase):
     @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_issues_config")
     def test_gen_assembly_bug_ids_jira(self, assembly_issues_config: Mock):
-        assembly_issues_config.return_value = flexmock(include=[{"id": 1}, {"id": 'OCPBUGS-2'}],
-                                                       exclude=[{"id": "2"}, {"id": 'OCPBUGS-3'}])
+        assembly_issues_config.return_value = flexmock(
+            include=[{"id": 1}, {"id": 'OCPBUGS-2'}], exclude=[{"id": "2"}, {"id": 'OCPBUGS-3'}]
+        )
         runtime = flexmock(get_releases_config=lambda: None, assembly='foo')
         expected = ({"OCPBUGS-2"}, {"OCPBUGS-3"})
         actual = get_assembly_bug_ids(runtime, 'jira')
@@ -326,8 +363,9 @@ class TestGenAssemblyBugIDs(unittest.TestCase):
 
     @patch("elliottlib.cli.find_bugs_sweep_cli.assembly_issues_config")
     def test_gen_assembly_bug_ids_bz(self, assembly_issues_config: Mock):
-        assembly_issues_config.return_value = flexmock(include=[{"id": 1}, {"id": 'OCPBUGS-2'}],
-                                                       exclude=[{"id": "2"}, {"id": 'OCPBUGS-3'}])
+        assembly_issues_config.return_value = flexmock(
+            include=[{"id": 1}, {"id": 'OCPBUGS-2'}], exclude=[{"id": "2"}, {"id": 'OCPBUGS-3'}]
+        )
         runtime = flexmock(get_releases_config=lambda: None, assembly='foo')
         expected = ({1}, {"2"})
         actual = get_assembly_bug_ids(runtime, 'bugzilla')

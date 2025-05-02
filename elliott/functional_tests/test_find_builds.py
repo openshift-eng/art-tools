@@ -10,20 +10,29 @@ version = "4.12"
 class FindBuildsTestCase(unittest.TestCase):
     def test_find_rpms(self):
         cmd = constants.ELLIOTT_CMD + [
-            "--assembly=stream", f"--group=openshift-{version}", "find-builds", "--kind=rpm",
+            "--assembly=stream",
+            f"--group=openshift-{version}",
+            "find-builds",
+            "--kind=rpm",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 0, msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}"
+        )
         self.assertRegex(result.stderr.decode(), "Found \\d+ builds")
 
     def test_find_images(self):
         cmd = constants.ELLIOTT_CMD + [
-            f"--group=openshift-{version}", "-i", "openshift-enterprise-cli", "find-builds", "--kind=image",
+            f"--group=openshift-{version}",
+            "-i",
+            "openshift-enterprise-cli",
+            "find-builds",
+            "--kind=image",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 0, msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}"
+        )
         self.assertRegex(result.stderr.decode(), "Found \\d+ builds")
 
     def test_change_state(self):
@@ -40,8 +49,9 @@ class FindBuildsTestCase(unittest.TestCase):
         ]
         result = subprocess.run(command, capture_output=True)
 
-        self.assertEqual(result.returncode, 1,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 1, msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}"
+        )
         self.assertIn('Cannot change state', result.stdout.decode())
 
 

@@ -10,7 +10,6 @@ from artcommonlib.brew import BuildStates
 
 
 class TestMetadata(unittest.TestCase):
-
     def setUp(self) -> None:
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
@@ -42,9 +41,20 @@ class TestMetadata(unittest.TestCase):
         self.meta = image_meta
         self.koji_mock = koji_mock
 
-    def build_record(self, creation_dt: datetime.datetime, assembly, el_target, name='foo-container',
-                     version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-                     release_prefix=None, build_state: BuildStates = BuildStates.COMPLETE, is_rpm: bool = False):
+    def build_record(
+        self,
+        creation_dt: datetime.datetime,
+        assembly,
+        el_target,
+        name='foo-container',
+        version='4.7.0',
+        p='p0',
+        epoch=None,
+        git_commit='4c0ed6d',
+        release_prefix=None,
+        build_state: BuildStates = BuildStates.COMPLETE,
+        is_rpm: bool = False,
+    ):
         """
         :return: Returns an artificial brew build record.
         """
@@ -188,14 +198,18 @@ class TestMetadata(unittest.TestCase):
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(
+                now - datetime.timedelta(hours=5), assembly='stream', el_target=8, build_state=BuildStates.COMPLETE
+            ),
             self.build_record(now, assembly='stream', el_target=8, build_state=BuildStates.FAILED),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[0])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(
+                now - datetime.timedelta(hours=5), assembly=None, el_target=8, build_state=BuildStates.COMPLETE
+            ),
             self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.FAILED),
             self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
         ]
@@ -204,7 +218,9 @@ class TestMetadata(unittest.TestCase):
         # Check whether extra pattern matching works
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
-            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'),
+            self.build_record(
+                now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'
+            ),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}', el_target=8),

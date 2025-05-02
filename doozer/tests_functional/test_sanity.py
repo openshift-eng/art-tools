@@ -7,7 +7,6 @@ from tests_functional import DoozerRunnerTestCase
 
 
 class TestSanity(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -24,13 +23,16 @@ class TestSanity(DoozerRunnerTestCase):
         """
         target_ocp_build_data_commitish = 'e4cb33b93b1c1364aa9fa1cd5fa3e6a1ae1e065b'
         group_name, _ = self.run_doozer(
-            '--group', f'openshift-4.7@{target_ocp_build_data_commitish}',
+            '--group',
+            f'openshift-4.7@{target_ocp_build_data_commitish}',
             'config:read-group',
             'name',
         )
         self.assertEqual(group_name, 'openshift-4.7')
 
-        checkout_commitish, _ = exectools.cmd_assert(f'git -C {self.dz_working_dir}/ocp-build-data rev-parse HEAD', strip=True)
+        checkout_commitish, _ = exectools.cmd_assert(
+            f'git -C {self.dz_working_dir}/ocp-build-data rev-parse HEAD', strip=True
+        )
         self.assertEqual(checkout_commitish, target_ocp_build_data_commitish)
 
 

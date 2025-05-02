@@ -19,7 +19,6 @@ except:
 
 
 class DBLibException(Exception):
-
     """
     Exception class to record exceptions raised within the dblib module.
     """
@@ -42,11 +41,9 @@ def try_connecting(func):
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-
         db = args[0]
 
         if db.mysql_db_env_var_setup:
-
             if not db.connection or not db.connection.is_connected():
                 count = 1
 
@@ -56,7 +53,8 @@ def try_connecting(func):
                             host=os.getenv(constants.DB_HOST, constants.default_db_params[constants.DB_HOST]),
                             user=os.getenv(constants.DB_USER),
                             password=os.getenv(constants.DB_PWD_NAME),
-                            database=os.getenv(constants.DB_NAME, constants.default_db_params[constants.DB_NAME]))
+                            database=os.getenv(constants.DB_NAME, constants.default_db_params[constants.DB_NAME]),
+                        )
                         break
                     except Exception as e:
                         traceback.print_exc()
@@ -72,7 +70,6 @@ def try_connecting(func):
 
 
 class DB(object):
-
     def __init__(self, runtime, environment, dry_run=False):
         """
         :param runtime: The runtime
@@ -101,7 +98,6 @@ class DB(object):
         self._table_column_cache = {}
 
     def check_missing_db_env_var(self):
-
         """
         The function checks if the expected environment variables are set. If not, returns False.
         If all required env variables are present, the object instance's configuration properties are set
@@ -109,8 +105,9 @@ class DB(object):
         """
 
         if not (constants.DB_USER in os.environ and constants.DB_PWD_NAME in os.environ):
-            self.runtime.logger.info("Environment variables required for db operation missing. Doozer will be running"
-                                     "in no DB use mode.")
+            self.runtime.logger.info(
+                "Environment variables required for db operation missing. Doozer will be runningin no DB use mode."
+            )
             return False
 
         import mysql.connector as mysql_connector
@@ -126,7 +123,6 @@ class DB(object):
         return True
 
     def select(self, expr, limit=100):
-
         """
         :param expr [string] the SQL command want to query from DB
         :param limit [number] limit the length of the return value
@@ -143,10 +139,7 @@ class DB(object):
             raise RuntimeError
 
         exeresult = []
-        db_connection = mysql_connector.connect(host=self.host,
-                                                user=self.db_user,
-                                                password=self.pwd,
-                                                database=self.db)
+        db_connection = mysql_connector.connect(host=self.host, user=self.db_user, password=self.pwd, database=self.db)
         cursor = db_connection.cursor()
         try:
             cursor.execute("{} LIMIT {}".format(expr, limit))
@@ -160,7 +153,6 @@ class DB(object):
         return exeresult
 
     def check_database_exists(self):
-
         """
         This method checks if the configured database is present.
         If present returns True.
@@ -171,19 +163,15 @@ class DB(object):
         When returns false, Doozer will run in no db mode.
         """
 
-        db_check_connection = mysql_connector.connect(host=self.host,
-                                                      user=self.db_user,
-                                                      password=self.pwd)
+        db_check_connection = mysql_connector.connect(host=self.host, user=self.db_user, password=self.pwd)
 
         cursor = db_check_connection.cursor()
-        cursor.execute("select count(*) from INFORMATION_SCHEMA.SCHEMATA where SCHEMA_NAME='{}'"
-                       .format(self.db))
+        cursor.execute("select count(*) from INFORMATION_SCHEMA.SCHEMATA where SCHEMA_NAME='{}'".format(self.db))
 
         exception_raised = False
 
         if cursor.fetchone()[0] != 0:
-            self.runtime.logger.info("Configured database [{}] present on MySQL host.".
-                                     format(self.db))
+            self.runtime.logger.info("Configured database [{}] present on MySQL host.".format(self.db))
             return True
         else:
             create_db_cursor = db_check_connection.cursor()
@@ -199,7 +187,6 @@ class DB(object):
         return not exception_raised
 
     def check_table_exist(self, table_name):
-
         """
         :param table_name
         This method returns True, if the table to which the record is attempted to be created in is true. Otherwise
@@ -210,11 +197,13 @@ class DB(object):
             return True
 
         cursor = self.connection.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT COUNT(*)
             FROM information_schema.tables
             WHERE table_schema ='{0}' and table_name = '{1}'
-            """.format(self.db, table_name.replace('\'', '\'\'')))
+            """.format(self.db, table_name.replace('\'', '\'\''))
+        )
         if cursor.fetchone()[0] != 0:
             cursor.close()
             self._table_column_cache[table_name] = {}
@@ -226,7 +215,6 @@ class DB(object):
 
     @staticmethod
     def identify_column_type(value):
-
         """
         :param value
         This is a helper method, which returns the MYSQL type to the provided value with corresponding python
@@ -243,7 +231,6 @@ class DB(object):
             return "VARCHAR(1000)", value
 
     def get_missing_columns(self, attr_payload, table_name):
-
         """
         This method fetches all the column in the given table, and compares it with
         the payload to check if there are any additional keys in the payload.
@@ -259,8 +246,9 @@ class DB(object):
             self.runtime.logger.info("Found all the columns in cache for table [{}].".format(table_name))
             return []
 
-        self.runtime.logger.info("Received new columns in the payload or table [{}] column cache empty."
-                                 .format(table_name))
+        self.runtime.logger.info(
+            "Received new columns in the payload or table [{}] column cache empty.".format(table_name)
+        )
 
         payload_columns = set()
         existing_columns = set()
@@ -270,7 +258,6 @@ class DB(object):
             payload_columns.add(column)
 
         if not self._table_column_cache[table_name]:
-
             # if the table's column cache is not updates, load the cache and return
             # the table columns
 
@@ -283,7 +270,6 @@ class DB(object):
                 existing_columns.add(data[0])
                 self._table_column_cache[table_name][data[0]] = True
         else:
-
             # otherwise if table column cache found, return cache value
 
             self.runtime.logger.info("Found table [{}] column cache.".format(table_name))
@@ -298,7 +284,6 @@ class DB(object):
         return return_columns
 
     def handle_missing_table(self, table_name):
-
         """
         :param table_name
         This method creates table, if it doesn't exist.
@@ -307,18 +292,15 @@ class DB(object):
         table_exist_status = self.check_table_exist(table_name)
 
         if not table_exist_status:
-            self.runtime.logger.info("Table [{}] not found in database [{}]."
-                                     .format(table_name, self.db))
+            self.runtime.logger.info("Table [{}] not found in database [{}].".format(table_name, self.db))
             cursor = self.connection.cursor()
             cursor.execute(f'create table {table_name}(log_{table_name}_id bigint auto_increment primary key)')
             cursor.close()
             self._table_column_cache[table_name] = dict()
             self._table_column_cache[table_name]["log_" + table_name + "_id"] = True
-            self.runtime.logger.info("Successfully create table [{}] in database [{}]."
-                                     .format(table_name, self.db))
+            self.runtime.logger.info("Successfully create table [{}] in database [{}].".format(table_name, self.db))
 
     def handle_missing_columns(self, payload, table_name):
-
         """
         :param payload
         :param table_name
@@ -338,19 +320,21 @@ class DB(object):
                     cursor.execute(f"alter table {table_name} add column `{missing_column}` {column_type}")
                     self._table_column_cache[table_name][missing_column] = True
 
-                    self.runtime.logger.info("Added new column [{}] of identified type [{}] to table [{}] "
-                                             "of database [{}].".format(missing_column, column_type,
-                                                                        table_name, self.db))
+                    self.runtime.logger.info(
+                        "Added new column [{}] of identified type [{}] to table [{}] of database [{}].".format(
+                            missing_column, column_type, table_name, self.db
+                        )
+                    )
                 except Exception as e:
-                    self.runtime.logger.warning("Could not add new column [{}] of identified type [{}] to table [{}] "
-                                                "of database [{}]. Error: {}".format(missing_column, column_type,
-                                                                                     table_name, self.db, e))
+                    self.runtime.logger.warning(
+                        "Could not add new column [{}] of identified type [{}] to table [{}] "
+                        "of database [{}]. Error: {}".format(missing_column, column_type, table_name, self.db, e)
+                    )
                     del payload[missing_column]  # delete the column from the payload
 
             cursor.close()
 
     def insert_payload(self, payload, table_name, dry_run=False):
-
         """
         :param payload
         :param table_name
@@ -385,12 +369,16 @@ class DB(object):
             return 0
 
         except Exception as e:
-            self.runtime.logger.error("Something went wrong creating payload entry in the database. Payload is {}. Exception is {}.".format(payload, e), exc_info=True)
+            self.runtime.logger.error(
+                "Something went wrong creating payload entry in the database. Payload is {}. Exception is {}.".format(
+                    payload, e
+                ),
+                exc_info=True,
+            )
             return 1
 
     @try_connecting
     def create_payload_entry(self, payload, table_name, record_dry_run=False):
-
         """
         :param payload
         :param table_name
@@ -427,7 +415,6 @@ class DB(object):
 
     @staticmethod
     def rename_to_valid_column(column_name):
-
         """
         This is a helper method to transform column name having '.' and '-' and replaces these characters with '_'.
         """
@@ -492,11 +479,9 @@ class Record(object):
     def __exit__(self, *args):
         try:
             with get_named_semaphore('dblib::mysql'):
-
                 attr_payload = {}
 
                 for k, v in self.attrs.items():
-
                     if v is None or v is Missing or v == '':
                         continue
                     else:

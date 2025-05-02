@@ -17,8 +17,7 @@ class TestImageSchema(unittest.TestCase):
             'from': {},
             'name': 1234,
         }
-        self.assertIn("1234 is not of type 'string'",
-                      image_schema.validate('filename', invalid_data))
+        self.assertIn("1234 is not of type 'string'", image_schema.validate('filename', invalid_data))
 
     def test_validate_with_invalid_content_source_git_url(self):
         url = 'https://github.com/openshift/csi-node-driver-registrar'
@@ -36,7 +35,10 @@ class TestImageSchema(unittest.TestCase):
             'name': '1234',
             'from': {},
         }
-        self.assertIn("'https://github.com/openshift/csi-node-driver-registrar' does not match", image_schema.validate('filename', invalid_data))
+        self.assertIn(
+            "'https://github.com/openshift/csi-node-driver-registrar' does not match",
+            image_schema.validate('filename', invalid_data),
+        )
 
     def test_validate_with_valid_content_source_git_url(self):
         url = 'git@github.com:openshift/csi-node-driver-registrar.git'

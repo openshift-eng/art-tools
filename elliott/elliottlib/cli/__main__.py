@@ -19,6 +19,7 @@ import logging
 from typing import Dict, List
 
 from artcommonlib.format_util import red_print, red_prefix, green_prefix, green_print, yellow_prefix, yellow_print
+
 # ours
 from elliottlib import util
 from elliottlib import Runtime
@@ -91,43 +92,40 @@ LOGGER = logging.getLogger(__name__)
 @cli.command("get", short_help="Get information for an ADVISORY")
 @click.argument('advisory', type=int, required=False)
 @use_default_advisory_option
-@click.option('--details', is_flag=True, default=False,
-              help="Print the full object of the advisory")
-@click.option('--id-only', is_flag=True, default=False,
-              help="Print only the ID of the default advisory")
-@click.option('--json', 'as_json', metavar="FILE_NAME",
-              help="Dump the advisory as JSON to a file (or '-' for stdout)")
+@click.option('--details', is_flag=True, default=False, help="Print the full object of the advisory")
+@click.option('--id-only', is_flag=True, default=False, help="Print only the ID of the default advisory")
+@click.option('--json', 'as_json', metavar="FILE_NAME", help="Dump the advisory as JSON to a file (or '-' for stdout)")
 @pass_runtime
 @click.pass_context
 def get(ctx, runtime, default_advisory_type, details, id_only, as_json, advisory):
     """Get details about a specific advisory from the Errata Tool. By
-default a brief one-line informational string is printed. Use the
---details option to fetch and print the full details of the advisory.
+    default a brief one-line informational string is printed. Use the
+    --details option to fetch and print the full details of the advisory.
 
-Use of --id-only will override all other printing options. Requires
-using --use-default-advisory. Only the ID of the advisory is printed
-to standard out.
+    Use of --id-only will override all other printing options. Requires
+    using --use-default-advisory. Only the ID of the advisory is printed
+    to standard out.
 
-Fields for the short format: Release date, State, Synopsys, URL
+    Fields for the short format: Release date, State, Synopsys, URL
 
-    Basic one-line output for advisory 123456:
+        Basic one-line output for advisory 123456:
 
-\b
-    $ elliott get 123456
-    2018-02-23T18:34:40 NEW_FILES OpenShift Container Platform 3.9 bug fix and enhancement update - https://errata.devel.redhat.com/advisory/123456
+    \b
+        $ elliott get 123456
+        2018-02-23T18:34:40 NEW_FILES OpenShift Container Platform 3.9 bug fix and enhancement update - https://errata.devel.redhat.com/advisory/123456
 
-    Get the full JSON advisory object, use `jq` to print just the
-    errata portion of the advisory:
+        Get the full JSON advisory object, use `jq` to print just the
+        errata portion of the advisory:
 
-\b
-    $ elliott get --json - 123456 | jq '.errata'
-    {
-      "rhba": {
-        "actual_ship_date": null,
-        "assigned_to_id": 3002255,
-        "batch_id": null,
-        ...
-"""
+    \b
+        $ elliott get --json - 123456 | jq '.errata'
+        {
+          "rhba": {
+            "actual_ship_date": null,
+            "assigned_to_id": 3002255,
+            "batch_id": null,
+            ...
+    """
 
     runtime.initialize(no_group=default_advisory_type is None)
 
@@ -151,7 +149,8 @@ Fields for the short format: Release date, State, Synopsys, URL
             date=advisory.publish_date_override,
             state=advisory.errata_state,
             synopsis=advisory.synopsis,
-            url=advisory.url())
+            url=advisory.url(),
+        )
         click.echo(advisory_string)
         return
 
@@ -184,30 +183,30 @@ Fields for the short format: Release date, State, Synopsys, URL
 @click_coroutine
 async def verify_payload(runtime, payload_or_imagestream, advisory):
     """Cross-check that the builds present in PAYLOAD or Imagestream match the builds
-attached to ADVISORY. The payload is treated as the source of
-truth. If something is absent or different in the advisory it is
-treated as an error with the advisory.
+    attached to ADVISORY. The payload is treated as the source of
+    truth. If something is absent or different in the advisory it is
+    treated as an error with the advisory.
 
-\b
-    PAYLOAD_OR_IMAGESTREAM - Full pullspec of the payload or imagestream to verify
-    ADVISORY - Numerical ID of the advisory
+    \b
+        PAYLOAD_OR_IMAGESTREAM - Full pullspec of the payload or imagestream to verify
+        ADVISORY - Numerical ID of the advisory
 
-Two checks are made:
+    Two checks are made:
 
-\b
- 1. Missing in Advisory - No payload/imagestream components are absent from the given advisory
+    \b
+     1. Missing in Advisory - No payload/imagestream components are absent from the given advisory
 
- 2. Payload/imagestream Advisory Mismatch - The version-release of each payload/imagestream item match what is in the advisory
+     2. Payload/imagestream Advisory Mismatch - The version-release of each payload/imagestream item match what is in the advisory
 
-Results are summarily printed at the end of the run. They are also
-written out to summary_results.json.
+    Results are summarily printed at the end of the run. They are also
+    written out to summary_results.json.
 
-     Verify builds in the given payload/imagestream match the builds attached to advisory 41567
+         Verify builds in the given payload/imagestream match the builds attached to advisory 41567
 
- \b
-    $ for paylaod: elliott -g openshift-1 verify-payload quay.io/openshift-release-dev/ocp-release:4.1.0-rc.6 41567
- \b
-    $ for imagestream: elliott -g openshift-1 verify-payload 4.1-art-assembly-rc.6 41567
+     \b
+        $ for paylaod: elliott -g openshift-1 verify-payload quay.io/openshift-release-dev/ocp-release:4.1.0-rc.6 41567
+     \b
+        $ for imagestream: elliott -g openshift-1 verify-payload 4.1-art-assembly-rc.6 41567
 
     """
     runtime.initialize()
@@ -241,7 +240,9 @@ written out to summary_results.json.
             missing_in_errata[image] = imagevr
             click.echo(f"{imagevr} in payload not found in advisory")
         elif image in all_advisory_nvrs and vr != all_advisory_nvrs[image]:
-            click.echo(f"{image} from payload has version {vr} which does not match {all_advisory_nvrs[image]} from advisory")
+            click.echo(
+                f"{image} from payload has version {vr} which does not match {all_advisory_nvrs[image]} from advisory"
+            )
             payload_doesnt_match_errata[image] = {
                 'payload': vr,
                 'errata': all_advisory_nvrs[image],
@@ -291,6 +292,7 @@ written out to summary_results.json.
     green_prefix("Wrote out summary results: ")
     click.echo("summary_results.json")
 
+
 #
 # Poll for rpm-signed state change
 # poll-signed
@@ -298,50 +300,50 @@ written out to summary_results.json.
 
 
 @cli.command("poll-signed", short_help="Poll for RPM build 'signed' status")
-@click.option("--minutes", "-m", required=False,
-              default=15, type=int,
-              help="How long to poll before quitting")
-@click.option("--advisory", "-a",
-              type=int, metavar='ADVISORY',
-              help="Advisory to watch")
+@click.option("--minutes", "-m", required=False, default=15, type=int, help="How long to poll before quitting")
+@click.option("--advisory", "-a", type=int, metavar='ADVISORY', help="Advisory to watch")
 @use_default_advisory_option
-@click.option("--noop", "--dry-run",
-              required=False,
-              default=False, is_flag=True,
-              help="Don't actually poll, just print the signed status of each build")
+@click.option(
+    "--noop",
+    "--dry-run",
+    required=False,
+    default=False,
+    is_flag=True,
+    help="Don't actually poll, just print the signed status of each build",
+)
 @pass_runtime
 def poll_signed(runtime, minutes, advisory, default_advisory_type, noop):
     """Poll for the signed-status of RPM builds attached to
-ADVISORY. Returns rc=0 when all builds have been signed. Returns non-0
-after MINUTES have passed and all builds have not been signed. This
-non-0 return code is the number of unsigned builds remaining. All
-builds must show 'signed' for this command to succeed.
+    ADVISORY. Returns rc=0 when all builds have been signed. Returns non-0
+    after MINUTES have passed and all builds have not been signed. This
+    non-0 return code is the number of unsigned builds remaining. All
+    builds must show 'signed' for this command to succeed.
 
-    NOTE: The two advisory options are mutually exclusive.
+        NOTE: The two advisory options are mutually exclusive.
 
-For testing in pipeline scripts this sub-command accepts a --noop
-option. When --noop is used the value of --minutes is irrelevant. This
-command will print out the signed state of all attached builds and
-then exit with rc=0 if all builds are signed and non-0 if builds are
-still unsigned. In the non-0 case the return code is the number of
-unsigned builds.
+    For testing in pipeline scripts this sub-command accepts a --noop
+    option. When --noop is used the value of --minutes is irrelevant. This
+    command will print out the signed state of all attached builds and
+    then exit with rc=0 if all builds are signed and non-0 if builds are
+    still unsigned. In the non-0 case the return code is the number of
+    unsigned builds.
 
-    Wait 15 minutes for the default 4.2 advisory to show all RPMS have
-    been signed:
+        Wait 15 minutes for the default 4.2 advisory to show all RPMS have
+        been signed:
 
-    $ elliott -g openshift-4.2 poll-signed --use-default-advisory rpm
+        $ elliott -g openshift-4.2 poll-signed --use-default-advisory rpm
 
-    Wait 5 mintes for the provided 4.2 advisory to show all RPMs have
-    been signed:
+        Wait 5 mintes for the provided 4.2 advisory to show all RPMs have
+        been signed:
 
-    $ elliott -g openshift-4.2 poll-signed -m 5 --advisory 123456
+        $ elliott -g openshift-4.2 poll-signed -m 5 --advisory 123456
 
-    Print the signed status of all attached builds, exit
-    immediately. Return code is the number of unsigned builds.
+        Print the signed status of all attached builds, exit
+        immediately. Return code is the number of unsigned builds.
 
-\b
-    $ elliott -g openshift-4.2 poll-signed --noop --use-default-advisory rpm
-"""
+    \b
+        $ elliott -g openshift-4.2 poll-signed --noop --use-default-advisory rpm
+    """
     if not (bool(advisory) ^ bool(default_advisory_type)):
         raise click.BadParameter("Use only one of --use-default-advisory or --advisory")
 
@@ -365,18 +367,14 @@ unsigned builds.
         click.echo("{} builds to check".format(len(all_builds)))
         start_time = datetime.datetime.now()
         while datetime.datetime.now() - start_time < datetime.timedelta(minutes=minutes):
-            pbar_header("Getting build signatures: ",
-                        "Should be pretty quick",
-                        all_builds)
+            pbar_header("Getting build signatures: ", "Should be pretty quick", all_builds)
             pool = ThreadPool(cpu_count())
             # Look up builds concurrently
             click.secho("[", nl=False)
 
             build_sigs = pool.map(
-                lambda build: progress_func(
-                    lambda: elliottlib.errata.build_signed(build),
-                    '*'),
-                all_builds)
+                lambda build: progress_func(lambda: elliottlib.errata.build_signed(build), '*'), all_builds
+            )
             # Wait for results
             pool.close()
             pool.join()

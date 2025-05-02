@@ -4,8 +4,7 @@ from errata_tool import ErrataException
 
 from artcommonlib import logutil
 from elliottlib import Runtime, errata
-from elliottlib.cli.common import (cli, find_default_advisory,
-                                   use_default_advisory_option)
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.util import ensure_erratatool_auth
 
 
@@ -14,20 +13,16 @@ LOGGER = logutil.get_logger(__name__)
 
 @cli.command('remove-builds', short_help='Remove builds from ADVISORY')
 @click.argument('builds', metavar='<NVR_OR_ID>', nargs=-1, required=False, default=None)
-@click.option('--advisory', '-a', 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help='Remove found builds from ADVISORY')
+@click.option('--advisory', '-a', 'advisory_id', type=int, metavar='ADVISORY', help='Remove found builds from ADVISORY')
 @use_default_advisory_option
-@click.option("--all", "clean",
-              required=False,
-              default=False, is_flag=True,
-              help="Remove all builds attached to the Advisory")
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
 @click.option(
-    "--builds-file", "-f", "builds_file",
+    "--all", "clean", required=False, default=False, is_flag=True, help="Remove all builds attached to the Advisory"
+)
+@click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
+@click.option(
+    "--builds-file",
+    "-f",
+    "builds_file",
     help="File to read builds from, `-` to read from STDIN.",
     type=click.File("rt"),
 )
@@ -35,24 +30,24 @@ LOGGER = logutil.get_logger(__name__)
 def remove_builds_cli(runtime: Runtime, builds, advisory_id, default_advisory_type, clean, noop, builds_file):
     """Remove builds (image or rpm) from ADVISORY.
 
-    Remove builds that are attached to an advisory:
+        Remove builds that are attached to an advisory:
 
-\b
-    $ elliott --group openshift-4.14 remove-builds
-    openshift-enterprise-deployer-container-v4.14.0-202401121302.p0.g286cfa5.assembly.stream
-    ose-installer-container-v4.14.0-202401121302.p0.ga57f47f.assembly.stream --advisory 1234123
+    \b
+        $ elliott --group openshift-4.14 remove-builds
+        openshift-enterprise-deployer-container-v4.14.0-202401121302.p0.g286cfa5.assembly.stream
+        ose-installer-container-v4.14.0-202401121302.p0.ga57f47f.assembly.stream --advisory 1234123
 
-    Remove build from default rpm advisory
+        Remove build from default rpm advisory
 
-\b
-    $ elliott --group openshift-4.14 --assembly 4.14.9 remove-builds fmt-10.2.1-1.el9 --use-default-advisory rpm
+    \b
+        $ elliott --group openshift-4.14 --assembly 4.14.9 remove-builds fmt-10.2.1-1.el9 --use-default-advisory rpm
 
-    Remove all builds from default image advisory
+        Remove all builds from default image advisory
 
-\b
-    $ elliott --group openshift-4.14 --assembly 4.14.9 remove-builds --all --use-default-advisory image
+    \b
+        $ elliott --group openshift-4.14 --assembly 4.14.9 remove-builds --all --use-default-advisory image
 
-"""
+    """
     if bool(builds) and bool(builds_file):
         raise click.BadParameter("Use only one of --build or --builds-file")
 

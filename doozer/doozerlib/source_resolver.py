@@ -24,7 +24,8 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class SourceResolution:
-    """ A dataclass for caching the result of SourceResolver.resolve_source."""
+    """A dataclass for caching the result of SourceResolver.resolve_source."""
+
     source_path: str
     """ The local path to the source code repository. """
     url: str
@@ -38,7 +39,7 @@ class SourceResolution:
 
     @property
     def commit_hash_short(self):
-        """ The short commit hash of the current HEAD. """
+        """The short commit hash of the current HEAD."""
         return self.commit_hash[:7]
 
     committer_date: datetime
@@ -54,13 +55,20 @@ class SourceResolution:
 
 
 class SourceResolver:
-    """ A class for resolving source code repositories.
-    """
+    """A class for resolving source code repositories."""
 
-    def __init__(self, sources_base_dir: str, cache_dir: Optional[str], group_config: Model,
-                 local=False, upcycle=False, stage=False,
-                 record_logger: Optional[RecordLogger] = None, state_holder: Optional[Dict[str, Any]] = None) -> None:
-        """ Initialize a new SourceResolver instance.
+    def __init__(
+        self,
+        sources_base_dir: str,
+        cache_dir: Optional[str],
+        group_config: Model,
+        local=False,
+        upcycle=False,
+        stage=False,
+        record_logger: Optional[RecordLogger] = None,
+        state_holder: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Initialize a new SourceResolver instance.
         :param sources_base_dir: The base directory where source code repositories will be cloned.
         :param cache_dir: The base directory where source code repositories will be cached.
         :param group_config: The group configuration.
@@ -83,7 +91,7 @@ class SourceResolver:
         self._state_holder = state_holder
 
     def resolve_source(self, meta: 'Metadata', no_clone: bool = False) -> SourceResolution:
-        """ Resolve the source code repository for the specified metadata.
+        """Resolve the source code repository for the specified metadata.
         :param meta: The metadata to resolve the source code repository for.
         :param no_clone: If True, the source code repository will not be cloned. Only the source resolution object will be returned.
         :return: A SourceResolution instance containing the information of the resolved source code repository.
@@ -154,7 +162,9 @@ class SourceResolver:
                 shutil.rmtree(source_dir)
 
             if meta.prevent_cloning:
-                raise IOError(f'Attempt to clone upstream {meta.distgit_key} after cloning disabled; a regression has been introduced.')
+                raise IOError(
+                    f'Attempt to clone upstream {meta.distgit_key} after cloning disabled; a regression has been introduced.'
+                )
 
             use_source_fallback_branch = cast(str, self._group_config.use_source_fallback_branch or "yes")
             clone_branch, _ = self.detect_remote_source_branch(source_details, self.stage, use_source_fallback_branch)
@@ -162,7 +172,9 @@ class SourceResolver:
             url = str(source_details["url"])
             has_public_upstream = False
             if self._group_config.public_upstreams:
-                meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
+                meta.public_upstream_url, meta.public_upstream_branch, has_public_upstream = self.get_public_upstream(
+                    url, self._group_config.public_upstreams
+                )
 
             if no_clone:
                 https_url = art_util.convert_remote_git_to_https(url)
@@ -187,7 +199,9 @@ class SourceResolver:
                 else:
                     gitargs = ['--branch', clone_branch]
 
-                git_clone(url, source_dir, gitargs=gitargs, set_env=constants.GIT_NO_PROMPTS, git_cache_dir=self.cache_dir)
+                git_clone(
+                    url, source_dir, gitargs=gitargs, set_env=constants.GIT_NO_PROMPTS, git_cache_dir=self.cache_dir
+                )
 
                 if self.is_branch_commit_hash(branch=clone_branch):
                     with exectools.Dir(source_dir):
@@ -203,7 +217,9 @@ class SourceResolver:
 
                 # fetch public upstream source
                 if has_public_upstream:
-                    self.setup_and_fetch_public_upstream_source(meta.public_upstream_url, meta.public_upstream_branch or clone_branch, source_dir)
+                    self.setup_and_fetch_public_upstream_source(
+                        meta.public_upstream_url, meta.public_upstream_branch or clone_branch, source_dir
+                    )
 
             except IOError as e:
                 LOGGER.info("Unable to checkout branch {}: {}".format(clone_branch, str(e)))
@@ -216,10 +232,10 @@ class SourceResolver:
             return self.source_resolutions[alias]
 
     @staticmethod
-    def detect_remote_source_branch(source_details: Dict[str, Any],
-                                    stage: bool,
-                                    use_source_fallback_branch: str = "yes") -> Tuple[str, str]:
-        """ Find a configured source branch that exists, or raise DoozerFatalError.
+    def detect_remote_source_branch(
+        source_details: Dict[str, Any], stage: bool, use_source_fallback_branch: str = "yes"
+    ) -> Tuple[str, str]:
+        """Find a configured source branch that exists, or raise DoozerFatalError.
 
         :param source_details: The source details from the metadata config.
         :param stage: If True, the stage branch will be used instead of the target branch.
@@ -238,7 +254,9 @@ class SourceResolver:
             result = SourceResolver._get_remote_branch_ref(git_url, stage_branch)
             if result:
                 return stage_branch, result
-            raise IOError('--stage option specified and no stage branch named "{}" exists for {}'.format(stage_branch, git_url))
+            raise IOError(
+                '--stage option specified and no stage branch named "{}" exists for {}'.format(stage_branch, git_url)
+            )
 
         branch = branches["target"]  # This is a misnomer as it can also be a git commit hash an not just a branch name.
         fallback_branch = branches.get("fallback", None)
@@ -277,7 +295,7 @@ class SourceResolver:
         """
         if len(branch) >= 7:  # The hash must be sufficiently unique
             try:
-                int(branch, 16)   # A hash must be a valid hex number
+                int(branch, 16)  # A hash must be a valid hex number
                 return True
             except ValueError:
                 pass
@@ -312,8 +330,7 @@ class SourceResolver:
         with exectools.Dir(path):
             url = None
             origin_url = "?"
-            rc1, out_origin, err_origin = exectools.cmd_gather(
-                ["git", "config", "--get", "remote.origin.url"])
+            rc1, out_origin, err_origin = exectools.cmd_gather(["git", "config", "--get", "remote.origin.url"])
             if rc1 == 0:
                 url = out_origin.strip()
                 # Usually something like "git@github.com:openshift/origin.git"
@@ -326,8 +343,7 @@ class SourceResolver:
                 LOGGER.error("Failed acquiring origin url for source alias %s: %s" % (alias, err_origin))
 
             branch = None
-            rc2, out_branch, err_branch = exectools.cmd_gather(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"])
+            rc2, out_branch, err_branch = exectools.cmd_gather(["git", "rev-parse", "--abbrev-ref", "HEAD"])
             if rc2 == 0:
                 branch = out_branch.strip()
             else:
@@ -349,7 +365,9 @@ class SourceResolver:
             public_upstream_branch = branch
             if branch != 'HEAD' and self._group_config.public_upstreams:
                 # If branch == HEAD, our source is a detached HEAD.
-                public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(url, self._group_config.public_upstreams)
+                public_upstream_url, public_upstream_branch_override, has_public_upstream = self.get_public_upstream(
+                    url, self._group_config.public_upstreams
+                )
                 if public_upstream_branch_override:
                     public_upstream_branch = public_upstream_branch_override
 
@@ -367,7 +385,9 @@ class SourceResolver:
             )
             self.source_resolutions[alias] = resolution
             if self._record_logger:
-                self._record_logger.add_record("source_alias", alias=alias, origin_url=origin_url, branch=branch or '?', path=path)
+                self._record_logger.add_record(
+                    "source_alias", alias=alias, origin_url=origin_url, branch=branch or '?', path=path
+                )
             if self._state_holder is not None:
                 self._state_holder[alias] = {
                     'url': origin_url,
@@ -398,7 +418,6 @@ class SourceResolver:
         remote_https = art_util.convert_remote_git_to_https(remote_git)
 
         if public_upstreams:
-
             # We prefer the longest match in the mapping, so iterate through the entire
             # map and keep track of the longest matching private remote.
             target_priv_prefix = None
@@ -409,7 +428,9 @@ class SourceResolver:
                 pub = upstream["public"]
                 # priv can be a full repo, or an organization (e.g. git@github.com:openshift)
                 # It will be treated as a prefix to be replaced
-                https_priv_prefix = art_util.convert_remote_git_to_https(priv)  # Normalize whatever is specified in group.yaml
+                https_priv_prefix = art_util.convert_remote_git_to_https(
+                    priv
+                )  # Normalize whatever is specified in group.yaml
                 https_pub_prefix = art_util.convert_remote_git_to_https(pub)
                 if remote_https.startswith(f'{https_priv_prefix}/') or remote_https == https_priv_prefix:
                     # If we have not set the prefix yet, or if it is longer than the current contender
@@ -419,7 +440,7 @@ class SourceResolver:
                         target_pub_branch = upstream.get("public_branch")
 
             if target_priv_prefix:
-                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix):]}', target_pub_branch, True
+                return f'{target_pub_prefix}{remote_https[len(target_priv_prefix) :]}', target_pub_branch, True
 
         return remote_https, None, False
 
@@ -436,9 +457,14 @@ class SourceResolver:
         if 'public_upstream' not in out.strip().split():
             exectools.cmd_assert(["git", "-C", source_dir, "remote", "add", "--", "public_upstream", public_source_url])
         else:
-            exectools.cmd_assert(["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url])
-        exectools.cmd_assert(["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch], retries=3,
-                             set_env=constants.GIT_NO_PROMPTS)
+            exectools.cmd_assert(
+                ["git", "-C", source_dir, "remote", "set-url", "--", "public_upstream", public_source_url]
+            )
+        exectools.cmd_assert(
+            ["git", "-C", source_dir, "fetch", "--", "public_upstream", public_upstream_branch],
+            retries=3,
+            set_env=constants.GIT_NO_PROMPTS,
+        )
 
     @staticmethod
     def get_source_dir(source: SourceResolution, metadata: 'Metadata', check=True) -> Path:

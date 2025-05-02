@@ -13,7 +13,6 @@ class TestPLRUrl(TestCase):
                 "labels": {
                     "appstudio.openshift.io/application": "openshift-4-19",
                 },
-
             },
         }
         actual = KonfluxClient.build_pipeline_url(pipeline_run)

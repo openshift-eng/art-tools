@@ -14,9 +14,7 @@ from pyartcd import constants, jenkins
 from pyartcd.cli import cli, click_coroutine, pass_runtime
 from pyartcd.runtime import Runtime
 from elliottlib import util as elliottutil
-from pyartcd.pipelines.update_golang import (is_latest_and_available,
-                                             extract_and_validate_golang_nvrs,
-                                             move_golang_bugs)
+from pyartcd.pipelines.update_golang import is_latest_and_available, extract_and_validate_golang_nvrs, move_golang_bugs
 
 try:
     from specfile import Specfile  # Linux only
@@ -27,8 +25,16 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RebuildGolangRPMsPipeline:
-    def __init__(self, runtime: Runtime, ocp_version: str, art_jira: str, cves: List[str],
-                 go_nvrs: List[str], force: bool = False, rpms: List[str] = None):
+    def __init__(
+        self,
+        runtime: Runtime,
+        ocp_version: str,
+        art_jira: str,
+        cves: List[str],
+        go_nvrs: List[str],
+        force: bool = False,
+        rpms: List[str] = None,
+    ):
         if "Specfile" not in globals():
             raise RuntimeError("This pipeline requires the 'specfile' module, which is only available on Linux")
         self.runtime = runtime
@@ -95,11 +101,15 @@ class RebuildGolangRPMsPipeline:
                 non_art_rpms_for_rebuild[el_v].extend([n[0] for n in nvrs if n[0] not in art_built_rpms])
 
             if non_art_rpms_for_rebuild.get(el_v):
-                _LOGGER.info(f'These non-ART rhel{el_v} rpms are on previous golang versions, they need to be '
-                             f'rebuilt: {sorted(non_art_rpms_for_rebuild[el_v])}')
+                _LOGGER.info(
+                    f'These non-ART rhel{el_v} rpms are on previous golang versions, they need to be '
+                    f'rebuilt: {sorted(non_art_rpms_for_rebuild[el_v])}'
+                )
 
         if art_rpms_for_rebuild:
-            _LOGGER.info(f'These ART rpms are on previous golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}')
+            _LOGGER.info(
+                f'These ART rpms are on previous golang versions, they need to be rebuilt: {sorted(art_rpms_for_rebuild)}'
+            )
             self.rebuild_art_rpms(art_rpms_for_rebuild)
 
         if not non_art_rpms_for_rebuild:
@@ -118,11 +128,14 @@ class RebuildGolangRPMsPipeline:
             email = "aos-team-art@redhat.com"
         _LOGGER.info(f"Will use author={author} email={email} for bump commit message")
 
-        results = await asyncio.gather(*[
-            self.bump_and_rebuild_rpm(rpm, el_v, author, email)
-            for el_v, rpms in non_art_rpms_for_rebuild.items()
-            for rpm in rpms
-        ], return_exceptions=True)
+        results = await asyncio.gather(
+            *[
+                self.bump_and_rebuild_rpm(rpm, el_v, author, email)
+                for el_v, rpms in non_art_rpms_for_rebuild.items()
+                for rpm in rpms
+            ],
+            return_exceptions=True,
+        )
         list_of_rpms = [rpm for el_v, rpms in non_art_rpms_for_rebuild.items() for rpm in rpms]
         failed_rpms = [rpm for rpm, result in zip(list_of_rpms, results) if isinstance(result, Exception)]
         if failed_rpms:
@@ -156,9 +169,11 @@ class RebuildGolangRPMsPipeline:
         return [c['name'].rstrip('.yml') for c in content if c['name'].endswith('.yml')]
 
     def rebuild_art_rpms(self, rpms):
-        _LOGGER.info(f"Trigger job at {constants.JENKINS_UI_URL}/job/aos-cd-builds/job/build%252Focp4/build "
-                     f"with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
-                     f"BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}")
+        _LOGGER.info(
+            f"Trigger job at {constants.JENKINS_UI_URL}/job/aos-cd-builds/job/build%252Focp4/build "
+            f"with params BUILD_VERSION={self.ocp_version} ASSEMBLY=stream "
+            f"BUILD_IMAGES=none BUILD_RPMS=only RPM_LIST={','.join(rpms)}"
+        )
         # jenkins.start_ocp4(
         #     build_version=self.ocp_version,
         #     assembly='stream',
@@ -260,17 +275,21 @@ class RebuildGolangRPMsPipeline:
 @cli.command('rebuild-golang-rpms')
 @click.option('--ocp-version', required=True, help='OCP version to rebuild golang rpms for')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
-@click.option('--cves', help='CVE-IDs that are confirmed to be fixed with given nvrs (comma separated) e.g. CVE-2024-1234')
+@click.option(
+    '--cves', help='CVE-IDs that are confirmed to be fixed with given nvrs (comma separated) e.g. CVE-2024-1234'
+)
 @click.option('--force', help='Force rebuild rpms even if they are on given golang', is_flag=True)
 @click.option('--rpms', help='Only consider these rpm(s) for rebuild')
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
 @pass_runtime
 @click_coroutine
-async def rebuild_golang_rpms(runtime: Runtime, ocp_version: str, art_jira: str, cves: str,
-                              force: bool, rpms: str, go_nvrs: List[str]):
+async def rebuild_golang_rpms(
+    runtime: Runtime, ocp_version: str, art_jira: str, cves: str, force: bool, rpms: str, go_nvrs: List[str]
+):
     if rpms:
         rpms = rpms.split(',')
     if cves:
         cves = cves.split(',')
-    await RebuildGolangRPMsPipeline(runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves,
-                                    force=force, rpms=rpms, go_nvrs=go_nvrs).run()
+    await RebuildGolangRPMsPipeline(
+        runtime, ocp_version=ocp_version, art_jira=art_jira, cves=cves, force=force, rpms=rpms, go_nvrs=go_nvrs
+    ).run()

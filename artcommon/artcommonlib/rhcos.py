@@ -8,10 +8,7 @@ from artcommonlib.runtime import GroupRuntime
 # https://github.com/openshift/machine-config-operator/blob/master/docs/OSUpgrades.md
 # But with OCP 4.12 this changed, see
 # https://github.com/coreos/enhancements/blob/main/os/coreos-layering.md
-default_primary_container = dict(
-    name="machine-os-content",
-    build_metadata_key="oscontainer",
-    primary=True)
+default_primary_container = dict(name="machine-os-content", build_metadata_key="oscontainer", primary=True)
 
 logger = logutil.get_logger(__name__)
 
@@ -21,6 +18,7 @@ class RhcosMissingContainerException(Exception):
     Thrown when group.yml configuration expects an RHCOS container but it is
     not available as specified in the RHCOS metadata.
     """
+
     pass
 
 
@@ -67,7 +65,8 @@ def get_container_pullspec(build_meta: dict, container_conf: Model) -> str:
     key = container_conf.build_metadata_key
     if key not in build_meta:
         raise RhcosMissingContainerException(
-            f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata")
+            f"RHCOS build {build_meta['buildid']} has no '{key}' attribute in its metadata"
+        )
 
     container = build_meta[key]
 

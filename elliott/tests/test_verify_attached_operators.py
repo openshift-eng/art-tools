@@ -9,18 +9,23 @@ from elliottlib.exceptions import BrewBuildException
 
 
 class TestVerifyAttachedOperators(unittest.TestCase):
-
     def setUp(self):
         self.respath = Path(os.path.dirname(__file__), 'resources')
 
     @patch("artcommonlib.exectools.cmd_assert", autospec=True)
     def test_nvr_for_operand_pullspec(self, mock_cmd):
         runtime = MagicMock()
-        img_info = dict(config=dict(config=dict(Labels={
-            "com.redhat.component": "csi-provisioner-container",
-            "release": "42",
-            "version": "v4.9.0",
-        })))
+        img_info = dict(
+            config=dict(
+                config=dict(
+                    Labels={
+                        "com.redhat.component": "csi-provisioner-container",
+                        "release": "42",
+                        "version": "v4.9.0",
+                    }
+                )
+            )
+        )
         mock_cmd.return_value = (json.dumps(img_info), "")
 
         self.assertEqual(
@@ -50,46 +55,65 @@ class TestVerifyAttachedOperators(unittest.TestCase):
     @patch("elliottlib.cli.verify_attached_operators_cli.red_print")  # suppress output
     def test_validate_csvs(self, mock_red_print):
         bundles = [
-            dict(nvr="spam", csv=dict(
-                metadata={"name": "spam.v4-202303240327"},
-                spec={"version": "v4.12.0-202303240327"},
-            )),
-            dict(nvr="eggs", csv=dict(
-                metadata={"name": "eggs.v4-notimestamp"},
-                spec={"version": "v4.12.0-202303240327"},
-            )),
-            dict(nvr="baked-beans", csv=dict(
-                metadata={"name": "bakedbeans.v4-202303240327"},
-            )),
+            dict(
+                nvr="spam",
+                csv=dict(
+                    metadata={"name": "spam.v4-202303240327"},
+                    spec={"version": "v4.12.0-202303240327"},
+                ),
+            ),
+            dict(
+                nvr="eggs",
+                csv=dict(
+                    metadata={"name": "eggs.v4-notimestamp"},
+                    spec={"version": "v4.12.0-202303240327"},
+                ),
+            ),
+            dict(
+                nvr="baked-beans",
+                csv=dict(
+                    metadata={"name": "bakedbeans.v4-202303240327"},
+                ),
+            ),
         ]
         self.assertEqual({"eggs", "baked-beans"}, vaocli._validate_csvs(bundles))
 
     @patch("elliottlib.brew.get_brew_build", autospec=True)
     def test_get_attached_advisory_ids(self, mock_gbb):
-        mock_gbb.return_value = MagicMock(all_errata=[
-            {'id': 42, 'name': 'RHSA-2022:7400', 'status': 'DROPPED_NO_SHIP'},
-            {'id': 104603, 'name': 'RHSA-2022:7401', 'status': 'SHIPPED_LIVE'},
-        ])
+        mock_gbb.return_value = MagicMock(
+            all_errata=[
+                {'id': 42, 'name': 'RHSA-2022:7400', 'status': 'DROPPED_NO_SHIP'},
+                {'id': 104603, 'name': 'RHSA-2022:7401', 'status': 'SHIPPED_LIVE'},
+            ]
+        )
         self.assertEqual({104603}, vaocli._get_attached_advisory_ids("nvr"), "contains only shipped")
 
     @patch("elliottlib.errata.get_cached_image_cdns", autospec=True)
     def test_get_cdn_repos(self, mock_gci_cdns):
         mock_gci_cdns.return_value = {
-            'nvr1': {'docker': {'target': {
-                'external_repos': {
-                    'openshift4/ose-metallb-operator': "{metadata}",
-                    'openshift4/ose-metallb-rhel8-operator': "{metadata}",
-                },
-                'repos': {  # not actually used, just for context
-                    'redhat-openshift4-ose-metallb-operator': "{metadata}",
-                    'redhat-openshift4-ose-metallb-rhel8-operator': "{metadata}",
-                },
-            }}},
-            'nvr2': {'docker': {'target': {
-                'external_repos': {
-                    'openshift4/ose-some-other-operator': "{metadata}",
-                },
-            }}},
+            'nvr1': {
+                'docker': {
+                    'target': {
+                        'external_repos': {
+                            'openshift4/ose-metallb-operator': "{metadata}",
+                            'openshift4/ose-metallb-rhel8-operator': "{metadata}",
+                        },
+                        'repos': {  # not actually used, just for context
+                            'redhat-openshift4-ose-metallb-operator': "{metadata}",
+                            'redhat-openshift4-ose-metallb-rhel8-operator': "{metadata}",
+                        },
+                    }
+                }
+            },
+            'nvr2': {
+                'docker': {
+                    'target': {
+                        'external_repos': {
+                            'openshift4/ose-some-other-operator': "{metadata}",
+                        },
+                    }
+                }
+            },
         }
         self.assertEqual(
             {'openshift4/ose-metallb-operator', 'openshift4/ose-metallb-rhel8-operator'},
@@ -141,8 +165,8 @@ class TestVerifyAttachedOperators(unittest.TestCase):
         # when the CDN does match
         mock_gcdnr.return_value = {"openshift4/ose-kube-rbac-proxy"}
         self.assertFalse(
-            vaocli._missing_references(None, bundles, {"sha256:feedface"}, False, False)[0],
-            "should succeed")
+            vaocli._missing_references(None, bundles, {"sha256:feedface"}, False, False)[0], "should succeed"
+        )
         self.assertIn("shipped/shipping", out.pop())
 
         # ... but we omit advisories that weren't specified
@@ -150,9 +174,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
         self.assertIn("only attached to separate advisory {42}", out.pop())
 
         # when not excluding separate advisories, it is finally found
-        self.assertFalse(
-            vaocli._missing_references(None, bundles, set(), False, False)[0],
-            "when not omitted")
+        self.assertFalse(vaocli._missing_references(None, bundles, set(), False, False)[0], "when not omitted")
         self.assertIn("attached to separate advisory {42}", out.pop())
 
         # when looking up the operand NVR in errata-tool fails

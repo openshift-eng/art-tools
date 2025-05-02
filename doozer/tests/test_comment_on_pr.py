@@ -11,9 +11,11 @@ class TestCommentOnPr(unittest.TestCase):
         self.nvr = "nvr"
         self.build_id = "build_id"
         self.distgit_name = "distgit_name"
-        self.comment = '**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build ' \
-                       '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n' \
-                       'All builds following this will include this PR.'
+        self.comment = (
+            '**[ART PR BUILD NOTIFIER]**\n\nDistgit: distgit_name\nThis PR has been included in build '
+            '[nvr](https://brewweb.engineering.redhat.com/brew/buildinfo?buildID=build_id).\n'
+            'All builds following this will include this PR.'
+        )
 
     def test_list_comments(self):
         pr_no = 1
@@ -68,9 +70,10 @@ class TestCommentOnPr(unittest.TestCase):
         api_mock = MagicMock()
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
         comment_on_pr.gh_client = api_mock
-        api_mock.repos.list_pull_requests_associated_with_commit.return_value = [{"html_url": "test_url", "number": 1},
-                                                                                 {"html_url": "test_url_2",
-                                                                                  "number": 2}]
+        api_mock.repos.list_pull_requests_associated_with_commit.return_value = [
+            {"html_url": "test_url", "number": 1},
+            {"html_url": "test_url_2", "number": 2},
+        ]
         with self.assertRaises(Exception):
             comment_on_pr.set_pr_from_commit()
 

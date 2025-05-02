@@ -6,17 +6,23 @@ from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import click
 from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBuildRecord, KonfluxBundleBuildRecord,
-    KonfluxFbcBuildRecord)
+    KonfluxBuildOutcome,
+    KonfluxBuildRecord,
+    KonfluxBundleBuildRecord,
+    KonfluxFbcBuildRecord,
+)
 from artcommonlib.konflux.konflux_db import KonfluxDb
 
 from doozerlib import constants, opm
-from doozerlib.backend.konflux_fbc import (KonfluxFbcBuilder,
-                                           KonfluxFbcImporter,
-                                           KonfluxFbcRebaser)
-from doozerlib.cli import (cli, click_coroutine, option_commit_message,
-                           option_push, pass_runtime,
-                           validate_semver_major_minor_patch)
+from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder, KonfluxFbcImporter, KonfluxFbcRebaser
+from doozerlib.cli import (
+    cli,
+    click_coroutine,
+    option_commit_message,
+    option_push,
+    pass_runtime,
+    validate_semver_major_minor_patch,
+)
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.image import ImageMetadata
 from doozerlib.runtime import Runtime
@@ -26,8 +32,17 @@ yaml = opm.yaml
 
 
 class FbcImportCli:
-    def __init__(self, runtime: Runtime, index_image: str | None, keep_templates: bool, push: bool,
-                 registry_auth: Optional[str], fbc_repo: str, message: str, dest_dir: str | None):
+    def __init__(
+        self,
+        runtime: Runtime,
+        index_image: str | None,
+        keep_templates: bool,
+        push: bool,
+        registry_auth: Optional[str],
+        fbc_repo: str,
+        message: str,
+        dest_dir: str | None,
+    ):
         self.runtime = runtime
         self.index_image = index_image
         self.keep_templates = keep_templates
@@ -35,10 +50,12 @@ class FbcImportCli:
         self.registry_auth = registry_auth
         self.fbc_repo = fbc_repo or constants.ART_FBC_GIT_REPO
         self.message = message
-        self.dest_dir = Path(dest_dir) if dest_dir else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES)
+        self.dest_dir = (
+            Path(dest_dir) if dest_dir else Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES)
+        )
 
     async def run(self):
-        """ Run the FBC import process
+        """Run the FBC import process
         This function implements the main logic of the FBC import process
         following https://github.com/konflux-ci/olm-operator-konflux-sample/blob/main/docs/konflux-onboarding.md#create-the-fbc-in-the-git-repository.
         """
@@ -46,7 +63,9 @@ class FbcImportCli:
         try:
             await opm.verify_opm()
         except (IOError, FileNotFoundError):
-            LOGGER.error("Please install the latest opm cli binary from https://github.com/operator-framework/operator-registry/releases")
+            LOGGER.error(
+                "Please install the latest opm cli binary from https://github.com/operator-framework/operator-registry/releases"
+            )
             raise
 
         # Initialize runtime
@@ -55,11 +74,17 @@ class FbcImportCli:
         assert runtime.group_config is not None, "group_config is not loaded; Doozer bug?"
         if not runtime.assembly:
             raise ValueError("Assemblies feature is disabled for this group. This is no longer supported.")
-        if not runtime.group_config.vars or "MAJOR" not in runtime.group_config.vars or "MINOR" not in runtime.group_config.vars:
+        if (
+            not runtime.group_config.vars
+            or "MAJOR" not in runtime.group_config.vars
+            or "MINOR" not in runtime.group_config.vars
+        ):
             raise ValueError("MAJOR and MINOR must be set in group vars.")
         major, minor = int(runtime.group_config.vars.MAJOR), int(runtime.group_config.vars.MINOR)
 
-        operator_metadatas = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
+        operator_metadatas = [
+            operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator
+        ]
         if not operator_metadatas:
             raise ValueError("No operator images loaded in group")
         auth = None
@@ -94,17 +119,35 @@ class FbcImportCli:
 
 
 @cli.command("beta:fbc:import", short_help="Create FBC by importing from the provided index image")
-@click.option("--from-index", metavar='INDEX_IMAGE', help="The index image to import from. If not set, the production index image will be used.")
-@click.option("--keep-templates", is_flag=True, help="Keep the generated templates. If not set, the templates will be deleted after rendering the final catalogs.")
+@click.option(
+    "--from-index",
+    metavar='INDEX_IMAGE',
+    help="The index image to import from. If not set, the production index image will be used.",
+)
+@click.option(
+    "--keep-templates",
+    is_flag=True,
+    help="Keep the generated templates. If not set, the templates will be deleted after rendering the final catalogs.",
+)
 @click.option("--push", is_flag=True, help="Push the generated FBC to the git repository.")
-@click.option("--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO)
+@click.option(
+    "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
+)
 @click.option("--registry-auth", metavar='AUTH', help="The registry authentication file to use for the index image.")
 @option_commit_message
 @click.argument("dest_dir", metavar='DEST_DIR', required=False, default=None)
 @pass_runtime
 @click_coroutine
-async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates: bool, push: bool, fbc_repo: str,
-                     registry_auth: Optional[str], message: str, dest_dir: Optional[str]):
+async def fbc_import(
+    runtime: Runtime,
+    from_index: Optional[str],
+    keep_templates: bool,
+    push: bool,
+    fbc_repo: str,
+    registry_auth: Optional[str],
+    message: str,
+    dest_dir: Optional[str],
+):
     """
     Create an FBC repository by importing from the provided index image
 
@@ -112,21 +155,30 @@ async def fbc_import(runtime: Runtime, from_index: Optional[str], keep_templates
 
     doozer --group=openshift-4.17 beta:fbc:import registry.redhat.io/redhat/redhat-operator-index:v4.17 ./fbc-4.17
     """
-    cli = FbcImportCli(runtime=runtime, index_image=from_index, keep_templates=keep_templates, push=push,
-                       fbc_repo=fbc_repo, registry_auth=registry_auth, message=message, dest_dir=dest_dir)
+    cli = FbcImportCli(
+        runtime=runtime,
+        index_image=from_index,
+        keep_templates=keep_templates,
+        push=push,
+        fbc_repo=fbc_repo,
+        registry_auth=registry_auth,
+        message=message,
+        dest_dir=dest_dir,
+    )
     await cli.run()
 
 
 class FbcRebaseCli:
     def __init__(
-            self,
-            runtime: Runtime,
-            version: str,
-            release: str,
-            commit_message: str,
-            push: bool,
-            fbc_repo: str,
-            operator_nvrs: Tuple[str, ...]):
+        self,
+        runtime: Runtime,
+        version: str,
+        release: str,
+        commit_message: str,
+        push: bool,
+        fbc_repo: str,
+        operator_nvrs: Tuple[str, ...],
+    ):
         self.runtime = runtime
         self.version = version
         self.release = release
@@ -153,7 +205,9 @@ class FbcRebaseCli:
 
         dgk_operator_builds = await self._get_operator_builds()
         bundle_builds = await self._get_bundle_builds(list(dgk_operator_builds.values()), strict=False)
-        not_found = [dgk for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None]
+        not_found = [
+            dgk for dgk, bundle_build in zip(dgk_operator_builds.keys(), bundle_builds) if bundle_build is None
+        ]
         if not_found:
             raise IOError(f"Bundle builds not found for {not_found}. Please build the bundles first.")
         bundle_builds = cast(List[KonfluxBundleBuildRecord], bundle_builds)
@@ -188,7 +242,7 @@ class FbcRebaseCli:
         logger.info("Rebase complete")
 
     async def _get_operator_builds(self):
-        """ Get build records for the given operator nvrs or latest build records for all operators.
+        """Get build records for the given operator nvrs or latest build records for all operators.
 
         :return: A dictionary of operator name to build records.
         """
@@ -214,7 +268,9 @@ class FbcRebaseCli:
             # Get latest build records for all specified operators
             runtime.initialize(mode='images', clone_distgits=False)
             LOGGER.info("Fetching latest operator builds from Konflux DB...")
-            operator_metas: List[ImageMetadata] = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
+            operator_metas: List[ImageMetadata] = [
+                operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator
+            ]
             records = await asyncio.gather(*(metadata.get_latest_build() for metadata in operator_metas))
             not_found = [metadata.distgit_key for metadata, record in zip(operator_metas, records) if record is None]
             if not_found:
@@ -224,19 +280,25 @@ class FbcRebaseCli:
                 dgk_records[metadata.distgit_key] = record
         return dgk_records
 
-    async def _get_bundle_builds(self, operator_builds: Sequence[KonfluxBuildRecord], strict: bool = True) -> List[Optional[KonfluxBundleBuildRecord]]:
-        """ Get bundle build records for the given operator builds.
+    async def _get_bundle_builds(
+        self, operator_builds: Sequence[KonfluxBuildRecord], strict: bool = True
+    ) -> List[Optional[KonfluxBundleBuildRecord]]:
+        """Get bundle build records for the given operator builds.
 
         :param operator_builds: operator builds.
         :return: A list of bundle build records.
         """
         logger = self._logger.getChild("get_bundle_builds")
         logger.info("Fetching bundle builds from Konflux DB...")
-        builds = await asyncio.gather(*(self._get_bundle_build_for(operator_build, strict=strict) for operator_build in operator_builds))
+        builds = await asyncio.gather(
+            *(self._get_bundle_build_for(operator_build, strict=strict) for operator_build in operator_builds)
+        )
         return builds
 
-    async def _get_bundle_build_for(self, operator_build: KonfluxBuildRecord, strict: bool = True) -> Optional[KonfluxBundleBuildRecord]:
-        """ Get bundle build record for the given operator build.
+    async def _get_bundle_build_for(
+        self, operator_build: KonfluxBuildRecord, strict: bool = True
+    ) -> Optional[KonfluxBundleBuildRecord]:
+        """Get bundle build record for the given operator build.
 
         :param operator_build: Operator build record.
         :return: Bundle build record.
@@ -259,12 +321,19 @@ class FbcRebaseCli:
 
 
 @cli.command("beta:fbc:rebase", short_help="Refresh a group's FBC konflux source content")
-@click.option("--version", metavar='VERSION', required=True, callback=validate_semver_major_minor_patch,
-              help="Version string to populate in Dockerfiles.")
+@click.option(
+    "--version",
+    metavar='VERSION',
+    required=True,
+    callback=validate_semver_major_minor_patch,
+    help="Version string to populate in Dockerfiles.",
+)
 @click.option("--release", metavar='RELEASE', required=True, help="Release string to populate in Dockerfiles.")
 @option_commit_message
 @option_push
-@click.option("--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO)
+@click.option(
+    "--fbc-repo", metavar='FBC_REPO', help="The git repository to push the FBC to.", default=constants.ART_FBC_GIT_REPO
+)
 @click.argument('operator_nvrs', nargs=-1, required=False)
 @pass_runtime
 @click_coroutine
@@ -275,7 +344,7 @@ async def fbc_rebase(
     message: str,
     push: bool,
     fbc_repo: str,
-    operator_nvrs: Tuple[str, ...]
+    operator_nvrs: Tuple[str, ...],
 ):
     """
     Refresh a group's FBC source content
@@ -283,15 +352,31 @@ async def fbc_rebase(
     The group's FBC konflux source content will be updated to include OLM bundles of the runtime assembly. The group's Dockerfiles will be
     updated to use the specified version and release.
     """
-    cli = FbcRebaseCli(runtime=runtime, version=version, release=release,
-                       commit_message=message, push=push, fbc_repo=fbc_repo, operator_nvrs=operator_nvrs)
+    cli = FbcRebaseCli(
+        runtime=runtime,
+        version=version,
+        release=release,
+        commit_message=message,
+        push=push,
+        fbc_repo=fbc_repo,
+        operator_nvrs=operator_nvrs,
+    )
     await cli.run()
 
 
 class FbcBuildCli:
-    def __init__(self, runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-                 konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, plr_template: str,
-                 dry_run: bool):
+    def __init__(
+        self,
+        runtime: Runtime,
+        konflux_kubeconfig: Optional[str],
+        konflux_context: Optional[str],
+        konflux_namespace: str,
+        image_repo: str,
+        skip_checks: bool,
+        fbc_repo: str,
+        plr_template: str,
+        dry_run: bool,
+    ):
         self.runtime = runtime
         self.konflux_kubeconfig = konflux_kubeconfig
         self.konflux_context = konflux_context
@@ -307,7 +392,9 @@ class FbcBuildCli:
     async def run(self):
         runtime = self.runtime
         runtime.initialize(mode='images', clone_distgits=False)
-        operator_metas: List[ImageMetadata] = [operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator]
+        operator_metas: List[ImageMetadata] = [
+            operator_meta for operator_meta in runtime.ordered_image_metas() if operator_meta.is_olm_operator
+        ]
         builder = KonfluxFbcBuilder(
             base_dir=Path(runtime.working_dir, constants.WORKING_SUBDIR_KONFLUX_FBC_SOURCES),
             group=runtime.group,
@@ -339,21 +426,54 @@ class FbcBuildCli:
 
 
 @cli.command("beta:fbc:build", short_help="Build the FBC source content")
-@click.option('--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.')
-@click.option('--konflux-context', metavar='CONTEXT', help='The name of the kubeconfig context to use for Konflux cluster connections.')
-@click.option('--konflux-namespace', metavar='NAMESPACE', default=constants.KONFLUX_DEFAULT_NAMESPACE, help='The namespace to use for Konflux cluster connections.')
+@click.option(
+    '--konflux-kubeconfig', metavar='PATH', help='Path to the kubeconfig file to use for Konflux cluster connections.'
+)
+@click.option(
+    '--konflux-context',
+    metavar='CONTEXT',
+    help='The name of the kubeconfig context to use for Konflux cluster connections.',
+)
+@click.option(
+    '--konflux-namespace',
+    metavar='NAMESPACE',
+    default=constants.KONFLUX_DEFAULT_NAMESPACE,
+    help='The namespace to use for Konflux cluster connections.',
+)
 @click.option('--image-repo', default=constants.KONFLUX_DEFAULT_FBC_REPO, help='Push images to the specified repo.')
 @click.option('--skip-checks', default=False, is_flag=True, help='Skip all post build checks')
-@click.option('--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO)
+@click.option(
+    '--fbc-repo', metavar='FBC_REPO', help='The git repository to push the FBC to.', default=constants.ART_FBC_GIT_REPO
+)
 @click.option('--dry-run', default=False, is_flag=True, help='Do not build anything, but only print build operations.')
-@click.option('--plr-template', required=False, default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
-              help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template')
+@click.option(
+    '--plr-template',
+    required=False,
+    default=constants.KONFLUX_DEFAULT_FBC_BUILD_PLR_TEMPLATE_URL,
+    help='Use a custom PipelineRun template to build the FBC fragement. Overrides the default template from openshift-priv/art-konflux-template',
+)
 @pass_runtime
 @click_coroutine
-async def fbc_build(runtime: Runtime, konflux_kubeconfig: Optional[str], konflux_context: Optional[str],
-                    konflux_namespace: str, image_repo: str, skip_checks: bool, fbc_repo: str, dry_run: bool,
-                    plr_template: str):
-    cli = FbcBuildCli(runtime=runtime, konflux_kubeconfig=konflux_kubeconfig, konflux_context=konflux_context,
-                      konflux_namespace=konflux_namespace, image_repo=image_repo, skip_checks=skip_checks,
-                      fbc_repo=fbc_repo, plr_template=plr_template, dry_run=dry_run)
+async def fbc_build(
+    runtime: Runtime,
+    konflux_kubeconfig: Optional[str],
+    konflux_context: Optional[str],
+    konflux_namespace: str,
+    image_repo: str,
+    skip_checks: bool,
+    fbc_repo: str,
+    dry_run: bool,
+    plr_template: str,
+):
+    cli = FbcBuildCli(
+        runtime=runtime,
+        konflux_kubeconfig=konflux_kubeconfig,
+        konflux_context=konflux_context,
+        konflux_namespace=konflux_namespace,
+        image_repo=image_repo,
+        skip_checks=skip_checks,
+        fbc_repo=fbc_repo,
+        plr_template=plr_template,
+        dry_run=dry_run,
+    )
     await cli.run()

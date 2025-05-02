@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import Mock
@@ -47,10 +46,7 @@ class SourceResolverTestCase(TestCase):
         self.assertEqual(("main_branch", "spam"), sr.detect_remote_source_branch(source_details, stage=False))
 
         # got a hit on the fallback branch
-        (flexmock(SourceResolver).
-            should_receive("_get_remote_branch_ref").
-            and_return(None).
-            and_return("eggs"))
+        (flexmock(SourceResolver).should_receive("_get_remote_branch_ref").and_return(None).and_return("eggs"))
         self.assertEqual(("fallback_branch", "eggs"), sr.detect_remote_source_branch(source_details, stage=False))
 
         # no target or fallback branch
@@ -74,4 +70,6 @@ class SourceResolverTestCase(TestCase):
         self.assertEqual(Path("/path/to/sources/foo"), SourceResolver.get_source_dir(source, metadata, check=False))
 
         metadata.config.content.source.path = "subdir"
-        self.assertEqual(Path("/path/to/sources/foo/subdir"), SourceResolver.get_source_dir(source, metadata, check=False))
+        self.assertEqual(
+            Path("/path/to/sources/foo/subdir"), SourceResolver.get_source_dir(source, metadata, check=False)
+        )

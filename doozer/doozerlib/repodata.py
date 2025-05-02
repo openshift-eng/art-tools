@@ -144,7 +144,9 @@ class Repodata:
 
     @staticmethod
     def from_metadatas(name: str, primary: xml.etree.ElementTree.Element, modules_yaml: List[Dict]):
-        primary_rpms = [Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)]
+        primary_rpms = [
+            Rpm.from_metadata(metadata) for metadata in primary.findall("common:package[@type='rpm']", NAMESPACES)
+        ]
         modules = [RpmModule.from_metadata(metadata) for metadata in modules_yaml if metadata['document'] == 'modulemd']
         repodata = Repodata(
             name=name,
@@ -180,7 +182,9 @@ class RepodataLoader:
         repomd_url = parse.urljoin(repo_url, "repodata/repomd.xml")
 
         timeout = aiohttp.ClientTimeout(total=60 * 10)
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=32, force_close=True), timeout=timeout) as session:
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=32, force_close=True), timeout=timeout
+        ) as session:
             async with session.get(repomd_url) as resp:
                 resp.raise_for_status()
                 repomd_xml = ET.fromstring(await resp.text())
@@ -201,10 +205,22 @@ class RepodataLoader:
                     raise ValueError("Couldn't find modules location in repodata")
                 modules_url = parse.urljoin(repo_url, modules_location.attrib['href'])
 
-            @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
-                   retry=(retry_if_exception_type(
-                       (aiohttp.ServerDisconnectedError, aiohttp.ClientResponseError, aiohttp.ClientPayloadError, aiohttp.ClientConnectionError))),
-                   before_sleep=before_sleep_log(LOGGER, logging.WARNING))
+            @retry(
+                reraise=True,
+                stop=stop_after_attempt(5),
+                wait=wait_exponential(multiplier=1, min=1, max=10),
+                retry=(
+                    retry_if_exception_type(
+                        (
+                            aiohttp.ServerDisconnectedError,
+                            aiohttp.ClientResponseError,
+                            aiohttp.ClientPayloadError,
+                            aiohttp.ClientConnectionError,
+                        )
+                    )
+                ),
+                before_sleep=before_sleep_log(LOGGER, logging.WARNING),
+            )
             async def fetch_remote_compressed(url: Optional[str]):
                 return await self._fetch_remote_compressed(session, url)
 
@@ -223,15 +239,17 @@ class RepodataLoader:
 
 
 class OutdatedRPMFinder:
-
     @staticmethod
     def _find_candidate_modular_rpms(all_modules, enabled_streams):
-        """ Finds all candidate modular rpms in enabled module streams
-        """
+        """Finds all candidate modular rpms in enabled module streams"""
         # Find the latest module versions for each enabled streams
-        latest_modules: Dict[str, Dict[str, Tuple[str, RpmModule]]] = {}  # module_stream => context => (repo_name, RpmModule)
+        latest_modules: Dict[
+            str, Dict[str, Tuple[str, RpmModule]]
+        ] = {}  # module_stream => context => (repo_name, RpmModule)
         for module_stream, allowed_contexts in enabled_streams.items():
-            module_versions = sorted(all_modules[module_stream].keys(), reverse=True)  # module versions are sorted from newest to oldest
+            module_versions = sorted(
+                all_modules[module_stream].keys(), reverse=True
+            )  # module versions are sorted from newest to oldest
             latest_modules[module_stream] = {}
             for version in module_versions:
                 for update_repo, update_module in all_modules[module_stream][version]:
@@ -254,7 +272,7 @@ class OutdatedRPMFinder:
 
     @staticmethod
     def _find_candidate_non_modular_rpms(all_non_modular_rpms):
-        """ Finds all candidate non-modular rpms.
+        """Finds all candidate non-modular rpms.
         For each non-modular rpm, if there is another candidate modular rpm with the same package name,
         the non-modular rpm will be exempt.
         """
@@ -266,7 +284,9 @@ class OutdatedRPMFinder:
                 candidate_non_modular_rpms[rpm.name] = (repo, rpm)
         return candidate_non_modular_rpms
 
-    def find_non_latest_rpms(self, rpms_to_check: List[Dict], repodatas: List[Repodata], logger: Optional[Logger] = None) -> List[Tuple[str, str, str]]:
+    def find_non_latest_rpms(
+        self, rpms_to_check: List[Dict], repodatas: List[Repodata], logger: Optional[Logger] = None
+    ) -> List[Tuple[str, str, str]]:
         """
         Finds non-latest rpms.
 
@@ -290,11 +310,17 @@ class OutdatedRPMFinder:
 
         logger.info("Determining which module streams are enabled")
         # Populate dicts to hold all modules and all modular rpms
-        all_modules: Dict[str, Dict[int, List[Tuple[str, RpmModule]]]] = {}  # module_name_stream => version => [(repo_name, module_object)]
-        all_modular_rpms: Dict[str, Dict[str, Dict[str, RpmModule]]] = {}  # rpm_nvera => repo_name => module_nsvca => module_object
+        all_modules: Dict[
+            str, Dict[int, List[Tuple[str, RpmModule]]]
+        ] = {}  # module_name_stream => version => [(repo_name, module_object)]
+        all_modular_rpms: Dict[
+            str, Dict[str, Dict[str, RpmModule]]
+        ] = {}  # rpm_nvera => repo_name => module_nsvca => module_object
         for repodata in repodatas:
             for module in repodata.modules:
-                all_modules.setdefault(module.name_stream, {}).setdefault(module.version, []).append((repodata.name, module))
+                all_modules.setdefault(module.name_stream, {}).setdefault(module.version, []).append(
+                    (repodata.name, module)
+                )
                 for nevra in module.rpms:
                     all_modular_rpms.setdefault(nevra, {}).setdefault(repodata.name, {})[module.nsvca] = module
 

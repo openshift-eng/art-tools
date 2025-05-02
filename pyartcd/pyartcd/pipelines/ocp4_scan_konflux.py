@@ -98,10 +98,12 @@ class Ocp4ScanPipeline:
         ]
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
-        cmd.extend([
-            'beta:config:konflux:scan-sources',
-            '--yaml',
-        ])
+        cmd.extend(
+            [
+                'beta:config:konflux:scan-sources',
+                '--yaml',
+            ]
+        )
         if self.runtime.dry_run:
             cmd.append('--dry-run')
 
@@ -119,12 +121,14 @@ class Ocp4ScanPipeline:
 @cli.command('beta:konflux:ocp4-scan')
 @click.option('--version', required=True, help='OCP version to scan')
 @click.option('--assembly', required=False, default='stream', help='Assembly to scan for')
-@click.option('--data-path', required=False, default=constants.OCP_BUILD_DATA_URL,
-              help='ocp-build-data fork to use (e.g. assembly definition in your own fork)')
-@click.option('--data-gitref', required=False, default='',
-              help='Doozer data path git [branch / tag / sha] to use')
-@click.option('--image-list', required=False,
-              help='Comma/space-separated list to of images to scan, empty to scan all')
+@click.option(
+    '--data-path',
+    required=False,
+    default=constants.OCP_BUILD_DATA_URL,
+    help='ocp-build-data fork to use (e.g. assembly definition in your own fork)',
+)
+@click.option('--data-gitref', required=False, default='', help='Doozer data path git [branch / tag / sha] to use')
+@click.option('--image-list', required=False, help='Comma/space-separated list to of images to scan, empty to scan all')
 @pass_runtime
 @click_coroutine
 async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: str, data_gitref, image_list: str):
@@ -147,7 +151,9 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
         lock_name = lock.value.format(version=version)
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
-            runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+            runtime.logger.warning(
+                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+            )
 
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,

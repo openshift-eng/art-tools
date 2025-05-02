@@ -4,11 +4,8 @@ from validator import github
 
 
 class TestGitHub(unittest.TestCase):
-
     def setUp(self):
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .and_return(True))
+        (flexmock(github.support).should_receive('resource_exists').and_return(True))
 
     def test_no_declared_repository(self):
         (url, err) = github.validate({}, {})
@@ -16,10 +13,12 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(err)
 
     def test_repository_doesnt_exist(self):
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args('https://github.com/openshift-priv/myrepo')
-         .and_return(False))
+        (
+            flexmock(github.support)
+            .should_receive('resource_exists')
+            .with_args('https://github.com/openshift-priv/myrepo')
+            .and_return(False)
+        )
 
         data = {
             'content': {
@@ -32,9 +31,7 @@ class TestGitHub(unittest.TestCase):
         }
 
         (url, err) = github.validate(data, {})
-        self.assertEqual(err, ('GitHub repository '
-                               "https://github.com/openshift-priv/myrepo doesn't "
-                               'exist'))
+        self.assertEqual(err, ('GitHub repository https://github.com/openshift-priv/myrepo doesn\'t exist'))
         self.assertEqual(url, 'https://github.com/openshift-priv/myrepo')
 
     def test_no_declared_branches(self):
@@ -50,19 +47,22 @@ class TestGitHub(unittest.TestCase):
 
         (url, err) = github.validate(data, {})
         self.assertEqual(url, 'https://github.com/openshift-priv/myrepo')
-        self.assertEqual(err, ('No branches specified under '
-                               'content > source > git'))
+        self.assertEqual(err, ('No branches specified under content > source > git'))
 
     def test_target_branch_doesnt_exist(self):
-        (flexmock(github)
-         .should_receive('branch_exists')
-         .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
-         .and_return(False))
+        (
+            flexmock(github)
+            .should_receive('branch_exists')
+            .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
+            .and_return(False)
+        )
 
-        (flexmock(github)
-         .should_receive('branch_exists')
-         .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
-         .and_return(True))
+        (
+            flexmock(github)
+            .should_receive('branch_exists')
+            .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
+            .and_return(True)
+        )
 
         data = {
             'content': {
@@ -83,15 +83,19 @@ class TestGitHub(unittest.TestCase):
         self.assertEqual(err, None)
 
     def test_target_nor_fallback_branches_exist(self):
-        (flexmock(github)
-         .should_receive('branch_exists')
-         .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
-         .and_return(False))
+        (
+            flexmock(github)
+            .should_receive('branch_exists')
+            .with_args('release-4.2', 'https://github.com/openshift-priv/myrepo')
+            .and_return(False)
+        )
 
-        (flexmock(github)
-         .should_receive('branch_exists')
-         .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
-         .and_return(False))
+        (
+            flexmock(github)
+            .should_receive('branch_exists')
+            .with_args('fallback-branch', 'https://github.com/openshift-priv/myrepo')
+            .and_return(False)
+        )
 
         data = {
             'content': {
@@ -109,14 +113,15 @@ class TestGitHub(unittest.TestCase):
 
         (url, err) = github.validate(data, {'vars': {'MAJOR': 4, 'MINOR': 2}})
         self.assertEqual(url, 'https://github.com/openshift-priv/myrepo')
-        self.assertEqual(err, ('At least one of the following branches '
-                               'should exist: release-4.2 or fallback-branch'))
+        self.assertEqual(err, ('At least one of the following branches should exist: release-4.2 or fallback-branch'))
 
     def test_declared_dockerfile_doesnt_exist(self):
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args('https://github.com/openshift-priv/repo/blob/xyz/Dockerfile.rhel7')
-         .and_return(False))
+        (
+            flexmock(github.support)
+            .should_receive('resource_exists')
+            .with_args('https://github.com/openshift-priv/repo/blob/xyz/Dockerfile.rhel7')
+            .and_return(False)
+        )
 
         data = {
             'content': {
@@ -135,22 +140,14 @@ class TestGitHub(unittest.TestCase):
 
         (url, err) = github.validate(data, {'vars': {'MAJOR': 4, 'MINOR': 2}})
         self.assertEqual(url, 'https://github.com/openshift-priv/repo')
-        self.assertEqual(err, ('dockerfile Dockerfile.rhel7 '
-                               'not found on branch xyz'))
+        self.assertEqual(err, ('dockerfile Dockerfile.rhel7 not found on branch xyz'))
 
     def test_declared_dockerfile_on_custom_path(self):
         bad_file_url = 'https://github.com/org/repo/blob/xyz/Dockerfile.rhel7'
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args(bad_file_url)
-         .and_return(False))
+        (flexmock(github.support).should_receive('resource_exists').with_args(bad_file_url).and_return(False))
 
-        good_file_url = ('https://github.com/org/repo/blob/xyz/my/custom/path/'
-                         'Dockerfile.rhel7')
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args(good_file_url)
-         .and_return(True))
+        good_file_url = 'https://github.com/org/repo/blob/xyz/my/custom/path/Dockerfile.rhel7'
+        (flexmock(github.support).should_receive('resource_exists').with_args(good_file_url).and_return(True))
 
         data = {
             'content': {
@@ -173,10 +170,12 @@ class TestGitHub(unittest.TestCase):
         self.assertIsNone(err)
 
     def test_declared_manifest_doesnt_exist(self):
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args('https://github.com/org/repo/blob/xyz/my-manifests')
-         .and_return(False))
+        (
+            flexmock(github.support)
+            .should_receive('resource_exists')
+            .with_args('https://github.com/org/repo/blob/xyz/my-manifests')
+            .and_return(False)
+        )
 
         data = {
             'content': {
@@ -201,17 +200,10 @@ class TestGitHub(unittest.TestCase):
 
     def test_declared_manifest_on_custom_path(self):
         bad_file_url = 'https://github.com/org/repo/blob/xyz/my-manifests'
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args(bad_file_url)
-         .and_return(False))
+        (flexmock(github.support).should_receive('resource_exists').with_args(bad_file_url).and_return(False))
 
-        good_file_url = ('https://github.com/org/repo/blob/xyz/my/custom/path/'
-                         'my-manifests')
-        (flexmock(github.support)
-         .should_receive('resource_exists')
-         .with_args(good_file_url)
-         .and_return(True))
+        good_file_url = 'https://github.com/org/repo/blob/xyz/my/custom/path/my-manifests'
+        (flexmock(github.support).should_receive('resource_exists').with_args(good_file_url).and_return(True))
 
         data = {
             'content': {

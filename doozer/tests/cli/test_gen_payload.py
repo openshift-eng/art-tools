@@ -35,7 +35,6 @@ rgp_cli.asyncio.sleep = no_sleep
 
 
 class TestGenPayloadCli(IsolatedAsyncioTestCase):
-
     def test_find_rhcos_payload_entries(self):
         rhcos_build = MagicMock()
         assembly_inspector = MagicMock()
@@ -103,7 +102,8 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             runtime=MagicMock(
                 assembly="stream",
                 exclude=["some-random-image"],
-            ))
+            ),
+        )
         with self.assertRaises(DoozerFatalError):
             gpcli.validate_parameters()
 
@@ -146,9 +146,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
     def test_detect_mismatched_siblings(self, fms_mock):
         gpcli = rgp_cli.GenPayloadCli(runtime=MagicMock(assembly="stream"))
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images={})
-        bbii = flexmock(
-            Mock(BrewBuildRecordInspector),
-            get_nvr="spam-1.0", get_source_git_commit="spamcommit")
+        bbii = flexmock(Mock(BrewBuildRecordInspector), get_nvr="spam-1.0", get_source_git_commit="spamcommit")
         fms_mock.return_value = [(bbii, bbii)]
 
         gpcli.detect_mismatched_siblings(ai)
@@ -198,7 +196,10 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli.runtime = MagicMock(build_system='brew')
         bbii = AsyncMock(BrewBuildRecordInspector)
         bbii.get_image_meta.return_value = Mock(ImageMetadata, is_rpm_exempt=Mock(return_value=(False, None)))
-        bbii.find_non_latest_rpms.return_value = {"x86_64": [("foo-0:1.2.0-1.el9.x86_64", "foo-0:1.2.1-1.el9.x86_64", "repo_name")], "s390x": []}
+        bbii.find_non_latest_rpms.return_value = {
+            "x86_64": [("foo-0:1.2.0-1.el9.x86_64", "foo-0:1.2.1-1.el9.x86_64", "repo_name")],
+            "s390x": [],
+        }
         ai = flexmock(Mock(AssemblyInspector), get_group_release_images=dict(spam=bbii))
         await gpcli.detect_non_latest_rpms(ai)
         self.assertEqual(gpcli.assembly_issues[0].code, AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD)
@@ -230,7 +231,9 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="spam"), issues=[], dest_pullspec="dummy")
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), ["issues"])
         e4a = await gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+        self.assertEqual(
+            e4a, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry)))
+        )
         self.assertEqual(gpcli.assembly_issues, ["issues", "embargo_issues"])
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
@@ -243,11 +246,14 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
             runtime=MagicMock(arches=["ppc64le"], assembly_type=AssemblyTypes.STREAM),
         )
 
-        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
-                                                  dest_pullspec="pullspec_1")
+        test_payload_entry = rgp_cli.PayloadEntry(
+            image_meta=Mock(distgit_key="image_1"), issues=[], dest_pullspec="pullspec_1"
+        )
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
         payload_entries = await gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+        self.assertEqual(
+            payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry)))
+        )
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.find_payload_entries")
     async def test_generate_payload_no_embargo(self, pg_findpe_mock):
@@ -258,28 +264,32 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         bbii = MagicMock(BrewBuildRecordInspector)
         bbii.is_under_embargo.return_value = False
 
-        test_payload_entry = rgp_cli.PayloadEntry(image_meta=Mock(distgit_key="image_1"), issues=[],
-                                                  dest_pullspec="pullspec_1", build_record_inspector=bbii)
+        test_payload_entry = rgp_cli.PayloadEntry(
+            image_meta=Mock(distgit_key="image_1"), issues=[], dest_pullspec="pullspec_1", build_record_inspector=bbii
+        )
         pg_findpe_mock.return_value = (dict(tag1=test_payload_entry), [])
         payload_entries = await gpcli.generate_payload_entries(Mock(AssemblyInspector))
-        self.assertEqual(payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry))))
+        self.assertEqual(
+            payload_entries, (dict(ppc64le=dict(tag1=test_payload_entry)), dict(ppc64le=dict(tag1=test_payload_entry)))
+        )
 
     async def test_detect_extend_payload_entry_issues(self):
         runtime = MagicMock(group_config=Model())
         gpcli = flexmock(rgp_cli.GenPayloadCli(runtime))
         spamEntry = rgp_cli.PayloadEntry(
             image_meta=Mock(distgit_key="spam"),
-            issues=[], dest_pullspec="dummy",
+            issues=[],
+            dest_pullspec="dummy",
         )
         rhcosEntry = rgp_cli.PayloadEntry(rhcos_build="rbi", dest_pullspec="dummy", issues=[])
         gpcli.payload_entries_for_arch = dict(ppc64le={"spam": spamEntry, "machine-os-content": rhcosEntry})
         gpcli.assembly_issues = [Mock(component="spam")]  # should associate with spamEntry
 
-        gpcli.should_receive("detect_rhcos_issues").with_args(rhcosEntry, None).once().and_return(AsyncMock(return_value=[])())
-        gpcli.should_receive("detect_rhcos_inconsistent_rpms").once().with_args(
-            {False: ["rbi"], True: []})
-        gpcli.should_receive("detect_rhcos_kernel_inconsistencies").once().with_args(
-            {False: ["rbi"], True: []})
+        gpcli.should_receive("detect_rhcos_issues").with_args(rhcosEntry, None).once().and_return(
+            AsyncMock(return_value=[])()
+        )
+        gpcli.should_receive("detect_rhcos_inconsistent_rpms").once().with_args({False: ["rbi"], True: []})
+        gpcli.should_receive("detect_rhcos_kernel_inconsistencies").once().with_args({False: ["rbi"], True: []})
 
         await gpcli.detect_extend_payload_entry_issues(None)
         self.assertEqual(gpcli.assembly_issues, spamEntry.issues)
@@ -295,9 +305,9 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         ai = flexmock(Mock(AssemblyInspector), check_rhcos_issues=AsyncMock(return_value=[rhcos_issue]))
         rhcos_build = flexmock(
             Mock(rhcos.RHCOSBuildInspector, brew_arch="x86_64"),
-            find_non_latest_rpms=AsyncMock(return_value=[("installed", "newest", "repo_name")]))
-        rhcos_entry = rgp_cli.PayloadEntry(
-            rhcos_build=rhcos_build, dest_pullspec="dummy", issues=[])
+            find_non_latest_rpms=AsyncMock(return_value=[("installed", "newest", "repo_name")]),
+        )
+        rhcos_entry = rgp_cli.PayloadEntry(rhcos_build=rhcos_build, dest_pullspec="dummy", issues=[])
 
         await gpcli.detect_rhcos_issues(rhcos_entry, ai)
         self.assertEqual(gpcli.assembly_issues[0], rhcos_entry.issues[0])
@@ -377,7 +387,9 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertTrue(permitted)
 
     def test_assess_assembly_viability(self):
-        gpcli = rgp_cli.GenPayloadCli(apply=True, apply_multi_arch=True, runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        gpcli = rgp_cli.GenPayloadCli(
+            apply=True, apply_multi_arch=True, runtime=MagicMock(assembly_type=AssemblyTypes.STREAM)
+        )
 
         gpcli.payload_permitted, gpcli.emergency_ignore_issues = True, False
         gpcli.assess_assembly_viability()
@@ -397,7 +409,8 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         runtime = MagicMock(group_config=Model(dict(multi_arch=dict(enabled=True))))
         gpcli = rgp_cli.GenPayloadCli(runtime, apply_multi_arch=True)
         payload_entry_test = rgp_cli.PayloadEntry(
-            issues=[], dest_pullspec="eggs_pullspec",
+            issues=[],
+            dest_pullspec="eggs_pullspec",
             build_record_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
         )
         gpcli.payload_entries_for_arch = {"x86_64": {"x86_entries": payload_entry_test}}
@@ -417,14 +430,17 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", apply=True, runtime=MagicMock(build_system='brew'))
         payload_entries = dict(
             rhcos=rgp_cli.PayloadEntry(
-                issues=[], dest_pullspec="dummy",
+                issues=[],
+                dest_pullspec="dummy",
             ),
             spam=rgp_cli.PayloadEntry(
-                issues=[], dest_pullspec="spam_pullspec",
+                issues=[],
+                dest_pullspec="spam_pullspec",
                 image_inspector=Mock(get_pullspec=lambda: "spam_src"),
             ),
             eggs=rgp_cli.PayloadEntry(
-                issues=[], dest_pullspec="eggs_pullspec",
+                issues=[],
+                dest_pullspec="eggs_pullspec",
                 image_inspector=Mock(get_pullspec=lambda: "eggs_src"),
                 dest_manifest_list_pullspec="eggs_manifest_pullspec",
                 build_record_inspector=Mock(get_build_pullspec=lambda: "eggs_manifest_src"),
@@ -438,32 +454,40 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         await gpcli.mirror_payload_content("s390x", payload_entries)
 
         lines = sorted(buffer.getvalue().splitlines())
-        self.assertEqual(lines, [
-            "eggs_manifest_src=eggs_manifest_pullspec",
-            "eggs_src=eggs_pullspec",
-            "spam_src=spam_pullspec",
-        ])  # rhcos notably absent from mirroring
+        self.assertEqual(
+            lines,
+            [
+                "eggs_manifest_src=eggs_manifest_pullspec",
+                "eggs_src=eggs_pullspec",
+                "spam_src=spam_pullspec",
+            ],
+        )  # rhcos notably absent from mirroring
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
     async def test_generate_specific_payload_imagestreams(self, build_mock):
         build_mock.side_effect = lambda name, _: name  # just to make the test simpler
         runtime = MagicMock(images=[], exclude=[], assembly_type=AssemblyTypes.STREAM)
-        gpcli = flexmock(rgp_cli.GenPayloadCli(
-            runtime=runtime,
-            apply=True,
-            is_name="release",
-            is_namespace="ocp",
-        ))
+        gpcli = flexmock(
+            rgp_cli.GenPayloadCli(
+                runtime=runtime,
+                apply=True,
+                is_name="release",
+                is_namespace="ocp",
+            )
+        )
         payload_entries = dict(
             rhcos=rgp_cli.PayloadEntry(
-                issues=[], dest_pullspec="dummy",
+                issues=[],
+                dest_pullspec="dummy",
             ),
             spam=rgp_cli.PayloadEntry(
-                issues=[], dest_pullspec="dummy",
+                issues=[],
+                dest_pullspec="dummy",
                 build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: True),
             ),
             eggs=rgp_cli.PayloadEntry(
-                issues=[], dest_pullspec="dummy",
+                issues=[],
+                dest_pullspec="dummy",
                 build_record_inspector=Mock(BrewBuildRecordInspector, is_under_embargo=lambda: False),
             ),
         )
@@ -476,16 +500,20 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         multi_specs = {True: dict(), False: dict()}
         await gpcli.generate_specific_payload_imagestreams("s390x", False, payload_entries, multi_specs)
         self.maxDiff = None
-        self.assertEqual(multi_specs, {
-            True: dict(),
-            False: dict(
-                rhcos=dict(s390x=payload_entries["rhcos"]),
-                spam=dict(),  # embargoed
-                eggs=dict(s390x=payload_entries["eggs"]),
-            ),
-        })
+        self.assertEqual(
+            multi_specs,
+            {
+                True: dict(),
+                False: dict(
+                    rhcos=dict(s390x=payload_entries["rhcos"]),
+                    spam=dict(),  # embargoed
+                    eggs=dict(s390x=payload_entries["eggs"]),
+                ),
+            },
+        )
         gpcli.write_imagestream_artifact_file.assert_awaited_once_with(
-            "ocp-s390x", "release-s390x", ["rhcos", "eggs"], True)
+            "ocp-s390x", "release-s390x", ["rhcos", "eggs"], True
+        )
         gpcli.apply_arch_imagestream.assert_awaited_once()
 
         # and when we're building a private payload too
@@ -493,33 +521,43 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         runtime.images.append("anything")  # just to exercise the other branch of logic
         gpcli.apply = False  # just to exercise the other branch of logic
         await gpcli.generate_specific_payload_imagestreams("s390x", True, payload_entries, multi_specs)
-        self.assertEqual(multi_specs, {
-            True: dict(
-                rhcos=dict(s390x=payload_entries["rhcos"]),
-                spam=dict(s390x=payload_entries["spam"]),
-                eggs=dict(s390x=payload_entries["eggs"]),
-            ), False: dict(
-                rhcos=dict(s390x=payload_entries["rhcos"]),
-                spam=dict(),  # embargoed
-                eggs=dict(s390x=payload_entries["eggs"]),
-            ),
-        })
+        self.assertEqual(
+            multi_specs,
+            {
+                True: dict(
+                    rhcos=dict(s390x=payload_entries["rhcos"]),
+                    spam=dict(s390x=payload_entries["spam"]),
+                    eggs=dict(s390x=payload_entries["eggs"]),
+                ),
+                False: dict(
+                    rhcos=dict(s390x=payload_entries["rhcos"]),
+                    spam=dict(),  # embargoed
+                    eggs=dict(s390x=payload_entries["eggs"]),
+                ),
+            },
+        )
         gpcli.write_imagestream_artifact_file.assert_awaited_once_with(
-            "ocp-s390x-priv", "release-s390x-priv", ["rhcos", "spam", "eggs"], True)
+            "ocp-s390x-priv", "release-s390x-priv", ["rhcos", "spam", "eggs"], True
+        )
         gpcli.apply_arch_imagestream.assert_awaited_once()
 
     @patch("aiofiles.open")
     async def test_write_imagestream_artifact_file(self, open_mock):
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=Mock(
-            brew_event="999999",
-            assembly_type=AssemblyTypes.STREAM,
-        ))
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
 
         buffer = io.StringIO()
         open_mock.return_value.__aenter__.return_value.write = AsyncMock(side_effect=lambda s: buffer.write(s))
 
         await gpcli.write_imagestream_artifact_file("ocp-s390x", "release-s390x", ["rhcos", "eggs"], True)
-        self.assertEqual(buffer.getvalue().strip(), f"""
+        self.assertEqual(
+            buffer.getvalue().strip(),
+            f"""
 apiVersion: image.openshift.io/v1
 kind: ImageStream
 metadata:
@@ -532,7 +570,8 @@ spec:
   tags:
   - rhcos
   - eggs
-        """.strip())
+        """.strip(),
+        )
 
     @patch("doozerlib.cli.release_gen_payload.oc")
     async def test_apply_arch_imagestream(self, oc_mock):
@@ -556,10 +595,13 @@ spec:
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_inconsistency_annotations")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
     async def test_apply_imagestream_update(self, mar_mock, binc_mock):
-        gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=Mock(
-            brew_event="999999",
-            assembly_type=AssemblyTypes.STREAM,
-        ))
+        gpcli = rgp_cli.GenPayloadCli(
+            output_dir="/tmp",
+            runtime=Mock(
+                brew_event="999999",
+                assembly_type=AssemblyTypes.STREAM,
+            ),
+        )
 
         # make method do basically what it would, without writing all the files
         mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
@@ -568,12 +610,19 @@ spec:
             "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
         }
 
-        istream_apiobj = Mock(oc.APIObject, model=oc.Model(dict(
-            metadata=dict(),
-            spec=dict(tags=[
-                dict(name="spam"),
-            ]),
-        )))
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(name="spam"),
+                        ]
+                    ),
+                )
+            ),
+        )
         new_istags = [dict(name="eggs")]
 
         # test when it's a partial update, should just be additive
@@ -581,8 +630,8 @@ spec:
         self.assertEqual(pruning, set(), "nothing should be pruned in partial update")
         self.assertEqual(adding, {"eggs"}, "new thing added with update")
         self.assertEqual(
-            istream_apiobj.model.spec.tags, [dict(name="eggs"), dict(name="spam")],
-            "tags should be combined")
+            istream_apiobj.model.spec.tags, [dict(name="eggs"), dict(name="spam")], "tags should be combined"
+        )
         self.assertIn("release.openshift.io/inconsistency", istream_apiobj.model.metadata.annotations)
 
         # test when it's a full update, only the new should remain
@@ -592,12 +641,13 @@ spec:
         self.assertEqual(pruning, {"spam"}, "should be pruned with complete update")
         self.assertEqual(adding, set(), "eggs added in previous update")
         self.assertEqual(
-            "issue1,issue2",
-            istream_apiobj.model.metadata.annotations["release.openshift.io/inconsistency"])
+            "issue1,issue2", istream_apiobj.model.metadata.annotations["release.openshift.io/inconsistency"]
+        )
 
     def test_get_multi_release_names(self):
         runtime = MagicMock(
-            assembly="stream", assembly_type=AssemblyTypes.STREAM,
+            assembly="stream",
+            assembly_type=AssemblyTypes.STREAM,
             get_minor_version=lambda: "4.10",
         )
         gpcli = rgp_cli.GenPayloadCli(runtime)
@@ -675,8 +725,8 @@ spec:
         )
         await gpcli.create_multi_manifest_list("spam", arch_to_payload_entry, "ocp-multi")
         self.assertEqual(
-            exec_mock.call_args[0][0],
-            "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml")
+            exec_mock.call_args[0][0], "manifest-tool  push from-spec /tmp/ocp-multi.spam.manifest-list.yaml"
+        )
         ml = yaml.safe_load(buffer.getvalue())
         self.assertRegex(ml["image"], r"^quay.io/org/repo:sha256-")
         self.assertEqual(len(ml["manifests"]), 2)
@@ -694,21 +744,26 @@ spec:
 
         self.assertEqual(
             await gpcli.create_multi_release_image(
-                imagestream_name="isname", multi_release_is=dict(example="spam"),
+                imagestream_name="isname",
+                multi_release_is=dict(example="spam"),
                 multi_release_dest="quay.io/org/repo:spam",
                 multi_release_name="relname",
                 multi_specs={False: {"cluster-version-operator": dict(arch=Mock(dest_pullspec="dest"))}},
-                private_mode=False),
+                private_mode=False,
+            ),
             "some_pullspec",
         )
         gpcli.create_multi_release_manifest_list.assert_awaited_once_with(
-            {"arch": "quay.io/org/repo:spam-arch"}, 'isname', 'quay.io/org/repo:spam')
+            {"arch": "quay.io/org/repo:spam-arch"}, 'isname', 'quay.io/org/repo:spam'
+        )
 
     @patch("doozerlib.cli.release_gen_payload.find_manifest_list_sha")
     @patch("doozerlib.cli.release_gen_payload.GenPayloadCli.mirror_payload_content")
     @patch("artcommonlib.exectools.cmd_assert_async")
     @patch("aiofiles.open")
-    async def test_create_multi_release_manifest_list(self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock):
+    async def test_create_multi_release_manifest_list(
+        self, open_mock, exec_mock, mirror_payload_content_mock, fmlsha_mock
+    ):
         os.environ['XDG_RUNTIME_DIR'] = 'fake'
         gpcli = rgp_cli.GenPayloadCli(output_dir="/tmp")
 
@@ -719,42 +774,74 @@ spec:
 
         pullspec = await gpcli.create_multi_release_manifest_list(
             arch_release_dests=dict(x86_64="pullspec:x86"),
-            imagestream_name="isname", multi_release_dest="quay.io/org/repo:spam",
+            imagestream_name="isname",
+            multi_release_dest="quay.io/org/repo:spam",
         )
         self.assertEqual(pullspec, "quay.io/org/repo@sha256:abcdef")
+        self.assertEqual(exec_mock.call_args[0][0], "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
         self.assertEqual(
-            exec_mock.call_args[0][0],
-            "manifest-tool  push from-spec /tmp/isname.manifest-list.yaml")
-        self.assertEqual(buffer.getvalue().strip(), """
+            buffer.getvalue().strip(),
+            """
 image: quay.io/org/repo:spam
 manifests:
 - image: pullspec:x86
   platform:
     architecture: amd64
     os: linux
-        """.strip())
+        """.strip(),
+        )
 
     @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
     async def test_apply_multi_imagestream_update(self, mar_mock, _):
-        gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM)))
+        gpcli = flexmock(
+            rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        )
 
         # make MAR method do basically what it would, without writing all the files
         mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
 
         # test object to modify - really testing inline function
-        istream_apiobj = Mock(oc.APIObject, model=oc.Model(dict(
-            metadata=dict(),
-            spec=dict(tags=[
-                dict(name=as_multi_release_name("spam0"), annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name=as_multi_release_name("spam1"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam2"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam3"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam4"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam5"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam6"), annotations={'release.openshift.io/phase': 'Accepted'}),
-            ]),
-        )))
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(
+                                name=as_multi_release_name("spam0"),
+                                annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam1"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam2"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam3"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam4"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam5"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam6"),
+                                annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                        ]
+                    ),
+                )
+            ),
+        )
         gpcli.should_receive("ensure_imagestream_apiobj").once().and_return(istream_apiobj)
 
         def contains(name: str):
@@ -777,28 +864,70 @@ manifests:
     @patch("doozerlib.cli.release_gen_payload.what_is_in_master", return_value="4.19")
     @patch("doozerlib.cli.release_gen_payload.modify_and_replace_api_object")
     async def test_apply_multi_imagestream_update_retain_accepted(self, mar_mock, _):
-        gpcli = flexmock(rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM)))
+        gpcli = flexmock(
+            rgp_cli.GenPayloadCli(output_dir="/tmp", runtime=MagicMock(assembly_type=AssemblyTypes.STREAM))
+        )
 
         # make MAR method do basically what it would, without writing all the files
         mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
 
         # test object to modify - really testing inline function
-        istream_apiobj = Mock(oc.APIObject, model=oc.Model(dict(
-            metadata=dict(),
-            spec=dict(tags=[
-                dict(name=as_multi_release_name("spam-1"), annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name=as_multi_release_name("spam0"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam1"), annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name=as_multi_release_name("spam2"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam3"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam4"), annotations={'release.openshift.io/phase': 'Accepted'}),
-                dict(name=as_multi_release_name("spam5"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam6"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam7"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam8"), annotations={'release.openshift.io/phase': 'Rejected'}),
-                dict(name=as_multi_release_name("spam9"), annotations={'release.openshift.io/phase': 'Rejected'}),
-            ]),
-        )))
+        istream_apiobj = Mock(
+            oc.APIObject,
+            model=oc.Model(
+                dict(
+                    metadata=dict(),
+                    spec=dict(
+                        tags=[
+                            dict(
+                                name=as_multi_release_name("spam-1"),
+                                annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam0"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam1"),
+                                annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam2"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam3"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam4"),
+                                annotations={'release.openshift.io/phase': 'Accepted'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam5"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam6"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam7"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam8"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                            dict(
+                                name=as_multi_release_name("spam9"),
+                                annotations={'release.openshift.io/phase': 'Rejected'},
+                            ),
+                        ]
+                    ),
+                )
+            ),
+        )
         gpcli.should_receive("ensure_imagestream_apiobj").once().and_return(istream_apiobj)
 
         await gpcli.apply_multi_imagestream_update("final_pullspec", "is_name", "multi_release_name")
@@ -809,10 +938,16 @@ manifests:
                     return True
             return False
 
-        self.assertFalse(contains(name=as_multi_release_name("spam-1")), "oldest accepted release should have been pruned")
+        self.assertFalse(
+            contains(name=as_multi_release_name("spam-1")), "oldest accepted release should have been pruned"
+        )
         self.assertTrue(contains(name=as_multi_release_name("spam1")), "accepted release should not have been pruned")
-        self.assertTrue(contains(name=as_multi_release_name("spam4")), "2nd accepted release should not have been pruned")
-        self.assertFalse(contains(name=as_multi_release_name("spam0")), "oldest rejected release should have been pruned")
+        self.assertTrue(
+            contains(name=as_multi_release_name("spam4")), "2nd accepted release should not have been pruned"
+        )
+        self.assertFalse(
+            contains(name=as_multi_release_name("spam0")), "oldest rejected release should have been pruned"
+        )
 
         new_tag_annotations = istream_apiobj.model.spec.tags[-1]['annotations']
         self.assertEqual('false', new_tag_annotations['release.openshift.io/rewrite'])

@@ -122,8 +122,9 @@ class Runtime(GroupRuntime):
             raise ValueError('group.yml contains template key `{}` but no value was provided'.format(e.args[0]))
         return assembly_group_config(self.get_releases_config(), self.assembly, tmp_config)
 
-    def initialize(self, mode='none', no_group=False, disabled=None, build_system: str = None,
-                   with_shipment: bool = False):
+    def initialize(
+        self, mode='none', no_group=False, disabled=None, build_system: str = None, with_shipment: bool = False
+    ):
         if self.initialized:
             return
 
@@ -167,14 +168,17 @@ class Runtime(GroupRuntime):
         self.group_config = self.get_group_config()
         if self.group_config.name != self.group:
             raise IOError(
-                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)")
+                "Name in group.yml does not match group name. Someone may have copied this group without updating group.yml (make sure to check branch)"
+            )
 
         self.product = self.group_config.product or "ocp"
         self.resolve_shipment_metadata(strict=with_shipment)
 
         if self.group_config.assemblies.enabled or self.enable_assemblies:
             if re.fullmatch(r'[\w.]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
-                raise ValueError('Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).')
+                raise ValueError(
+                    'Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).'
+                )
         else:
             # If assemblies are not enabled for the group,
             # ignore this argument throughout doozer.
@@ -186,7 +190,9 @@ class Runtime(GroupRuntime):
             self.branch = self.group_config.branch
             self._logger.info("Using branch from group.yml: %s" % self.branch)
         else:
-            self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
+            self._logger.info(
+                "No branch specified either in group.yml or on the command line; all included images will need to specify their own."
+            )
 
         # Flattens a list like [ 'x', 'y,z' ] into [ 'x.yml', 'y.yml', 'z.yml' ]
         # for later checking we need to remove from the lists, but they are tuples. Clone to list
@@ -234,29 +240,41 @@ class Runtime(GroupRuntime):
 
         image_data = {}
         if mode in ['images', 'both']:
-            image_data = self.gitdata.load_data(path='images', keys=image_keys,
-                                                exclude=image_ex,
-                                                filter_funcs=None if len(image_keys) else filter_func,
-                                                replace_vars=replace_vars)
+            image_data = self.gitdata.load_data(
+                path='images',
+                keys=image_keys,
+                exclude=image_ex,
+                filter_funcs=None if len(image_keys) else filter_func,
+                replace_vars=replace_vars,
+            )
             for i in image_data.values():
                 self.late_resolve_image(i.key, add=True, data_obj=i)
             if not self.image_map:
-                self._logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
+                self._logger.warning(
+                    "No image metadata directories found for given options within: {}".format(self.group_dir)
+                )
 
         if mode in ['rpms', 'both']:
-            rpm_data = self.gitdata.load_data(path='rpms', keys=rpm_keys,
-                                              exclude=rpm_ex,
-                                              replace_vars=replace_vars,
-                                              filter_funcs=None if len(rpm_keys) else filter_func)
+            rpm_data = self.gitdata.load_data(
+                path='rpms',
+                keys=rpm_keys,
+                exclude=rpm_ex,
+                replace_vars=replace_vars,
+                filter_funcs=None if len(rpm_keys) else filter_func,
+            )
             for r in rpm_data.values():
                 metadata = RPMMetadata(self, r)
                 self.rpm_map[metadata.distgit_key] = metadata
             if not self.rpm_map:
-                self._logger.warning("No rpm metadata directories found for given options within: {}".format(self.group_dir))
+                self._logger.warning(
+                    "No rpm metadata directories found for given options within: {}".format(self.group_dir)
+                )
 
         missed_include = set(image_keys) - set(image_data.keys())
         if len(missed_include) > 0:
-            raise ElliottFatalError('The following images or rpms were either missing or filtered out: {}'.format(', '.join(missed_include)))
+            raise ElliottFatalError(
+                'The following images or rpms were either missing or filtered out: {}'.format(', '.join(missed_include))
+            )
 
         strict_mode = True
         if not self.assembly or self.assembly in ['stream', 'test', 'microshift']:
@@ -265,7 +283,9 @@ class Runtime(GroupRuntime):
         self.assembly_basis_event = assembly_basis_event(self.get_releases_config(), self.assembly, strict=strict_mode)
         if self.assembly_basis_event:
             if self.brew_event:
-                raise ElliottFatalError(f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.')
+                raise ElliottFatalError(
+                    f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
+                )
             # If the assembly has a basis event, we constrain all brew calls to that event.
             self.brew_event = self.assembly_basis_event
             self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
@@ -336,15 +356,21 @@ class Runtime(GroupRuntime):
 
         if self.data_path is None:
             raise ElliottFatalError(
-                ("No metadata path provided. Must be set via one of:\n"
-                 "* data_path key in {}\n"
-                 "* elliott --data-path [PATH|URL]\n"
-                 "* Environment variable ELLIOTT_DATA_PATH\n"
-                 ).format(self.cfg_obj.full_path))
+                (
+                    "No metadata path provided. Must be set via one of:\n"
+                    "* data_path key in {}\n"
+                    "* elliott --data-path [PATH|URL]\n"
+                    "* Environment variable ELLIOTT_DATA_PATH\n"
+                ).format(self.cfg_obj.full_path)
+            )
 
         try:
-            self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                           commitish=self.group_commitish, logger=self._logger)
+            self.gitdata = gitdata.GitData(
+                data_path=self.data_path,
+                clone_dir=self.working_dir,
+                commitish=self.group_commitish,
+                logger=self._logger,
+            )
             self.data_dir = self.gitdata.data_dir
 
         except gitdata.GitDataException as ex:
@@ -368,14 +394,15 @@ class Runtime(GroupRuntime):
                     try:
                         parsed_url = urlparse(shipment_path)
                         scheme = parsed_url.scheme
-                        rest_of_the_url = shipment_path[len(scheme + "://"):]
+                        rest_of_the_url = shipment_path[len(scheme + "://") :]
                         shipment_path = f'https://oauth2:{gitlab_auth_token}@{rest_of_the_url}'
                     except Exception as e:
                         self._logger.warning(f"Failed to use GITLAB_TOKEN env var to clone {shipment_path}: {e}")
 
             try:
-                self.shipment_gitdata = gitdata.GitData(data_path=shipment_path, clone_dir=self.working_dir,
-                                                        commitish=commitish, logger=self._logger)
+                self.shipment_gitdata = gitdata.GitData(
+                    data_path=shipment_path, clone_dir=self.working_dir, commitish=commitish, logger=self._logger
+                )
             except gitdata.GitDataException as ex:
                 raise ElliottFatalError(ex)
 

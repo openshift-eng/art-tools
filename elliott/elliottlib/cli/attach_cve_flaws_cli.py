@@ -10,8 +10,7 @@ from artcommonlib.rpm_utils import parse_nvr
 
 from elliottlib import constants
 from elliottlib.bzutil import sort_cve_bugs
-from elliottlib.cli.common import (cli, click_coroutine, find_default_advisory,
-                                   use_default_advisory_option)
+from elliottlib.cli.common import cli, click_coroutine, find_default_advisory, use_default_advisory_option
 from elliottlib.errata import is_security_advisory
 from elliottlib.errata_async import AsyncErrataAPI, AsyncErrataUtils
 from elliottlib.runtime import Runtime
@@ -20,22 +19,25 @@ from elliottlib.bzutil import Bug, get_highest_security_impact, is_first_fix_any
 LOGGER = logging.getLogger(__name__)
 
 
-@cli.command('attach-cve-flaws',
-             short_help='Attach corresponding flaw bugs for trackers in advisory (first-fix only)')
-@click.option('--advisory', '-a', 'advisory_id',
-              type=int,
-              help='Find tracker bugs in given advisory')
-@click.option("--noop", "--dry-run",
-              required=False,
-              default=False, is_flag=True,
-              help="Print what would change, but don't change anything")
+@cli.command('attach-cve-flaws', short_help='Attach corresponding flaw bugs for trackers in advisory (first-fix only)')
+@click.option('--advisory', '-a', 'advisory_id', type=int, help='Find tracker bugs in given advisory')
+@click.option(
+    "--noop",
+    "--dry-run",
+    required=False,
+    default=False,
+    is_flag=True,
+    help="Print what would change, but don't change anything",
+)
 @use_default_advisory_option
-@click.option("--into-default-advisories",
-              is_flag=True,
-              help='Run for all advisories values defined in [group|releases].yml')
+@click.option(
+    "--into-default-advisories", is_flag=True, help='Run for all advisories values defined in [group|releases].yml'
+)
 @click.pass_obj
 @click_coroutine
-async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str, into_default_advisories: bool):
+async def attach_cve_flaws_cli(
+    runtime: Runtime, advisory_id: int, noop: bool, default_advisory_type: str, into_default_advisories: bool
+):
     """Attach corresponding flaw bugs for trackers in advisory (first-fix only).
 
     Also converts advisory to RHSA, if not already.
@@ -82,8 +84,9 @@ async def attach_cve_flaws_cli(runtime: Runtime, advisory_id: int, noop: bool, d
                 _update_advisory(runtime, advisory, flaw_bugs, flaw_bug_tracker, noop)
                 # Associate builds with CVEs
                 LOGGER.info('Associating CVEs with builds')
-                await associate_builds_with_cves(errata_api, advisory, flaw_bugs, attached_trackers,
-                                                 tracker_flaws, noop)
+                await associate_builds_with_cves(
+                    errata_api, advisory, flaw_bugs, attached_trackers, tracker_flaws, noop
+                )
             else:
                 pass  # TODO: convert RHSA back to RHBA
         except Exception as e:
@@ -103,8 +106,10 @@ def get_attached_trackers(advisory: Erratum, bug_tracker: BugTracker):
         return []
 
     attached_tracker_bugs: List[Bug] = bug_tracker.get_tracker_bugs(advisory_bug_ids)
-    LOGGER.info(f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
-                f'{sorted([b.id for b in attached_tracker_bugs])}')
+    LOGGER.info(
+        f'Found {len(attached_tracker_bugs)} {bug_tracker.type} tracker bugs attached: '
+        f'{sorted([b.id for b in attached_tracker_bugs])}'
+    )
     return attached_tracker_bugs
 
 
@@ -118,8 +123,10 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
         flaw_bug_tracker,
         brew_api,
     )
-    LOGGER.info(f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
-                f' {sorted(flaw_tracker_map.keys())}')
+    LOGGER.info(
+        f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
+        f' {sorted(flaw_tracker_map.keys())}'
+    )
 
     # current_target_release can be digit.digit.([z|0])?
     # if current_target_release is GA then run first-fix bug filtering
@@ -132,7 +139,8 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     else:
         LOGGER.info("Detected GA release, applying first-fix filtering..")
         first_fix_flaw_bugs = [
-            flaw_bug_info['bug'] for flaw_bug_info in flaw_tracker_map.values()
+            flaw_bug_info['bug']
+            for flaw_bug_info in flaw_tracker_map.values()
             if is_first_fix_any(flaw_bug_info['bug'], flaw_bug_info['trackers'], current_target_release)
         ]
 
@@ -154,7 +162,14 @@ def _update_advisory(runtime, advisory, flaw_bugs, bug_tracker, noop):
     bug_tracker.attach_bugs(flaw_ids, advisory_obj=advisory, noop=noop)
 
 
-async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Erratum, flaw_bugs: Iterable[Bug], attached_tracker_bugs: List[Bug], tracker_flaws: Dict[int, Iterable], dry_run: bool):
+async def associate_builds_with_cves(
+    errata_api: AsyncErrataAPI,
+    advisory: Erratum,
+    flaw_bugs: Iterable[Bug],
+    attached_tracker_bugs: List[Bug],
+    tracker_flaws: Dict[int, Iterable],
+    dry_run: bool,
+):
     # `Erratum.errata_builds` doesn't include RHCOS builds. Use AsyncErrataAPI instead.
     attached_builds = await errata_api.get_builds_flattened(advisory.errata_id)
     attached_components = {parse_nvr(build)["name"] for build in attached_builds}
@@ -183,7 +198,9 @@ async def associate_builds_with_cves(errata_api: AsyncErrataAPI, advisory: Errat
             cve = alias[0]
             cve_components_mapping.setdefault(cve, set()).update(component_names)
 
-    await AsyncErrataUtils.associate_builds_with_cves(errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=dry_run)
+    await AsyncErrataUtils.associate_builds_with_cves(
+        errata_api, advisory.errata_id, attached_builds, cve_components_mapping, dry_run=dry_run
+    )
 
 
 def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bugs):
@@ -215,9 +232,9 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
         updated = True
 
     if updated:
-        formatted_cve_list = '\n'.join([
-            f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs
-        ])
+        formatted_cve_list = '\n'.join(
+            [f'* {b.summary.replace(b.alias[0], "").strip()} ({b.alias[0]})' for b in flaw_bugs]
+        )
         formatted_description = cve_boilerplate['description'].format(CVES=formatted_cve_list)
         advisory.update(description=formatted_description)
 
@@ -228,7 +245,9 @@ def get_updated_advisory_rhsa(cve_boilerplate: dict, advisory: Erratum, flaw_bug
             advisory.update(security_impact=highest_impact)
             updated = True
         else:
-            LOGGER.info(f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust')
+            LOGGER.info(
+                f'Advisory current security impact {advisory.security_impact} is higher than {highest_impact} no need to adjust'
+            )
 
     if highest_impact not in advisory.topic:
         topic = cve_boilerplate['topic'].format(IMPACT=highest_impact)

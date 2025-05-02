@@ -18,6 +18,7 @@ LOGGER = get_logger(__name__)
 
 class SourceModifierFactory(object):
     """A factory class for creating source modifier objects."""
+
     MODIFICATIONS = {}
 
     @classmethod
@@ -41,7 +42,7 @@ class SourceModifierFactory(object):
 
 
 class AddModifier(object):
-    """ A source modifier that supports adding an out-of-tree source to dist-git.
+    """A source modifier that supports adding an out-of-tree source to dist-git.
 
     An `add` action has the following valid fields:
 
@@ -74,7 +75,7 @@ class AddModifier(object):
     SUPPORTED_URL_SCHEMES = ["http", "https"]
 
     def __init__(self, *args, **kwargs):
-        """ Initialize an "add" Modifier.
+        """Initialize an "add" Modifier.
         :param source: URL to the out-of-tree source.
         :param path: Destination path to the dist-git repo.
         :param overwriting: True to allow to overwrite if path exists.
@@ -89,7 +90,7 @@ class AddModifier(object):
         self.doozer_source = kwargs.get("doozer_source", None)
 
     def act(self, *args, **kwargs):
-        """ Run the modification action
+        """Run the modification action
 
         :param ceiling_dir: If not None, prevent from writing to a directory that is out of ceiling_dir.
         :param session: If not None, a requests.Session object for HTTP requests
@@ -97,21 +98,23 @@ class AddModifier(object):
         LOGGER.debug("Running 'add' modification action...")
         ceiling_dir = kwargs.get("ceiling_dir")
         build_system = kwargs["context"].get("build_system", "brew")
-        dest_path = str(kwargs["context"]['distgit_path'].joinpath(self.path)) if build_system == "brew" else f"{ceiling_dir}/{self.path}"
+        dest_path = (
+            str(kwargs["context"]['distgit_path'].joinpath(self.path))
+            if build_system == "brew"
+            else f"{ceiling_dir}/{self.path}"
+        )
         if self.doozer_source and self.source:
             raise ValueError("Can't support source and doozersource at the same time")
         # Note: `overwriting` is checked before writing.
         # Data race might happen but it should suffice for prevent from accidently overwriting in-tree sources.
         if not self.overwriting and os.path.exists(dest_path):
-            raise IOError(
-                "Destination path {} exists. Use 'overwriting: true' to overwrite.".format(self.path))
+            raise IOError("Destination path {} exists. Use 'overwriting: true' to overwrite.".format(self.path))
         if build_system == "brew" and ceiling_dir and not is_in_directory(dest_path, ceiling_dir):
             raise ValueError("Writing to a file out of {} is not allowed.".format(ceiling_dir))
         if self.source:
             source = urlparse(self.source)
             if source.scheme not in self.SUPPORTED_URL_SCHEMES:
-                raise ValueError(
-                    "Unsupported URL scheme {} used in 'add' action.".format(source.scheme))
+                raise ValueError("Unsupported URL scheme {} used in 'add' action.".format(source.scheme))
             source_address = source.geturl()  # normalized URL
             LOGGER.debug("Getting out-of-tree source {}...".format(source_address))
             session = kwargs.get("session") or requests.session()
@@ -138,11 +141,10 @@ SourceModifierFactory.MODIFICATIONS["add"] = AddModifier
 
 
 class ReplaceModifier(object):
-    """ A source modifier that supports replacing a substring in Dockerfile or RPM spec file.
-    """
+    """A source modifier that supports replacing a substring in Dockerfile or RPM spec file."""
 
     def __init__(self, *args, **kwargs):
-        """ Initialize ReplaceModifier
+        """Initialize ReplaceModifier
         :param match: This is old substring to be replaced.
         :param replacement: This is new substring, which would replace old substring.
         """
@@ -150,7 +152,7 @@ class ReplaceModifier(object):
         self.replacement = kwargs["replacement"]
 
     def act(self, *args, **kwargs):
-        """ Run the modification action
+        """Run the modification action
 
         :param context: A context dict. `context.component_name` is the dist-git repo name,
             and `context.content` is the content of Dockerfile or RPM spec file.
@@ -159,19 +161,20 @@ class ReplaceModifier(object):
         content = context["content"]
         component_name = context["component_name"]
         match = self.match
-        assert (match is not Missing)
+        assert match is not Missing
         replacement = self.replacement
-        assert (replacement is not Missing)
+        assert replacement is not Missing
         if replacement is None:  # Nothing follows colon in config yaml; user attempting to remove string
             replacement = ""
         pre = content
         post = pre.replace(match, replacement)
         if post == pre:
-            raise DoozerFatalError("{}: Replace ({}->{}) modification did not make a change to the Dockerfile content"
-                                   .format(component_name, match, replacement))
-        LOGGER.debug(
-            "Performed string replace '%s' -> '%s':\n%s\n" %
-            (match, replacement, post))
+            raise DoozerFatalError(
+                "{}: Replace ({}->{}) modification did not make a change to the Dockerfile content".format(
+                    component_name, match, replacement
+                )
+            )
+        LOGGER.debug("Performed string replace '%s' -> '%s':\n%s\n" % (match, replacement, post))
         context["result"] = post
 
 
@@ -179,18 +182,17 @@ SourceModifierFactory.MODIFICATIONS["replace"] = ReplaceModifier
 
 
 class CommandModifier(object):
-    """ A source modifier that supports running a custom command to modify the source.
-    """
+    """A source modifier that supports running a custom command to modify the source."""
 
     def __init__(self, *args, **kwargs):
-        """ Initialize CommandModifier
+        """Initialize CommandModifier
         :param command: a `str` or `list` of the command with arguments
         """
         self.command = kwargs["command"]
         self.env = kwargs.get("env", {})
 
     def act(self, *args, **kwargs):
-        """ Run the command
+        """Run the command
         :param context: A context dict. `context.set_env` is a `dict` of env vars to set for command (overriding existing).
         """
         context = kwargs["context"]
@@ -208,17 +210,16 @@ SourceModifierFactory.MODIFICATIONS["command"] = CommandModifier
 
 
 class RemoveModifier(object):
-    """ A source modifier that supports removing files from the distgit repository.
-    """
+    """A source modifier that supports removing files from the distgit repository."""
 
     def __init__(self, *args, **kwargs):
-        """ Initialize CommandModifier
+        """Initialize CommandModifier
         :param command: a `str` or `list` of the command with arguments
         """
         self.glob = kwargs["glob"]
 
     def act(self, *args, **kwargs):
-        """ Run the command
+        """Run the command
         :param context: A context dict. `context.set_env` is a `dict` of env vars to set for command (overriding existing).
         """
         context = kwargs["context"]
@@ -230,7 +231,9 @@ class RemoveModifier(object):
         removed = []
         for path in distgit_path.rglob(self.glob):
             if not is_in_directory(path, ceiling_dir):
-                raise PermissionError("Removing a file from a location outside of directory {} is not allowed.".format(ceiling_dir))
+                raise PermissionError(
+                    "Removing a file from a location outside of directory {} is not allowed.".format(ceiling_dir)
+                )
             relative_path = str(path.relative_to(distgit_path))
             LOGGER.info("Distgit repo %s: Removing %s", component, relative_path)
             path.unlink()

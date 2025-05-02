@@ -140,7 +140,9 @@ def _get_upstream_source(runtime, image_meta, skip_branch_check=False):
         source_repo_url = image_meta.config.content.source.git.url
         source_repo_branch = image_meta.config.content.source.git.branch.target
         if not skip_branch_check:
-            branch_check, err = exectools.cmd_assert(f'git ls-remote --heads {source_repo_url} {source_repo_branch}', strip=True, retries=3)
+            branch_check, err = exectools.cmd_assert(
+                f'git ls-remote --heads {source_repo_url} {source_repo_branch}', strip=True, retries=3
+            )
             if not branch_check:
                 # Output is empty if branch does not exist
                 source_repo_branch = image_meta.config.content.source.git.branch.fallback
@@ -203,7 +205,6 @@ def get_needed_for_okd_payload_constructions(image_meta):
 
 
 class CiOperatorImageConfig:
-
     def __init__(self, image_meta: ImageMetadata, promotion_namespace: str, promotion_imagestream: str):
         self.image_meta = image_meta
         self.promotion_namespace = promotion_namespace
@@ -215,7 +216,9 @@ class CiOperatorImageConfig:
         self.payload_tag = get_okd_payload_tag_name(image_meta)
 
         self.base_image: Optional[ImageCoordinate] = None
-        self.coordinate = ImageCoordinate(namespace=promotion_namespace, name=promotion_imagestream, tag=self.payload_tag)
+        self.coordinate = ImageCoordinate(
+            namespace=promotion_namespace, name=promotion_imagestream, tag=self.payload_tag
+        )
         self.replacements: Dict[ImageCoordinate, List[str]] = dict()
 
     def add_replacement(self, image_coordinate: ImageCoordinate, pullspecs_or_stages_to_replace: List[str]):
@@ -254,17 +257,19 @@ class CiOperatorImageConfig:
                 if not repo_id or not baseurl:
                     raise IOError(f'Incomplete repo injection data for {image_meta.distgit_key}: {repo_id} / {baseurl}')
 
-                repo_def_lines.extend([
-                    f'[{repo_id}]',
-                    f'id = {repo_id}',
-                    f'name = {repo_id}',
-                    f'baseurl = {baseurl}',
-                    'enabled = 1',
-                    'gpgcheck = 0',
-                    'sslverify = false',
-                    'skip_if_unavailable = true',
-                    '',
-                ])
+                repo_def_lines.extend(
+                    [
+                        f'[{repo_id}]',
+                        f'id = {repo_id}',
+                        f'name = {repo_id}',
+                        f'baseurl = {baseurl}',
+                        'enabled = 1',
+                        'gpgcheck = 0',
+                        'sslverify = false',
+                        'skip_if_unavailable = true',
+                        '',
+                    ]
+                )
 
             repo_lines = '\n'.join(repo_def_lines)
             raw_step = {
@@ -300,7 +305,7 @@ EOF
             # Very rarely, a prow base build will require a context_dir to be set.
             base_obj['context_dir'] = self.context_dir
             if prowjob_dockerfile_path.startswith(self.context_dir):
-                prowjob_dockerfile_path = prowjob_dockerfile_path[len(self.context_dir):].lstrip('/')
+                prowjob_dockerfile_path = prowjob_dockerfile_path[len(self.context_dir) :].lstrip('/')
             else:
                 raise IOError('Expected path to start with prowjob context_dir')
 
@@ -321,8 +326,14 @@ EOF
 
 
 class CiOperatorConfig:
-
-    def __init__(self, org: GitHubOrgName, repo: GitHubRepoName, branch_name: str, promotion_namespace: str, promotion_imagestream: str):
+    def __init__(
+        self,
+        org: GitHubOrgName,
+        repo: GitHubRepoName,
+        branch_name: str,
+        promotion_namespace: str,
+        promotion_imagestream: str,
+    ):
         self.org = org
         self.repo = repo
         self.branch_name = branch_name
@@ -345,7 +356,9 @@ class CiOperatorConfig:
 
     def get_image_config(self, image_meta: ImageMetadata) -> CiOperatorImageConfig:
         if image_meta.distgit_key not in self.ci_operator_image_configs:
-            self.ci_operator_image_configs[image_meta.distgit_key] = CiOperatorImageConfig(image_meta, self.promotion_namespace, self.promotion_imagestream)
+            self.ci_operator_image_configs[image_meta.distgit_key] = CiOperatorImageConfig(
+                image_meta, self.promotion_namespace, self.promotion_imagestream
+            )
         return self.ci_operator_image_configs[image_meta.distgit_key]
 
     def add_release(self, release_name: str, release_def):
@@ -355,7 +368,9 @@ class CiOperatorConfig:
         self.build_root = build_root.as_dict()
 
     def get_ci_operator_config_path(self, release_clone_dir: Path):
-        return release_clone_dir.joinpath('ci-operator', 'config', self.org, self.repo, f'{self.org}-{self.repo}-{self.branch_name}__okd-scos.yaml')
+        return release_clone_dir.joinpath(
+            'ci-operator', 'config', self.org, self.repo, f'{self.org}-{self.repo}-{self.branch_name}__okd-scos.yaml'
+        )
 
     def write_config(self, release_clone_dir: Path):
         output_path = self.get_ci_operator_config_path(release_clone_dir)
@@ -427,6 +442,7 @@ class CiOperatorConfigs:
     each repository. Each repository has a set of images that need to be built
     for OKD. Each repo will have a ci-operator configuration specific to OKD.
     """
+
     def __init__(self, promotion_namespace: str, promotion_imagestream: str):
         self.configs_by_repo: Dict[OrgRepoKey, CiOperatorConfig] = dict()
         self.promotion_namespace = promotion_namespace
@@ -435,7 +451,13 @@ class CiOperatorConfigs:
     def get_ci_operator_config(self, org: GitHubOrgName, repo: GitHubRepoName, branch_name: str) -> CiOperatorConfig:
         config_key = f'{org}:{repo}:{branch_name}'
         if config_key not in self.configs_by_repo:
-            self.configs_by_repo[config_key] = CiOperatorConfig(org, repo, branch_name, promotion_namespace=self.promotion_namespace, promotion_imagestream=self.promotion_imagestream)
+            self.configs_by_repo[config_key] = CiOperatorConfig(
+                org,
+                repo,
+                branch_name,
+                promotion_namespace=self.promotion_namespace,
+                promotion_imagestream=self.promotion_imagestream,
+            )
         return self.configs_by_repo[config_key]
 
     def write_configs(self, release_clone_dir: Path):
@@ -499,7 +521,9 @@ def images_okg_check(runtime):
 
             if tag_entry.items:
                 latest_pullspec: str = tag_entry['items'][0].dockerImageReference
-                latest_pullspec = latest_pullspec.replace('image-registry.openshift-image-registry.svc:5000', 'registry.ci.openshift.org')
+                latest_pullspec = latest_pullspec.replace(
+                    'image-registry.openshift-image-registry.svc:5000', 'registry.ci.openshift.org'
+                )
 
             if tag == 'branding':
                 scos_status = "N/A"
@@ -534,19 +558,44 @@ def images_okg_check(runtime):
             print(f'{remaining_tag},{scos_status},{detail},{latest_pullspec}')
 
 
-@prs.command('open', short_help='Open PRs against upstream component repos that have a FROM that differs from ART metadata.')
+@prs.command(
+    'open', short_help='Open PRs against upstream component repos that have a FROM that differs from ART metadata.'
+)
 @click.option('--github-access-token', metavar='TOKEN', required=True, help='Github access token for user.')
 @click.option('--okd-version', metavar='VERSION', required=True, help='Which OKD stream to promote to.')
-@click.option('--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.')
+@click.option(
+    '--ignore-missing-images', default=False, is_flag=True, help='Do not exit if an image is missing upstream.'
+)
 @click.option('--draft-prs', default=False, is_flag=True, help='Open PRs as draft PRs')
 @click.option('--moist-run', default=False, is_flag=True, help='Do everything except opening the final PRs')
-@click.option('--add-auto-labels', default=False, is_flag=True, help='Add auto_labels to PRs; unless running as openshift-bot, you probably lack the privilege to do so')
-@click.option('--add-label', default=[], multiple=True, help='Add a label to all open PRs (new and existing) - Requires being openshift-bot')
-@click.option('--non-master', default=False, is_flag=True, help='Acknowledge that this is a non-master branch and proceed anyway')
+@click.option(
+    '--add-auto-labels',
+    default=False,
+    is_flag=True,
+    help='Add auto_labels to PRs; unless running as openshift-bot, you probably lack the privilege to do so',
+)
+@click.option(
+    '--add-label',
+    default=[],
+    multiple=True,
+    help='Add a label to all open PRs (new and existing) - Requires being openshift-bot',
+)
+@click.option(
+    '--non-master', default=False, is_flag=True, help='Acknowledge that this is a non-master branch and proceed anyway'
+)
 @pass_runtime
 @click_coroutine
-async def images_okd_prs(runtime, github_access_token, ignore_missing_images, okd_version,
-                         draft_prs, moist_run, add_auto_labels, add_label, non_master):
+async def images_okd_prs(
+    runtime,
+    github_access_token,
+    ignore_missing_images,
+    okd_version,
+    draft_prs,
+    moist_run,
+    add_auto_labels,
+    add_label,
+    non_master,
+):
     # OKD images are marked as disabled: true in their metadata. So make sure to load
     # disabled images.
     runtime.initialize(clone_distgits=False, clone_source=False, disabled=True)
@@ -560,7 +609,9 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
     if major != master_major or minor != master_minor:
         if not non_master:
             # These verbs should normally only be run against the version in master.
-            runtime.logger.warning(f'Target {major}.{minor} is not in master (it is tracking {master_major}.{master_minor}); skipping PRs')
+            runtime.logger.warning(
+                f'Target {major}.{minor} is not in master (it is tracking {master_major}.{master_minor}); skipping PRs'
+            )
             exit(0)
     else:
         non_master = False
@@ -649,7 +700,9 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
 
         desired_ci_build_root_coordinate = None
         if okd_alignment_config.ci_build_root is not Missing:
-            desired_ci_build_root_image = resolve_okd_from_entry(runtime, image_meta, okd_alignment_config.ci_build_root, okd_version=okd_version)
+            desired_ci_build_root_image = resolve_okd_from_entry(
+                runtime, image_meta, okd_alignment_config.ci_build_root, okd_version=okd_version
+            )
 
             # Split the pullspec into an openshift namespace, imagestream, and tag.
             # e.g. registry.openshift.org:999/ocp/release:golang-1.16 => tag=golang-1.16, namespace=ocp, imagestream=release
@@ -659,9 +712,16 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
         else:
             # ci-operator configuration, even if it is not building anything, fails if there is no
             # build root. Just get the default golang.
-            default_build_root = resolve_okd_from_entry(runtime, image_meta, Model({
-                'stream': 'rhel-9-golang',
-            }), okd_version=okd_version)
+            default_build_root = resolve_okd_from_entry(
+                runtime,
+                image_meta,
+                Model(
+                    {
+                        'stream': 'rhel-9-golang',
+                    }
+                ),
+                okd_version=okd_version,
+            )
             desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(default_build_root)
 
         source_repo_url, source_repo_branch = _get_upstream_source(runtime, image_meta, skip_branch_check=True)
@@ -676,7 +736,9 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
             logger.info(f'Skipping non-OKD image: {image_meta.distgit_key}')
             continue
 
-        public_repo_url, public_branch, _ = SourceResolver.get_public_upstream(source_repo_url, runtime.group_config.public_upstreams)
+        public_repo_url, public_branch, _ = SourceResolver.get_public_upstream(
+            source_repo_url, runtime.group_config.public_upstreams
+        )
         if not public_branch:
             public_branch = source_repo_branch
 
@@ -692,7 +754,6 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
             priv_branches = priv_branches.splitlines()
 
             if non_master:
-
                 if [bl for bl in public_branches if bl.endswith(f'/release-{major}.{minor}')]:
                     public_branch = f'release-{major}.{minor}'
                 elif [bl for bl in public_branches if bl.endswith(f'/openshift-{major}.{minor}')]:
@@ -700,15 +761,19 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
                 else:
                     raise IOError(f'Did not find release branch among: {public_branches}')
             else:
-                if [bl for bl in public_branches if bl.endswith('/main')] and \
-                   [bl for bl in priv_branches if bl.endswith('/main')]:
+                if [bl for bl in public_branches if bl.endswith('/main')] and [
+                    bl for bl in priv_branches if bl.endswith('/main')
+                ]:
                     public_branch = 'main'
-                elif [bl for bl in public_branches if bl.endswith('/master')] and \
-                     [bl for bl in priv_branches if bl.endswith('/master')]:
+                elif [bl for bl in public_branches if bl.endswith('/master')] and [
+                    bl for bl in priv_branches if bl.endswith('/master')
+                ]:
                     public_branch = 'master'
                 else:
                     # There are ways of determining default branch without using naming conventions, but as of today, we don't need it.
-                    raise IOError(f'Did not find master or main branch; unable to detect default branch: {public_branches}')
+                    raise IOError(
+                        f'Did not find master or main branch; unable to detect default branch: {public_branches}'
+                    )
 
         _, org, repo_name = split_git_url(public_repo_url)
 
@@ -741,7 +806,8 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
                 branch=public_branch,
                 path=dockerfile_path,
                 token=github_access_token,
-                destination=dockerfile_abs_path)
+                destination=dockerfile_abs_path,
+            )
 
             content = dockerfile_abs_path.read_text()
             if len(content.strip().splitlines()) == 1:
@@ -758,23 +824,30 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
             # The number of FROM statements in the ART metadata does not match the number
             # of FROM statements in the upstream Dockerfile. ART's normal build process will alert
             # artists on this condition, so assume it will be handled and skip for now.
-            yellow_print(f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]')
+            yellow_print(
+                f'Parent count mismatch for {image_meta.get_component_name()}; skipping reconciliation.\nDesired: [{desired_parents}]\nDetected[{dfp.parent_images}]'
+            )
             continue
 
         # reconcile_url = f'{convert_remote_git_to_https(runtime.gitdata.origin_url)}/tree/{runtime.gitdata.commit_hash}/images/{os.path.basename(image_meta.config_filename)}'
         # reconcile_info = f"Reconciling with {reconcile_url}"
 
         ci_operator_image_config = ci_operator_config.get_image_config(image_meta)
-        ci_operator_config.add_release('latest', {
-            'integration': {
-                # 'include_built_images': True,
-                'namespace': 'origin',
-                'name': f'scos-{okd_version}',
+        ci_operator_config.add_release(
+            'latest',
+            {
+                'integration': {
+                    # 'include_built_images': True,
+                    'namespace': 'origin',
+                    'name': f'scos-{okd_version}',
+                },
             },
-        })
+        )
 
         stage_names = extract_stage_names(dfp)
-        for index, stage_name in enumerate(stage_names[:-1]):  # For all stages except the last (i.e. except for the base image)
+        for index, stage_name in enumerate(
+            stage_names[:-1]
+        ):  # For all stages except the last (i.e. except for the base image)
             if image_meta.config['from']['builder'][index].image is not Missing:
                 # An explicit image was specified. Don't try to create a coordinate.
                 continue
@@ -800,7 +873,10 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
     print('It is necessary to run "make ci-operator-configs" and then "make jobs" on the generated release repository')
 
 
-@prs.command('set-optional-presubmit', short_help='Find OKD configs in MODIFIED openshift/release and set optional & always_run:false.')
+@prs.command(
+    'set-optional-presubmit',
+    short_help='Find OKD configs in MODIFIED openshift/release and set optional & always_run:false.',
+)
 @click.option('--release-dir', metavar='DIR', required=True, help='Path to the openshift/release directory')
 @pass_runtime
 def images_okd_prs_optional(runtime, release_dir):

@@ -70,11 +70,12 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
         remove_nvr_payload = {
             'nvr': nvr,
         }
-        res = requests.post(f'{ERRATA_API_URL}/erratum/{advisory_id}/remove_build',
-                            verify=ssl.get_default_verify_paths().openssl_cafile,
-                            auth=auth,
-                            json=remove_nvr_payload,
-                            )
+        res = requests.post(
+            f'{ERRATA_API_URL}/erratum/{advisory_id}/remove_build',
+            verify=ssl.get_default_verify_paths().openssl_cafile,
+            auth=auth,
+            json=remove_nvr_payload,
+        )
         if res.status_code not in (200, 201):
             logger.error(f'Error remove build from advisory: {res.content}')
             raise IOError(f'Unable to remove nvr from advisory {advisory_id}: {nvr}')
@@ -88,18 +89,21 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
             logger.info(f'Skipping advisory attach for excluded package: {nvr}')
             continue
 
-        add_builds_payload.append({
-            "product_version": nvr_product_version[nvr],
-            "build": nvr,
-            "file_types": ['rpm'],
-        })
+        add_builds_payload.append(
+            {
+                "product_version": nvr_product_version[nvr],
+                "build": nvr,
+                "file_types": ['rpm'],
+            }
+        )
 
     if add_builds_payload:
-        res = requests.post(f'{ERRATA_API_URL}/erratum/{advisory_id}/add_builds',
-                            verify=ssl.get_default_verify_paths().openssl_cafile,
-                            auth=HTTPKerberosAuth(),
-                            json=add_builds_payload,
-                            )
+        res = requests.post(
+            f'{ERRATA_API_URL}/erratum/{advisory_id}/add_builds',
+            verify=ssl.get_default_verify_paths().openssl_cafile,
+            auth=HTTPKerberosAuth(),
+            json=add_builds_payload,
+        )
 
         if res.status_code not in (201, 200):
             logger.error('Error attaching builds to advisory')
@@ -131,7 +135,6 @@ def _assemble_repo(config, nvres: List[str]):
 
         # Each arch will have its own yum repo & thus needs its own rpm_list
         with open(rpm_list_path, mode='w+') as rl:
-
             for nvre in nvres:
                 nvr = strip_epoch(nvre)
                 matched_count = 0
@@ -143,7 +146,7 @@ def _assemble_repo(config, nvres: List[str]):
                     logger.info(f'Skipping repo addition for excluded package: {nvre}')
                     continue
 
-                signed = (signing_mode == 'signed')
+                signed = signing_mode == 'signed'
                 br_arch_base_path = get_brewroot_arch_base_path(config, nvre, signed)
 
                 # Include noarch in each arch specific repo.
@@ -176,8 +179,11 @@ def _assemble_repo(config, nvres: List[str]):
                         matched_count += 1
 
                 if not matched_count:
-                    logger.warning("Unable to find any {arch} rpms for {nvre} in {p} ; this may be ok if the package doesn't support the arch and it is not required for that arch".format(
-                        arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed)))
+                    logger.warning(
+                        "Unable to find any {arch} rpms for {nvre} in {p} ; this may be ok if the package doesn't support the arch and it is not required for that arch".format(
+                            arch=arch_name, nvre=nvre, p=get_brewroot_arch_base_path(config, nvre, signed)
+                        )
+                    )
 
         exectools.cmd_assert('createrepo_c -i rpm_list .', cwd=dest_arch_path)
         logger.info(f'Successfully created repo at {dest_arch_path}')
@@ -206,13 +212,11 @@ def assemble_repo(config, nvres, event_info=None, extra_data: Dict = None):
             _assemble_repo(config, nvres)
             success = True
         finally:
-
             packages = list()
             for nvre in sorted(nvres):
                 nvr = strip_epoch(nvre)
                 build = koji_proxy.getBuild(nvr)
-                tag_listing = koji_proxy.queryHistory(table='tag_listing',
-                                                      build=build['id'])['tag_listing']
+                tag_listing = koji_proxy.queryHistory(table='tag_listing', build=build['id'])['tag_listing']
                 latest_tag = {}
                 if tag_listing:
                     tag_listing.sort(key=lambda event: event['create_event'])
@@ -299,7 +303,9 @@ def is_signed(config, nvre, koji_api: koji.ClientSession):
             tasks.append(m.queryRPMSigs(rpm_id=rpm['id'], sigkey=sigkey))
 
     for rpm, task in zip(rpms, tasks):
-        if not any(os.path.exists("%s/%s" % (unsigned_base, koji.pathinfo.signed(rpm, sig['sigkey']))) for sig in task.result):
+        if not any(
+            os.path.exists("%s/%s" % (unsigned_base, koji.pathinfo.signed(rpm, sig['sigkey']))) for sig in task.result
+        ):
             logger.info(f'Found incomplete signed rpm {nvre}; brewroot may still be being built.')
             return False
     return True
@@ -330,15 +336,21 @@ def assert_signed(config, nvre, koji_api: koji.ClientSession, poll_for=15):
     while not is_signed(config, nvre, koji_api):
         if poll_for <= 0:
             br_arch_base_path = get_brewroot_arch_base_path(config, nvre, True)
-            logger.info('Package {nvre} has not been signed; {signed_path} does not exist'.format(
-                nvre=nvre,
-                signed_path=br_arch_base_path,
-            ))
-            raise IOError('Package {nvre} has not been signed; {signed_path} does not exist'.format(
-                nvre=nvre,
-                signed_path=br_arch_base_path,
-            ))
-        logger.info(f'Waiting for up to {poll_for} more minutes, get back to default of 20 minutes after SIGNSERVER-267 is solved')
+            logger.info(
+                'Package {nvre} has not been signed; {signed_path} does not exist'.format(
+                    nvre=nvre,
+                    signed_path=br_arch_base_path,
+                )
+            )
+            raise IOError(
+                'Package {nvre} has not been signed; {signed_path} does not exist'.format(
+                    nvre=nvre,
+                    signed_path=br_arch_base_path,
+                )
+            )
+        logger.info(
+            f'Waiting for up to {poll_for} more minutes, get back to default of 20 minutes after SIGNSERVER-267 is solved'
+        )
         poll_for -= 1
         time_used += 1
         time.sleep(60)
@@ -375,22 +387,44 @@ def setup_logging(dest_dir: str):
     logger.info('Invocation: ' + ' '.join(sys.argv))
 
 
-@click.group("config:plashet", short_help="Creates a directory containing one or more arch specific yum repositories by using local symlinks.")
+@click.group(
+    "config:plashet",
+    short_help="Creates a directory containing one or more arch specific yum repositories by using local symlinks.",
+)
 @click.pass_context
-@click.option('--base-dir', default=os.getcwd(),
-              help='Parent directory for repo directory. Defaults to current working directory.')
+@click.option(
+    '--base-dir',
+    default=os.getcwd(),
+    help='Parent directory for repo directory. Defaults to current working directory.',
+)
 @click.option('--name', metavar='NAME', required=True, help='Directory name to create relative to base directory.')
-@click.option('--repo-subdir', metavar='REL_PATH', required=False, help='Directory under each arch repo to create yum repo (e.g. "os" will create x86_64/os/repodata)')
-@click.option('--signing-key-id', required=False, metavar='HEX',
-              help='Signing key to require for signed arches if you fd431d51 is not desired.')
-@click.option('--arch', multiple=True, metavar='ARCH <signed|unsigned>',
-              required=True, nargs=2,
-              help='For each arch to include in the plashet. Each arch will be a repo beneath the plashet dir.')
+@click.option(
+    '--repo-subdir',
+    metavar='REL_PATH',
+    required=False,
+    help='Directory under each arch repo to create yum repo (e.g. "os" will create x86_64/os/repodata)',
+)
+@click.option(
+    '--signing-key-id',
+    required=False,
+    metavar='HEX',
+    help='Signing key to require for signed arches if you fd431d51 is not desired.',
+)
+@click.option(
+    '--arch',
+    multiple=True,
+    metavar='ARCH <signed|unsigned>',
+    required=True,
+    nargs=2,
+    help='For each arch to include in the plashet. Each arch will be a repo beneath the plashet dir.',
+)
 @click.option('--brew-root', metavar='PATH', default='/mnt/redhat/brewroot', help='Filesystem location of brew root')
-@click.option('-x', '--exclude-package', metavar='NAME',
-              multiple=True, default=[], help='Exclude one or more package names')
-@click.option('-i', '--include-package', metavar='NAME',
-              multiple=True, default=[], help='Only include specified packages')
+@click.option(
+    '-x', '--exclude-package', metavar='NAME', multiple=True, default=[], help='Exclude one or more package names'
+)
+@click.option(
+    '-i', '--include-package', metavar='NAME', multiple=True, default=[], help='Only include specified packages'
+)
 def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
     """
     Creates a directory containing one or more arch specific yum repositories by using local
@@ -446,36 +480,89 @@ def config_plashet(ctx, base_dir, brew_root, name, signing_key_id, **kwargs):
 
     runtime: Runtime = ctx.obj
 
-    ctx.obj = SimpleNamespace(base_dir=base_dir,
-                              brew_root=brew_root,
-                              name=name,
-                              brew_root_path=brew_root_path,
-                              packages_path=packages_path,
-                              base_dir_path=base_dir_path,
-                              dest_dir=dest_dir,
-                              signing_key_id=signing_key_id if signing_key_id else 'fd431d51',
-                              runtime=runtime,
-                              **kwargs)
+    ctx.obj = SimpleNamespace(
+        base_dir=base_dir,
+        brew_root=brew_root,
+        name=name,
+        brew_root_path=brew_root_path,
+        packages_path=packages_path,
+        base_dir_path=base_dir_path,
+        dest_dir=dest_dir,
+        signing_key_id=signing_key_id if signing_key_id else 'fd431d51',
+        runtime=runtime,
+        **kwargs,
+    )
 
 
-@config_plashet.command('from-tags', short_help='Collects a set of RPMs from specified brew tags -- signing if necessary.')
+@config_plashet.command(
+    'from-tags', short_help='Collects a set of RPMs from specified brew tags -- signing if necessary.'
+)
 @click.pass_obj
-@click.option('-t', '--brew-tag', multiple=True, required=True, nargs=2, help='One or more brew tags whose RPMs should be included in the repo; format is: <tag> <product_version>')
-@click.option('-e', '--embargoed-brew-tag', multiple=True, required=False, help='If specified, any nvr found in these tags will be considered embargoed (unless they have already shipped)')
-@click.option('--embargoed-nvr', multiple=True, required=False, help='Treat this nvr as embargoed (unless it has already shipped)')
-@click.option('--signing-advisory-id', type=click.INT, required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
-@click.option('--signing-advisory-mode', required=False, default="clean", type=click.Choice(['leave', 'clean'], case_sensitive=False),
-              help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign')
+@click.option(
+    '-t',
+    '--brew-tag',
+    multiple=True,
+    required=True,
+    nargs=2,
+    help='One or more brew tags whose RPMs should be included in the repo; format is: <tag> <product_version>',
+)
+@click.option(
+    '-e',
+    '--embargoed-brew-tag',
+    multiple=True,
+    required=False,
+    help='If specified, any nvr found in these tags will be considered embargoed (unless they have already shipped)',
+)
+@click.option(
+    '--embargoed-nvr', multiple=True, required=False, help='Treat this nvr as embargoed (unless it has already shipped)'
+)
+@click.option(
+    '--signing-advisory-id',
+    type=click.INT,
+    required=False,
+    help='Use this auto-signing advisory to sign RPMs if necessary.',
+)
+@click.option(
+    '--signing-advisory-mode',
+    required=False,
+    default="clean",
+    type=click.Choice(['leave', 'clean'], case_sensitive=False),
+    help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign',
+)
 @click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
-@click.option('--include-previous-for', multiple=True, metavar='PACKAGE_NAME_PREFFIX', required=False, help='For specified package (may be package name prefix), include latest-1 tagged nvr in the plashet')
-@click.option('--include-previous', default=False, is_flag=True,
-              help='Like --include-previous-for, but performs the operation for all packages found in the tags')
-@click.option('--include-embargoed', default=False, is_flag=True,
-              help='If specified, embargoed/unshipped RPMs will be included in the plashet')
-@click.option('--inherit', required=False, default=False, is_flag=True,
-              help='Descend into brew tag inheritance')
-def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], embargoed_brew_tag: Tuple[str, ...], embargoed_nvr: Tuple[str, ...], signing_advisory_id: Optional[int], signing_advisory_mode: str,
-              poll_for: int, include_previous_for: Tuple[str, ...], include_previous: bool, include_embargoed: bool, inherit: bool):
+@click.option(
+    '--include-previous-for',
+    multiple=True,
+    metavar='PACKAGE_NAME_PREFFIX',
+    required=False,
+    help='For specified package (may be package name prefix), include latest-1 tagged nvr in the plashet',
+)
+@click.option(
+    '--include-previous',
+    default=False,
+    is_flag=True,
+    help='Like --include-previous-for, but performs the operation for all packages found in the tags',
+)
+@click.option(
+    '--include-embargoed',
+    default=False,
+    is_flag=True,
+    help='If specified, embargoed/unshipped RPMs will be included in the plashet',
+)
+@click.option('--inherit', required=False, default=False, is_flag=True, help='Descend into brew tag inheritance')
+def from_tags(
+    config: SimpleNamespace,
+    brew_tag: Tuple[Tuple[str, str], ...],
+    embargoed_brew_tag: Tuple[str, ...],
+    embargoed_nvr: Tuple[str, ...],
+    signing_advisory_id: Optional[int],
+    signing_advisory_mode: str,
+    poll_for: int,
+    include_previous_for: Tuple[str, ...],
+    include_previous: bool,
+    include_embargoed: bool,
+    inherit: bool,
+):
     """
     The repositories are filled with RPMs derived from the list of
     brew tags. If the RPMs are not signed and a repo should contain signed content,
@@ -491,10 +578,15 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     --brew-tag <tag> <product_version> example: --brew-tag rhaos-4.5-rhel-8-candidate OSE-4.5-RHEL-8 --brew-tag .. ..
     """
     runtime: Runtime = config.runtime
-    runtime.initialize(mode="rpms", clone_source=False, clone_distgits=False, prevent_cloning=True,
-                       # we load disabled to include microshift rpm which still could be pinned for assembly
-                       # and eligible for plashet inclusion
-                       disabled=True)
+    runtime.initialize(
+        mode="rpms",
+        clone_source=False,
+        clone_distgits=False,
+        prevent_cloning=True,
+        # we load disabled to include microshift rpm which still could be pinned for assembly
+        # and eligible for plashet inclusion
+        disabled=True,
+    )
     assembly = runtime.assembly
     koji_proxy = runtime.build_retrying_koji_client()
     koji_proxy.gssapi_login()
@@ -529,17 +621,23 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
             Without this filtering, the error from errata tool looks like:
             b'{"error":"Unable to add build \'cri-o-1.16.6-2.rhaos4.3.git4936f44.el7\' which is older than cri-o-1.16.6-16.dev.rhaos4.3.git4936f44.el7"}'
             """
-            released_tag = tag[:tag.rfind('-')]
+            released_tag = tag[: tag.rfind('-')]
             for build in koji_proxy.listTagged(released_tag, latest=True, inherit=True, event=event, type='rpm'):
                 package_name = build['package_name']
                 released_package_nvre_obj[package_name] = parse_nvr(to_nvre(build))
 
-        component_builds: Dict[str, Dict] = {}  # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
-        pinned_nvres: Dict[str, str] = {}  # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
+        component_builds: Dict[
+            str, Dict
+        ] = {}  # candidate rpms for plashet; keys are rpm component names, values are Brew build dicts
+        pinned_nvres: Dict[
+            str, str
+        ] = {}  # rpms pinned to the runtime assembly either by "is" or group dependencies; keys are rpm component names, values are nvres
 
         if runtime.assembly_basis_event:
             # If an assembly has a basis event, it will only query for artifacts from the "stream" assembly.
-            logger.info(f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}')
+            logger.info(
+                f'Constraining rpm search to stream assembly due to assembly basis event {runtime.assembly_basis_event}'
+            )
             assembly = 'stream'
 
         # If assemblies are disabled, the true latest rpm builds from the tag will be collected; Otherwise we will only collect the rpm builds specific to that assembly.
@@ -561,22 +659,34 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
         el_version = isolate_el_version_in_brew_tag(tag)
         if el_version:  # Only honor pinned rpms if this tag is relevant to a RHEL version
             # Honors pinned NVRs by "is"
-            pinned_by_is = builder.from_pinned_by_is(el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map)
+            pinned_by_is = builder.from_pinned_by_is(
+                el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map
+            )
             # Builds pinned by "is" should take precedence over every build from tag
             for component, pinned_build in pinned_by_is.items():
                 pinned_nvres[component] = to_nvre(pinned_build)
                 if component in component_builds and pinned_build["id"] != component_builds[component]["id"]:
-                    logger.warning("Swapping nvr %s from brew tag for pinned nvr %s...", component_builds[component]["nvr"], pinned_build["nvr"])
+                    logger.warning(
+                        "Swapping nvr %s from brew tag for pinned nvr %s...",
+                        component_builds[component]["nvr"],
+                        pinned_build["nvr"],
+                    )
             component_builds.update(pinned_by_is)  # pinned rpms take precedence over those from tags
             signable_components |= pinned_by_is.keys()  # ART-managed rpms are always signable
 
             # Honors group dependencies
-            group_deps = builder.from_group_deps(el_version, runtime.group_config, runtime.rpm_map)  # the return value doesn't include any ART managed rpms
+            group_deps = builder.from_group_deps(
+                el_version, runtime.group_config, runtime.rpm_map
+            )  # the return value doesn't include any ART managed rpms
             # Group dependencies should take precedence over anything previously determined except those pinned by "is".
             for component, dep_build in group_deps.items():
                 pinned_nvres[component] = to_nvre(dep_build)
                 if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
-                    logger.warning("Swapping stream nvr %s for group dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"])
+                    logger.warning(
+                        "Swapping stream nvr %s for group dependency nvr %s...",
+                        component_builds[component]["nvr"],
+                        dep_build["nvr"],
+                    )
             component_builds.update(group_deps)
 
         for build in component_builds.values():
@@ -591,7 +701,9 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                 # .p1/.p3 or inclusion in the embargoed_tag_nvrs indicates this rpm is embargoed OR *was* embargoed.
                 # We can ignore it if it has already shipped.
                 test_nvre_obj = parse_nvr(an_nvre)
-                if released_nvre_obj is None or compare_nvr(test_nvre_obj, released_nvre_obj) > 0:  # If this nvr hasn't shipped
+                if (
+                    released_nvre_obj is None or compare_nvr(test_nvre_obj, released_nvre_obj) > 0
+                ):  # If this nvr hasn't shipped
                     pflag = get_visibility_suffix(runtime.build_system, BuildVisibility.PRIVATE)
                     if f'.{pflag}' in (an_nvre or '') or strip_epoch(an_nvre) in embargoed_tag_nvrs:  # It's embargoed!
                         return True
@@ -612,10 +724,14 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                 if not include_embargoed:
                     # We are being asked to build a plashet without embargoed RPMs. We need to find a stand-in.
                     if package_name in pinned_nvres:
-                        raise IOError(f'Unable to build unembargoed plashet. Build {nvre} is pinned in the assembly config but it is embargoed.')
+                        raise IOError(
+                            f'Unable to build unembargoed plashet. Build {nvre} is pinned in the assembly config but it is embargoed.'
+                        )
 
                     # Search through the tag's package history to find the last build that was NOT embargoed.
-                    tag_history = koji_proxy.listTagged(tag, package=package_name, inherit=inherit, event=event, type='rpm')
+                    tag_history = koji_proxy.listTagged(
+                        tag, package=package_name, inherit=inherit, event=event, type='rpm'
+                    )
 
                     # Skip any builds latter tagged than nvre.
                     tag_history = itertools.dropwhile(lambda build: to_nvre(build) != nvre, tag_history)
@@ -626,7 +742,9 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                     # Find the latest build in historical builds for the runtime assembly.
                     unembargoed_latest = next(find_latest_builds(tag_history, assembly), None)
                     if unembargoed_latest is None:
-                        raise IOError(f'Unable to build unembargoed plashet. Lastest build of {package_name} ({nvre}) is embargoed but unable to find unembargoed version in history')
+                        raise IOError(
+                            f'Unable to build unembargoed plashet. Lastest build of {package_name} ({nvre}) is embargoed but unable to find unembargoed version in history'
+                        )
 
                     unembargoed_nvre = to_nvre(unembargoed_latest)
                     plashet_concerns.append(f'Swapping embargoed nvr {nvre} for unembargoed nvr {unembargoed_nvre}.')
@@ -635,7 +753,9 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
 
             nvre_obj = parse_nvr(nvre)
 
-            if package_name not in pinned_nvres and released_nvre_obj and compare_nvr(nvre_obj, released_nvre_obj) < 0:  # if the current nvr is not pinned in the assembly config and is less than the released NVR
+            if (
+                package_name not in pinned_nvres and released_nvre_obj and compare_nvr(nvre_obj, released_nvre_obj) < 0
+            ):  # if the current nvr is not pinned in the assembly config and is less than the released NVR
                 msg = f'Skipping tagged {nvre} because it is older than a released version: {released_nvre_obj}'
                 plashet_concerns.append(msg)
                 logger.error(msg)
@@ -649,7 +769,11 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
             if package_name.startswith(tuple(include_previous_for)) or include_previous:
                 # The user has asked for non-latest entry for this package to be included in the plashet.
                 if package_name in pinned_nvres:
-                    logger.warning("Previous version of %s package will not be included because %s is required by the assembly config", package_name, nvre)
+                    logger.warning(
+                        "Previous version of %s package will not be included because %s is required by the assembly config",
+                        package_name,
+                        nvre,
+                    )
                     continue
 
                 # we can try to find this by looking at the packages full history in this tag. Listing is
@@ -670,15 +794,21 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                         # Is our historical nvr > target for inclusion in plashet? If it is, a user of the plashet would
                         # pull in the historical nvr with a yum install. We can't allow that. Just give up -- this is
                         # not in line with the use case of history.
-                        plashet_concerns.append(f'Unable to include previous for {package_name} because history {history_nvre} is newer than latest tagged {nvre}')
+                        plashet_concerns.append(
+                            f'Unable to include previous for {package_name} because history {history_nvre} is newer than latest tagged {nvre}'
+                        )
                     if include_embargoed is False and is_embargoed(history_nvre):
                         # smh.. history is still under embargo. What you are guys doing?!
-                        plashet_concerns.append(f'Unable to include previous for {package_name} because history {history_nvre} is under embargo')
+                        plashet_concerns.append(
+                            f'Unable to include previous for {package_name} because history {history_nvre} is under embargo'
+                        )
                     historical_nvres.add(history_nvre)
                     nvr_product_version[strip_epoch(history_nvre)] = product_version
 
     if config.include_package and len(config.include_package) != len(desired_nvres):
-        raise IOError(f'Did not find all command line included packages {config.include_package}; only found {desired_nvres}')
+        raise IOError(
+            f'Did not find all command line included packages {config.include_package}; only found {desired_nvres}'
+        )
 
     # Did any of the arches require signed content?
     possible_signing_needed = signed_desired(config)
@@ -705,8 +835,9 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
                         nvres_for_advisory.append(nvre)
 
                 logger.info(f'Updating advisory to get nvre set {set_name} signed: {signing_advisory_id}')
-                update_advisory_builds(config, errata_session, signing_advisory_id, nvres_for_advisory,
-                                       nvr_product_version)
+                update_advisory_builds(
+                    config, errata_session, signing_advisory_id, nvres_for_advisory, nvr_product_version
+                )
 
             else:
                 logger.warning(f'No signing advisory specified; will simply poll and hope for nvre set {set_name}')
@@ -737,16 +868,43 @@ def from_tags(config: SimpleNamespace, brew_tag: Tuple[Tuple[str, str], ...], em
     assemble_repo(config, all_nvres, event_info, extra_data=extra_data)
 
 
-@config_plashet.command('for-assembly', short_help='Builds repositories of RPMs explicitly listed as dependencies in the assembly.')
+@config_plashet.command(
+    'for-assembly', short_help='Builds repositories of RPMs explicitly listed as dependencies in the assembly.'
+)
 @click.pass_obj
-@click.option('--image', metavar='DISTGIT_KEY', required=False, help='Include any dependencies specified in the component overrides for the assembly.')
-@click.option('--rhcos', is_flag=True, help="Include any dependencies specified in the assembly's assembly.rhcos.dependencies.")
+@click.option(
+    '--image',
+    metavar='DISTGIT_KEY',
+    required=False,
+    help='Include any dependencies specified in the component overrides for the assembly.',
+)
+@click.option(
+    '--rhcos', is_flag=True, help="Include any dependencies specified in the assembly's assembly.rhcos.dependencies."
+)
 @click.option('--el-version', metavar='NUMBER', type=click.INT, required=False, help="RHEL version")
-@click.option('--signing-advisory-id', type=click.INT, required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
-@click.option('--signing-advisory-mode', required=False, default="clean", type=click.Choice(['leave', 'clean'], case_sensitive=False),
-              help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign')
+@click.option(
+    '--signing-advisory-id',
+    type=click.INT,
+    required=False,
+    help='Use this auto-signing advisory to sign RPMs if necessary.',
+)
+@click.option(
+    '--signing-advisory-mode',
+    required=False,
+    default="clean",
+    type=click.Choice(['leave', 'clean'], case_sensitive=False),
+    help='clean=remove all builds on start and successful exit; leave=leave existing builds attached when attempting to sign',
+)
 @click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
-def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_version: Optional[int], signing_advisory_id: Optional[int], signing_advisory_mode: str, poll_for: int):
+def for_assembly(
+    config: SimpleNamespace,
+    image: Optional[str],
+    rhcos: bool,
+    el_version: Optional[int],
+    signing_advisory_id: Optional[int],
+    signing_advisory_mode: str,
+    poll_for: int,
+):
     """
     Creates a directory containing arch specific yum repository subdirectories based on RPMs explicitly listed as dependencies in the assembly
     (whether for the core assembly, rhcos, or a specific image, depending on the command line invocation).
@@ -777,19 +935,27 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
     desired_nvres = set()  # The final set of rpm build NVREs that will be included in the plashet repo
     nvr_product_version = {}  # Maps nvr to product_version for signing
 
-    component_builds: Dict[str, Dict] = {}  # This dict stores candidate rpm builds for plashet; keys are rpm component names, values are Brew build dicts
+    component_builds: Dict[
+        str, Dict
+    ] = {}  # This dict stores candidate rpm builds for plashet; keys are rpm component names, values are Brew build dicts
 
     # Honors pinned NVRs by "is"
-    pinned_by_is = builder.from_pinned_by_is(el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map)
+    pinned_by_is = builder.from_pinned_by_is(
+        el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map
+    )
     # Builds pinned by "is" should take precedence over every build from tag
     for component, pinned_build in pinned_by_is.items():
         if component in component_builds and pinned_build["id"] != component_builds[component]["id"]:
-            logger.warning("Swapping tagged nvr %s for pinned nvr %s...", component_builds[component]["nvr"], pinned_build["nvr"])
+            logger.warning(
+                "Swapping tagged nvr %s for pinned nvr %s...", component_builds[component]["nvr"], pinned_build["nvr"]
+            )
     component_builds.update(pinned_by_is)  # pinned rpms take precedence over those from tags
 
     # Only ART-managed rpms are always signable
     # Determines product version for each rpm
-    tag_pv_map = runtime.gitdata.load_data(key='erratatool', replace_vars=runtime.group_config.vars).data.get('brew_tag_product_version_mapping', {})
+    tag_pv_map = runtime.gitdata.load_data(key='erratatool', replace_vars=runtime.group_config.vars).data.get(
+        'brew_tag_product_version_mapping', {}
+    )
     nvrs = [b["nvr"] for b in pinned_by_is.values()]
     for nvr, tags in zip(nvrs, get_builds_tags(nvrs, session=koji_proxy)):
         tag_names = {tag["name"] for tag in tags}
@@ -799,11 +965,17 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
         nvr_product_version[nvr] = tag_pv_map[accepted_tag_names.pop()]
 
     # Honors group dependencies
-    group_deps = builder.from_group_deps(el_version, runtime.group_config, runtime.rpm_map)  # the return value doesn't include any ART managed rpms
+    group_deps = builder.from_group_deps(
+        el_version, runtime.group_config, runtime.rpm_map
+    )  # the return value doesn't include any ART managed rpms
     # Group dependencies should take precedence over anything previously determined except those pinned by "is".
     for component, dep_build in group_deps.items():
         if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
-            logger.warning("Swapping tagged nvr %s for group dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"])
+            logger.warning(
+                "Swapping tagged nvr %s for group dependency nvr %s...",
+                component_builds[component]["nvr"],
+                dep_build["nvr"],
+            )
     component_builds.update(group_deps)
 
     # If "--image" is specified, the final list of package NVRs should include any dependencies specified in the component overrides for the assembly.
@@ -813,22 +985,36 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
             raise IOError(f"Distgit key '{image}' specified by '--image' is not found or excluded from build data.")
         image_el_version = isolate_el_version_in_brew_tag(image_meta.branch())
         if image_el_version is None:  # This should never happen, but be safe
-            raise ValueError(f"Distgit repo {image} uses a distgit branch {image_meta.branch()} that is irrelevant to any RHEL version.")
+            raise ValueError(
+                f"Distgit repo {image} uses a distgit branch {image_meta.branch()} that is irrelevant to any RHEL version."
+            )
         if image_el_version == el_version:
-            image_deps = builder.from_image_member_deps(image_el_version, runtime.assembly, runtime.get_releases_config(), image_meta, runtime.rpm_map)  # the return value doesn't include any ART managed rpms
+            image_deps = builder.from_image_member_deps(
+                image_el_version, runtime.assembly, runtime.get_releases_config(), image_meta, runtime.rpm_map
+            )  # the return value doesn't include any ART managed rpms
             # image member dependencies should take precedence over anything previously determined except those pinned by "is".
             for component, dep_build in image_deps.items():
                 if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
-                    logger.warning("Swapping tagged nvr %s for image member dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"])
+                    logger.warning(
+                        "Swapping tagged nvr %s for image member dependency nvr %s...",
+                        component_builds[component]["nvr"],
+                        dep_build["nvr"],
+                    )
             component_builds.update(image_deps)
 
     # If "--rhcos" argument is specified, the final list of package NVRs should include any dependencies specified in the assembly's assembly.rhcos.dependencies field.
     elif rhcos:
-        rhcos_deps = builder.from_rhcos_deps(el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map)   # the return value doesn't include any ART managed rpms
+        rhcos_deps = builder.from_rhcos_deps(
+            el_version, runtime.assembly, runtime.get_releases_config(), runtime.rpm_map
+        )  # the return value doesn't include any ART managed rpms
         # RHCOS dependencies should take precedence over anything previously determined except those pinned by "is".
         for component, dep_build in rhcos_deps.items():
             if component in component_builds and dep_build["id"] != component_builds[component]["id"]:
-                logger.warning("Swapping tagged nvr %s for RHCOS dependency nvr %s...", component_builds[component]["nvr"], dep_build["nvr"])
+                logger.warning(
+                    "Swapping tagged nvr %s for RHCOS dependency nvr %s...",
+                    component_builds[component]["nvr"],
+                    dep_build["nvr"],
+                )
         component_builds.update(rhcos_deps)
 
     for component, build in component_builds.items():
@@ -871,9 +1057,29 @@ def for_assembly(config: SimpleNamespace, image: Optional[str], rhcos: bool, el_
 
 @config_plashet.command('from-images', short_help='Collects a set of RPMs attached to specified advisories.')
 @click.pass_obj
-@click.option('--image', 'images', metavar='IMAGE_NVR', multiple=True, required=True, help='Image NVRs which contain RPMs to include in the plashet [multiple].')
-@click.option('--replace', multiple=True, metavar='RPM_PACKAGE_NVR', required=False, help='Include or override the package NVR used in the image(s) with this package version.')
-@click.option('-t', '--brew-tag', multiple=True, required=False, nargs=2, help='One or more brew tags which will be used to sign RPMs required by this plashet: <tag> <product_version>')
+@click.option(
+    '--image',
+    'images',
+    metavar='IMAGE_NVR',
+    multiple=True,
+    required=True,
+    help='Image NVRs which contain RPMs to include in the plashet [multiple].',
+)
+@click.option(
+    '--replace',
+    multiple=True,
+    metavar='RPM_PACKAGE_NVR',
+    required=False,
+    help='Include or override the package NVR used in the image(s) with this package version.',
+)
+@click.option(
+    '-t',
+    '--brew-tag',
+    multiple=True,
+    required=False,
+    nargs=2,
+    help='One or more brew tags which will be used to sign RPMs required by this plashet: <tag> <product_version>',
+)
 @click.option('--signing-advisory-id', required=False, help='Use this auto-signing advisory to sign RPMs if necessary.')
 @click.option('--poll-for', default=300, type=click.INT, help='Allow up to this number of minutes for auto-signing')
 def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for):
@@ -929,12 +1135,12 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
 
         if signing_advisory_id:
             for product_version, nvr_list in sign_using.items():
-                logger.info(f'Attempting to sign {nvr_list} using product: {product_version} and advisory {signing_advisory_id}')
+                logger.info(
+                    f'Attempting to sign {nvr_list} using product: {product_version} and advisory {signing_advisory_id}'
+                )
                 # Remove all builds attached to advisory before attempting signing
-                update_advisory_builds(config, errata_session, signing_advisory_id, [],
-                                       product_version)
-                update_advisory_builds(config, errata_session, signing_advisory_id, nvr_list,
-                                       product_version)
+                update_advisory_builds(config, errata_session, signing_advisory_id, [], product_version)
+                update_advisory_builds(config, errata_session, signing_advisory_id, nvr_list, product_version)
         else:
             logger.warning('No signing advisory specified; will poll for any unsigned NVRs')
 
@@ -971,7 +1177,9 @@ def from_images(config, images, replace, brew_tag, signing_advisory_id, poll_for
 
                 nvr = build['nvr']
                 if package_name in package_nvrs and package_nvrs[package_name] != nvr:
-                    raise IOError(f'Images contain inconsistent versions of {package_name}: {nvr} vs {package_nvrs[package_name]} . You must explicitly resolve this with --replace.')
+                    raise IOError(
+                        f'Images contain inconsistent versions of {package_name}: {nvr} vs {package_nvrs[package_name]} . You must explicitly resolve this with --replace.'
+                    )
 
                 package_nvrs[package_name] = nvr
 

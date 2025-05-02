@@ -24,7 +24,7 @@ def get_utc_now_formatted_str():
 
 def remove_prefix(s: str, prefix: str) -> str:
     if s.startswith(prefix):
-        return s[len(prefix):]
+        return s[len(prefix) :]
     else:
         return s[:]
 
@@ -38,7 +38,7 @@ def remove_prefixes(s: str, *args) -> str:
 def remove_suffix(s: str, suffix: str) -> str:
     # suffix='' should not call self[:-0].
     if suffix and s.endswith(suffix):
-        return s[:-len(suffix)]
+        return s[: -len(suffix)]
     else:
         return s[:]
 
@@ -145,7 +145,7 @@ async def download_file_from_github(repository, branch, path, token: str, destin
 
 
 def merge_objects(a, b):
-    """ Merges two, potentially deep, objects into a new one and returns the result.
+    """Merges two, potentially deep, objects into a new one and returns the result.
     'a' is layered over 'b' and is dominant when necessary. The output is 'c'.
     """
     if not isinstance(a, dict) or not isinstance(b, dict):
@@ -180,7 +180,9 @@ def get_assembly_release_date(assembly, group):
 
     :raises ValueError: If the assembly release date is not found
     """
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    release_schedules = requests.get(
+        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+    )
     try:
         for release in release_schedules.json()['all_ga_tasks']:
             if assembly in release['name']:
@@ -200,7 +202,9 @@ async def get_assembly_release_date_async(release_name: str):
     version = VersionInfo.parse(release_name)
     release_train = f'openshift-{version.major}.{version.minor}.z'
     async with aiohttp.ClientSession() as session:
-        async with session.get(f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}) as response:
+        async with session.get(
+            f'{RELEASE_SCHEDULES}/{release_train}/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+        ) as response:
             response.raise_for_status()
             data = await response.json()
             for release in data['all_ga_tasks']:
@@ -214,7 +218,9 @@ def is_release_next_week(group):
     """
     Check if there release of group need to release in the near week
     """
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    release_schedules = requests.get(
+        f'{RELEASE_SCHEDULES}/{group}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'}
+    )
     for release in release_schedules.json()['all_ga_tasks']:
         release_date = datetime.strptime(release['date_finish'], "%Y-%m-%d").date()
         if release_date > date.today() and release_date <= date.today() + timedelta(days=7):
@@ -229,11 +235,19 @@ def get_inflight(assembly, group):
     inflight_release = None
     assembly_release_date = get_assembly_release_date(assembly, group)
     major, minor = get_ocp_version_from_group(group)
-    release_schedules = requests.get(f'{RELEASE_SCHEDULES}/openshift-{major}.{minor-1}.z/?fields=all_ga_tasks', headers={'Accept': 'application/json'})
+    release_schedules = requests.get(
+        f'{RELEASE_SCHEDULES}/openshift-{major}.{minor - 1}.z/?fields=all_ga_tasks',
+        headers={'Accept': 'application/json'},
+    )
     for release in release_schedules.json()['all_ga_tasks']:
         is_future = is_future_release_date(release['date_start'])
         if is_future:
-            days_diff = abs((datetime.strptime(assembly_release_date, "%Y-%b-%d") - datetime.strptime(release['date_start'], "%Y-%m-%d")).days)
+            days_diff = abs(
+                (
+                    datetime.strptime(assembly_release_date, "%Y-%b-%d")
+                    - datetime.strptime(release['date_start'], "%Y-%m-%d")
+                ).days
+            )
             if days_diff <= 5:  # if next Y-1 release and assembly release in the same week
                 match = re.search(r'\d+\.\d+\.\d+', release['name'])
                 if match:
@@ -353,7 +367,8 @@ async def _limit_concurrency(tasks: List, limit: int):
             return
 
         done, pending = await asyncio.wait(
-            pending, return_when=asyncio.FIRST_COMPLETED,
+            pending,
+            return_when=asyncio.FIRST_COMPLETED,
         )
         while done:
             yield done.pop()
@@ -406,7 +421,8 @@ def is_cachito_enabled(metadata, group_config, logger):
         elif isinstance(metadata.config.content.source.pkg_managers, ListModel):
             logger.warning(
                 f"pkg_managers directive for {metadata.name} has no effect since cachito/cachi2 is not enabled in "
-                "image metadata or group config.")
+                "image metadata or group config."
+            )
     if cachito_enabled and not metadata.has_source():
         logger.warning("Cachito integration for distgit-only image %s is not supported.", metadata.name)
         cachito_enabled = False
@@ -414,7 +430,7 @@ def is_cachito_enabled(metadata, group_config, logger):
 
 
 def detect_package_managers(metadata, dest_dir: Path):
-    """ Detect and return package managers used by the source
+    """Detect and return package managers used by the source
     :return: a list of package managers
     """
     if not dest_dir or not dest_dir.is_dir():

@@ -85,8 +85,10 @@ class PackageRpmFinder:
         installed_packages = build_record.installed_packages
         installed_packages = [pkg for pkg in installed_packages if pkg not in self._not_found_packages]
         self._cache_packages(installed_packages)
-        return {self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
-                for package_nvr in installed_packages}
+        return {
+            self._packages_build_dicts[package_nvr]['name']: self._packages_build_dicts[package_nvr]
+            for package_nvr in installed_packages
+        }
 
     def get_rpms_in_pkg_build(self, nvr: str) -> list:
         return self._package_to_rpms.get(nvr, [])

@@ -99,7 +99,10 @@ class TestKonfluxCachi2(TestCase):
         metadata.config.content.source.pkg_managers = ["gomod"]
         metadata.config.cachito.packages = {"gomod": [{"path": "."}, {"path": "api"}, {"path": "client/pkg"}]}
 
-        self.assertEqual(builder._prefetch(metadata=metadata), [{"type": "gomod", "path": "."}, {"type": "gomod", "path": "api"}, {"type": "gomod", "path": "client/pkg"}])
+        self.assertEqual(
+            builder._prefetch(metadata=metadata),
+            [{"type": "gomod", "path": "."}, {"type": "gomod", "path": "api"}, {"type": "gomod", "path": "client/pkg"}],
+        )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("doozerlib.backend.konflux_image_builder.KonfluxImageBuilder._is_cachi2_enabled")
@@ -110,4 +113,6 @@ class TestKonfluxCachi2(TestCase):
         metadata.config.content.source.pkg_managers = ["npm", "gomod"]
         metadata.config.cachito.packages = {'npm': [{'path': 'web'}], 'gomod': [{'path': '.'}]}
 
-        self.assertEqual(builder._prefetch(metadata=metadata), [{'type': 'gomod', 'path': '.'}, {'type': 'npm', 'path': 'web'}])
+        self.assertEqual(
+            builder._prefetch(metadata=metadata), [{'type': 'gomod', 'path': '.'}, {'type': 'npm', 'path': 'web'}]
+        )

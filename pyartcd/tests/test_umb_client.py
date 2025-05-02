@@ -37,7 +37,6 @@ class TestModuleFunctions(TestCase):
 
 
 class TestAsyncUMBClient(IsolatedAsyncioTestCase):
-
     @patch("stomp.StompConnection11", autospec=True)
     def test_create_connection(self, StompConnection11: MagicMock):
         uri = "failover:(stomp+ssl://stomp1.example.com:12345,stomp://stomp2.example.com:23456)"
@@ -46,11 +45,17 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
         actual = AsyncUMBClient._create_connection(uri, cert_file, key_file)
         conn = StompConnection11.return_value
         self.assertEqual(actual, conn)
-        StompConnection11.assert_called_once_with(host_and_ports=[("stomp1.example.com", 12345), ("stomp2.example.com", 23456)])
-        conn.set_ssl.assert_called_once_with(for_hosts=[("stomp1.example.com", 12345)], cert_file=cert_file, key_file=key_file)
+        StompConnection11.assert_called_once_with(
+            host_and_ports=[("stomp1.example.com", 12345), ("stomp2.example.com", 23456)]
+        )
+        conn.set_ssl.assert_called_once_with(
+            for_hosts=[("stomp1.example.com", 12345)], cert_file=cert_file, key_file=key_file
+        )
 
     async def test_call_in_sender_thread(self):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         client._sender_loop = asyncio.get_event_loop()
         actual = await client._call_in_sender_thread(lambda: "foo")
         self.assertEqual(actual, "foo")
@@ -58,7 +63,10 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
     async def test_call_in_sender_thread_with_exception(self):
         def func():
             raise ValueError("Test error")
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         client._sender_loop = asyncio.get_event_loop()
         with self.assertRaises(ValueError):
             await client._call_in_sender_thread(func)
@@ -67,7 +75,9 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
     async def test_connect(self, _create_connection: MagicMock):
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = False
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         loop = asyncio.get_event_loop()
         loop.call_soon(lambda: client._listener._complete_future("on_connected", None))
         await client.connect()
@@ -76,7 +86,9 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.umb_client.AsyncUMBClient._create_connection", autospec=True)
     async def test_disconnect(self, _create_connection: MagicMock):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = True
         client._sender_loop = asyncio.get_event_loop()
@@ -88,18 +100,24 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
 
     @patch("pyartcd.umb_client.AsyncUMBClient._create_connection", autospec=True)
     async def test_subscribe(self, _create_connection: MagicMock):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = True
         client._sender_loop = asyncio.get_event_loop()
         receiver = await client.subscribe(destination="/topic/foo.bar", id="fake-subscription")
         conn = _create_connection.return_value
-        conn.subscribe.assert_called_once_with(destination="/topic/foo.bar", id="fake-subscription", ack="client-individual")
+        conn.subscribe.assert_called_once_with(
+            destination="/topic/foo.bar", id="fake-subscription", ack="client-individual"
+        )
         self.assertEqual(receiver.id, "fake-subscription")
 
     @patch("pyartcd.umb_client.AsyncUMBClient._create_connection", autospec=True)
     async def test_unsubscribe(self, _create_connection: MagicMock):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = True
         client._sender_loop = asyncio.get_event_loop()
@@ -111,7 +129,9 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
     @patch("uuid.uuid4", autospec=True)
     @patch("pyartcd.umb_client.AsyncUMBClient._create_connection", autospec=True)
     async def test_send(self, _create_connection: MagicMock, uuid4: MagicMock):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = True
         client._sender_loop = asyncio.get_event_loop()
@@ -120,12 +140,16 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
         loop.call_soon(lambda: client._listener._complete_future(uuid4.return_value, None))
         await client.send(destination="/topic/foo.bar", body="fake-content")
         conn = _create_connection.return_value
-        conn.send.assert_called_once_with(body="fake-content", destination="/topic/foo.bar", headers={"receipt": uuid4.return_value})
+        conn.send.assert_called_once_with(
+            body="fake-content", destination="/topic/foo.bar", headers={"receipt": uuid4.return_value}
+        )
 
     @patch("uuid.uuid4", autospec=True)
     @patch("pyartcd.umb_client.AsyncUMBClient._create_connection", autospec=True)
     async def test_ack(self, _create_connection: MagicMock, uuid4: MagicMock):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = True
         client._sender_loop = asyncio.get_event_loop()
@@ -139,7 +163,9 @@ class TestAsyncUMBClient(IsolatedAsyncioTestCase):
     @patch("uuid.uuid4", autospec=True)
     @patch("pyartcd.umb_client.AsyncUMBClient._create_connection", autospec=True)
     async def test_nack(self, _create_connection: MagicMock, uuid4: MagicMock):
-        client = AsyncUMBClient("stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key")
+        client = AsyncUMBClient(
+            "stomp+ssl://stomp1.example.com:12345", cert_file="/path/to/client.crt", key_file="/path/to/client.key"
+        )
         stomp_conn = _create_connection.return_value
         stomp_conn.is_connected.return_value = True
         client._sender_loop = asyncio.get_event_loop()

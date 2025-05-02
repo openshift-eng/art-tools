@@ -11,8 +11,9 @@ class FindBugsSweepTestCase(unittest.TestCase):
             "find-bugs:sweep",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0,
-                         msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 0, msg=f"stdout: {result.stdout.decode()}\nstderr: {result.stderr.decode()}"
+        )
         self.assertRegex(result.stdout.decode(), "Found \\d+ bugs")
 
 

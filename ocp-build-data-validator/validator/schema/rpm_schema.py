@@ -33,38 +33,40 @@ RPM_CONTENT_SCHEMA = {
     },
 }
 
-rpm_schema = Schema({
-    'content': RPM_CONTENT_SCHEMA,
-    Optional('distgit'): {
-        Optional('branch'): And(str, len),
-    },
-    Optional('enabled_repos'): [
-        And(str, len),
-    ],
-    Optional('mode'): Or(*valid_modes),
-    'name': And(str, len),
-    'owners': [
-        And(str, len),
-    ],
-    Optional('maintainer'): {
-        Optional('product'): And(str, len),
-        'component': And(str, len),
-        Optional('subcomponent'): And(str, len),
-    },
-    Optional('targets'): [
-        And(str, len),
-    ],
-    Optional('hotfix_targets'): [
-        And(str, len),
-    ],
-    Optional('external_scanners'): {
-        Optional('sast_scanning'): {
-            Optional('jira_integration'): {
-                'enabled': And(bool),
+rpm_schema = Schema(
+    {
+        'content': RPM_CONTENT_SCHEMA,
+        Optional('distgit'): {
+            Optional('branch'): And(str, len),
+        },
+        Optional('enabled_repos'): [
+            And(str, len),
+        ],
+        Optional('mode'): Or(*valid_modes),
+        'name': And(str, len),
+        'owners': [
+            And(str, len),
+        ],
+        Optional('maintainer'): {
+            Optional('product'): And(str, len),
+            'component': And(str, len),
+            Optional('subcomponent'): And(str, len),
+        },
+        Optional('targets'): [
+            And(str, len),
+        ],
+        Optional('hotfix_targets'): [
+            And(str, len),
+        ],
+        Optional('external_scanners'): {
+            Optional('sast_scanning'): {
+                Optional('jira_integration'): {
+                    'enabled': And(bool),
+                },
             },
         },
-    },
-})
+    }
+)
 
 
 def validate(_, data):

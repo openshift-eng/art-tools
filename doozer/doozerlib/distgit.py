@@ -21,8 +21,7 @@ import bashlex
 import requests
 import yaml
 from dockerfile_parse import DockerfileParser
-from tenacity import (before_sleep_log, retry, retry_if_not_result,
-                      stop_after_attempt, wait_fixed)
+from tenacity import before_sleep_log, retry, retry_if_not_result, stop_after_attempt, wait_fixed
 
 import doozerlib
 from artcommonlib import assertion, logutil, exectools
@@ -35,8 +34,13 @@ from artcommonlib.release_util import isolate_assembly_in_release, isolate_el_ve
 from artcommonlib.rpm_utils import parse_nvr
 from doozerlib import state, util
 from artcommonlib.brew import BuildStates
-from doozerlib.build_visibility import is_release_embargoed, get_all_visibility_suffixes, get_visibility_suffix, \
-    BuildVisibility, isolate_pflag_in_release
+from doozerlib.build_visibility import (
+    is_release_embargoed,
+    get_all_visibility_suffixes,
+    get_visibility_suffix,
+    BuildVisibility,
+    isolate_pflag_in_release,
+)
 from doozerlib.dblib import Record
 from doozerlib.exceptions import DoozerFatalError
 from doozerlib.build_info import BrewBuildRecordInspector
@@ -44,11 +48,16 @@ from artcommonlib.git_helper import git_clone, gather_git
 from artcommonlib.lock import get_named_semaphore
 from doozerlib.osbs2_builder import OSBS2Builder, OSBS2BuildError
 from doozerlib.source_modifications import SourceModifierFactory
-from artcommonlib.util import (convert_remote_git_to_https, isolate_rhel_major_from_distgit_branch, deep_merge,
-                               isolate_el_version_in_brew_tag)
+from artcommonlib.util import (
+    convert_remote_git_to_https,
+    isolate_rhel_major_from_distgit_branch,
+    deep_merge,
+    isolate_el_version_in_brew_tag,
+)
 from doozerlib.comment_on_pr import CommentOnPr
 from doozerlib.util import extract_version_fields
 from doozerlib.source_resolver import SourceResolver
+
 if TYPE_CHECKING:
     from doozerlib.metadata import Metadata
     from doozerlib.image import ImageMetadata
@@ -95,8 +104,7 @@ def pull_image(url):
         logger.info("Error pulling image %s -- retrying in 60 seconds" % url)
         time.sleep(60)
 
-    exectools.retry(
-        retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
+    exectools.retry(retries=3, wait_f=wait, task_f=lambda: exectools.cmd_gather(["podman", "pull", url])[0] == 0)
 
 
 def map_image_name(name, image_map):
@@ -107,7 +115,6 @@ def map_image_name(name, image_map):
 
 
 class DistGitRepo(object):
-
     def __init__(self, metadata: "Metadata", autoclone=True):
         self.metadata = metadata
         self.config: Model = metadata.config
@@ -161,10 +168,11 @@ class DistGitRepo(object):
 
     def clone(self, distgits_root_dir, distgit_branch):
         if self.metadata.prevent_cloning:
-            raise IOError(f'Attempt to clone downstream {self.metadata.distgit_key} after cloning disabled; a regression has been introduced.')
+            raise IOError(
+                f'Attempt to clone downstream {self.metadata.distgit_key} after cloning disabled; a regression has been introduced.'
+            )
 
         with Dir(distgits_root_dir):
-
             namespace_dir = os.path.join(distgits_root_dir, self.metadata.namespace)
 
             # It is possible we have metadata for the same distgit twice in a group.
@@ -174,7 +182,7 @@ class DistGitRepo(object):
             self.distgit_dir = os.path.join(namespace_dir, self.metadata.distgit_key)
             self.dg_path = pathlib.Path(self.distgit_dir)
 
-            fake_distgit = (self.runtime.local and 'content' in self.metadata.config)
+            fake_distgit = self.runtime.local and 'content' in self.metadata.config
 
             if os.path.isdir(self.distgit_dir):
                 self.logger.info("Distgit directory already exists; skipping clone: %s" % self.distgit_dir)
@@ -184,7 +192,6 @@ class DistGitRepo(object):
                         exectools.cmd_assert('git fetch --all', retries=3)
                         exectools.cmd_assert('git reset --hard @{upstream}', retries=3)
             else:
-
                 # Make a directory for the distgit namespace if it does not already exist
                 try:
                     os.mkdir(namespace_dir)
@@ -198,12 +205,15 @@ class DistGitRepo(object):
                     exectools.cmd_assert(cmd_list)
                 else:
                     if self.runtime.command == 'images:build':
-                        yellow_print('Warning: images:rebase was skipped and therefore your '
-                                     'local build will be sourced from the current dist-git '
-                                     'contents and not the typical GitHub source. ',
-                                     )
+                        yellow_print(
+                            'Warning: images:rebase was skipped and therefore your '
+                            'local build will be sourced from the current dist-git '
+                            'contents and not the typical GitHub source. ',
+                        )
 
-                    self.logger.info("Cloning distgit repository [branch:%s] into: %s" % (distgit_branch, self.distgit_dir))
+                    self.logger.info(
+                        "Cloning distgit repository [branch:%s] into: %s" % (distgit_branch, self.distgit_dir)
+                    )
 
                     # Has the user specified a specific commit to checkout from distgit on the command line?
                     distgit_commitish = self.runtime.downstream_commitish_overrides.get(self.metadata.distgit_key, None)
@@ -223,18 +233,31 @@ class DistGitRepo(object):
                             gitargs.extend(["--depth", str(rhpkg_clone_depth)])
 
                         try:
-                            git_clone(self.metadata.distgit_remote_url(), self.distgit_dir, gitargs=gitargs,
-                                      set_env=GIT_NO_PROMPTS, timeout=timeout,
-                                      git_cache_dir=self.runtime.git_cache_dir)
+                            git_clone(
+                                self.metadata.distgit_remote_url(),
+                                self.distgit_dir,
+                                gitargs=gitargs,
+                                set_env=GIT_NO_PROMPTS,
+                                timeout=timeout,
+                                git_cache_dir=self.runtime.git_cache_dir,
+                            )
                         except ChildProcessError as err:
                             # Create branch on demand
-                            if len(err.args) > 1 and self.has_source() and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch):
+                            if (
+                                len(err.args) > 1
+                                and self.has_source()
+                                and re.fullmatch(r'rhaos-\d+\.\d+-rhel-\d+', distgit_branch)
+                            ):
                                 _, _, clone_error = err.args[1]
                                 if f"Remote branch {distgit_branch} not found" in clone_error:
                                     self.logger.info(f"Creating distgit branch {distgit_branch} for {self.name}")
                                     exectools.cmd_assert(f"git init {self.distgit_dir}")
-                                    exectools.cmd_assert(f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}')
-                                    exectools.cmd_assert(f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}')
+                                    exectools.cmd_assert(
+                                        f'git -C {self.distgit_dir} remote add origin {self.metadata.distgit_remote_url()}'
+                                    )
+                                    exectools.cmd_assert(
+                                        f'git -C {self.distgit_dir} checkout --orphan {distgit_branch}'
+                                    )
                     else:
                         # Use rhpkg -- presently no idea how to cache.
                         cmd_list = ["timeout", timeout]
@@ -275,7 +298,9 @@ class DistGitRepo(object):
         exectools.cmd_assert(cmd, retries=3)
         if not allow_overwrite:
             if os.path.isfile('Dockerfile') or os.path.isdir('.oit'):
-                raise IOError('Unable to continue merge. Dockerfile found in target branch. Use --allow-overwrite to force.')
+                raise IOError(
+                    'Unable to continue merge. Dockerfile found in target branch. Use --allow-overwrite to force.'
+                )
         self.logger.info('Merging source branch history over current branch')
         msg = 'Merge branch {} into {}'.format(self.branch, target)
         exectools.cmd_assert(
@@ -306,14 +331,25 @@ class DistGitRepo(object):
     def add_distgits_diff(self, diff):
         return self.runtime.add_distgits_diff(self.metadata.distgit_key, diff)
 
-    def commit(self, cmdline_commit_msg: str, commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None, log_diff=False):
+    def commit(
+        self,
+        cmdline_commit_msg: str,
+        commit_attributes: Optional[Dict[str, Union[int, str, bool]]] = None,
+        log_diff=False,
+    ):
         if self.runtime.local:
             return ''  # no commits if local
 
         with Dir(self.distgit_dir):
             commit_payload: Dict[str, Union[int, str, bool]] = {
-                'MaxFileSize': 100 * 1024 * 1024,  # 100MB push limit; see https://source.redhat.com/groups/public/release-engineering/release_engineering_rcm_wiki/dist_git_update_hooks
-                'jenkins.url': None if 'unittest' in sys.modules.keys() else os.getenv('BUILD_URL'),  # Get the Jenkins build URL if available, but ignore if this is a unit test run
+                'MaxFileSize': 100
+                * 1024
+                * 1024,  # 100MB push limit; see https://source.redhat.com/groups/public/release-engineering/release_engineering_rcm_wiki/dist_git_update_hooks
+                'jenkins.url': None
+                if 'unittest' in sys.modules.keys()
+                else os.getenv(
+                    'BUILD_URL'
+                ),  # Get the Jenkins build URL if available, but ignore if this is a unit test run
             }
 
             if self.dg_path:  # Might not be set if this is a unittest
@@ -322,7 +358,12 @@ class DistGitRepo(object):
                     # This is an image distgit commit, we can help the callers by reading in env variables for the commit message.
                     # RPM commits are expected to pass these values in directly in commit_attributes.
                     dfp = DockerfileParser(str(df_path))
-                    for var_name in ['version', 'release', 'io.openshift.build.source-location', 'io.openshift.build.commit.id']:
+                    for var_name in [
+                        'version',
+                        'release',
+                        'io.openshift.build.source-location',
+                        'io.openshift.build.commit.id',
+                    ]:
                         commit_payload[var_name] = dfp.labels.get(var_name, None)
 
             if commit_attributes:
@@ -331,7 +372,9 @@ class DistGitRepo(object):
             # The commit should be a valid yaml document so we can retrieve details
             # programmatically later. The human specified portion of the commit is
             # included in comments above the yaml payload.
-            cmdline_commit_msg = cmdline_commit_msg.strip().replace('\n', '\n# ')  # If multiple lines are specified, split across commented lines.
+            cmdline_commit_msg = cmdline_commit_msg.strip().replace(
+                '\n', '\n# '
+            )  # If multiple lines are specified, split across commented lines.
             commit_msg = f'# {cmdline_commit_msg}\n'  # Any message specified in '-m' during rebase
             commit_msg += yaml.safe_dump(commit_payload, default_flow_style=False, sort_keys=True)
 
@@ -349,7 +392,7 @@ class DistGitRepo(object):
         return self.sha
 
     def cgit_file_available(self, filename: str = ".oit/signed.repo") -> Tuple[bool, str]:
-        """ Check if the specified file associated with the commit hash pushed to distgit is available on cgit
+        """Check if the specified file associated with the commit hash pushed to distgit is available on cgit
         :return: (existence, url)
         """
         assert self.sha is not None
@@ -363,10 +406,14 @@ class DistGitRepo(object):
         self.logger.debug("Distgit commit %s is available on cgit", self.sha)
         return True, url
 
-    @retry(retry=retry_if_not_result(lambda r: r), wait=wait_fixed(10), stop=stop_after_attempt(60), before_sleep=before_sleep_log(logger, logging.WARNING))
+    @retry(
+        retry=retry_if_not_result(lambda r: r),
+        wait=wait_fixed(10),
+        stop=stop_after_attempt(60),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
     def wait_on_cgit_file(self, filename: str = ".oit/signed.repo"):
-        """ Poll cgit for the specified file associated with the commit hash pushed to distgit
-        """
+        """Poll cgit for the specified file associated with the commit hash pushed to distgit"""
         existence, _ = self.cgit_file_available(filename)
         return existence
 
@@ -406,7 +453,9 @@ class DistGitRepo(object):
         # time, a single push invocation can take hours to complete -- making the
         # timeout value counterproductive. Limit to 5 simultaneous pushes.
         timeout = str(self.runtime.global_opts['rhpkg_push_timeout'])
-        await exectools.cmd_assert_async(["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir)
+        await exectools.cmd_assert_async(
+            ["timeout", f"{timeout}", "git", "push", "--follow-tags"], cwd=self.distgit_dir
+        )
 
     def get_branch_el(self) -> Optional[int]:
         """
@@ -433,7 +482,6 @@ class DistGitRepo(object):
 
 
 class ImageDistGitRepo(DistGitRepo):
-
     source_labels = dict(
         old=dict(
             sha='io.openshift.source-repo-commit',
@@ -447,8 +495,7 @@ class ImageDistGitRepo(DistGitRepo):
         ),
     )
 
-    def __init__(self, metadata: "ImageMetadata", autoclone=True,
-                 source_modifier_factory=SourceModifierFactory()):
+    def __init__(self, metadata: "ImageMetadata", autoclone=True, source_modifier_factory=SourceModifierFactory()):
         self.org_image_name = None
         self.org_version = None
         self.org_release = None
@@ -509,7 +556,9 @@ class ImageDistGitRepo(DistGitRepo):
             if not config_value:
                 self.logger.info("Use fetch-artifacts-url.yaml provided by upstream.")
                 return
-            raise ValueError("Image config option content.source.artifacts.from_urls cannot be used if upstream source has fetch-artifacts-url.yaml")
+            raise ValueError(
+                "Image config option content.source.artifacts.from_urls cannot be used if upstream source has fetch-artifacts-url.yaml"
+            )
         if not config_value:
             return  # fetch-artifacts-url.yaml is not needed.
         self.logger.info('Generating fetch-artifacts-url.yaml')
@@ -572,14 +621,18 @@ class ImageDistGitRepo(DistGitRepo):
             if self.runtime.group_config.cachito.enabled:
                 cachito_enabled = True
             elif isinstance(self.config.content.source.pkg_managers, ListModel):
-                self.logger.warning(f"pkg_managers directive for {self.name} has no effect since cachito is not enabled in "
-                                    "image meta or group config.")
+                self.logger.warning(
+                    f"pkg_managers directive for {self.name} has no effect since cachito is not enabled in "
+                    "image meta or group config."
+                )
         if cachito_enabled and not self.has_source():
             self.logger.warning("Cachito integration for distgit-only image %s is not supported.", self.name)
             cachito_enabled = False
         if cachito_enabled:
             if config_overrides.get("go", {}).get("modules"):
-                raise ValueError(f"Cachito integration is enabled for image {self.name}. Specifying `go.modules` in `container.yaml` is not allowed.")
+                raise ValueError(
+                    f"Cachito integration is enabled for image {self.name}. Specifying `go.modules` in `container.yaml` is not allowed."
+                )
             pkg_managers = []  # Note if cachito is enabled but `pkg_managers` is set to an empty array, Cachito will provide the sources with no package manager magic.
             if isinstance(self.config.content.source.pkg_managers, ListModel):
                 # Use specified package managers
@@ -588,7 +641,9 @@ class ImageDistGitRepo(DistGitRepo):
                 # Auto-detect package managers
                 pkg_managers = self._detect_package_managers()
             else:
-                raise ValueError(f"Invalid content.source.pkg_managers config for image {self.name}: {self.config.content.source.pkg_managers}")
+                raise ValueError(
+                    f"Invalid content.source.pkg_managers config for image {self.name}: {self.config.content.source.pkg_managers}"
+                )
             # Configure Cachito flags
             # https://github.com/containerbuildsystem/cachito#flags
             flags = []
@@ -616,7 +671,9 @@ class ImageDistGitRepo(DistGitRepo):
             if self.config.cachito.packages is not Missing:
                 remote_source['packages'] = self.config.cachito.packages.primitive()
             elif self.config.content.source.path:  # source is in subdirectory
-                remote_source['packages'] = {pkg_manager: [{"path": self.config.content.source.path}] for pkg_manager in pkg_managers}
+                remote_source['packages'] = {
+                    pkg_manager: [{"path": self.config.content.source.path}] for pkg_manager in pkg_managers
+                }
             if self.config.cachito.version is not Missing:
                 remote_sources_version = self.config.cachito.version
             elif self.runtime.group_config.cachito.version is not Missing:
@@ -625,15 +682,17 @@ class ImageDistGitRepo(DistGitRepo):
                 # https://spaces.redhat.com/pages/viewpage.action?pageId=591269742
                 remote_sources_version = 1
 
-            config_overrides.update({
-                'remote_sources_version': remote_sources_version,
-                'remote_sources': [
-                    {
-                        'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
-                        'remote_source': remote_source,
-                    },
-                ],
-            })
+            config_overrides.update(
+                {
+                    'remote_sources_version': remote_sources_version,
+                    'remote_sources': [
+                        {
+                            'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
+                            'remote_source': remote_source,
+                        },
+                    ],
+                }
+            )
 
         if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
             config_overrides['image_build_method'] = self.metadata.image_build_method
@@ -705,7 +764,7 @@ class ImageDistGitRepo(DistGitRepo):
         return config
 
     def _detect_package_managers(self):
-        """ Detect and return package managers used by the source
+        """Detect and return package managers used by the source
         :return: a list of package managers
         """
         if not self.dg_path or not self.dg_path.is_dir():
@@ -771,8 +830,17 @@ class ImageDistGitRepo(DistGitRepo):
                 self.org_version = dfp.labels.get("version")
                 self.org_release = dfp.labels.get("release")  # occasionally no release given
 
-    def push_image(self, tag_list, push_to_defaults, additional_registries=[], version_release_tuple=None,
-                   push_late=False, dry_run=False, registry_config_dir=None, filter_by_os=None):
+    def push_image(
+        self,
+        tag_list,
+        push_to_defaults,
+        additional_registries=[],
+        version_release_tuple=None,
+        push_late=False,
+        dry_run=False,
+        registry_config_dir=None,
+        filter_by_os=None,
+    ):
         """
         Pushes the most recent image built for this distgit repo. This is
         accomplished by looking at the 'version' field in the Dockerfile or
@@ -821,12 +889,10 @@ class ImageDistGitRepo(DistGitRepo):
             registry_config_file = util.get_docker_config_json(registry_config_dir)
 
         with Dir(self.distgit_dir):
-
             if version_release_tuple:
                 version = version_release_tuple[0]
                 release = version_release_tuple[1]
             else:
-
                 # History
                 # We used to rely on the "release" label being set in the Dockerfile, but this is problematic for several reasons.
                 # (1) If 'release' is not set, OSBS will determine one automatically that does not conflict
@@ -878,7 +944,9 @@ class ImageDistGitRepo(DistGitRepo):
 
                     if dry_run:
                         for push_url in all_push_urls:
-                            self.logger.info('Would have tagged {} as {}'.format(brew_image_url, push_url.split('=')[1]))
+                            self.logger.info(
+                                'Would have tagged {} as {}'.format(brew_image_url, push_url.split('=')[1])
+                            )
                         dr = "--dry-run=true"
                     else:
                         dr = ""
@@ -926,7 +994,9 @@ class ImageDistGitRepo(DistGitRepo):
                             self.logger.info("Error mirroring image -- retrying in 60 seconds.\n{}".format(err))
                             time.sleep(60)
 
-                        lstate = self.runtime.state[self.runtime.command] if self.runtime.command == 'images:push' else None
+                        lstate = (
+                            self.runtime.state[self.runtime.command] if self.runtime.command == 'images:push' else None
+                        )
 
                         if rc != 0:
                             if lstate:
@@ -968,7 +1038,8 @@ class ImageDistGitRepo(DistGitRepo):
         with self.build_lock:
             if not self.build_status:
                 raise IOError(
-                    "Error building image: %s (%s was waiting)" % (self.metadata.qualified_name, who_is_waiting))
+                    "Error building image: %s (%s was waiting)" % (self.metadata.qualified_name, who_is_waiting)
+                )
             else:
                 self.logger.info("Member successfully waited for me to build: %s" % who_is_waiting)
 
@@ -983,7 +1054,7 @@ class ImageDistGitRepo(DistGitRepo):
             raise KeyboardInterrupt()
 
     def wait_for_rebase(self, image_name, terminate_event):
-        """ Wait for image_name to be rebased. """
+        """Wait for image_name to be rebased."""
         image = self.runtime.resolve_image(image_name, False)
         if image is None:
             self.logger.info("Skipping image rebase since it is not included: %s" % image_name)
@@ -997,8 +1068,19 @@ class ImageDistGitRepo(DistGitRepo):
             raise KeyboardInterrupt()
 
     def build_container(
-            self, profile, push_to_defaults, additional_registries, terminate_event,
-            scratch=False, retries=3, realtime=False, dry_run=False, registry_config_dir=None, filter_by_os=None, comment_on_pr=False):
+        self,
+        profile,
+        push_to_defaults,
+        additional_registries,
+        terminate_event,
+        scratch=False,
+        retries=3,
+        realtime=False,
+        dry_run=False,
+        registry_config_dir=None,
+        filter_by_os=None,
+        comment_on_pr=False,
+    ):
         """
         This method is designed to be thread-safe. Multiple builds should take place in brew
         at the same time. After a build, images are pushed serially to all mirrors.
@@ -1013,9 +1095,9 @@ class ImageDistGitRepo(DistGitRepo):
         """
         if self.org_image_name is None or self.org_version is None:
             if not os.path.isfile(os.path.join(self.distgit_dir, 'Dockerfile')):
-                msg = ('No Dockerfile found in {}'.format(self.distgit_dir))
+                msg = 'No Dockerfile found in {}'.format(self.distgit_dir)
             else:
-                msg = ('Unknown error loading Dockerfile information')
+                msg = 'Unknown error loading Dockerfile information'
 
             self.logger.info(msg)
             state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, msg, self.runtime.logger)
@@ -1070,11 +1152,14 @@ class ImageDistGitRepo(DistGitRepo):
             if self.runtime.local:
                 self.build_status = self._build_container_local(target_image, profile["repo_type"], realtime)
                 if not self.build_status:
-                    state.record_image_fail(self.runtime.state[self.runtime.command], self.metadata, 'Build failure', self.runtime.logger)
+                    state.record_image_fail(
+                        self.runtime.state[self.runtime.command], self.metadata, 'Build failure', self.runtime.logger
+                    )
                 else:
                     state.record_image_success(self.runtime.state[self.runtime.command], self.metadata)
                 return (self.metadata.distgit_key, self.build_status)  # do nothing more since it's local only
             else:
+
                 def wait(n):
                     self.logger.info("Async error in image build thread [attempt #{}]".format(n + 1))
                     # No need to retry if the failure will just recur
@@ -1083,8 +1168,9 @@ class ImageDistGitRepo(DistGitRepo):
                         for match in re.finditer("No package (.*) available", error):
                             self._add_missing_pkgs(match.group(1))
                         raise exectools.RetryException(
-                            "Saw permanent error in build logs:\n{}\nWill not retry after {} failed attempt(s)"
-                            .format(error, n + 1),
+                            "Saw permanent error in build logs:\n{}\nWill not retry after {} failed attempt(s)".format(
+                                error, n + 1
+                            ),
                         )
                     # Brew does not handle an immediate retry correctly, wait
                     # before trying another build, terminating if interrupted.
@@ -1098,7 +1184,9 @@ class ImageDistGitRepo(DistGitRepo):
                     raise DoozerFatalError("Building images against multiple targets is not currently supported.")
 
                 if self.metadata.image_build_method != "osbs2":
-                    raise DoozerFatalError(f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists")
+                    raise DoozerFatalError(
+                        f"Do not understand image build method {self.metadata.image_build_method}. Only osbs2 exists"
+                    )
                 osbs2 = OSBS2Builder(self.runtime, scratch=scratch, dry_run=dry_run)
                 try:
                     task_id, task_url, build_info = asyncio.run(osbs2.build(self.metadata, profile, retries=retries))
@@ -1108,22 +1196,27 @@ class ImageDistGitRepo(DistGitRepo):
                         record["nvrs"] = build_info["nvr"]
                     if not dry_run:
                         self.update_build_db(True, task_id=task_id, scratch=scratch)
-                        self.update_konflux_db(build_info=build_info,
-                                               outcome=KonfluxBuildOutcome.SUCCESS,
-                                               build_pipeline_url=task_url,
-                                               scratch=scratch)
+                        self.update_konflux_db(
+                            build_info=build_info,
+                            outcome=KonfluxBuildOutcome.SUCCESS,
+                            build_pipeline_url=task_url,
+                            scratch=scratch,
+                        )
 
                         if comment_on_pr and self.runtime.assembly == "stream":
                             try:
-                                comment_on_pr_obj = CommentOnPr(distgit_dir=self.distgit_dir,
-                                                                nvr=build_info["nvr"],
-                                                                build_id=build_info["id"],
-                                                                distgit_name=self.metadata.name,
-                                                                )
+                                comment_on_pr_obj = CommentOnPr(
+                                    distgit_dir=self.distgit_dir,
+                                    nvr=build_info["nvr"],
+                                    build_id=build_info["id"],
+                                    distgit_name=self.metadata.name,
+                                )
                                 comment_on_pr_obj.run()
                             except Exception as e:
-                                self.logger.error(f"Error commenting on PR for build task id {task_id} for distgit"
-                                                  f"{self.metadata.name}: {e}")
+                                self.logger.error(
+                                    f"Error commenting on PR for build task id {task_id} for distgit"
+                                    f"{self.metadata.name}: {e}"
+                                )
                         if not scratch:
                             push_version = build_info["version"]
                             push_release = build_info["release"]
@@ -1171,7 +1264,14 @@ class ImageDistGitRepo(DistGitRepo):
             with self.runtime.mutex:
                 self.push_status = False
                 try:
-                    self.push_image([], push_to_defaults, additional_registries, version_release_tuple=(push_version, push_release), registry_config_dir=registry_config_dir, filter_by_os=filter_by_os)
+                    self.push_image(
+                        [],
+                        push_to_defaults,
+                        additional_registries,
+                        version_release_tuple=(push_version, push_release),
+                        registry_config_dir=registry_config_dir,
+                        filter_by_os=filter_by_os,
+                    )
                     self.push_status = True
                 except Exception as push_e:
                     self.logger.info("Error during push after successful build: %s" % str(push_e))
@@ -1231,7 +1331,6 @@ class ImageDistGitRepo(DistGitRepo):
         return True
 
     def update_build_db(self, success_flag, task_id=None, scratch=False):
-
         if scratch:
             return
 
@@ -1260,11 +1359,12 @@ class ImageDistGitRepo(DistGitRepo):
 
                 # Ignore io.openshift labels other than the ones specified below
                 for label in [
-                        'io.openshift.build.source-location',
-                        'io.openshift.build.commit.id',
-                        'io.openshift.build.commit.url',
-                        'io.openshift.release.operator',
-                        'io.openshift.build.versions']:
+                    'io.openshift.build.source-location',
+                    'io.openshift.build.commit.id',
+                    'io.openshift.build.commit.url',
+                    'io.openshift.release.operator',
+                    'io.openshift.build.versions',
+                ]:
                     if label in dfp.labels:
                         Record.set(f'label.{label}', dfp.labels[label])
 
@@ -1295,18 +1395,22 @@ class ImageDistGitRepo(DistGitRepo):
                             Record.set('brew.build_ids', ','.join(build_ids))  # comma delimited list if > 1
                             image_shas = []
                             for idx, build_id in enumerate(build_ids):
-                                build_info = Model(kcs.getBuild(int(
-                                    build_id)))  # Example: https://gist.github.com/jupierce/fe05f8fe310fdf8aa8b5c5991cf21f05
+                                build_info = Model(
+                                    kcs.getBuild(int(build_id))
+                                )  # Example: https://gist.github.com/jupierce/fe05f8fe310fdf8aa8b5c5991cf21f05
 
-                                main_sha = build_info.extra.typeinfo.image.index.digests  # Typically contains manifest list sha
+                                main_sha = (
+                                    build_info.extra.typeinfo.image.index.digests
+                                )  # Typically contains manifest list sha
                                 if main_sha:
                                     image_shas.extend(main_sha.values())
 
-                                for build_datum in ['id', 'source', 'version', 'nvr', 'name', 'release',
-                                                    'package_id']:
+                                for build_datum in ['id', 'source', 'version', 'nvr', 'name', 'release', 'package_id']:
                                     Record.set(f'build.{idx}.{build_datum}', build_info.get(build_datum, ''))
 
-                                archives = ListModel(kcs.listArchives(int(build_id)))  # https://gist.github.com/jupierce/6f27ebf35e88ed5a9a2c8e66fdcd34b4
+                                archives = ListModel(
+                                    kcs.listArchives(int(build_id))
+                                )  # https://gist.github.com/jupierce/6f27ebf35e88ed5a9a2c8e66fdcd34b4
                                 for archive in archives:
                                     archive_shas = archive.extra.docker.digests
                                     if archive_shas:
@@ -1369,25 +1473,30 @@ class ImageDistGitRepo(DistGitRepo):
 
             if outcome == KonfluxBuildOutcome.FAILURE:
                 self.logger.info('Storing failed Brew build info for %s in Konflux DB', self.metadata.name)
-                build_record_params.update({
-                    'start_time': build_info.start_time,
-                    'end_time': build_info.end_time,
-                })
+                build_record_params.update(
+                    {
+                        'start_time': build_info.start_time,
+                        'end_time': build_info.end_time,
+                    }
+                )
 
             else:
                 self.logger.info('Storing Brew build info for %s in Konflux DB', build_info['nvr'])
                 image_pullspec = build_info['extra']['image']['index']['pull'][0]
 
-                build_record_params.update({
-                    'installed_packages': self.get_installed_packages(image_pullspec),
-                    'parent_images': [build['nvr']
-                                      for build in build_info['extra']['image']['parent_image_builds'].values()],
-                    'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
-                    'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
-                    'image_pullspec': image_pullspec,
-                    'image_tag': build_info['extra']['image']['index']['tags'][0],
-                    'build_id': str(build_info['id']),
-                })
+                build_record_params.update(
+                    {
+                        'installed_packages': self.get_installed_packages(image_pullspec),
+                        'parent_images': [
+                            build['nvr'] for build in build_info['extra']['image']['parent_image_builds'].values()
+                        ],
+                        'start_time': datetime.strptime(build_info['start_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                        'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
+                        'image_pullspec': image_pullspec,
+                        'image_tag': build_info['extra']['image']['index']['tags'][0],
+                        'build_id': str(build_info['id']),
+                    }
+                )
 
             build_record = KonfluxBuildRecord(**build_record_params)
             self.runtime.konflux_db.add_build(build_record)
@@ -1451,7 +1560,8 @@ class ImageDistGitRepo(DistGitRepo):
     def _mangle_pkgmgr(cmd):
         # alter the arg by splicing its content
         def splice(pos, replacement):
-            return cmd[:pos[0]] + replacement + cmd[pos[1]:]
+            return cmd[: pos[0]] + replacement + cmd[pos[1] :]
+
         changed = False  # were there changes aside from whitespace?
 
         # build a list of nodes we may want to alter from the AST
@@ -1482,7 +1592,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         # note: make changes working back from the end so that positions to splice don't change
         for subcmd in reversed(cmd_nodes):
-
             if subcmd.kind == "operator":
                 # we lose the line breaks in the original dockerfile,
                 # so try to format nicely around operators -- more readable git diffs.
@@ -1494,7 +1603,11 @@ class ImageDistGitRepo(DistGitRepo):
                 cmd = splice(subcmd.pos, ": 'removed yum-config-manager'")
                 changed = True
                 continue
-            if re.search(r'(^|/)(micro)?dnf$', subcmd.parts[0].word) and len(subcmd.parts) > 1 and subcmd.parts[1].word == "config-manager":
+            if (
+                re.search(r'(^|/)(micro)?dnf$', subcmd.parts[0].word)
+                and len(subcmd.parts) > 1
+                and subcmd.parts[1].word == "config-manager"
+            ):
                 cmd = splice(subcmd.pos, ": 'removed dnf config-manager'")
                 changed = True
                 continue
@@ -1629,7 +1742,8 @@ class ImageDistGitRepo(DistGitRepo):
                 # If there is a basis event, we must look for latest; we can't just persist
                 # what is in the Dockerfile. It has to be constrained to the brew event.
                 self.logger.info(
-                    '[{}] parent image {} not included. Looking up FROM tag.'.format(self.config.name, base))
+                    '[{}] parent image {} not included. Looking up FROM tag.'.format(self.config.name, base)
+                )
                 base_meta = self.runtime.late_resolve_image(base)
                 _, v, r = base_meta.get_latest_build_info()
                 if is_release_embargoed(r, self.runtime.build_system):  # latest parent is embargoed
@@ -1644,8 +1758,7 @@ class ImageDistGitRepo(DistGitRepo):
             else:
                 if from_image_metadata.private_fix is None:  # This shouldn't happen.
                     raise ValueError(
-                        f"Parent image {base} doesn't have .p? flag determined. "
-                        f"This indicates a bug in Doozer.",
+                        f"Parent image {base} doesn't have .p? flag determined. This indicates a bug in Doozer.",
                     )
                 # If the parent we are going to build is embargoed, this image should also be embargoed
                 if from_image_metadata.private_fix:
@@ -1666,8 +1779,10 @@ class ImageDistGitRepo(DistGitRepo):
         # consider using 'from!:' in the assembly metadata for this component. This will
         # allow you to fully pin the parent images (e.g. {'from!:' ['image': <pullspec>] })
         latest_build = self.metadata.get_latest_brew_build(default=None)
-        assembly_msg = f'{self.metadata.distgit_key} in assembly {self.runtime.assembly} ' \
-                       f'with basis event {self.runtime.assembly_basis_event}'
+        assembly_msg = (
+            f'{self.metadata.distgit_key} in assembly {self.runtime.assembly} '
+            f'with basis event {self.runtime.assembly_basis_event}'
+        )
         if not latest_build:
             raise IOError(f'Unable to find latest build for {assembly_msg}')
         build_model = Model(dict_to_model=latest_build)
@@ -1695,13 +1810,17 @@ class ImageDistGitRepo(DistGitRepo):
         # }
         # Note this map actually gets us to an NVR.
         # Example latest_build return: https://gist.github.com/jupierce/57e99b80572336e8652df3c6be7bf664
-        target_parent_name = build_model.extra.image.parent_images[i]  # Which parent are looking for? e.g. 'openshift/golang-builder:rhel_8_golang_1.15'
+        target_parent_name = build_model.extra.image.parent_images[
+            i
+        ]  # Which parent are looking for? e.g. 'openshift/golang-builder:rhel_8_golang_1.15'
         tag_pullspec = self.runtime.resolve_brew_image_url(
-            target_parent_name)  # e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:rhel_8_golang_1.15
+            target_parent_name
+        )  # e.g. registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder:rhel_8_golang_1.15
         parent_build_info = build_model.extra.image.parent_image_builds[tag_pullspec]
         if parent_build_info is Missing:
             raise IOError(
-                f'Unable to resolve parent {target_parent_name} in {latest_build} for {assembly_msg}; tried {tag_pullspec}')
+                f'Unable to resolve parent {target_parent_name} in {latest_build} for {assembly_msg}; tried {tag_pullspec}'
+            )
         parent_build_nvr = parse_nvr(parent_build_info.nvr)
         # Hang in there.. this is a long dance. Now that we know the NVR, we can construct
         # a truly unique pullspec.
@@ -1811,7 +1930,9 @@ class ImageDistGitRepo(DistGitRepo):
         matched = False
         for alt_config in alt_configs or []:
             if alt_config['when'] == f'el{self.upstream_intended_el_version}':
-                self.logger.info('Merging rhel%s alternative config to match upstream', self.upstream_intended_el_version)
+                self.logger.info(
+                    'Merging rhel%s alternative config to match upstream', self.upstream_intended_el_version
+                )
                 self.config = Model(deep_merge(self.config.primitive(), alt_config.primitive()))
                 matched = True
                 break
@@ -1819,8 +1940,10 @@ class ImageDistGitRepo(DistGitRepo):
         if not matched:
             # there's no 'when' clause matching upstream intended RHEL version, will not merge configs
             # Besides, ART and upstream intended rhel versions do not match, therefore fallback to default ART's config
-            self.logger.warning('"%s" version is not mapped in alternative_config, will not merge configs',
-                                self.upstream_intended_el_version)
+            self.logger.warning(
+                '"%s" version is not mapped in alternative_config, will not merge configs',
+                self.upstream_intended_el_version,
+            )
             self.should_match_upstream = False
 
         else:
@@ -1848,7 +1971,8 @@ class ImageDistGitRepo(DistGitRepo):
                     count2=len(dfp.parent_images),
                     meta_parents=downstream_parents,
                     upstream_parents=dfp.parent_images,
-                ))
+                )
+            )
         mapped_images = []
 
         upstream_parents = dfp.parent_images
@@ -1981,7 +2105,10 @@ class ImageDistGitRepo(DistGitRepo):
                 # increment the release that was in the Dockerfile
                 if prev_release:
                     self.logger.info("Bumping release field in Dockerfile")
-                    if self.runtime.group_config.public_upstreams and isolate_pflag_in_release(prev_release) in get_all_visibility_suffixes():
+                    if (
+                        self.runtime.group_config.public_upstreams
+                        and isolate_pflag_in_release(prev_release) in get_all_visibility_suffixes()
+                    ):
                         # We can assume .pX is a suffix because assemblies are asserted disabled earlier.
                         prev_release = prev_release[:-3]  # strip .p0/1
                     # If release has multiple fields (e.g. 0.173.0.0), increment final field
@@ -1999,8 +2126,12 @@ class ImageDistGitRepo(DistGitRepo):
                     # find a valid value for each build. This means OSBS is effectively auto-bumping.
                     # This is better than us doing it, so let it.
                     if self.runtime.group_config.public_upstreams:
-                        raise ValueError("Failed to bump the release: Neither 'release' is specified in the Dockerfile nor we can use OSBS auto-bumping when a public upstream mapping is defined in ocp-build-data.")
-                    self.logger.info("No release label found in Dockerfile; bumping unnecessary -- osbs will automatically select unique release value at build time")
+                        raise ValueError(
+                            "Failed to bump the release: Neither 'release' is specified in the Dockerfile nor we can use OSBS auto-bumping when a public upstream mapping is defined in ocp-build-data."
+                        )
+                    self.logger.info(
+                        "No release label found in Dockerfile; bumping unnecessary -- osbs will automatically select unique release value at build time"
+                    )
                     release = None
 
             # If a release is specified, set it. If it is not specified, remove the field.
@@ -2012,9 +2143,12 @@ class ImageDistGitRepo(DistGitRepo):
                 if self.runtime.group_config.public_upstreams:
                     if not release.endswith(".p?"):
                         raise ValueError(
-                            f"'release' must end with '.p?' for an image with a public upstream but its actual value is {release}")
+                            f"'release' must end with '.p?' for an image with a public upstream but its actual value is {release}"
+                        )
                     if self.metadata.private_fix is None:
-                        raise ValueError("metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream")
+                        raise ValueError(
+                            "metadata.private_fix must be set (or determined by _merge_source) before rebasing for an image with a public upstream"
+                        )
                     if self.metadata.private_fix:
                         pval = f'.{get_visibility_suffix(self.runtime.build_system, BuildVisibility.PRIVATE)}'
 
@@ -2037,7 +2171,9 @@ class ImageDistGitRepo(DistGitRepo):
                     raise ValueError('Release value must be specified when assemblies are enabled')
 
                 if self.runtime.group_config.public_upstreams:
-                    raise ValueError("We are not able to let OSBS choose a release value for an image with a public upstream.")
+                    raise ValueError(
+                        "We are not able to let OSBS choose a release value for an image with a public upstream."
+                    )
                 if "release" in dfp.labels:
                     self.logger.info("Removing release field from Dockerfile")
                     del dfp.labels['release']
@@ -2058,7 +2194,9 @@ class ImageDistGitRepo(DistGitRepo):
                 dfp.labels[srclab['sha']] = self.source_full_sha
                 if self.public_facing_source_url:
                     dfp.labels[srclab['source']] = self.public_facing_source_url
-                    dfp.labels[srclab['source_commit']] = '{}/commit/{}'.format(self.public_facing_source_url, self.source_full_sha)
+                    dfp.labels[srclab['source_commit']] = '{}/commit/{}'.format(
+                        self.public_facing_source_url, self.source_full_sha
+                    )
 
             dfp.labels['version'] = version
 
@@ -2069,7 +2207,6 @@ class ImageDistGitRepo(DistGitRepo):
             filtered_content = []
             in_mod_block = False
             for line in df_lines:
-
                 # Check for begin/end of mod block, skip any lines inside
                 if OIT_BEGIN in line:
                     in_mod_block = True
@@ -2093,11 +2230,13 @@ class ImageDistGitRepo(DistGitRepo):
             # ART-8476 assert rhel version equivalence
             if self.should_match_upstream:
                 el_version = isolate_el_version_in_brew_tag(self.config.distgit.branch)
-                df_lines.extend([
-                    '',
-                    '# RHEL version in final image must match the one in ART\'s config',
-                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
-                ])
+                df_lines.extend(
+                    [
+                        '',
+                        '# RHEL version in final image must match the one in ART\'s config',
+                        f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
+                    ]
+                )
 
             df_content = "\n".join(df_lines)
 
@@ -2144,7 +2283,7 @@ class ImageDistGitRepo(DistGitRepo):
             return version, release
 
     def _update_yum_update_commands(self, force_yum_updates: bool, df_fileobj: io.TextIOBase) -> io.StringIO:
-        """ If force_yum_updates is True, inject "yum updates -y" in the final build stage; Otherwise, remove the lines we injected.
+        """If force_yum_updates is True, inject "yum updates -y" in the final build stage; Otherwise, remove the lines we injected.
         Returns an in-memory text stream for the new Dockerfile content
         """
         if force_yum_updates and not self.config.get('enabled_repos'):
@@ -2199,9 +2338,13 @@ class ImageDistGitRepo(DistGitRepo):
             if final_stage_user:
                 output.write(f"# {yum_update_line_flag}\nUSER 0\n")
             else:
-                self.logger.warning("Will not inject `USER 0` before `yum update -y` for the final build stage because `final_stage_user` is missing (or 0) in image meta."
-                                    " If this build fails with `yum update -y` permission denied error, please set correct `final_stage_user` and rebase again.")
-            output.write(f"# {yum_update_line_flag}\n{yum_update_line}  # set final_stage_user in ART metadata if this fails\n")
+                self.logger.warning(
+                    "Will not inject `USER 0` before `yum update -y` for the final build stage because `final_stage_user` is missing (or 0) in image meta."
+                    " If this build fails with `yum update -y` permission denied error, please set correct `final_stage_user` and rebase again."
+                )
+            output.write(
+                f"# {yum_update_line_flag}\n{yum_update_line}  # set final_stage_user in ART metadata if this fails\n"
+            )
             if final_stage_user:
                 output.write(f"# {yum_update_line_flag}\nUSER {final_stage_user}\n")
         output.seek(0)
@@ -2222,20 +2365,26 @@ class ImageDistGitRepo(DistGitRepo):
         """
         with self.runtime.pooled_koji_client_session() as koji_api:
             component_name = self.metadata.get_component_name()
-            package_info = koji_api.getPackage(component_name)  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
+            package_info = koji_api.getPackage(
+                component_name
+            )  # e.g. {'id': 66873, 'name': 'atomic-openshift-descheduler-container'}
             if not package_info:
                 raise IOError(f'No brew package is defined for {component_name}')
-            package_id = package_info['id']  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
+            package_id = package_info[
+                'id'
+            ]  # we could just constrain package name using pattern glob, but providing package ID # should be a much more efficient DB query.
             pattern_prefix = f'{component_name}-v{self.metadata.branch_major_minor()}.'
-            builds = koji_api.listBuilds(packageID=package_id,
-                                         state=BuildStates.COMPLETE.value,
-                                         pattern=f'{pattern_prefix}{pattern_suffix}*')
+            builds = koji_api.listBuilds(
+                packageID=package_id, state=BuildStates.COMPLETE.value, pattern=f'{pattern_prefix}{pattern_suffix}*'
+            )
             nvrs: Set[str] = set([build['nvr'] for build in builds])
             # NVRS should now be a set including entries like 'cluster-nfd-operator-container-v4.10.0-202211280957.p0.ga42b581.assembly.stream'
             # We need to convert these into versions like "4.11.0-202205250107"
             versions: Set[str] = set()
             for nvr in nvrs:
-                without_component = nvr[len(f'{component_name}-v'):]  # e.g. "4.10.0-202211280957.p0.ga42b581.assembly.stream"
+                without_component = nvr[
+                    len(f'{component_name}-v') :
+                ]  # e.g. "4.10.0-202211280957.p0.ga42b581.assembly.stream"
                 version_components = without_component.split('.')[0:3]  # e.g. ['4', '10', '0-202211280957']
                 version = '.'.join(version_components)
                 versions.add(version)
@@ -2257,7 +2406,11 @@ class ImageDistGitRepo(DistGitRepo):
             if os.path.isfile(cand):
                 refs = cand
         if not refs:
-            raise DoozerFatalError('{}: image-references file not found in any location: {}'.format(self.metadata.distgit_key, ref_candidates))
+            raise DoozerFatalError(
+                '{}: image-references file not found in any location: {}'.format(
+                    self.metadata.distgit_key, ref_candidates
+                )
+            )
 
         with io.open(refs, 'r', encoding="utf-8") as f_ref:
             ref_data = yaml.full_load(f_ref)
@@ -2268,9 +2421,15 @@ class ImageDistGitRepo(DistGitRepo):
         manifests = os.path.join(self.distgit_dir, manifests_dir, bundle_dir)
         csvs = list(pathlib.Path(manifests).glob('*.clusterserviceversion.yaml'))
         if len(csvs) < 1:
-            raise DoozerFatalError('{}: did not find a *.clusterserviceversion.yaml file @ {}'.format(self.metadata.distgit_key, manifests))
+            raise DoozerFatalError(
+                '{}: did not find a *.clusterserviceversion.yaml file @ {}'.format(self.metadata.distgit_key, manifests)
+            )
         elif len(csvs) > 1:
-            raise DoozerFatalError('{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(self.metadata.distgit_key, manifests))
+            raise DoozerFatalError(
+                '{}: Must be exactly one *.clusterserviceversion.yaml file but found more than one @ {}'.format(
+                    self.metadata.distgit_key, manifests
+                )
+            )
         return str(csvs[0]), image_refs
 
     def _update_csv(self, version, release):
@@ -2297,7 +2456,9 @@ class ImageDistGitRepo(DistGitRepo):
                 distgit = self.runtime.name_in_bundle_map.get(name, None)
                 # fail if upstream is referring to an image we don't actually build
                 if not distgit:
-                    raise DoozerFatalError('Unable to find {} in image-references data for {}'.format(name, self.metadata.distgit_key))
+                    raise DoozerFatalError(
+                        'Unable to find {} in image-references data for {}'.format(name, self.metadata.distgit_key)
+                    )
 
                 meta = self.runtime.image_map.get(distgit, None)
                 if meta:  # image is currently be processed
@@ -2310,7 +2471,9 @@ class ImageDistGitRepo(DistGitRepo):
 
                 if self.metadata.distgit_key != meta.distgit_key:
                     if self.metadata.distgit_key not in meta.config.dependents:
-                        raise DoozerFatalError(f'Related image contains {meta.distgit_key} but this does not have {self.metadata.distgit_key} in dependents')
+                        raise DoozerFatalError(
+                            f'Related image contains {meta.distgit_key} but this does not have {self.metadata.distgit_key} in dependents'
+                        )
 
                 namespace = self.runtime.group_config.get('csv_namespace', None)
                 if not namespace:
@@ -2321,7 +2484,7 @@ class ImageDistGitRepo(DistGitRepo):
                     content = f.read()
                     if content.count(spec):
                         content = content.replace(spec + '\n', replace + '\n')
-                        content = content.replace(spec + '\"', replace + '\"')
+                        content = content.replace(spec + '"', replace + '"')
                         f.seek(0)
                         f.truncate()
                         f.write(content)
@@ -2331,10 +2494,12 @@ class ImageDistGitRepo(DistGitRepo):
                 raise
 
         if len(image_refs) != len(found_image_refs):
-            message = (f"Mismatch between number of found image references in {csv_file} and image-references file. "
-                       f"Found {len(found_image_refs)}: {sorted(found_image_refs)}, "
-                       f"Expected {len(image_refs)}: {sorted([i['name'] for i in image_refs])}. "
-                       "Operator metadata is invalid, please investigate.")
+            message = (
+                f"Mismatch between number of found image references in {csv_file} and image-references file. "
+                f"Found {len(found_image_refs)}: {sorted(found_image_refs)}, "
+                f"Expected {len(image_refs)}: {sorted([i['name'] for i in image_refs])}. "
+                "Operator metadata is invalid, please investigate."
+            )
             self.runtime.logger.warning(message)
 
         if version.startswith('v'):
@@ -2387,12 +2552,16 @@ class ImageDistGitRepo(DistGitRepo):
                         s = sr.get('search', None)
                         r = sr.get('replace', None)
                         if not s or not r:
-                            raise DoozerFatalError('Must provide `search` and `replace` fields in art.yaml `update_list`')
+                            raise DoozerFatalError(
+                                'Must provide `search` and `replace` fields in art.yaml `update_list`'
+                            )
 
                         original_string = sr_file_str
                         sr_file_str = sr_file_str.replace(s, r)
                         if sr_file_str == original_string:
-                            self.logger.error(f'Search `{s}` and replace was ineffective for {self.metadata.distgit_key}')
+                            self.logger.error(
+                                f'Search `{s}` and replace was ineffective for {self.metadata.distgit_key}'
+                            )
                     sr_file.seek(0)
                     sr_file.truncate()
                     sr_file.write(sr_file_str)
@@ -2409,9 +2578,11 @@ class ImageDistGitRepo(DistGitRepo):
             olm_version = csv_obj['spec']['version']  # "4.11.0-202205301910"
 
             if not olm_name.endswith(olm_version):
-                raise IOError(f'Expected {self.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.')
+                raise IOError(
+                    f'Expected {self.name} CSV metadata.name field ("{olm_name}" after rebase) to be suffixed by spec.version ("{olm_version}" after rebase). art-config.yml / upstream CSV metadata may be incorrect.'
+                )
 
-            olm_name_prefix = olm_name[:-1 * len(olm_version)]  # "nfd."
+            olm_name_prefix = olm_name[: -1 * len(olm_version)]  # "nfd."
 
             # Inject the skips..
             csv_obj['spec']['skips'] = [f'{olm_name_prefix}{old_version}' for old_version in previous_build_versions]
@@ -2419,7 +2590,9 @@ class ImageDistGitRepo(DistGitRepo):
             # Re-write the CSV content.
             pathlib.Path(csv_file).write_text(yaml.dump(csv_obj))
 
-    def _update_environment_variables(self, build_update_envs: Dict[str, str], metadata_envs: Dict[str, str], filename='Dockerfile'):
+    def _update_environment_variables(
+        self, build_update_envs: Dict[str, str], metadata_envs: Dict[str, str], filename='Dockerfile'
+    ):
         """
         There are three distinct sets of environment variables we need to consider
         in a Dockerfile:
@@ -2512,15 +2685,19 @@ class ImageDistGitRepo(DistGitRepo):
 
         # If a merge has occurred, build up a MERGE mode environment variable line we want to inject into each stage.
         merge_env_line = None
-        if do_set_build_variables and self.env_vars_from_source is not None:  # If None, no merge has occurred. Anything else means it has.
-            self.env_vars_from_source.update(dict(
-                SOURCE_GIT_COMMIT=self.source_full_sha,
-                SOURCE_GIT_TAG=self.source_latest_tag,
-                SOURCE_GIT_URL=self.public_facing_source_url,
-                SOURCE_DATE_EPOCH=self.source_date_epoch,
-                OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
-                OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}',
-            ))
+        if (
+            do_set_build_variables and self.env_vars_from_source is not None
+        ):  # If None, no merge has occurred. Anything else means it has.
+            self.env_vars_from_source.update(
+                dict(
+                    SOURCE_GIT_COMMIT=self.source_full_sha,
+                    SOURCE_GIT_TAG=self.source_latest_tag,
+                    SOURCE_GIT_URL=self.public_facing_source_url,
+                    SOURCE_DATE_EPOCH=self.source_date_epoch,
+                    OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
+                    OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}',
+                )
+            )
 
             merge_env_line = f"ENV {env_merge_line_flag} " + get_env_set_list(self.env_vars_from_source)
 
@@ -2530,7 +2707,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         with df_path.open('w', encoding="utf-8") as df:
             for line in df_lines:
-
                 # Always remove the env line we update each time.
                 if env_update_line_flag in line:
                     continue
@@ -2597,12 +2773,18 @@ class ImageDistGitRepo(DistGitRepo):
             self.source_latest_tag = source_resolution.latest_tag
 
             self.actual_source_url = source_resolution.url  # This may differ from the URL we report to the public
-            self.public_facing_source_url = source_resolution.public_upstream_url  # Point to public upstream if there are private components to the URL
+            self.public_facing_source_url = (
+                source_resolution.public_upstream_url
+            )  # Point to public upstream if there are private components to the URL
             # If private_fix has not already been set (e.g. by --embargoed), determine if the source contains private fixes by checking if the private org branch commit exists in the public org
             if self.metadata.private_fix is None:
-                self.metadata.private_fix = source_resolution.has_public_upstream \
-                    and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch) \
-                    and not util.is_commit_in_public_upstream(source_resolution.commit_hash, source_resolution.public_upstream_branch, source_dir)
+                self.metadata.private_fix = (
+                    source_resolution.has_public_upstream
+                    and not SourceResolver.is_branch_commit_hash(source_resolution.public_upstream_branch)
+                    and not util.is_commit_in_public_upstream(
+                        source_resolution.commit_hash, source_resolution.public_upstream_branch, source_dir
+                    )
+                )
 
             self.env_vars_from_source.update(self.metadata.extract_kube_env_vars())
 
@@ -2624,7 +2806,6 @@ class ImageDistGitRepo(DistGitRepo):
 
         dg_path = self.dg_path
         for ent in dg_path.iterdir():
-
             if ent.name in ignore_list:
                 continue
 
@@ -2644,8 +2825,10 @@ class ImageDistGitRepo(DistGitRepo):
             # be directed to the target file). So unlink explicitly.
             df_path.unlink()
 
-        with open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile, \
-             open(str(df_path), mode='w+', encoding='utf-8') as distgit_dockerfile:
+        with (
+            open(source_dockerfile_path, mode='r', encoding='utf-8') as source_dockerfile,
+            open(str(df_path), mode='w+', encoding='utf-8') as distgit_dockerfile,
+        ):
             # The source Dockerfile could be named virtually anything (e.g. Dockerfile.rhel) or
             # be a symlink. Ultimately, we don't care - we just need its content in distgit
             # as /Dockerfile (which OSBS requires). Read in the content and write it back out
@@ -2717,13 +2900,15 @@ class ImageDistGitRepo(DistGitRepo):
             source_root = self.runtime.source_resolver.resolve_source(self.metadata).source_path
             source_alias = self.config.content.source.get('alias', os.path.basename(source_root))
 
-            self.runtime.record_logger.add_record("dockerfile_notify",
-                                                  distgit=self.metadata.qualified_name,
-                                                  image=self.config.name,
-                                                  owners=','.join(owners),
-                                                  source_alias=source_alias,
-                                                  source_dockerfile_subpath=source_dockerfile_subpath,
-                                                  dockerfile=str(dg_path.joinpath('Dockerfile')))
+            self.runtime.record_logger.add_record(
+                "dockerfile_notify",
+                distgit=self.metadata.qualified_name,
+                image=self.config.name,
+                owners=','.join(owners),
+                source_alias=source_alias,
+                source_dockerfile_subpath=source_dockerfile_subpath,
+                dockerfile=str(dg_path.joinpath('Dockerfile')),
+            )
 
     def _run_modifications(self):
         """
@@ -2735,8 +2920,8 @@ class ImageDistGitRepo(DistGitRepo):
             dockerfile_data = df.read()
 
         self.logger.debug(
-            "About to start modifying Dockerfile [%s]:\n%s\n" %
-            (self.metadata.distgit_key, dockerfile_data))
+            "About to start modifying Dockerfile [%s]:\n%s\n" % (self.metadata.distgit_key, dockerfile_data)
+        )
 
         # add build data modifications dir to path; we *could* add more
         # specific paths for the group and the individual config but
@@ -2826,7 +3011,9 @@ class ImageDistGitRepo(DistGitRepo):
                         dfp = DockerfileParser(str(df_path))
                         version = dfp.labels["version"]
                 else:
-                    self.metadata.private_fix = bool(prev_private_fix)  # preserve private_fix boolean for distgit-only repo
+                    self.metadata.private_fix = bool(
+                        prev_private_fix
+                    )  # preserve private_fix boolean for distgit-only repo
 
                 # Source or not, we should find a Dockerfile in the root at this point or something is wrong
                 assertion.isfile(df_path, "Unable to find Dockerfile in distgit root")
@@ -2848,13 +3035,12 @@ class ImageDistGitRepo(DistGitRepo):
 
 
 class RPMDistGitRepo(DistGitRepo):
-
     def __init__(self, metadata, autoclone=True):
         super(RPMDistGitRepo, self).__init__(metadata, autoclone)
         self.source = self.config.content.source
 
     async def resolve_specfile_async(self) -> Tuple[pathlib.Path, Tuple[str, str, str], str]:
-        """ Returns the path, NVR, and commit hash of the spec file in distgit_dir
+        """Returns the path, NVR, and commit hash of the spec file in distgit_dir
 
         :return: (spec_path, NVR, commit)
         """
@@ -2864,7 +3050,17 @@ class RPMDistGitRepo(DistGitRepo):
         spec_path = pathlib.Path(specs[0])
 
         async def _get_nvr():
-            cmd = ["rpmspec", "-q", "--qf", "%{name}-%{version}-%{release}", "--srpm", "--undefine", "dist", "--", str(spec_path)]
+            cmd = [
+                "rpmspec",
+                "-q",
+                "--qf",
+                "%{name}-%{version}-%{release}",
+                "--srpm",
+                "--undefine",
+                "dist",
+                "--",
+                str(spec_path),
+            ]
             _, out, _ = await exectools.cmd_gather_async(cmd)
             return out.strip().rsplit("-", 2)
 
@@ -2874,7 +3070,7 @@ class RPMDistGitRepo(DistGitRepo):
                     line = line.strip()
                     k = "%global commit "
                     if line.startswith(k):
-                        return line[len(k):]
+                        return line[len(k) :]
             return None
 
         nvr, commit = await asyncio.gather(_get_nvr(), _get_commit())

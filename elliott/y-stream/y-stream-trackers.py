@@ -71,12 +71,14 @@ for y_stream_tracker in y_stream_trackers:
 
     def filter_tracker(tracker):
         tracker_tr = tracker.target_release[0].replace(".z", ".0")
-        if all([
-            tracker.product == PRODUCT_NAME,
-            component + ":" in tracker.summary,
-            version.parse(tracker_tr) <= version.parse(TARGET_RELEASE),
-            version.parse(tracker_tr) > version.parse("4.0.0"),
-        ]):
+        if all(
+            [
+                tracker.product == PRODUCT_NAME,
+                component + ":" in tracker.summary,
+                version.parse(tracker_tr) <= version.parse(TARGET_RELEASE),
+                version.parse(tracker_tr) > version.parse("4.0.0"),
+            ]
+        ):
             return True
         return False
 

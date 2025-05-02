@@ -4,8 +4,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_APPLICATION, KIND_RELEASE_PLAN
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.cli.konflux_release_cli import CreateReleaseCli
-from elliottlib.shipment_model import (ShipmentConfig, Shipment, ShipmentEnv, Environments, Metadata, Snapshot, Spec,
-                                       Data, ReleaseNotes)
+from elliottlib.shipment_model import (
+    ShipmentConfig,
+    Shipment,
+    ShipmentEnv,
+    Environments,
+    Metadata,
+    Snapshot,
+    Spec,
+    Data,
+    ReleaseNotes,
+)
 from artcommonlib.model import Model
 
 
@@ -248,8 +257,12 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.runtime.initialize.assert_called_once_with(with_shipment=True)
 
         # Verify resource existence was checked
-        self.konflux_client._get.assert_any_call(API_VERSION, KIND_APPLICATION, shipment_config.shipment.metadata.application)
-        self.konflux_client._get.assert_any_call(API_VERSION, KIND_RELEASE_PLAN, shipment_config.shipment.environments.stage.releasePlan)
+        self.konflux_client._get.assert_any_call(
+            API_VERSION, KIND_APPLICATION, shipment_config.shipment.metadata.application
+        )
+        self.konflux_client._get.assert_any_call(
+            API_VERSION, KIND_RELEASE_PLAN, shipment_config.shipment.environments.stage.releasePlan
+        )
 
         # Verify release was created with correct parameters
         self.konflux_client._create.assert_called_once_with(expected_release)
@@ -304,7 +317,10 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("1 validation error for ShipmentConfig\nshipment.metadata.assembly\n  Field required", str(context.exception))
+        self.assertIn(
+            "1 validation error for ShipmentConfig\nshipment.metadata.assembly\n  Field required",
+            str(context.exception),
+        )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -471,5 +487,8 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} "
-                      "extra={'test-nvr-3'}", str(context.exception))
+        self.assertIn(
+            "snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} "
+            "extra={'test-nvr-3'}",
+            str(context.exception),
+        )

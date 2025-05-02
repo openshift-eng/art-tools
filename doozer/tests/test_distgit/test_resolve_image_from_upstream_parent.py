@@ -14,13 +14,22 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         self.dg.runtime.group_config = Model()
 
     @patch('doozerlib.util.oc_image_info_for_arch__caching')
-    def test_resolve_parent_1(self, oc_mock, ):
+    def test_resolve_parent_1(
+        self,
+        oc_mock,
+    ):
         # Matching MAJOR.MINOR
         # Matching RHEL version
-        oc_mock.return_value = {'config': {'config': {'Labels': {
-            'version': 'v1.19.3',
-            'release': '202401221732.el9.g00c615b',
-        }}}}
+        oc_mock.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'version': 'v1.19.3',
+                        'release': '202401221732.el9.g00c615b',
+                    }
+                }
+            }
+        }
         streams = {
             'golang': {'image': 'openshift/golang-builder:v1.19.13-202310161903.el9.g0f9bb4c'},
         }
@@ -29,13 +38,22 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         self.assertEqual(image, streams['golang']['image'])
 
     @patch('doozerlib.util.oc_image_info_for_arch__caching')
-    def test_resolve_parent_2(self, oc_mock, ):
+    def test_resolve_parent_2(
+        self,
+        oc_mock,
+    ):
         # Matching MAJOR.MINOR
         # Mismatching RHEL version
-        oc_mock.return_value = {'config': {'config': {'Labels': {
-            'version': 'v1.19.3',
-            'release': '202401221732.el8.g00c615b',
-        }}}}
+        oc_mock.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'version': 'v1.19.3',
+                        'release': '202401221732.el8.g00c615b',
+                    }
+                }
+            }
+        }
         self.dg.runtime.streams = {
             'golang': {'image': 'openshift/golang-builder:v1.19.13-202310161903.el9.g0f9bb4c'},
         }
@@ -43,13 +61,22 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         self.assertEqual(image, None)
 
     @patch('doozerlib.util.oc_image_info_for_arch__caching')
-    def test_resolve_parent_3(self, oc_mock, ):
+    def test_resolve_parent_3(
+        self,
+        oc_mock,
+    ):
         # Misatching MAJOR
         # Matching RHEL version
-        oc_mock.return_value = {'config': {'config': {'Labels': {
-            'version': 'v2.19.3',
-            'release': '202401221732.el9.g00c615b',
-        }}}}
+        oc_mock.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'version': 'v2.19.3',
+                        'release': '202401221732.el9.g00c615b',
+                    }
+                }
+            }
+        }
         self.dg.runtime.streams = {
             'golang': {'image': 'openshift/golang-builder:v1.19.13-202310161903.el9.g0f9bb4c'},
         }
@@ -57,13 +84,22 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         self.assertEqual(image, None)
 
     @patch('doozerlib.util.oc_image_info_for_arch__caching')
-    def test_resolve_parent_4(self, oc_mock, ):
+    def test_resolve_parent_4(
+        self,
+        oc_mock,
+    ):
         # Misatching MINOR
         # Matching RHEL version
-        oc_mock.return_value = {'config': {'config': {'Labels': {
-            'version': 'v1.21.3',
-            'release': '202401221732.el9.g00c615b',
-        }}}}
+        oc_mock.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'version': 'v1.21.3',
+                        'release': '202401221732.el9.g00c615b',
+                    }
+                }
+            }
+        }
         self.dg.runtime.streams = {
             'golang': {'image': 'openshift/golang-builder:v1.19.13-202310161903.el9.g0f9bb4c'},
         }
@@ -71,13 +107,22 @@ class TestResolveImageFromUpstreamParent(TestDistgit):
         self.assertEqual(image, None)
 
     @patch('doozerlib.util.oc_image_info_for_arch__caching')
-    def test_resolve_parent_5(self, oc_mock, ):
+    def test_resolve_parent_5(
+        self,
+        oc_mock,
+    ):
         # Misatching MINOR
         # Matching RHEL version
-        oc_mock.return_value = {'config': {'config': {'Labels': {
-            'version': 'v1.21.3',
-            'release': '202401221732.el9.g00c615b',
-        }}}}
+        oc_mock.return_value = {
+            'config': {
+                'config': {
+                    'Labels': {
+                        'version': 'v1.21.3',
+                        'release': '202401221732.el9.g00c615b',
+                    }
+                }
+            }
+        }
         streams = {
             'golang-1.20-rhel9': {'image': 'openshift/golang-builder:v1.20.13-202310161903.el9.g0f9bb4c'},
             'golang-1.21-rhel9': {'image': 'openshift/golang-builder:v1.21.13-202310161903.el9.g0f9bb4c'},

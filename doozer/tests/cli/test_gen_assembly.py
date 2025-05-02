@@ -9,7 +9,6 @@ from doozerlib.cli.release_gen_assembly import GenAssemblyCli
 
 
 class TestGenPayloadCli(TestCase):
-
     def test_initialize_assembly_type(self):
         """
         Check that the correct assembly type is set, according to
@@ -45,10 +44,12 @@ class TestGenPayloadCli(TestCase):
         The command should raise an error otherwise
         """
 
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='custom', arches=['amd64']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=MagicMock(assembly='custom', arches=['amd64']),
+                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
@@ -59,9 +60,11 @@ class TestGenPayloadCli(TestCase):
         The command should raise an error otherwise
         """
 
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream'),
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=MagicMock(assembly='stream'),
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
@@ -72,12 +75,14 @@ class TestGenPayloadCli(TestCase):
         The command should raise an error otherwise
         """
 
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream', arches=['amd64']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-            auto_previous=True,
-            previous_list='4.y.z',
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=MagicMock(assembly='stream', arches=['amd64']),
+                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
+                auto_previous=True,
+                previous_list='4.y.z',
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
@@ -89,32 +94,38 @@ class TestGenPayloadCli(TestCase):
         """
 
         # Custom and auto_previous
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream', arches=['amd64']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-            custom=True,
-            auto_previous=True,
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=MagicMock(assembly='stream', arches=['amd64']),
+                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
+                custom=True,
+                auto_previous=True,
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
         # Custom and previous_list
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream', arches=['amd64']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-            custom=True,
-            previous_list='4.y.z',
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=MagicMock(assembly='stream', arches=['amd64']),
+                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
+                custom=True,
+                previous_list='4.y.z',
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
         # Custom and in_flight
-        gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream', arches=['amd64']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-            custom=True,
-            in_flight=True,
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=MagicMock(assembly='stream', arches=['amd64']),
+                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
+                custom=True,
+                in_flight=True,
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
 
@@ -127,10 +138,12 @@ class TestGenPayloadCli(TestCase):
 
         runtime = MagicMock()
         runtime.get_minor_version.return_value = '4.12'
-        gacli = flexmock(GenAssemblyCli(
-            runtime=runtime,
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=runtime,
+                nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._get_release_pullspecs()
 
@@ -207,10 +220,12 @@ class TestGenPayloadCli(TestCase):
 
         runtime = MagicMock()
         runtime.get_minor_version.return_value = '4.12'
-        gacli = flexmock(GenAssemblyCli(
-            runtime=runtime,
-            standards=['4.11.18-x86_64'],
-        ))
+        gacli = flexmock(
+            GenAssemblyCli(
+                runtime=runtime,
+                standards=['4.11.18-x86_64'],
+            )
+        )
         gacli.should_receive('_exit_with_error').once()
         gacli._get_release_pullspecs()
 
@@ -260,52 +275,74 @@ class TestGenPayloadCli(TestCase):
         runtime.get_major_minor_fields.return_value = (4, 11)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.11.2')
         advisories, release_jira = gacli._get_advisories_release_jira()
-        self.assertEqual(advisories, {
-            'image': -1,
-            'rpm': -1,
-            'extras': -1,
-            'metadata': -1,
-        })
+        self.assertEqual(
+            advisories,
+            {
+                'image': -1,
+                'rpm': -1,
+                'extras': -1,
+                'metadata': -1,
+            },
+        )
         self.assertEqual(release_jira, "ART-0")
 
         runtime.get_major_minor_fields.return_value = (4, 14)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='4.14.3')
         advisories, release_jira = gacli._get_advisories_release_jira()
-        self.assertEqual(advisories, {
-            'image': -1,
-            'rpm': -1,
-            'extras': -1,
-            'metadata': -1,
-        })
+        self.assertEqual(
+            advisories,
+            {
+                'image': -1,
+                'rpm': -1,
+                'extras': -1,
+                'metadata': -1,
+            },
+        )
 
         runtime.get_major_minor_fields.return_value = (3, 11)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='3.11.2')
         advisories, release_jira = gacli._get_advisories_release_jira()
-        self.assertEqual(advisories, {
-            'image': -1,
-            'rpm': -1,
-            'extras': -1,
-            'metadata': -1,
-        })
+        self.assertEqual(
+            advisories,
+            {
+                'image': -1,
+                'rpm': -1,
+                'extras': -1,
+                'metadata': -1,
+            },
+        )
 
         runtime.get_major_minor_fields.return_value = (5, 1)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='5.1.12')
         advisories, release_jira = gacli._get_advisories_release_jira()
-        self.assertEqual(advisories, {
-            'image': -1,
-            'rpm': -1,
-            'extras': -1,
-            'metadata': -1,
-        })
+        self.assertEqual(
+            advisories,
+            {
+                'image': -1,
+                'rpm': -1,
+                'extras': -1,
+                'metadata': -1,
+            },
+        )
 
     def test_get_advisories_release_jira_candidate_reuse(self):
         runtime = MagicMock()
         advisories = {'image': 123, 'rpm': 456, 'extras': 789, 'metadata': 654}
         release_jira = "ART-123"
-        runtime.get_releases_config.return_value = Model({'releases': {'rc.0': {'assembly': {'group': {
-            'advisories': advisories,
-            'release_jira': release_jira,
-        }}}}})
+        runtime.get_releases_config.return_value = Model(
+            {
+                'releases': {
+                    'rc.0': {
+                        'assembly': {
+                            'group': {
+                                'advisories': advisories,
+                                'release_jira': release_jira,
+                            }
+                        }
+                    }
+                }
+            }
+        )
         runtime.get_major_minor_fields.return_value = (4, 12)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')
         actual = gacli._get_advisories_release_jira()

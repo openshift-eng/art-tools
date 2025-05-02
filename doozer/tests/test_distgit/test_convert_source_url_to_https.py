@@ -5,7 +5,6 @@ from doozerlib import util
 
 
 class TestDistgitConvertSourceURLToHTTPS(unittest.TestCase):
-
     def test_conversion_from_ssh_source(self):
         source = "git@github.com:myorg/myproject.git"
 
@@ -40,7 +39,12 @@ class TestDistgitConvertSourceURLToHTTPS(unittest.TestCase):
 
     def test_conversion_from_ssh_org_source(self):
         expected = "https://github.com/myorg"
-        for source in ["git@github.com:myorg/", "git@github.com/myorg/", 'ssh://someone@github.com/myorg', 'ssh://someone@github.com:myorg']:
+        for source in [
+            "git@github.com:myorg/",
+            "git@github.com/myorg/",
+            'ssh://someone@github.com/myorg',
+            'ssh://someone@github.com:myorg',
+        ]:
             actual = artcommonlib.util.convert_remote_git_to_https(source)
             self.assertEqual(actual, expected)
 

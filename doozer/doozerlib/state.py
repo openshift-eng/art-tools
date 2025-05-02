@@ -19,6 +19,7 @@ TEMPLATE_IMAGE = {
 
 class DoozerStateError(Exception):
     """A broad exception for errors during Brew CRUD operations"""
+
     pass
 
 

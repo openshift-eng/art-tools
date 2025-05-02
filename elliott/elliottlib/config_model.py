@@ -1,10 +1,9 @@
-
 from typing import List
 from pydantic import BaseModel, Field
 
 
 class KernelBugSweepConfig(BaseModel):
-    """ Represents kernel_bug_sweep field in bug.yml
+    """Represents kernel_bug_sweep field in bug.yml
 
     Example config:
         kernel_bug_sweep:
@@ -23,9 +22,9 @@ class KernelBugSweepConfig(BaseModel):
                 candidate_brew_tag: "rhaos-{MAJOR}.{MINOR}-rhel-9-candidate"
                 prod_brew_tag: "rhaos-{MAJOR}.{MINOR}-rhel-9"
     """
+
     class TrackerJiraConfig(BaseModel):
-        """ tracker_jira field in kernel_bug_sweep config
-        """
+        """tracker_jira field in kernel_bug_sweep config"""
 
         project: str = Field(min_length=1, default="KMAINT")
         """ Jira project to discover weekly kernel release trackers """
@@ -34,15 +33,14 @@ class KernelBugSweepConfig(BaseModel):
         """ Jira labels for filtering weekly kernel release trackers """
 
     class BugzillaConfig(BaseModel):
-        """ bugzilla field in kernel_bug_sweep config
-        """
+        """bugzilla field in kernel_bug_sweep config"""
 
         target_releases: List[str]
         """ Target releases of kernel bugs in Bugzilla
         """
 
     class TargetJiraConfig(BaseModel):
-        """ target_jira field in kernel_bug_sweep config """
+        """target_jira field in kernel_bug_sweep config"""
 
         project: str = Field(min_length=1, default="OCPBUGS")
         """ Target Jira project to clone kernel bugs into """

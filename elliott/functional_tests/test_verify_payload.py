@@ -12,7 +12,11 @@ class VerifyPayloadTestCase(unittest.TestCase):
             "49645",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0, msg=f"stdout: {result.stdout.decode('utf-8')}, stderr: {result.stderr.decode('utf-8')}")
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout: {result.stdout.decode('utf-8')}, stderr: {result.stderr.decode('utf-8')}",
+        )
         self.assertIn("Summary results:", result.stdout.decode("utf-8"))
 
 

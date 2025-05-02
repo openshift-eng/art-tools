@@ -8,7 +8,6 @@ def lambda_handler(event, context):
     response = event['Records'][0]['cf']['response']
 
     if int(response['status']) == 403:  # This is basically file-not-found from s3 if the user is authenticated
-
         if uri.endswith('/') or uri.endswith('/index.html'):
             # Nothing to do. This should have already hit the index.html
             return response

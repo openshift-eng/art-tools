@@ -69,7 +69,8 @@ class AssemblyPinBuildsCli:
 
         if len(rhcos) > 1:
             raise ValueError(
-                "Did not expect more than one rhcos nvr. Provide only 1 nvr which will be pinned for all arches.")
+                "Did not expect more than one rhcos nvr. Provide only 1 nvr which will be pinned for all arches."
+            )
 
         nvrs_to_fetch = sorted(images + art_rpms + non_art_rpms)
         if nvrs_to_fetch:
@@ -145,10 +146,13 @@ class AssemblyPinBuildsCli:
         github_api_repo_url = "https://api.github.com/repos"
         pr_api_url = f"{github_api_repo_url}/{org_repo_suffix}/pulls/{pr_url.split('/')[-1]}"
         LOGGER.info('Fetching url %s', pr_api_url)
-        response = requests.get(pr_api_url, headers={
-            "Authorization": f"token {auth_token}",
-            "Accept": "application/json",
-        })
+        response = requests.get(
+            pr_api_url,
+            headers={
+                "Authorization": f"token {auth_token}",
+                "Accept": "application/json",
+            },
+        )
         response.raise_for_status()
         json_data = response.json()
         sha, branch = None, None

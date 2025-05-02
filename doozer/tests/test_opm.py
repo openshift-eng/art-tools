@@ -2,13 +2,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from doozerlib.opm import (OpmRegistryAuth, generate_basic_template,
-                           generate_dockerfile, render,
-                           render_catalog_from_template, verify_opm)
+from doozerlib.opm import (
+    OpmRegistryAuth,
+    generate_basic_template,
+    generate_dockerfile,
+    render,
+    render_catalog_from_template,
+    verify_opm,
+)
 
 
 class TestOpm(unittest.IsolatedAsyncioTestCase):
-
     @patch('doozerlib.opm.gather_opm', new_callable=AsyncMock)
     async def test_verify_opm(self, mock_gather_opm):
         mock_gather_opm.return_value = (0, 'OpmVersion:"v1.47.0"', '')
@@ -37,9 +41,18 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         catalog_file = Path('/path/to/catalog.yaml')
         template_file = Path('/path/to/template.yaml')
         await generate_basic_template(catalog_file, template_file)
-        mock_gather_opm.assert_called_once_with([
-            'alpha', 'convert-template', 'basic', '-o', 'yaml', '--', str(catalog_file),
-        ], stdout=mock_open.return_value.__enter__.return_value)
+        mock_gather_opm.assert_called_once_with(
+            [
+                'alpha',
+                'convert-template',
+                'basic',
+                '-o',
+                'yaml',
+                '--',
+                str(catalog_file),
+            ],
+            stdout=mock_open.return_value.__enter__.return_value,
+        )
 
     @patch("builtins.open")
     @patch('doozerlib.opm.gather_opm', new_callable=AsyncMock)
@@ -48,9 +61,21 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         catalog_file = Path('/path/to/catalog.yaml')
         auth = MagicMock(spec=OpmRegistryAuth)
         await render_catalog_from_template(template_file, catalog_file, auth=auth)
-        mock_gather_opm.assert_called_once_with([
-            'alpha', 'render-template', 'basic', '--migrate-level', 'none', '-o', 'yaml', '--', str(template_file),
-        ], stdout=mock_open.return_value.__enter__.return_value, auth=auth)
+        mock_gather_opm.assert_called_once_with(
+            [
+                'alpha',
+                'render-template',
+                'basic',
+                '--migrate-level',
+                'none',
+                '-o',
+                'yaml',
+                '--',
+                str(template_file),
+            ],
+            stdout=mock_open.return_value.__enter__.return_value,
+            auth=auth,
+        )
 
         with self.assertRaises(ValueError, msg="Invalid migrate level: invalid"):
             await render_catalog_from_template(template_file, catalog_file, migrate_level='invalid')

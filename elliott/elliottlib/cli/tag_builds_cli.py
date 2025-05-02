@@ -20,32 +20,45 @@ LOGGER = logging.getLogger(__name__)
 #
 @cli.command("tag-builds", short_help="Tag specified Brew builds into specified tag")
 @click.option(
-    '--advisory', '-a', 'advisories',
-    multiple=True, metavar='ADVISORY', type=int,
-    help='Add builds on ADVISORY to tag [MULTIPLE]')
+    '--advisory',
+    '-a',
+    'advisories',
+    multiple=True,
+    metavar='ADVISORY',
+    type=int,
+    help='Add builds on ADVISORY to tag [MULTIPLE]',
+)
 @use_default_advisory_option
 @click.option(
-    '--product-version', '--pv', 'product_version',
-    metavar='PRODUCT_VERSION', type=str,
-    help='Narrow builds with specified product version. e.g. RHEL-7-OSE-4.4, OSE-4.4-RHEL-8')
+    '--product-version',
+    '--pv',
+    'product_version',
+    metavar='PRODUCT_VERSION',
+    type=str,
+    help='Narrow builds with specified product version. e.g. RHEL-7-OSE-4.4, OSE-4.4-RHEL-8',
+)
 @click.option(
-    '--build', '-b', 'builds',
-    multiple=True, metavar='NVR_OR_ID',
-    help='Add build NVR_OR_ID to tag [MULTIPLE]')
+    '--build', '-b', 'builds', multiple=True, metavar='NVR_OR_ID', help='Add build NVR_OR_ID to tag [MULTIPLE]'
+)
+@click.option('--tag', '-t', metavar='TAG', required=True, help='Tag name. e.g. rhaos-4.4-rhel-8-image-build')
+@click.option('--dont-untag', '-d', is_flag=True, help="Don't untag unspecified Brew builds")
 @click.option(
-    '--tag', '-t',
-    metavar='TAG', required=True,
-    help='Tag name. e.g. rhaos-4.4-rhel-8-image-build')
-@click.option(
-    '--dont-untag', '-d', is_flag=True,
-    help="Don't untag unspecified Brew builds")
-@click.option(
-    '--dry-run', is_flag=True,
-    help="Don't really tag/untag any builds. Just print which builds should be tagged and untagged")
+    '--dry-run',
+    is_flag=True,
+    help="Don't really tag/untag any builds. Just print which builds should be tagged and untagged",
+)
 @pass_runtime
-def tag_builds_cli(runtime: Runtime, advisories: Tuple[int], default_advisory_type: str, product_version: str,
-                   builds: Tuple[str], tag: str, dont_untag: bool, dry_run: bool):
-    """ Tag builds into Brew tag and optionally untag unspecified builds.
+def tag_builds_cli(
+    runtime: Runtime,
+    advisories: Tuple[int],
+    default_advisory_type: str,
+    product_version: str,
+    builds: Tuple[str],
+    tag: str,
+    dont_untag: bool,
+    dry_run: bool,
+):
+    """Tag builds into Brew tag and optionally untag unspecified builds.
 
     Example 1: Tag RHEL7 RPMs that on ocp-build-data recorded advisory into rhaos-4.3-rhel-7-image-build
 
@@ -71,7 +84,7 @@ def tag_builds_cli(runtime: Runtime, advisories: Tuple[int], default_advisory_ty
     runtime.initialize()
     logger = LOGGER
     if default_advisory_type:
-        advisories = (find_default_advisory(runtime, default_advisory_type), )
+        advisories = (find_default_advisory(runtime, default_advisory_type),)
 
     all_builds = set()  # All Brew builds that should be in the tag
 
@@ -81,7 +94,9 @@ def tag_builds_cli(runtime: Runtime, advisories: Tuple[int], default_advisory_ty
             logger.info(f"Fetching attached Brew builds from advisory {advisory}...")
             errata_builds = errata.get_builds(advisory, errata_session)
             product_versions = list(errata_builds.keys())
-            logger.debug(f"Advisory {advisory} has builds for {len(product_versions)} product versions: {product_versions}")
+            logger.debug(
+                f"Advisory {advisory} has builds for {len(product_versions)} product versions: {product_versions}"
+            )
             if product_version:  # Only this product version should be concerned
                 product_versions = [product_version]
             for pv in product_versions:

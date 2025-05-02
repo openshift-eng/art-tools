@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field, RootModel
 
 
 class RPMDelivery(BaseModel):
-    """ An RPMDelivery config
-    """
+    """An RPMDelivery config"""
+
     packages: List[str] = Field(min_length=1)
     rhel_tag: Optional[str] = Field(None, min_length=1)
     integration_tag: str = Field(min_length=1)
@@ -14,8 +14,8 @@ class RPMDelivery(BaseModel):
 
 
 class RPMDeliveries(RootModel):
-    """ Represents rpm_deliveries field in group config
-    """
+    """Represents rpm_deliveries field in group config"""
+
     root: List[RPMDelivery]
 
     def __bool__(self):

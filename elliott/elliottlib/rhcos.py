@@ -6,8 +6,7 @@ from artcommonlib import exectools
 from artcommonlib.arch_util import brew_suffix_for_arch
 from artcommonlib.format_util import red_print
 from elliottlib import constants
-from artcommonlib.rhcos import (get_primary_container_name,
-                                get_build_id_from_rhcos_pullspec)
+from artcommonlib.rhcos import get_primary_container_name, get_build_id_from_rhcos_pullspec
 
 
 def release_url(runtime, version, arch="x86_64", private=False):

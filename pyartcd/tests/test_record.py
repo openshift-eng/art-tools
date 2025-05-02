@@ -7,10 +7,7 @@ from pyartcd import record
 class TestRebuildPipeline(TestCase):
     def test_parse_record_log(self):
         fake_file = StringIO(
-            "type1|key1=value1|key2=value2|\n"
-            "type2|key3=value3|key4=value4|\n"
-            "type2|key5=value5|\n"
-            "type3\n",
+            "type1|key1=value1|key2=value2|\ntype2|key3=value3|key4=value4|\ntype2|key5=value5|\ntype3\n",
         )
         actual = record.parse_record_log(fake_file)
         expected = {
@@ -46,8 +43,7 @@ image_build_metrics|elapsed_wait_minutes=1|elapsed_total_minutes=13|task_count=1
         self.assertEqual(
             distgit_notify,
             {
-                'containers/openshift-enterprise-haproxy-router':
-                {
+                'containers/openshift-enterprise-haproxy-router': {
                     'distgit': 'containers/openshift-enterprise-haproxy-router',
                     'dockerfile': '/containers/openshift-enterprise-haproxy-router/Dockerfile',
                     'image': 'openshift/ose-haproxy-router',
@@ -66,9 +62,9 @@ image_build_metrics|elapsed_wait_minutes=1|elapsed_total_minutes=13|task_count=1
 
     def test_get_failed_builds(self):
         failed_map = record.get_failed_builds(self.data)
-        self.assertEqual(failed_map, {
-            'openshift-enterprise-haproxy-router': 'n/a',
-            'ose-haproxy-router-base': 'brew/taskinfo?taskID=53138249'},
+        self.assertEqual(
+            failed_map,
+            {'openshift-enterprise-haproxy-router': 'n/a', 'ose-haproxy-router-base': 'brew/taskinfo?taskID=53138249'},
         )
 
     def test_determine_build_failure_ratio(self):

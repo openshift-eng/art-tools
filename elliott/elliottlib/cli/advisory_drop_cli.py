@@ -54,6 +54,8 @@ def advisory_drop_cli(advisory):
     r = requests.post(url, auth=HTTPSPNEGOAuth(), data=data, headers=headers)
     adv.refresh()
     if adv.errata_state != "DROPPED_NO_SHIP":
-        raise ElliottFatalError(f'Failed to drop advisory {advisory}. Got status code {r.status_code}. Are you the owner of advisory {advisory}?')
+        raise ElliottFatalError(
+            f'Failed to drop advisory {advisory}. Got status code {r.status_code}. Are you the owner of advisory {advisory}?'
+        )
 
     click.echo(f'Successfully dropped advisory {advisory}')

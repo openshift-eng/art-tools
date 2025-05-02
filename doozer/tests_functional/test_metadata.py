@@ -9,7 +9,6 @@ from doozerlib import metadata
 
 
 class TestMetadata(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -20,7 +19,9 @@ class TestMetadata(DoozerRunnerTestCase):
         super().tearDown()
 
     def test_cgit_atom(self):
-        data_obj = MagicMock(key="cluster-etcd-operator", filename="cluster-etcd-operator.yml", data={"name": "cluster-etcd-operator"})
+        data_obj = MagicMock(
+            key="cluster-etcd-operator", filename="cluster-etcd-operator.yml", data={"name": "cluster-etcd-operator"}
+        )
         runtime = MagicMock()
         runtime.group_config.urls.cgit = "http://pkgs.devel.redhat.com/cgit"
         meta = metadata.Metadata("image", runtime, data_obj)

@@ -12,7 +12,6 @@ from artcommonlib.brew import BuildStates
 
 
 class TestMetadata(TestCase):
-
     def setUp(self) -> None:
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
@@ -50,7 +49,9 @@ class TestMetadata(TestCase):
         runtime.group_config.urls.cgit = "http://distgit.example.com/cgit"
         meta = Metadata("image", runtime, data_obj)
         url = meta.cgit_file_url("some_path/some_file.txt", "abcdefg", "some-branch")
-        self.assertEqual(url, "http://distgit.example.com/cgit/containers/foo/plain/some_path/some_file.txt?h=some-branch&id=abcdefg")
+        self.assertEqual(
+            url, "http://distgit.example.com/cgit/containers/foo/plain/some_path/some_file.txt?h=some-branch&id=abcdefg"
+        )
 
     def test_is_rpm_exempt(self):
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
@@ -58,9 +59,11 @@ class TestMetadata(TestCase):
         meta = Metadata("image", runtime, data_obj)
         self.assertFalse(meta.is_rpm_exempt('bar')[0])
 
-        meta.config = Model(dict_to_model={
-            'scan_sources': {'exempt_rpms': ['bar', 'foo*', 'barfoo?']},
-        })
+        meta.config = Model(
+            dict_to_model={
+                'scan_sources': {'exempt_rpms': ['bar', 'foo*', 'barfoo?']},
+            }
+        )
         self.assertTrue(meta.is_rpm_exempt('bar')[0])
         self.assertTrue(meta.is_rpm_exempt('foo')[0])
         self.assertTrue(meta.is_rpm_exempt('foo123')[0])
@@ -71,11 +74,20 @@ class TestMetadata(TestCase):
         meta.config = Model(dict_to_model={'scan_sources': {'exempt_rpms': ['*']}})
         self.assertTrue(meta.is_rpm_exempt('anything_goes')[0])
 
-    def build_record(self, creation_dt: datetime.datetime, assembly, el_target, name='foo-container',
-                     version='4.7.0', p='p0', epoch=None, git_commit='4c0ed6d',
-                     release_prefix=None,
-                     build_state: BuildStates = BuildStates.COMPLETE,
-                     is_rpm: bool = False):
+    def build_record(
+        self,
+        creation_dt: datetime.datetime,
+        assembly,
+        el_target,
+        name='foo-container',
+        version='4.7.0',
+        p='p0',
+        epoch=None,
+        git_commit='4c0ed6d',
+        release_prefix=None,
+        build_state: BuildStates = BuildStates.COMPLETE,
+        is_rpm: bool = False,
+    ):
         """
         :return: Returns an artificial brew build record.
         """
@@ -210,14 +222,18 @@ class TestMetadata(TestCase):
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(
+                now - datetime.timedelta(hours=5), assembly='stream', el_target=8, build_state=BuildStates.COMPLETE
+            ),
             self.build_record(now, assembly='stream', el_target=8, build_state=BuildStates.FAILED),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[0])
 
         # By default, we should only be finding COMPLETE builds
         builds = [
-            self.build_record(now - datetime.timedelta(hours=5), assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(
+                now - datetime.timedelta(hours=5), assembly=None, el_target=8, build_state=BuildStates.COMPLETE
+            ),
             self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.FAILED),
             self.build_record(now, assembly=None, el_target=8, build_state=BuildStates.COMPLETE),
         ]
@@ -226,7 +242,9 @@ class TestMetadata(TestCase):
         # Check whether extra pattern matching works
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
-            self.build_record(now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'),
+            self.build_record(
+                now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'
+            ),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}', el_target=8),
@@ -311,10 +329,14 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=now, id='1234567'),
         ]
         builds = [
-            self.build_record(now - datetime.timedelta(minutes=5), assembly=runtime.assembly, el_target=8,
-                              git_commit=None, build_state=BuildStates.FAILED),
-            self.build_record(then, assembly=runtime.assembly, el_target=8,
-                              git_commit=None),
+            self.build_record(
+                now - datetime.timedelta(minutes=5),
+                assembly=runtime.assembly,
+                el_target=8,
+                git_commit=None,
+                build_state=BuildStates.FAILED,
+            ),
+            self.build_record(then, assembly=runtime.assembly, el_target=8, git_commit=None),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
@@ -333,7 +355,9 @@ class TestMetadata(TestCase):
             CgitAtomFeedEntry(title='', content='', updated=then, id='1234567'),
         ]
         builds = [
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=None, build_state=BuildStates.FAILED),
+            self.build_record(
+                now, assembly=runtime.assembly, el_target=8, git_commit=None, build_state=BuildStates.FAILED
+            ),
             self.build_record(now, assembly='not_ours', el_target=8, git_commit=None),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
@@ -377,7 +401,14 @@ class TestMetadata(TestCase):
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
         builds = [
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7, build_state=BuildStates.FAILED),
+            self.build_record(
+                then,
+                assembly=runtime.assembly,
+                git_commit=None,
+                is_rpm=True,
+                el_target=7,
+                build_state=BuildStates.FAILED,
+            ),
             self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
@@ -396,21 +427,41 @@ class TestMetadata(TestCase):
 
         # If a build is newer, but el7 failed
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7, build_state=BuildStates.FAILED),
-            self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
+            self.build_record(
+                now,
+                assembly=runtime.assembly,
+                git_commit=None,
+                is_rpm=True,
+                el_target=7,
+                build_state=BuildStates.FAILED,
+            ),
+            self.build_record(
+                then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7
+            ),
             self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
         # If a build is newer, but el8 failed
         builds = [
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8, build_state=BuildStates.FAILED),
-            self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
+            self.build_record(
+                now,
+                assembly=runtime.assembly,
+                git_commit=None,
+                is_rpm=True,
+                el_target=8,
+                build_state=BuildStates.FAILED,
+            ),
+            self.build_record(
+                then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8
+            ),
             self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
-    @patch("doozerlib.metadata.exectools.cmd_assert", return_value=("296ac244f3e7fd2d937316639892f90f158718b0", ""))  # emulate response to ls-remote of openshift/release
+    @patch(
+        "doozerlib.metadata.exectools.cmd_assert", return_value=("296ac244f3e7fd2d937316639892f90f158718b0", "")
+    )  # emulate response to ls-remote of openshift/release
     def test_needs_rebuild_with_upstream(self, mock_cmd_assert):
         runtime = self.runtime
         meta = self.meta
@@ -426,13 +477,15 @@ class TestMetadata(TestCase):
         koji_mock.listBuilds.side_effect = list_builds
         ls_remote_commit = '296ac244f3e7fd2d937316639892f90f158718b0'
 
-        meta.config.content = Model(dict_to_model={
-            'source': {
-                'git': {
-                    'url': 'git@github.com:openshift/release.git',
+        meta.config.content = Model(
+            dict_to_model={
+                'source': {
+                    'git': {
+                        'url': 'git@github.com:openshift/release.git',
+                    },
                 },
-            },
-        })
+            }
+        )
 
         # If listBuilds returns nothing, we want to trigger a rebuild
         builds = []
@@ -442,8 +495,12 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=f'{runtime.assembly}extra', el_target=8, git_commit=ls_remote_commit),  # Close but not quite our assembly
+            self.build_record(
+                now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED
+            ),
+            self.build_record(
+                now, assembly=f'{runtime.assembly}extra', el_target=8, git_commit=ls_remote_commit
+            ),  # Close but not quite our assembly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
@@ -466,8 +523,12 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8, git_commit=ls_remote_commit),
             self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit),  # This one should match perfectly
+            self.build_record(
+                now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED
+            ),
+            self.build_record(
+                now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit
+            ),  # This one should match perfectly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
@@ -475,24 +536,48 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly='stream', el_target=8, git_commit=ls_remote_commit),  # This one should match perfectly
+            self.build_record(
+                now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED
+            ),
+            self.build_record(
+                now, assembly='stream', el_target=8, git_commit=ls_remote_commit
+            ),  # This one should match perfectly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
         # If we tried the upstream commit recently and failed, there should be a delay before the next attempt
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE),
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(
+                now - datetime.timedelta(days=5),
+                git_commit='1234567',
+                assembly=runtime.assembly,
+                el_target=8,
+                build_state=BuildStates.COMPLETE,
+            ),
+            self.build_record(
+                now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED
+            ),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
         # If the failed build attempt is old, try again
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now - datetime.timedelta(days=5), git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
+            self.build_record(
+                now - datetime.timedelta(days=5),
+                git_commit='1234567',
+                assembly=runtime.assembly,
+                el_target=8,
+                build_state=BuildStates.COMPLETE,
+            ),
+            self.build_record(
+                now - datetime.timedelta(days=5),
+                assembly=runtime.assembly,
+                el_target=8,
+                git_commit=ls_remote_commit,
+                build_state=BuildStates.FAILED,
+            ),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.LAST_BUILD_FAILED)
 
@@ -500,24 +585,36 @@ class TestMetadata(TestCase):
         # but there is an old build that does. Indicates some type of revert. Rebuild.
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit),
+            self.build_record(
+                now, git_commit='1234567', assembly=runtime.assembly, el_target=8, build_state=BuildStates.COMPLETE
+            ),
+            self.build_record(
+                now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit
+            ),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
 
         # The preceding revert scenario only applies if the assemblies match
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, git_commit='1234567', assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit),
+            self.build_record(
+                now, git_commit='1234567', assembly='stream', el_target=8, build_state=BuildStates.COMPLETE
+            ),
+            self.build_record(
+                now - datetime.timedelta(days=5), assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit
+            ),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
         # If both builds are 'stream' assembly, the upstream commit revert DOES affect our assembly
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, git_commit='1234567', assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
-            self.build_record(now - datetime.timedelta(days=5), assembly='stream', el_target=8, git_commit=ls_remote_commit),
+            self.build_record(
+                now, git_commit='1234567', assembly='stream', el_target=8, build_state=BuildStates.COMPLETE
+            ),
+            self.build_record(
+                now - datetime.timedelta(days=5), assembly='stream', el_target=8, git_commit=ls_remote_commit
+            ),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
 
@@ -526,79 +623,97 @@ class TestMetadata(TestCase):
         # right upstream commit.
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now - datetime.timedelta(days=5), git_commit=ls_remote_commit, assembly='stream', el_target=8, build_state=BuildStates.COMPLETE),
+            self.build_record(
+                now - datetime.timedelta(days=5),
+                git_commit=ls_remote_commit,
+                assembly='stream',
+                el_target=8,
+                build_state=BuildStates.COMPLETE,
+            ),
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='123457'),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.UPSTREAM_COMMIT_MISMATCH)
 
     def test_konflux_network_mode_group_missing(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
 
-        runtime.group_config = Model(dict_to_model={
-            "konflux": {},
-        })
+        runtime.group_config = Model(
+            dict_to_model={
+                "konflux": {},
+            }
+        )
 
-        meta.config = Model(dict_to_model={
-            "konflux": {
-                "network_mode": "hermetic",
-            },
-        })
+        meta.config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "hermetic",
+                },
+            }
+        )
 
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
 
     def test_konflux_network_mode_image_missing(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
 
-        meta.config = Model(dict_to_model={
-            "konflux": {},
-        })
+        meta.config = Model(
+            dict_to_model={
+                "konflux": {},
+            }
+        )
 
-        runtime.group_config = Model(dict_to_model={
-            "konflux": {
-                "network_mode": "hermetic",
-            },
-        })
+        runtime.group_config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "hermetic",
+                },
+            }
+        )
 
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
 
     def test_konflux_network_mode_both_missing(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
 
-        meta.config = Model(dict_to_model={
-            "konflux": {},
-        })
+        meta.config = Model(
+            dict_to_model={
+                "konflux": {},
+            }
+        )
 
-        runtime.group_config = Model(dict_to_model={
-            "konflux": {},
-        })
+        runtime.group_config = Model(
+            dict_to_model={
+                "konflux": {},
+            }
+        )
 
         self.assertEqual(meta.get_konflux_network_mode(), "open")
 
     def test_konflux_network_mode_both_set(self):
-
         data_obj = MagicMock(key="foo", filename="foo.yml", data={"name": "foo"})
         runtime = MagicMock()
         meta = Metadata("image", runtime, data_obj)
 
-        meta.config = Model(dict_to_model={
-            "konflux": {
-                "network_mode": "internal-only",
-            },
-        })
+        meta.config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "internal-only",
+                },
+            }
+        )
 
-        runtime.group_config = Model(dict_to_model={
-            "konflux": {
-                "network_mode": "hermetic",
-            },
-        })
+        runtime.group_config = Model(
+            dict_to_model={
+                "konflux": {
+                    "network_mode": "hermetic",
+                },
+            }
+        )
 
         self.assertEqual(meta.get_konflux_network_mode(), "internal-only")

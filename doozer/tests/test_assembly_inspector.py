@@ -1,4 +1,3 @@
-
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import MagicMock
 
@@ -10,17 +9,22 @@ from doozerlib.assembly_inspector import AssemblyInspector
 class TestAssemblyInspector(IsolatedAsyncioTestCase):
     async def test_check_installed_packages_for_rpm_delivery(self):
         # Test a standard release with a package tagged into my-ship-ok-tag
-        rt = MagicMock(mode="both", group_config=Model({
-            "rpm_deliveries": [
+        rt = MagicMock(
+            mode="both",
+            group_config=Model(
                 {
-                    "packages": ["kernel", "kernel-rt"],
-                    "rhel_tag": "my-rhel-tag",
-                    "integration_tag": "my-integration-tag",
-                    "stop_ship_tag": "my-stop-ship-tag",
-                    "target_tag": "my-target-tag",
-                },
-            ],
-        }))
+                    "rpm_deliveries": [
+                        {
+                            "packages": ["kernel", "kernel-rt"],
+                            "rhel_tag": "my-rhel-tag",
+                            "integration_tag": "my-integration-tag",
+                            "stop_ship_tag": "my-stop-ship-tag",
+                            "target_tag": "my-target-tag",
+                        },
+                    ],
+                }
+            ),
+        )
         brew_session = MagicMock()
         brew_session.listTags.return_value = [
             {"name": "tag-a"},
@@ -45,17 +49,22 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         self.assertEqual(len(issues), 1)
 
     def test_check_installed_rpms_in_image(self):
-        rt = MagicMock(mode="both", group_config=Model({
-            "rpm_deliveries": [
+        rt = MagicMock(
+            mode="both",
+            group_config=Model(
                 {
-                    "packages": ["kernel", "kernel-rt"],
-                    "rhel_tag": "my-rhel-tag",
-                    "integration_tag": "my-integration-tag",
-                    "stop_ship_tag": "my-stop-ship-tag",
-                    "target_tag": "my-target-tag",
-                },
-            ],
-        }))
+                    "rpm_deliveries": [
+                        {
+                            "packages": ["kernel", "kernel-rt"],
+                            "rhel_tag": "my-rhel-tag",
+                            "integration_tag": "my-integration-tag",
+                            "stop_ship_tag": "my-stop-ship-tag",
+                            "target_tag": "my-target-tag",
+                        },
+                    ],
+                }
+            ),
+        )
         brew_session = MagicMock()
         brew_session.listTags.return_value = [
             {"name": "tag-a"},
@@ -69,4 +78,5 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         }
         issues = ai.check_installed_rpms_in_image("foo", build_inspector, None)
         self.assertEqual(issues, [])
+
     pass

@@ -9,13 +9,15 @@ pass_runtime = click.make_pass_decorator(Runtime)
 
 @cli.command('advisory-images', short_help='List of images in a given advisory')
 @click.option(
-    '--advisory', '-a', 'advisory',
-    type=int, default=None, metavar='ADVISORY',
-    help='Explicitly define image advisory ID to be used instead of the default')
-@click.option(
-    '--raw', '-r', 'raw',
-    is_flag=True,
-    help='Output raw images')
+    '--advisory',
+    '-a',
+    'advisory',
+    type=int,
+    default=None,
+    metavar='ADVISORY',
+    help='Explicitly define image advisory ID to be used instead of the default',
+)
+@click.option('--raw', '-r', 'raw', is_flag=True, help='Output raw images')
 @pass_runtime
 def advisory_images_cli(runtime, advisory, raw):
     """List images of a given advisory in the format we usually send to CCS (docs team)

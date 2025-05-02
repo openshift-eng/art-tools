@@ -34,7 +34,10 @@ class TestJIRABugTracker(unittest.TestCase):
         client.should_receive("transition_issue").with_args(bug.id, 'status2')
         comment = 'Elliott changed bug status from status1 to status2.\ncomment'
         flexmock(JIRABugTracker).should_receive("add_comment").with_args(
-            bug.id, comment, private=True, noop=False,
+            bug.id,
+            comment,
+            private=True,
+            noop=False,
         )
 
         jira = JIRABugTracker({})
@@ -48,7 +51,9 @@ class TestJIRABugTracker(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         client = flexmock()
         client.should_receive("add_comment").with_args(
-            bug.id, 'comment', visibility={'type': 'group', 'value': 'Red Hat Employee'},
+            bug.id,
+            'comment',
+            visibility={'type': 'group', 'value': 'Red Hat Employee'},
         )
 
         jira = JIRABugTracker({})

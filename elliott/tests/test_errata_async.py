@@ -83,11 +83,13 @@ class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
     @patch("elliottlib.errata_async.AsyncErrataAPI._make_request", autospec=True)
     async def test_get_cves(self, _make_request: Mock, ClientSession: Mock):
         api = AsyncErrataAPI("https://errata.example.com")
-        api.get_advisory = AsyncMock(return_value={
-            "content": {
-                "content": {"cve": "A B C"},
-            },
-        })
+        api.get_advisory = AsyncMock(
+            return_value={
+                "content": {
+                    "content": {"cve": "A B C"},
+                },
+            }
+        )
         actual = await api.get_cves(1)
         api.get_advisory.assert_awaited_once_with(1)
         self.assertEqual(actual, ["A", "B", "C"])
@@ -98,7 +100,9 @@ class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
         api = AsyncErrataAPI("https://errata.example.com")
         _make_request.return_value = {"result": "fake"}
         actual = await api.create_cve_package_exclusion(1, "CVE-1", "a")
-        _make_request.assert_awaited_once_with(ANY, 'POST', '/api/v1/cve_package_exclusion', json={'cve': 'CVE-1', 'errata': 1, 'package': 'a'})
+        _make_request.assert_awaited_once_with(
+            ANY, 'POST', '/api/v1/cve_package_exclusion', json={'cve': 'CVE-1', 'errata': 1, 'package': 'a'}
+        )
         self.assertEqual(actual, {"result": "fake"})
 
     @patch("aiohttp.ClientSession", autospec=True)
@@ -127,7 +131,12 @@ class TestAsyncErrataAPI(IsolatedAsyncioTestCase):
             return items
 
         actual = await _call()
-        _make_request.assert_awaited_with(ANY, 'GET', '/api/v1/cve_package_exclusion', params={'filter[errata_id]': '1', 'page[number]': 3, 'page[size]': 1000})
+        _make_request.assert_awaited_with(
+            ANY,
+            'GET',
+            '/api/v1/cve_package_exclusion',
+            params={'filter[errata_id]': '1', 'page[number]': 3, 'page[size]': 1000},
+        )
         self.assertEqual(actual, [{'id': 1}, {'id': 2}, {'id': 3}, {'id': 4}, {'id': 5}])
 
 
@@ -159,19 +168,21 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
         builder_el8 = 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca'
         builder_el9 = 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el9.g4d4caca'
         get_go_container_nvrs.return_value = {
-            builder_el8: {(n['name'], n['version'], n['release'])
-                          for n in [parse_nvr(n) for n in attached_builds if 'el8' in n]},
-            builder_el9: {(n['name'], n['version'], n['release'])
-                          for n in [parse_nvr(n) for n in attached_builds if 'el9' in n]},
+            builder_el8: {
+                (n['name'], n['version'], n['release']) for n in [parse_nvr(n) for n in attached_builds if 'el8' in n]
+            },
+            builder_el9: {
+                (n['name'], n['version'], n['release']) for n in [parse_nvr(n) for n in attached_builds if 'el9' in n]
+            },
         }
         expected = {
             "CVE-2099-1": {"a", "b"},
             "CVE-2099-2": {"c"},
             "CVE-2099-3": {"a", "b", "c", "d"},
         }
-        actual = AsyncErrataUtils.populate_golang_cve_components(golang_cve_names,
-                                                                 expected_cve_components,
-                                                                 attached_builds)
+        actual = AsyncErrataUtils.populate_golang_cve_components(
+            golang_cve_names, expected_cve_components, attached_builds
+        )
         self.assertEqual(expected, actual)
 
     @patch("elliottlib.errata_async.AsyncErrataUtils.populate_golang_cve_components", autospec=True)
@@ -221,10 +232,19 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
 
     @patch("elliottlib.errata_async.AsyncErrataUtils.get_advisory_cve_exclusions", autospec=True)
     @patch("elliottlib.errata_async.AsyncErrataAPI", autospec=True)
-    async def test_associate_builds_with_cves(self, FakeAsyncErrataAPI: AsyncMock, fake_get_advisory_cve_exclusions: AsyncMock):
+    async def test_associate_builds_with_cves(
+        self, FakeAsyncErrataAPI: AsyncMock, fake_get_advisory_cve_exclusions: AsyncMock
+    ):
         api = FakeAsyncErrataAPI.return_value
         api.get_cves.return_value = ["CVE-2099-1", "CVE-2099-2", "CVE-2099-3"]
-        attached_builds = ["a-1.0.0-1.el8", "a-1.0.0-1.el7", "b-1.0.0-1.el8", "c-1.0.0-1.el8", "d-1.0.0-1.el8", "e-1.0.0-1.el7"]
+        attached_builds = [
+            "a-1.0.0-1.el8",
+            "a-1.0.0-1.el7",
+            "b-1.0.0-1.el8",
+            "c-1.0.0-1.el8",
+            "d-1.0.0-1.el8",
+            "e-1.0.0-1.el7",
+        ]
         cve_components_mapping = {
             "CVE-2099-1": {"a", "b", "d"},
             "CVE-2099-2": {"c", "e"},
@@ -235,8 +255,9 @@ class TestAsyncErrataUtils(IsolatedAsyncioTestCase):
             "CVE-2099-2": {"a": 3, "b": 4, "d": 5},
             "CVE-2099-3": {},
         }
-        actual = await AsyncErrataUtils.associate_builds_with_cves(api, 1, attached_builds, cve_components_mapping,
-                                                                   dry_run=False)
+        actual = await AsyncErrataUtils.associate_builds_with_cves(
+            api, 1, attached_builds, cve_components_mapping, dry_run=False
+        )
         api.delete_cve_package_exclusion.assert_any_await(2)
         api.create_cve_package_exclusion.assert_any_await(1, "CVE-2099-1", "e")
         api.create_cve_package_exclusion.assert_any_await(1, "CVE-2099-3", "e")

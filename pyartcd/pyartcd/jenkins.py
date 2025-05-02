@@ -152,8 +152,10 @@ def wait_until_building(queue_item: QueueItem, job: Job, delay: int = 5) -> Buil
     jenkins_url = get_jenkins_url()
     triggered_build_url = triggered_build_url.replace(constants.JENKINS_UI_URL, jenkins_url)
     triggered_build = Build(url=triggered_build_url, buildno=get_build_id_from_url(triggered_build_url), job=job)
-    description = f'Started by upstream project <b>{current_job_name}</b> ' \
-                  f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
+    description = (
+        f'Started by upstream project <b>{current_job_name}</b> '
+        f'build number <a href="{current_build_url}">{get_build_id_from_url(current_build_url)}</a><br><br>'
+    )
     set_build_description(triggered_build, description)
 
     return triggered_build
@@ -201,10 +203,13 @@ def is_build_running(build_path: str) -> bool:
 
 
 @check_env_vars
-def start_build(job: Jobs, params: dict,
-                block_until_building: bool = True,
-                block_until_complete: bool = False,
-                watch_building_delay: int = 5) -> Optional[str]:
+def start_build(
+    job: Jobs,
+    params: dict,
+    block_until_building: bool = True,
+    block_until_complete: bool = False,
+    watch_building_delay: int = 5,
+) -> Optional[str]:
     """
     Starts a new Jenkins build
 
@@ -242,8 +247,9 @@ def start_build(job: Jobs, params: dict,
     return result
 
 
-def start_ocp4(build_version: str, assembly: str, rpm_list: list,
-               image_list: list, comment_on_pr: bool, **kwargs) -> Optional[str]:
+def start_ocp4(
+    build_version: str, assembly: str, rpm_list: list, image_list: list, comment_on_pr: bool, **kwargs
+) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly,
@@ -280,8 +286,9 @@ def start_ocp4(build_version: str, assembly: str, rpm_list: list,
     )
 
 
-def start_ocp4_konflux(build_version: str, assembly: str, image_list: list,
-                       limit_arches: list = None, **kwargs) -> Optional[str]:
+def start_ocp4_konflux(
+    build_version: str, assembly: str, image_list: list, limit_arches: list = None, **kwargs
+) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly,
@@ -331,9 +338,15 @@ def start_rhcos(build_version: str, new_build: bool, job_name: str = 'build', **
     )
 
 
-def start_build_sync(build_version: str, assembly: str, doozer_data_path: Optional[str] = None,
-                     doozer_data_gitref: Optional[str] = None, build_system: Optional[str] = 'brew',
-                     exclude_arches: list = None, **kwargs) -> Optional[str]:
+def start_build_sync(
+    build_version: str,
+    assembly: str,
+    doozer_data_path: Optional[str] = None,
+    doozer_data_gitref: Optional[str] = None,
+    build_system: Optional[str] = 'brew',
+    exclude_arches: list = None,
+    **kwargs,
+) -> Optional[str]:
     params = {
         'BUILD_VERSION': build_version,
         'ASSEMBLY': assembly,
@@ -357,8 +370,9 @@ def start_build_sync(build_version: str, assembly: str, doozer_data_path: Option
         )
 
 
-def start_cincinnati_prs(from_releases: list, release_name: str, advisory_id: int,
-                         candidate_pr_note: str, skip_ota_notification, **kwargs) -> Optional[str]:
+def start_cincinnati_prs(
+    from_releases: list, release_name: str, advisory_id: int, candidate_pr_note: str, skip_ota_notification, **kwargs
+) -> Optional[str]:
     return start_build(
         job=Jobs.CINCINNATI_PRS,
         params={
@@ -368,7 +382,8 @@ def start_cincinnati_prs(from_releases: list, release_name: str, advisory_id: in
             'CANDIDATE_PR_NOTE': candidate_pr_note,
             'SKIP_OTA_SLACK_NOTIFICATION': skip_ota_notification,
             'GITHUB_ORG': 'openshift',
-        }, **kwargs,
+        },
+        **kwargs,
     )
 
 
@@ -384,9 +399,14 @@ def start_build_microshift(build_version: str, assembly: str, dry_run: bool, **k
     )
 
 
-def start_olm_bundle(build_version: str, assembly: str, operator_nvrs: list,
-                     doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-                     doozer_data_gitref: str = '', **kwargs) -> Optional[str]:
+def start_olm_bundle(
+    build_version: str,
+    assembly: str,
+    operator_nvrs: list,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+    **kwargs,
+) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')
         return
@@ -405,9 +425,13 @@ def start_olm_bundle(build_version: str, assembly: str, operator_nvrs: list,
 
 
 def start_olm_bundle_konflux(
-        build_version: str, assembly: str, operator_nvrs: list,
-        doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-        doozer_data_gitref: str = '', **kwargs) -> Optional[str]:
+    build_version: str,
+    assembly: str,
+    operator_nvrs: list,
+    doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+    doozer_data_gitref: str = '',
+    **kwargs,
+) -> Optional[str]:
     if not operator_nvrs:
         logger.warning('Empty operator NVR received: skipping olm-bundle')
         return
@@ -490,11 +514,7 @@ def update_title(title: str, append: bool = True):
 
     data = {'json': f'{{"displayName":"{title}"}}'}
     headers = {'Content-Type': 'application/x-www-form-urlencoded', 'Referer': f"{build.baseurl}/configure"}
-    build.job.jenkins.requester.post_url(
-        f'{build.baseurl}/configSubmit',
-        params=data,
-        data='',
-        headers=headers)
+    build.job.jenkins.requester.post_url(f'{build.baseurl}/configSubmit', params=data, data='', headers=headers)
 
 
 @check_env_vars
