@@ -13,7 +13,7 @@ format:
 	uv run -m ruff format --config ruff.toml
 
 lint: format-check
-	uv run -m flake8
+	uv run -m ruff check --output-format concise --config ruff.toml
 
 pylint:
 	uv run -m pylint --errors-only .
