@@ -2,6 +2,7 @@ pip
 setuptools
 flexmock
 mock
+ruff
 
 # tox reqs
 coverage~=5.3

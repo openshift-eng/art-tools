@@ -1,4 +1,4 @@
-.PHONY: venv tox lint test pylint
+.PHONY: venv tox lint test pylint format format-check
 
 venv:
 	uv venv --python 3.11
@@ -6,7 +6,13 @@ venv:
 	uv pip install -r doozer/requirements-dev.txt -r pyartcd/requirements-dev.txt -r ocp-build-data-validator/requirements-dev.txt
 	cd elliott && uv pip install '.[tests]'
 
-lint:
+format-check:
+	uv run -m ruff format --check --diff --config ruff.toml
+
+format:
+	uv run -m ruff format --config ruff.toml
+
+lint: format-check
 	uv run -m flake8
 
 pylint:
