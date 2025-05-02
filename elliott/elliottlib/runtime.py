@@ -94,6 +94,17 @@ class Runtime(GroupRuntime):
     def get_major_minor(self):
         return self.group_config.vars.MAJOR, self.group_config.vars.MINOR
 
+    def get_major_minor_patch(self):
+        pattern = r"\d+.\d+.\d+"
+        match = re.search(pattern, self.assembly)
+        if match:
+            self._logger.debug(f"Found major.minor.patch {match.group()} for assembly {self.assembly}")
+            return self.assembly.split(".")
+        else:
+            raise ValueError(
+                f"Could not find major.minor.patch for assembly {self.assembly}. Use get_major_minor() instead for major.minor"
+            )
+
     def get_default_advisories(self):
         return self.group_config.get('advisories', {})
 
