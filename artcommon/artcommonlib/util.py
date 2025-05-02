@@ -449,12 +449,11 @@ def detect_package_managers(metadata, dest_dir: Path):
 
 
 @retry(reraise=True, wait=wait_fixed(10), stop=stop_after_attempt(3))
-async def get_konflux_slsa_attestation(pull_spec: str):
+async def get_konflux_slsa_attestation(pull_spec: str, registry_username: str, registry_password: str):
     """
-    Inspect the SLSA provenance: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
-    To see if the latest build is actually hermetic
+    Retrieve the SLSA attestation: https://konflux.pages.redhat.com/docs/users/metadata/attestations.html
     """
-    cmd = f"cosign download attestation {pull_spec} --registry-username {os.environ['KONFLUX_ART_IMAGES_USERNAME']} --registry-password {os.environ['KONFLUX_ART_IMAGES_PASSWORD']}"
+    cmd = f"cosign download attestation {pull_spec} --registry-username {registry_username} --registry-password {registry_password}"
     _, out, _ = await cmd_gather_async(cmd)
 
     return out.strip()

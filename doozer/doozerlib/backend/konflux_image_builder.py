@@ -184,10 +184,20 @@ class KonfluxImageBuilder:
                 succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
                 outcome = KonfluxBuildOutcome.extract_from_pipelinerun_succeeded_condition(succeeded_condition)
 
+                # Even if the build succeeded, if the SLSA attestation cannot be retrieved, it is unreleasable.
+                if outcome is KonfluxBuildOutcome.SUCCESS:
+                    image_pullspec = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None)
+                    try:
+                        # Get SLA attestation from konflux. The command will error out if it cannot find it.
+                        await artlib_util.get_konflux_slsa_attestation(image_pullspec, os.environ['KONFLUX_ART_IMAGES_USERNAME'], os.environ['KONFLUX_ART_IMAGES_PASSWORD'])
+                    except Exception as e:
+                        logger.error(f"Failed to get SLA attestation from konflux for image {image_pullspec}: {e}")
+                        outcome = KonfluxBuildOutcome.FAILURE
+
                 if self._config.dry_run:
                     logger.info("Dry run: Would have inserted build record in Konflux DB")
                 else:
-                    _, outcome = await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
+                    await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
                     error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
@@ -472,7 +482,7 @@ class KonfluxImageBuilder:
             installed_packages.update(srpms)
         return sorted(installed_packages)
 
-    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None) -> Union[Optional[KonfluxBuildRecord], KonfluxBuildOutcome]:
+    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
             logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
@@ -545,15 +555,6 @@ class KonfluxImageBuilder:
                 'installed_packages': installed_packages,
                 'image_tag': image_pullspec.split(':')[-1],
             })
-
-            try:
-                # Get SLA attestation from konflux. The command will error out if it cannot find it.
-                await artlib_util.get_konflux_slsa_attestation(build_record_params['image_pullspec'])
-            except Exception as e:
-                logger.error(f"Failed to get SLA attestation from konflux for image {image_pullspec}: {e}")
-                outcome = KonfluxBuildOutcome.FAILURE
-                build_record_params["outcome"] = outcome
-
         if pipelinerun.status:
             if pipelinerun.status.startTime:
                 build_record_params['start_time'] = datetime.strptime(pipelinerun.status.startTime, '%Y-%m-%dT%H:%M:%SZ')
@@ -682,4 +683,4 @@ class KonfluxImageBuilder:
             logger.warning('Error recording taskrun information in bigquery')
             traceback.print_exc()
 
-        return build_record, outcome
+        return build_record

@@ -416,17 +416,20 @@ class ConfigScanSources:
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
 
-        attestation = await artcommonlib.util.get_konflux_slsa_attestation(build_record.image_pullspec)
+        attestation = await artcommonlib.util.get_konflux_slsa_attestation(build_record.image_pullspec, os.environ['KONFLUX_ART_IMAGES_USERNAME'], os.environ['KONFLUX_ART_IMAGES_PASSWORD'])
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
             payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))
         except Exception as e:
             raise IOError(f"Failed to parse SLSA attestation for {build_record.image_pullspec}: {e}")
+
+        # Inspect the SLSA attestation to see if the build is hermetic
         is_hermetic = payload_json["predicate"]["invocation"]["parameters"]["hermetic"]
+        is_hermetic = True if is_hermetic.lower() == "true" else False
 
         self.logger.debug(f"Hermetic mode for {build_record.image_pullspec} is set to: {is_hermetic}")
         # Rebuild if there is a mismatch
-        if str(network_mode == "hermetic").lower() != is_hermetic.lower():
+        if (network_mode == "hermetic") == is_hermetic:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(code=RebuildHintCode.CONFIG_CHANGE,
