@@ -51,7 +51,7 @@ class CoverityContext(object):
             podman_tmpdir_path = pathlib.Path(podman_tmpdir)
             podman_tmpdir_path.mkdir(exist_ok=True)
             self.podman_env = {
-                'TMPDIR': str(podman_tmpdir_path.absolute())
+                'TMPDIR': str(podman_tmpdir_path.absolute()),
             }
 
         # Runtime coverity scanning output directory; each stage will have an entry beneath this.

@@ -39,7 +39,7 @@ async def find_k_builds_cli(runtime: Runtime, kind, engine, outcome, output):
         'names': names,
         'group': runtime.group,
         'assembly': runtime.assembly,
-        'outcome': outcome
+        'outcome': outcome,
     }
     if engine:
         args.update({'engine': Engine(engine)})

@@ -104,7 +104,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
             f"{JIRABugTracker.field_target_version}": [{"name": "4.14.z"}],
-            "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"]
+            "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"],
         }
         jira_client.create_issue.assert_called_once_with(expected_fields)
         self.assertEqual([b for b in actual], [1])
@@ -147,7 +147,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             "issuetype": {"name": "Bug"},
             "versions": [{"name": "4.14"}],
             f"{JIRABugTracker.field_target_version}": [{"name": "4.14.z"}],
-            "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"]
+            "labels": ["art:cloned-kernel-bug", "art:bz#1", "art:kmaint:TRACKER-1"],
         }
         found_issues[0].update.assert_called_once_with(expected_fields)
         self.assertEqual([b for b in actual], [1])
@@ -160,7 +160,7 @@ class TestFindBugsKernelCli(IsolatedAsyncioTestCase):
             ],
             "clones": {
                 1: ["BUG-1"],
-            }
+            },
         }
         out = StringIO()
         FindBugsKernelCli._print_report(report, out=out)
@@ -234,13 +234,13 @@ TRACKER-1	2	N/A	Verified	test bug 2
                         "prod_brew_tag": "rhaos-4.14-rhel-9",
                     },
                 },
-            }
+            },
         )
         _find_kmaint_trackers.return_value = [
             MagicMock(spec=Issue, key="TRACKER-1", fields=MagicMock(
                 summary="kernel-1.0.1-1.fake and kernel-rt-1.0.1-1.fake early delivery via OCP",
                 description="Fixes bugzilla.redhat.com/show_bug.cgi?id=5 and bz6.",
-            ))
+            )),
         ]
         _find_bugs.return_value = [
             MagicMock(spec=Bug, id=10001, cf_zstream_target_release="9.2.0", status="on_qa",
@@ -291,7 +291,7 @@ TRACKER-1	2	N/A	Verified	test bug 2
                         "prod_brew_tag": "rhaos-4.14-rhel-9",
                     },
                 },
-            }
+            },
         )
         jira_client = runtime.bug_trackers.return_value._client
         jira_client.issue.return_value = \

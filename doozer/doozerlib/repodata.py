@@ -217,7 +217,7 @@ class RepodataLoader:
         repodata = Repodata.from_metadatas(
             repo_name,
             ET.fromstring(primary_bytes),
-            list(yaml.load_all(modules_bytes) if modules_bytes else [])
+            list(yaml.load_all(modules_bytes) if modules_bytes else []),
         )
         return repodata
 

@@ -116,7 +116,7 @@ def get_flaws(flaw_bug_tracker: BugTracker, tracker_bugs: Iterable[Bug], brew_ap
     tracker_flaws, flaw_tracker_map = BugTracker.get_corresponding_flaw_bugs(
         tracker_bugs,
         flaw_bug_tracker,
-        brew_api
+        brew_api,
     )
     LOGGER.info(f'Found {len(flaw_tracker_map)} {flaw_bug_tracker.type} corresponding flaw bugs:'
                 f' {sorted(flaw_tracker_map.keys())}')

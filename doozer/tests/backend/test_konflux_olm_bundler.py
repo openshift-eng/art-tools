@@ -89,9 +89,9 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                         'release': '1',
                     },
                     'Env': {
-                        '__doozer_key=test-component'
-                    }
-                }
+                        '__doozer_key=test-component',
+                    },
+                },
             },
             'listDigest': 'sha256:1234567890abcdef',
             'contentDigest': 'sha256:abcdef1234567890',
@@ -117,7 +117,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         self.assertEqual(found_images['image'], (
             'registry.example.com/namespace/image:tag',
             'registry.redhat.io/openshift4/image@sha256:1234567890abcdef',
-            'test-component-1.0-1'
+            'test-component-1.0-1',
         ))
 
     def test_operator_index_mode(self):
@@ -329,8 +329,8 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -349,7 +349,7 @@ class TestKonfluxOlmBundleRebaser(IsolatedAsyncioTestCase):
         mock_file = mock_open.return_value.__aenter__.return_value
         mock_file.read.return_value = yaml.safe_dump({
             'packageName': 'test-package',
-            'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}]
+            'channels': [{'name': 'test-channel', 'currentCSV': 'test-operator.v1.0.0'}],
         })
 
         new_content = """
@@ -363,7 +363,7 @@ spec:
   displayName: Test Operator
         """
         mock_replace_image_references.return_value = (new_content, {
-            'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
+            'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
         })
 
         bundle_files = [
@@ -394,7 +394,7 @@ spec:
         mock_create_oit_files.assert_called_once_with(
             'test-package', 'test-operator.v1.0.0',
             bundle_dir, 'test-distgit-key-1.0-1', {
-                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1')
+                'image': ('old_pullspec', 'new_pullspec', 'test-component-1.0-1'),
             })
 
     async def test_rebase_dir_no_update_csv(self):
@@ -415,8 +415,8 @@ spec:
             'update-csv': {
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -433,8 +433,8 @@ spec:
             'update-csv': {
                 'manifests-dir': 'manifests',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -451,8 +451,8 @@ spec:
             'update-csv': {
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -472,8 +472,8 @@ spec:
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/operator/dir")
@@ -496,8 +496,8 @@ spec:
                 'manifests-dir': 'manifests',
                 'bundle-dir': 'bundle',
                 'valid-subscription-label': 'valid-subscription',
-                'registry': 'registry.example.com'
-            }
+                'registry': 'registry.example.com',
+            },
         }
         metadata.distgit_key = "test-distgit-key"
         operator_dir = Path("/path/to/base/dir/operator/dir")
@@ -621,7 +621,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.status.results = [
             {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'}
+            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'},
         ]
         pipelinerun.metadata.name = "test-pipelinerun"
         pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
@@ -645,8 +645,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
         await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.SUCCESS,
@@ -713,8 +713,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
         await self.builder._update_konflux_db(metadata, build_repo, 'test-operator', 'test-operator-1.0', pipelinerun, KonfluxBuildOutcome.FAILURE,
@@ -760,7 +760,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.status.results = [
             {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'}
+            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'},
         ]
         pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
@@ -783,8 +783,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
         self.builder._db = None
@@ -812,7 +812,7 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
         pipelinerun = MagicMock()
         pipelinerun.status.results = [
             {'name': 'IMAGE_URL', 'value': 'quay.io/openshift-release-dev/ocp-v4.0-art-dev-test:test-image'},
-            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'}
+            {'name': 'IMAGE_DIGEST', 'value': 'sha256:49d65afba393950a93517f09385e1b441d1735e0071678edf6fc0fc1fe501807'},
         ]
         pipelinerun.status.startTime = "2023-10-01T12:00:00Z"
         pipelinerun.status.completionTime = "2023-10-01T12:30:00Z"
@@ -835,8 +835,8 @@ class TestKonfluxOlmBundleBuilder(IsolatedAsyncioTestCase):
             'operator': {'nvr': 'test-operator-1.0-1'},
             'operands': {
                 'operand1': {'nvr': 'operand1-1.0-1'},
-                'operand2': {'nvr': 'operand2-1.0-1'}
-            }
+                'operand2': {'nvr': 'operand2-1.0-1'},
+            },
         })
 
         self.db.add_build.side_effect = Exception("Test exception")

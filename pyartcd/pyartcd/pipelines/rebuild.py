@@ -74,7 +74,7 @@ class RebuildPipeline:
                                                doozer_data_path=self.ocp_build_data_url)
         releases_config = await load_releases_config(
             group=self.group,
-            data_path=self.ocp_build_data_url
+            data_path=self.ocp_build_data_url,
         )
 
         if get_assembly_type(releases_config, self.assembly) == AssemblyTypes.STREAM:
@@ -183,7 +183,7 @@ class RebuildPipeline:
             "config:plashet",
             "--base-dir", str(base_dir),
             "--name", directory_name,
-            "--repo-subdir", "os"
+            "--repo-subdir", "os",
         ]
         for arch in arches:
             cmd.extend(["--arch", arch, signing_mode])
@@ -243,7 +243,7 @@ class RebuildPipeline:
             "config:plashet",
             "--base-dir", str(base_dir),
             "--name", directory_name,
-            "--repo-subdir", "os"
+            "--repo-subdir", "os",
         ]
         for arch in arches:
             cmd.extend(["--arch", arch, signing_mode])
@@ -308,7 +308,7 @@ class RebuildPipeline:
             "--perms",
             "--",
             f"{local_plashet_dir}",
-            f"{self.plashet_remote['host']}:{remote_dir}"
+            f"{self.plashet_remote['host']}:{remote_dir}",
         ]
         if self.runtime.dry_run:
             self.logger.warning("[DRY RUN] Would have run %s", cmd)
@@ -556,14 +556,14 @@ class RebuildPipeline:
                                 {
                                     "distgit_key": self.dg_key,
                                     "metadata": {
-                                        "is": is_entry
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                }
-            }
+                                        "is": is_entry,
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
         }
         return schema
 
@@ -612,7 +612,7 @@ async def rebuild(runtime: Runtime, ocp_build_data_url: str, version: str, assem
                 coro=pipeline.run(),
                 lock=lock,
                 lock_name=lock_name,
-                lock_id=lock_identifier
+                lock_id=lock_identifier,
             )
             for pipeline in pipelines
         ])

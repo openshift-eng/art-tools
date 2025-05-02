@@ -71,7 +71,7 @@ class ScanFips:
                 await self.slack_client.upload_content(
                     content=json.dumps(results),
                     filename="report.json",
-                    thread_ts=slack_thread
+                    thread_ts=slack_thread,
                 )
 
                 # Exit as error so that we see in the PipelineRun
@@ -94,6 +94,6 @@ async def scan_osh(runtime: Runtime, data_path: str, all_images: bool, nvrs: str
     pipeline = ScanFips(runtime=runtime,
                         data_path=data_path,
                         all_images=all_images,
-                        nvrs=nvrs.split(",") if nvrs else None
+                        nvrs=nvrs.split(",") if nvrs else None,
                         )
     await pipeline.run()

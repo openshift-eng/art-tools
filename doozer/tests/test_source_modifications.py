@@ -76,7 +76,7 @@ class AddModifierTestCase(unittest.TestCase):
             "source": "http://example.com/gating_yaml",
             "path": os.path.join(self.temp_dir, "gating.yaml"),
             "overwriting": True,
-            "validate": "yaml"
+            "validate": "yaml",
         }
         expected_content = b"@!abc123"
         modifier = AddModifier(**params)

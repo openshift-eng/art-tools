@@ -74,7 +74,7 @@ class BuildMicroShiftPipeline:
         advisories = group_config.get("advisories", {})
         self.releases_config = await load_releases_config(
             group=self.group,
-            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL
+            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         if self.assembly_type not in self.SUPPORTED_ASSEMBLY_TYPES:
@@ -116,7 +116,7 @@ class BuildMicroShiftPipeline:
             create_cmd.append("--yes")
         _, out, _ = await exectools.cmd_gather_async(create_cmd, env=self._elliott_env_vars, stderr=None)
         match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", out
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", out,
         )
         assert match is not None
         advisory_num = int(match[1])
@@ -264,7 +264,7 @@ class BuildMicroShiftPipeline:
             "find-builds",
             "-k", "rpm",
             "--member-only",
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -279,7 +279,7 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "find-bugs:sweep",
             "--permissive",  # this is so we don't error out on non-microshift bugs
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -293,7 +293,7 @@ class BuildMicroShiftPipeline:
             "--group", self.group,
             "--assembly", self.assembly,
             "attach-cve-flaws",
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")
@@ -308,7 +308,7 @@ class BuildMicroShiftPipeline:
             "--assembly", self.assembly,
             "verify-attached-bugs",
             "--verify-flaws",
-            str(advisory_id)
+            str(advisory_id),
         ]
         try:
             await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
@@ -333,7 +333,7 @@ class BuildMicroShiftPipeline:
             "change-state",
             "-s", "QE",
             "--from", "NEW_FILES",
-            "--use-default-advisory", "microshift"
+            "--use-default-advisory", "microshift",
         ]
         if self.runtime.dry_run:
             cmd.append("--dry-run")

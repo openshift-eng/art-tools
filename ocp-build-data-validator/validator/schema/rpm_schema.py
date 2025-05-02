@@ -44,7 +44,7 @@ rpm_schema = Schema({
     Optional('mode'): Or(*valid_modes),
     'name': And(str, len),
     'owners': [
-        And(str, len)
+        And(str, len),
     ],
     Optional('maintainer'): {
         Optional('product'): And(str, len),
@@ -60,10 +60,10 @@ rpm_schema = Schema({
     Optional('external_scanners'): {
         Optional('sast_scanning'): {
             Optional('jira_integration'): {
-                'enabled': And(bool)
-            }
-        }
-    }
+                'enabled': And(bool),
+            },
+        },
+    },
 })
 
 

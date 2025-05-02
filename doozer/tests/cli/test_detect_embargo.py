@@ -12,7 +12,7 @@ class TestDetectEmbargoCli(TestCase):
     def test_detect_embargoes_in_nvrs(self):
         builds = [
             {"id": 1, "nvr": "foo-1.2.3-1.p0"},
-            {"id": 2, "nvr": "bar-1.2.3-1.p1"}
+            {"id": 2, "nvr": "bar-1.2.3-1.p1"},
         ]
         nvrs = [b["nvr"] for b in builds]
         expected = [builds[1]]
@@ -50,7 +50,7 @@ class TestDetectEmbargoCli(TestCase):
         pullspecs = ["example.com/repo:foo", "example.com/repo:bar"]
         builds = [
             {"id": 1, "nvr": "foo-1.2.3-1.p0"},
-            {"id": 2, "nvr": "bar-1.2.3-1.p1"}
+            {"id": 2, "nvr": "bar-1.2.3-1.p1"},
         ]
         nvrs = [("foo", "1.2.3", "1.p0"), ("bar", "1.2.3", "1.p1")]
         expected = ([pullspecs[1]], [builds[1]])
@@ -70,7 +70,7 @@ class TestDetectEmbargoCli(TestCase):
         }
         builds = [
             {"id": 1, "nvr": "foo-1.2.3-1.p0"},
-            {"id": 2, "nvr": "bar-1.2.3-1.p1"}
+            {"id": 2, "nvr": "bar-1.2.3-1.p1"},
         ]
         expected = ([releases[1]], [release_pullspecs["b"][1]], [builds[1]])
         fake_runtime = MagicMock()
@@ -111,7 +111,7 @@ class TestDetectEmbargoCli(TestCase):
             "has_embargoes": True,
             "builds": embargoed_builds,
             "pullspecs": embargoed_pullspecs,
-            "releases": embargoed_releases
+            "releases": embargoed_releases,
         }
         detect_embargo.print_result_and_exit(embargoed_builds, embargoed_pullspecs, embargoed_releases, True, False)
         mock_exit.assert_called_once_with(0)

@@ -218,7 +218,7 @@ class FindBugsKernelCli:
         elif candidate:
             early_kernel.comment_on_tracker(
                 logger, self.dry_run, jira_client, tracker,
-                [f"Build(s) {nvrs} was/were already tagged into {candidate}."]
+                [f"Build(s) {nvrs} was/were already tagged into {candidate}."],
                 # do not reword, see NOTE in method
             )
         else:
@@ -328,6 +328,6 @@ async def find_bugs_kernel_cli(
         clone=clone,
         reconcile=reconcile,
         update_tracker=update_tracker,
-        dry_run=dry_run
+        dry_run=dry_run,
     )
     await cli.run()

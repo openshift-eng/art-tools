@@ -758,7 +758,7 @@ class KojiWrapper(koji.ClientSession):
                     caching_key = json.dumps({
                         'method_name': name,
                         'args': args,
-                        'kwargs': kwargs
+                        'kwargs': kwargs,
                     }, sort_keys=True)
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:

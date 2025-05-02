@@ -45,7 +45,7 @@ def validate_rhsa_cli(runtime, advisory):
     ignores = [
         'ErratumValidator.check_spelling',
         'ErratumValidator.check_multiple_builds',
-        'ErratumValidator.check_ps_review_presence'
+        'ErratumValidator.check_ps_review_presence',
     ]
     actionable_alerts = []
     for alert in alerts:

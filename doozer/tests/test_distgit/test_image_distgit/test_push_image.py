@@ -25,7 +25,7 @@ class TestImageDistGitRepoPushImage(unittest.TestCase):
             command="some-command",
             add_record=lambda *_, **__: None,
             assembly_type=AssemblyTypes.STANDARD,
-            record_logger=Mock()
+            record_logger=Mock(),
         )
 
     @patch('doozerlib.image.ImageMetadata.canonical_builders_enabled', return_value=False)

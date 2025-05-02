@@ -48,7 +48,7 @@ class PackageRpmFinder:
             if not_found_packages:
                 self._logger.warning(
                     'The following packages could not be found in Brew and will be excluded from the check: %s',
-                    ', '.join(not_found_packages)
+                    ', '.join(not_found_packages),
                 )
 
                 # Remove missing builds from packages in need for caching

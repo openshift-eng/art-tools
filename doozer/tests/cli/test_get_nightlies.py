@@ -14,7 +14,7 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                 arches=["x86_64", "s390x", "ppc64le", "aarch64"],
                 multi_arch=dict(enabled=True),
             )),
-            arches=["x86_64", "s390x", "ppc64le", "aarch64"]
+            arches=["x86_64", "s390x", "ppc64le", "aarch64"],
         )
         subject.image_info_cache = {}
 
@@ -22,7 +22,7 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
         self.assertEqual(
             # {"aarch64", "x86_64", "multi"},  # no multi yet
             {"aarch64", "x86_64"},
-            set(subject.determine_arch_list(self.runtime, ["s390x", "ppc64le"]))
+            set(subject.determine_arch_list(self.runtime, ["s390x", "ppc64le"])),
         )
 
         runtime = MagicMock(arches=["x86_64", "aarch64"])
@@ -88,8 +88,8 @@ class TestGetNightlies(IsolatedAsyncioTestCase):
                         "name": "pod",
                         "annotations": {"io.openshift.build.commit.id": "pod-commit"},
                         "from": {"name": "pod-pullspec"},
-                    }
-                ]}}
+                    },
+                ]}},
             },
             name=name or "name", phase="Accepted", pullspec="nightly-pullspec",
         )

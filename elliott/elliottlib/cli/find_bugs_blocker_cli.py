@@ -22,7 +22,7 @@ class FindBugsBlocker(FindBugsMode):
     def search(self, bug_tracker_obj: BugTracker, verbose: bool = False):
         return bug_tracker_obj.blocker_search(
             self.status,
-            verbose=verbose
+            verbose=verbose,
         )
 
 

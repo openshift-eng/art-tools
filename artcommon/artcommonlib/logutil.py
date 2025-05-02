@@ -15,7 +15,7 @@ class RedactingFilter(logging.Filter):
     PATTERNS = {
         'requests_gssapi.gssapi_': [
             (re.compile(r'Authorization header:(.+)', re.IGNORECASE), 'Authorization header: <redacted>'),
-        ]
+        ],
     }
 
     def filter(self, record: logging.LogRecord):

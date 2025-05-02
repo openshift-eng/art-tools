@@ -36,7 +36,7 @@ class FindBuildsTestCase(unittest.TestCase):
             '--images=openshift-enterprise-cli',
             'find-builds',
             '--kind=image',
-            '--attach=57899'
+            '--attach=57899',
         ]
         result = subprocess.run(command, capture_output=True)
 

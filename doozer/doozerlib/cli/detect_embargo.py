@@ -209,7 +209,7 @@ def detect_embargoes_in_releases(runtime: Runtime, pullspecs: List[str]):
     jobs = exectools.parallel_exec(
         lambda pullspec, _: get_image_pullspecs_from_release_payload(pullspec, ignore_rhcos_tags),
         pullspecs,
-        min(len(pullspecs), multiprocessing.cpu_count() * 4, 32)
+        min(len(pullspecs), multiprocessing.cpu_count() * 4, 32),
     )
     pullspec_lists = jobs.get()
     embargoed_releases = []
@@ -233,7 +233,7 @@ def print_result_and_exit(embargoed_builds, embargoed_pullspecs, embargoed_relea
     :as_json: if true, print the result as a JSON document
     """
     out = {
-        "has_embargoes": bool(embargoed_builds)
+        "has_embargoes": bool(embargoed_builds),
     }
     if embargoed_builds:
         out["builds"] = embargoed_builds

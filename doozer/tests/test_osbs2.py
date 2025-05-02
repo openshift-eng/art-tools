@@ -16,10 +16,10 @@ class TestOSBS2Builder(unittest.IsolatedAsyncioTestCase):
             "content": {
                 "source": {
                     "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
-                }
+                },
             },
             'distgit': {
-                'branch': 'rhaos-4.12-rhel-8'
+                'branch': 'rhaos-4.12-rhel-8',
             },
             "targets": ["rhaos-4.12-rhel-8-containers-candidate"],
         })

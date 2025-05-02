@@ -200,7 +200,7 @@ class DistGitRepo(object):
                     if self.runtime.command == 'images:build':
                         yellow_print('Warning: images:rebase was skipped and therefore your '
                                      'local build will be sourced from the current dist-git '
-                                     'contents and not the typical GitHub source. '
+                                     'contents and not the typical GitHub source. ',
                                      )
 
                     self.logger.info("Cloning distgit repository [branch:%s] into: %s" % (distgit_branch, self.distgit_dir))
@@ -631,8 +631,8 @@ class ImageDistGitRepo(DistGitRepo):
                     {
                         'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
                         'remote_source': remote_source,
-                    }
-                ]
+                    },
+                ],
             })
 
         if self.metadata.image_build_method is not Missing and self.metadata.image_build_method != "osbs2":
@@ -1084,7 +1084,7 @@ class ImageDistGitRepo(DistGitRepo):
                             self._add_missing_pkgs(match.group(1))
                         raise exectools.RetryException(
                             "Saw permanent error in build logs:\n{}\nWill not retry after {} failed attempt(s)"
-                            .format(error, n + 1)
+                            .format(error, n + 1),
                         )
                     # Brew does not handle an immediate retry correctly, wait
                     # before trying another build, terminating if interrupted.
@@ -1118,7 +1118,7 @@ class ImageDistGitRepo(DistGitRepo):
                                 comment_on_pr_obj = CommentOnPr(distgit_dir=self.distgit_dir,
                                                                 nvr=build_info["nvr"],
                                                                 build_id=build_info["id"],
-                                                                distgit_name=self.metadata.name
+                                                                distgit_name=self.metadata.name,
                                                                 )
                                 comment_on_pr_obj.run()
                             except Exception as e:
@@ -1143,7 +1143,7 @@ class ImageDistGitRepo(DistGitRepo):
                             build_info=build_err,
                             outcome=KonfluxBuildOutcome.FAILURE,
                             build_pipeline_url=build_err.task_url,
-                            scratch=scratch
+                            scratch=scratch,
                         )
                     raise
             record["message"] = "Success"
@@ -1212,7 +1212,7 @@ class ImageDistGitRepo(DistGitRepo):
             'dir': self.distgit_dir,
             'repo_type': repo_type,
             'name': name,
-            'tag': ':{}'.format(tag) if tag else ''
+            'tag': ':{}'.format(tag) if tag else '',
         }
 
         cmd = cmd.format(**args)
@@ -1364,14 +1364,14 @@ class ImageDistGitRepo(DistGitRepo):
                 'outcome': outcome,
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_pipeline_url': build_pipeline_url if build_pipeline_url else '',
-                'pipeline_commit': 'n/a'
+                'pipeline_commit': 'n/a',
             }
 
             if outcome == KonfluxBuildOutcome.FAILURE:
                 self.logger.info('Storing failed Brew build info for %s in Konflux DB', self.metadata.name)
                 build_record_params.update({
                     'start_time': build_info.start_time,
-                    'end_time': build_info.end_time
+                    'end_time': build_info.end_time,
                 })
 
             else:
@@ -1386,7 +1386,7 @@ class ImageDistGitRepo(DistGitRepo):
                     'end_time': datetime.strptime(build_info['completion_time'], '%Y-%m-%d %H:%M:%S.%f'),
                     'image_pullspec': image_pullspec,
                     'image_tag': build_info['extra']['image']['index']['tags'][0],
-                    'build_id': str(build_info['id'])
+                    'build_id': str(build_info['id']),
                 })
 
             build_record = KonfluxBuildRecord(**build_record_params)
@@ -1587,7 +1587,7 @@ class ImageDistGitRepo(DistGitRepo):
             0,
             "",
             "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
-            ""
+            "",
         )
 
         return None
@@ -1623,7 +1623,7 @@ class ImageDistGitRepo(DistGitRepo):
             if not self.runtime.ignore_missing_base:
                 raise IOError(
                     "Unable to find base image metadata [%s] in included images. "
-                    "Use --ignore-missing-base to ignore." % base
+                    "Use --ignore-missing-base to ignore." % base,
                 )
             elif self.runtime.latest_parent_version or self.runtime.assembly_basis_event:
                 # If there is a basis event, we must look for latest; we can't just persist
@@ -1645,7 +1645,7 @@ class ImageDistGitRepo(DistGitRepo):
                 if from_image_metadata.private_fix is None:  # This shouldn't happen.
                     raise ValueError(
                         f"Parent image {base} doesn't have .p? flag determined. "
-                        f"This indicates a bug in Doozer."
+                        f"This indicates a bug in Doozer.",
                     )
                 # If the parent we are going to build is embargoed, this image should also be embargoed
                 if from_image_metadata.private_fix:
@@ -1676,7 +1676,7 @@ class ImageDistGitRepo(DistGitRepo):
         elif len(build_model.extra.image.parent_images) != len(parent_images):
             raise IOError(
                 f'Did not find the expected cardinality ({len(parent_images)} '
-                f'of parent images in {latest_build} for {assembly_msg}'
+                f'of parent images in {latest_build} for {assembly_msg}',
             )
 
         # build_model.extra.image.parent_images is an array of tags
@@ -2096,7 +2096,7 @@ class ImageDistGitRepo(DistGitRepo):
                 df_lines.extend([
                     '',
                     '# RHEL version in final image must match the one in ART\'s config',
-                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]'
+                    f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
                 ])
 
             df_content = "\n".join(df_lines)
@@ -2347,7 +2347,7 @@ class ImageDistGitRepo(DistGitRepo):
             'MINOR': y,
             'SUBMINOR': z,
             'RELEASE': release,
-            'FULL_VER': '{}-{}'.format(version, release.split('.')[0])
+            'FULL_VER': '{}-{}'.format(version, release.split('.')[0]),
         }
 
         manifests_base = os.path.join(self.distgit_dir, csv_config['manifests-dir'])
@@ -2519,7 +2519,7 @@ class ImageDistGitRepo(DistGitRepo):
                 SOURCE_GIT_URL=self.public_facing_source_url,
                 SOURCE_DATE_EPOCH=self.source_date_epoch,
                 OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{self.source_full_sha[0:7]}',
-                OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}'
+                OS_GIT_COMMIT=f'{self.source_full_sha[0:7]}',
             ))
 
             merge_env_line = f"ENV {env_merge_line_flag} " + get_env_set_list(self.env_vars_from_source)
@@ -2692,7 +2692,7 @@ class ImageDistGitRepo(DistGitRepo):
                     # --no-merges because the merge bot is not the real author
                     # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
                     #   (though this means when the only commit is the initial add, that is omitted)
-                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name)
+                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name),
                 )
                 if rc == 0:
                     rc, ae, err = exectools.cmd_gather('git show -s --pretty=format:%ae {}'.format(sha))
@@ -2757,7 +2757,7 @@ class ImageDistGitRepo(DistGitRepo):
                     "set_env": {
                         "PATH": path,
                         "BREW_EVENT": f'{self.runtime.brew_event}',
-                        "BREW_TAG": f'{self.metadata.candidate_brew_tag()}'
+                        "BREW_TAG": f'{self.metadata.candidate_brew_tag()}',
                     },
                     "distgit_path": self.dg_path,
                 }

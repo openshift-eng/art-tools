@@ -17,7 +17,7 @@ DB_NAME = "DOOZER_DB_NAME"
 default_db_params = {
     DB_NAME: "doozer_build",
     DB_HOST: "localhost",
-    DB_PORT: "3306"
+    DB_PORT: "3306",
 }
 
 # TODO: once brew outage is resolved, change to 6 hours again (currently set to 100)

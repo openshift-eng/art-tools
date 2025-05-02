@@ -48,7 +48,7 @@ class TestImageDistGit(TestDistgit):
             command="some-command",
             add_record=lambda *_, **__: None,
             assembly_type=AssemblyTypes.STANDARD,
-            get_major_minor_fields=lambda *_, **__: (4, 14)
+            get_major_minor_fields=lambda *_, **__: (4, 14),
         )
 
     def test_clone_invokes_read_master_data(self):
@@ -312,7 +312,7 @@ class TestImageDistGit(TestDistgit):
             """yum repolist && \
                ( foo || yum-config-manager --enable blah && verify-something )""":
             """yum repolist \\\n && \
-               ( foo \\\n || : 'removed yum-config-manager' \\\n && verify-something )"""
+               ( foo \\\n || : 'removed yum-config-manager' \\\n && verify-something )""",
         }
         for cmd, expect in changes.items():
             changed, result = distgit.ImageDistGitRepo._mangle_pkgmgr(cmd)
@@ -378,7 +378,7 @@ class TestImageDistGit(TestDistgit):
             'data': {
                 'name': 'openshift/foo',
                 'distgit': {'branch': 'fake-branch-rhel-8'},
-                "enabled_repos": ["repo-a", "repo-b"]
+                "enabled_repos": ["repo-a", "repo-b"],
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -447,7 +447,7 @@ COPY --from=builder /some/path/a /some/path/b
             'data': {
                 'name': 'openshift/foo',
                 'distgit': {'branch': 'fake-branch-rhel-8'},
-                "enabled_repos": ["repo-a", "repo-b"]
+                "enabled_repos": ["repo-a", "repo-b"],
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -487,7 +487,7 @@ COPY --from=builder /some/path/a /some/path/b
             'data': {
                 'name': 'openshift/foo',
                 'distgit': {'branch': 'fake-branch-rhel-8'},
-                "enabled_repos": []
+                "enabled_repos": [],
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -528,7 +528,7 @@ COPY --from=builder /some/path/a /some/path/b
             'data': {
                 'name': 'openshift/foo',
                 'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"]
+                "additional_tags": ["tag_a", "tag_b"],
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -552,7 +552,7 @@ COPY --from=builder /some/path/a /some/path/b
             'data': {
                 'name': 'openshift/foo',
                 'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"]
+                "additional_tags": ["tag_a", "tag_b"],
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -571,7 +571,7 @@ COPY --from=builder /some/path/a /some/path/b
             'data': {
                 'name': 'openshift/foo',
                 'distgit': {'branch': 'fake-branch-rhel-8'},
-                "additional_tags": ["tag_a", "tag_b"]
+                "additional_tags": ["tag_a", "tag_b"],
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)
@@ -595,9 +595,9 @@ COPY --from=builder /some/path/a /some/path/b
                 'distgit': {'branch': 'fake-branch-rhel-8'},
                 "additional_tags": ["tag_a", "tag_b"],
                 "content": {
-                    "source": {"git": {"url": "git@example.com:openshift-priv/foo.git", "branch": {"target": "release-4.10"}}}
+                    "source": {"git": {"url": "git@example.com:openshift-priv/foo.git", "branch": {"target": "release-4.10"}}},
                 },
-                "cachito": {"enabled": True, "flags": ["gomod-vendor-check"]}
+                "cachito": {"enabled": True, "flags": ["gomod-vendor-check"]},
             },
         }))
         dg = distgit.ImageDistGitRepo(meta, autoclone=False)

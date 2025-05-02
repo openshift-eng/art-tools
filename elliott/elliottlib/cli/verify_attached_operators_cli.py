@@ -352,7 +352,7 @@ def _nvr_for_operand_pullspec(runtime, spec):
     spec = f"{urls.brew_image_host}/{urls.brew_image_namespace}/openshift-{spec}"
     info = exectools.cmd_assert(
         f"oc image info -o json --filter-by-os=linux/amd64 {spec}",
-        retries=3, pollrate=5
+        retries=3, pollrate=5,
     )[0]
     labels = json.loads(info)["config"]["config"]["Labels"]
     return f"{labels['com.redhat.component']}-{labels['version']}-{labels['release']}"

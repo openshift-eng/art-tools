@@ -120,7 +120,7 @@ class TestBrew(unittest.TestCase):
         expected_json = {
             'product_version': pv,
             'build': nvr,
-            'file_types': ['rpm']
+            'file_types': ['rpm'],
         }
 
         self.assertEqual(expected_json, b.to_json())
@@ -137,7 +137,7 @@ class TestBrew(unittest.TestCase):
         expected_json = {
             'product_version': pv,
             'build': nvr,
-            'file_types': ['tar']
+            'file_types': ['tar'],
         }
 
         self.assertEqual(expected_json, b.to_json())

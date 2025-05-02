@@ -112,9 +112,9 @@ class CreateSnapshotCli:
                     "git": {
                         "url": source_url,
                         "revision": revision,
-                    }
+                    },
                 },
-                "containerImage": record.image_pullspec
+                "containerImage": record.image_pullspec,
             }
 
         components = [await _comp(record) for record in build_records]
@@ -130,7 +130,7 @@ class CreateSnapshotCli:
             "spec": {
                 "application": application_name,
                 "components": components,
-            }
+            },
         }
         return snapshot_obj
 

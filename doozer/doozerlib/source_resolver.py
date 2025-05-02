@@ -372,7 +372,7 @@ class SourceResolver:
                 self._state_holder[alias] = {
                     'url': origin_url,
                     'branch': branch or '?',
-                    'path': path
+                    'path': path,
                 }
             return resolution
 

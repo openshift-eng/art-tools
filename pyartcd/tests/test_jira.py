@@ -39,7 +39,7 @@ class TestJIRAClient(TestCase):
                     "components": [],
                     "labels": ["label-1", "label-2"],
                     "reporter": {"name": "someone"},
-                }
+                },
             })
         source_issue.fields.issuetype.subtask = True
         mock_jira = mock.MagicMock()
@@ -68,7 +68,7 @@ class TestJIRAClient(TestCase):
                     "components": [],
                     "labels": ["label-1", "label-2"],
                     "reporter": {"name": "someone"},
-                }
+                },
             })
         source_issue.fields.subtasks = [
             mock.MagicMock(
@@ -83,7 +83,7 @@ class TestJIRAClient(TestCase):
                         "components": [],
                         "labels": ["label-1", "label-2"],
                         "reporter": {"name": "someone"},
-                    }
+                    },
                 }),
             mock.MagicMock(
                 key="FOO-3",
@@ -97,7 +97,7 @@ class TestJIRAClient(TestCase):
                         "components": [],
                         "labels": ["label-1", "label-2"],
                         "reporter": {"name": "someone"},
-                    }
+                    },
                 }),
         ]
 

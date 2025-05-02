@@ -100,7 +100,7 @@ class Ocp4Pipeline:
             f'--assembly={assembly}',
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
-            group_param
+            group_param,
         ]
         self._slack_client = runtime.new_slack_client()
         self._mail_client = self.runtime.new_mail_client()
@@ -344,7 +344,7 @@ class Ocp4Pipeline:
         cmd.extend([
             'rpms:rebase-and-build',
             f'--version={self.version.stream}',
-            f'--release={self.version.release}'
+            f'--release={self.version.release}',
         ])
 
         if self.runtime.dry_run:
@@ -397,7 +397,7 @@ class Ocp4Pipeline:
             version=self.version.stream,
             doozer_data_path=self.data_path,
             doozer_working=self.runtime.doozer_working,
-            doozer_data_gitref=self.data_gitref
+            doozer_data_gitref=self.data_gitref,
         )
         self.runtime.logger.info('Automation freeze for %s: %s', self.version.stream, automation_state)
 
@@ -409,7 +409,7 @@ class Ocp4Pipeline:
             self._slack_client.bind_channel(f'openshift-{self.version.stream}')
             await self._slack_client.say(
                 "*:alert: ocp4 build compose running during automation freeze*\n"
-                "There were RPMs in the build plan that forced build compose during automation freeze."
+                "There were RPMs in the build plan that forced build compose during automation freeze.",
             )
 
             return True
@@ -437,7 +437,7 @@ class Ocp4Pipeline:
                 data_path=self.data_path,
                 data_gitref=self.data_gitref,
                 dry_run=self.runtime.dry_run,
-                copy_links=self.copy_links
+                copy_links=self.copy_links,
             )
             self.runtime.logger.info('Built plashets: %s', json.dumps(plashets_built, indent=4))
 
@@ -479,7 +479,7 @@ class Ocp4Pipeline:
         cmd.extend([
             'images:rebase', f'--version=v{self.version.stream}', f'--release={self.version.release}',
             f"--message='Updating Dockerfile version and release v{self.version.stream}-{self.version.release}'",
-            '--push', f"--message='{os.environ['BUILD_URL']}'"
+            '--push', f"--message='{os.environ['BUILD_URL']}'",
         ])
 
         if self.runtime.dry_run:
@@ -495,15 +495,15 @@ class Ocp4Pipeline:
                 state = yaml.safe_load(state_yaml)
             failed_images = list(
                 dict(
-                    filter(lambda item: item[1] is not True, state['images:rebase']['images'].items())
-                ).keys()
+                    filter(lambda item: item[1] is not True, state['images:rebase']['images'].items()),
+                ).keys(),
             )
 
             # Notify about rebase failures
             if self.assembly == 'stream':
                 self._slack_client.bind_channel(f'openshift-{self.version.stream}')
                 await self._slack_client.say(
-                    f":alert: Following images failed to rebase in {self.version.stream}: {','.join(failed_images)}"
+                    f":alert: Following images failed to rebase in {self.version.stream}: {','.join(failed_images)}",
                 )
 
             # Remove failed images from build plan
@@ -514,14 +514,14 @@ class Ocp4Pipeline:
         util.notify_dockerfile_reconciliations(
             version=self.version.stream,
             doozer_working=self.runtime.doozer_working,
-            mail_client=self._mail_client
+            mail_client=self._mail_client,
         )
 
         # TODO: if a non-required rebase fails, notify ART and the image owners
         util.notify_bz_info_missing(
             version=self.version.stream,
             doozer_working=self.runtime.doozer_working,
-            mail_client=self._mail_client
+            mail_client=self._mail_client,
         )
 
     def _handle_image_build_failures(self):
@@ -558,7 +558,7 @@ class Ocp4Pipeline:
                 failed_builds=failed_map,
                 doozer_working=self.runtime.doozer_working,
                 mail_client=self._mail_client,
-                default_owner=self.mail_list_failure
+                default_owner=self.mail_list_failure,
             )
 
     async def _build_images(self):
@@ -574,7 +574,7 @@ class Ocp4Pipeline:
             group=f'openshift-{self.version.stream}',
             assembly=self.assembly,
             doozer_data_path=self.data_path,
-            doozer_data_gitref=self.data_gitref
+            doozer_data_gitref=self.data_gitref,
         )
 
         # Doozer command
@@ -673,7 +673,7 @@ class Ocp4Pipeline:
                 build_version=self.version.stream,
                 assembly=self.assembly,
                 doozer_data_path=self.data_path,
-                doozer_data_gitref=self.data_gitref
+                doozer_data_gitref=self.data_gitref,
             )
 
         if operator_nvrs:
@@ -682,7 +682,7 @@ class Ocp4Pipeline:
                 assembly=self.assembly,
                 operator_nvrs=operator_nvrs,
                 doozer_data_path=self.data_path,
-                doozer_data_gitref=self.data_gitref
+                doozer_data_gitref=self.data_gitref,
             )
 
     async def _mirror_rpms(self):
@@ -704,18 +704,18 @@ class Ocp4Pipeline:
                                             dry_run=self.runtime.dry_run),
                 lock=Lock.MIRRORING_RPMS,
                 lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier
+                lock_id=self.lock_identifier,
             )
 
             await locks.run_with_lock(
                 coro=sync_repo_to_s3_mirror(
                     local_dir=self.rpm_mirror.local_plashet_path,
                     s3_path=f'/enterprise/all/{self.version.stream}/latest/',
-                    dry_run=self.runtime.dry_run
+                    dry_run=self.runtime.dry_run,
                 ),
                 lock=Lock.MIRRORING_RPMS,
                 lock_name=Lock.MIRRORING_RPMS.value.format(version=self.version.stream),
-                lock_id=self.lock_identifier
+                lock_id=self.lock_identifier,
             )
             self.runtime.logger.info('Finished mirroring OCP %s to openshift mirrors',
                                      f'{self.version.stream}-{self.version.release}')
@@ -740,7 +740,7 @@ class Ocp4Pipeline:
         cmd = [
             'elliott',
             f'--group=openshift-{self.version.stream}',
-            "find-bugs:qe"
+            "find-bugs:qe",
         ]
         if self.runtime.dry_run:
             cmd.append('--dry-run')
@@ -769,7 +769,7 @@ class Ocp4Pipeline:
             f'--group=openshift-{self.version.stream}',
             "find-bugs:golang",
             "--analyze",
-            "--update-tracker"
+            "--update-tracker",
         ]
 
         if self.runtime.dry_run:
@@ -822,7 +822,7 @@ class Ocp4Pipeline:
             lock_name=Lock.MASS_REBUILD.value,
             lock_id=self.lock_identifier,
             ocp_version=self.version.stream,
-            version_queue_name=queue
+            version_queue_name=queue,
         )
 
     async def run(self):
@@ -840,7 +840,7 @@ class Ocp4Pipeline:
                 coro=self._build_compose(),
                 lock=lock,
                 lock_name=lock_name,
-                lock_id=self.lock_identifier
+                lock_id=self.lock_identifier,
             )
 
         else:
@@ -927,7 +927,7 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
         mail_list_failure=mail_list_failure,
         lock_identifier=lock_identifier,
         comment_on_pr=comment_on_pr,
-        copy_links=copy_links
+        copy_links=copy_links,
     )
 
     if ignore_locks:
@@ -938,5 +938,5 @@ async def ocp4(runtime: Runtime, version: str, assembly: str, data_path: str, da
             coro=pipeline.run(),
             lock=Lock.BUILD,
             lock_name=Lock.BUILD.value.format(version=version),
-            lock_id=lock_identifier
+            lock_id=lock_identifier,
         )

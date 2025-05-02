@@ -551,7 +551,7 @@ class Runtime(GroupRuntime):
                     except Exception as e:
                         raise ValueError(
                             "could not compile image build log regex for group:\n{}\n{}"
-                            .format(val, e)
+                            .format(val, e),
                         )
                 scanner.matches = regexen
 
@@ -1039,7 +1039,7 @@ class Runtime(GroupRuntime):
         repo_url = self.repos['rhel-server-ose-rpms'].baseurl(repo_type, 'x86_64')
         self._logger.info(
             "Getting version from atomic-openshift package in {}".format(
-                repo_url)
+                repo_url),
         )
 
         # create a randomish repo name to avoid erroneous cache hits
@@ -1052,7 +1052,7 @@ class Runtime(GroupRuntime):
         rc, auto_version, err = exectools.cmd_gather(version_query)
         if rc != 0:
             raise RuntimeError(
-                "Unable to get OCP version from RPM repository: {}".format(err)
+                "Unable to get OCP version from RPM repository: {}".format(err),
             )
 
         version = "v" + auto_version.strip()

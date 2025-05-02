@@ -437,7 +437,7 @@ class MetadataBase(object):
             'completed_before': completed_before,
             'engine': self.runtime.build_system,
             'extra_patterns': extra_patterns,
-            **kwargs
+            **kwargs,
         }
         if el_target and isinstance(el_target, int):
             el_target = f'el{el_target}'

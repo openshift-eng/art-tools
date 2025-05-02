@@ -94,13 +94,13 @@ class Ocp4ScanPipeline:
             f'--data-path={self.data_path}',
             f'--group={group_param}',
             f'--assembly={self.assembly}',
-            '--build-system=konflux'
+            '--build-system=konflux',
         ]
         if self.image_list:
             cmd.append(f'--images={self.image_list}')
         cmd.extend([
             'beta:config:konflux:scan-sources',
-            '--yaml'
+            '--yaml',
         ])
         if self.runtime.dry_run:
             cmd.append('--dry-run')
@@ -161,7 +161,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
                 lock=build_lock,
                 lock_name=build_lock_name,
                 lock_id=lock_identifier,
-                skip_if_locked=True
+                skip_if_locked=True,
             )
 
         await locks.run_with_lock(
@@ -169,7 +169,7 @@ async def ocp4_scan(runtime: Runtime, version: str, assembly: str, data_path: st
             lock=lock,
             lock_name=lock_name,
             lock_id=lock_identifier,
-            skip_if_locked=True
+            skip_if_locked=True,
         )
 
     if pipeline.skipped:

@@ -45,7 +45,7 @@ class InitShipmentCli:
                     topic="Topic for a test release for Red Hat Openshift.",
                     description="Description for a test release for Red Hat Openshift.",
                     solution="Solution for a test release for Red Hat Openshift.",
-                )
+                ),
             )
 
             if self.advisory_key:
@@ -63,7 +63,7 @@ class InitShipmentCli:
                         topic=boilerplate["topic"],
                         description=boilerplate["description"],
                         solution=boilerplate["solution"],
-                    )
+                    ),
                 )
 
         default_application = KonfluxImageBuilder.get_application_name(self.runtime.group)
@@ -82,7 +82,7 @@ class InitShipmentCli:
                 ),
                 snapshot=Snapshot(name=self.snapshot or "test-snapshot", spec=Spec(nvrs=[])),
                 data=data,
-            )
+            ),
         )
 
         return shipment.model_dump(exclude_unset=True, exclude_none=True)

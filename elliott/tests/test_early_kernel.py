@@ -86,7 +86,7 @@ class TestEarlyKernel(TestCase):
         # test adding an existing link does not happen
         advisory.url.return_value = "http://example.com"
         msgs = early_kernel._link_tracker_advisories(
-            MagicMock(), False, jira_client, [advisory], ["nvrs"], tracker
+            MagicMock(), False, jira_client, [advisory], ["nvrs"], tracker,
         )
         jira_client.add_simple_link.assert_not_called()
         self.assertEqual([], msgs)
@@ -94,7 +94,7 @@ class TestEarlyKernel(TestCase):
         # test adding a new link does happen
         advisory.url.return_value = "http://different.example.com"
         msgs = early_kernel._link_tracker_advisories(
-            MagicMock(), False, jira_client, [advisory], ["nvrs"], tracker
+            MagicMock(), False, jira_client, [advisory], ["nvrs"], tracker,
         )
         jira_client.add_simple_link.assert_called_once_with(tracker, ANY)
         self.assertEqual(1, len(msgs))

@@ -101,7 +101,7 @@ class AssemblyIssue:
         return {
             "code": self.code.value,
             "component": self.component,
-            "msg": self.msg
+            "msg": self.msg,
         }
 
 

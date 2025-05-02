@@ -113,7 +113,7 @@ advisory.
                 advisory_manager_email=manager,
                 advisory_assigned_to_email=assigned_to,
                 advisory_publish_date_override=date,
-                batch_id=batch_id
+                batch_id=batch_id,
             )
             advisory_info = next(iter(created_advisory["errata"].values()))
             advisory_name = advisory_info["fulladvisory"].rsplit("-", 1)[0]

@@ -270,7 +270,7 @@ class KonfluxDb:
         base_clauses = [
             Column('name', String) == name,
             Column('group', String) == group,
-            Column('outcome', String) == str(outcome)
+            Column('outcome', String) == str(outcome),
         ]
         if assembly:
             base_clauses.append(Column('assembly', String) == assembly)
@@ -284,7 +284,7 @@ class KonfluxDb:
             self.logger.info('Searching for %s builds completed before %s', name, completed_before)
             base_clauses.extend([
                 Column('end_time').isnot(None),
-                Column('end_time', DateTime) < completed_before
+                Column('end_time', DateTime) < completed_before,
             ])
 
         if el_target:

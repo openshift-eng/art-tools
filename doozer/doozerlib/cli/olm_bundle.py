@@ -258,7 +258,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                 'art_job_url': os.getenv('BUILD_URL', 'n/a'),
                 'build_pipeline_url': record['task_url'],
                 'pipeline_commit': 'n/a',
-                'operator_nvr': olm_bundle.operator_dict['nvr']
+                'operator_nvr': olm_bundle.operator_dict['nvr'],
             }
 
             if record['status'] == 0:
@@ -274,7 +274,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     'operand_nvrs': [v for _, v in olm_bundle.found_image_references.items()],
                     'build_id': str(build_info['id']),
                     'outcome': KonfluxBuildOutcome.SUCCESS,
-                    'nvr': record['bundle_nvr']
+                    'nvr': record['bundle_nvr'],
                 })
 
             else:
@@ -288,7 +288,7 @@ def rebase_and_build_olm_bundle(runtime: Runtime, operator_nvrs: Tuple[str, ...]
                     'outcome': KonfluxBuildOutcome.FAILURE,
                     'start_time': dateutil.parser.parse(task_start_time).replace(tzinfo=timezone.utc),
                     'end_time': dateutil.parser.parse(task_end_time).replace(tzinfo=timezone.utc),
-                    'nvr': 'n/a'
+                    'nvr': 'n/a',
                 })
 
             build_record = KonfluxBundleBuildRecord(**build_record_params)

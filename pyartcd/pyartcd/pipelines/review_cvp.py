@@ -119,7 +119,7 @@ If you have any questions or encounter a CVP bug, drop a message to CVP gchat ch
             "--all",
             "--include-content-set-check",
             "-o",
-            "json"
+            "json",
         ]
         _, out, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
         result = json.loads(out)

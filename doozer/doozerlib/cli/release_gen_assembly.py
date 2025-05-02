@@ -290,7 +290,7 @@ class GenAssemblyCli:
                 build_nvr = package_name + '-' + image_labels['version'] + '-' + image_labels['release']
                 build_record = await self.runtime.konflux_db.get_build_record_by_nvr(
                     nvr=build_nvr,
-                    outcome=KonfluxBuildOutcome.SUCCESS
+                    outcome=KonfluxBuildOutcome.SUCCESS,
                 )
                 build_inspector = KonfluxBuildRecordInspector(self.runtime, build_record)
 
@@ -506,7 +506,7 @@ class GenAssemblyCli:
                 archive_lists = brew.list_archives_by_builds(
                     build_ids=[b.get_build_id() for b in self.component_image_builds.values()],
                     build_type="image",
-                    session=koji_api
+                    session=koji_api,
                 )
                 rpm_build_ids = {rpm["build_id"] for archives in archive_lists for ar in archives for rpm in ar["rpms"]}
             else:
@@ -667,7 +667,7 @@ class GenAssemblyCli:
             # If the user has specified fewer nightlies than is required by this
             # group, then we need to override the group arches.
             group_info = {
-                'arches!': list(self.rhcos_by_tag[self.primary_rhcos_tag].keys())
+                'arches!': list(self.rhcos_by_tag[self.primary_rhcos_tag].keys()),
             }
 
         if self.assembly_type != AssemblyTypes.CUSTOM:
@@ -698,10 +698,10 @@ class GenAssemblyCli:
                         'members': {
                             'rpms': rpm_member_overrides,
                             'images': image_member_overrides,
-                        }
-                    }
-                }
-            }
+                        },
+                    },
+                },
+            },
         }
 
     def _get_member_overrides(self):
@@ -728,9 +728,9 @@ class GenAssemblyCli:
                            'referenced nightly content exactly. Pinning to replicate.',
                     'metadata': {
                         'is': {
-                            'nvr': build_inspector.get_nvr()
-                        }
-                    }
+                            'nvr': build_inspector.get_nvr(),
+                        },
+                    },
                 })
             elif package_name in self.component_rpm_builds:
                 dgk = self.package_rpm_meta[package_name].distgit_key
@@ -742,8 +742,8 @@ class GenAssemblyCli:
                         'is': {
                             f'el{el_ver}': self.component_rpm_builds[package_name][el_ver]['nvr'] for el_ver in
                             self.component_rpm_builds[package_name]
-                        }
-                    }
+                        },
+                    },
                 })
 
         return image_member_overrides, rpm_member_overrides

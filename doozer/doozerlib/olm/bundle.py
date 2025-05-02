@@ -149,7 +149,7 @@ class OLMBundle(object):
             return
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert('rhpkg {} clone --depth 1 --branch {} {} {}'.format(
-            self.rhpkg_opts, tag, self.operator_repo_name, self.operator_clone_path
+            self.rhpkg_opts, tag, self.operator_repo_name, self.operator_clone_path,
         ), retries=3)
 
     def checkout_operator_to_build_commit(self):
@@ -184,7 +184,7 @@ class OLMBundle(object):
             return
         dg_dir.parent.mkdir(parents=True, exist_ok=True)
         exectools.cmd_assert('rhpkg {} clone --depth 1 --branch {} {} {}'.format(
-            self.rhpkg_opts, self.branch, self.bundle_repo_name, self.bundle_clone_path
+            self.rhpkg_opts, self.branch, self.bundle_repo_name, self.bundle_clone_path,
         ), retries=retries)
 
     def clean_bundle_contents(self):
@@ -276,12 +276,12 @@ class OLMBundle(object):
         bundle_df.labels['name'] = self.bundle_image_name
         bundle_df.labels['version'] = '{}.{}'.format(
             operator_df.labels['version'],
-            operator_df.labels['release']
+            operator_df.labels['release'],
         )
         bundle_df.labels = {
             **bundle_df.labels,
             **self.redhat_delivery_tags,
-            **self.operator_framework_tags
+            **self.operator_framework_tags,
         }
         del (bundle_df.labels['release'])
 
@@ -331,7 +331,7 @@ class OLMBundle(object):
             return 12345, "https://brewweb.example.com/brew/taskinfo?taskID=12345"
         with pushd.Dir(self.bundle_clone_path):
             rc, out, err = exectools.cmd_gather(
-                'rhpkg {} container-build --nowait --target {}'.format(self.rhpkg_opts, self.target)
+                'rhpkg {} container-build --nowait --target {}'.format(self.rhpkg_opts, self.target),
             )
 
         if rc != 0:
@@ -355,7 +355,7 @@ class OLMBundle(object):
             self.brew_session,
             self.runtime.logger.info,
             task_id,
-            threading.Event()
+            threading.Event(),
         )
         if error:
             self.runtime.logger.info(error)
@@ -378,7 +378,7 @@ class OLMBundle(object):
             image = '{}/{}@{}'.format(
                 'registry.redhat.io',  # hardcoded until appregistry is dead
                 match.group(1).replace('openshift/', 'openshift4/'),
-                sha
+                sha,
             )
             key = re.search(r'([^/]+)/(.+)', match.group(1)).group(2)
             self.runtime.logger.info(f"Replacing {self.operator_csv_config['registry']}/{source_image} with {image}")
@@ -390,7 +390,7 @@ class OLMBundle(object):
             pattern,
             collect_replaced_image,
             contents,
-            flags=re.MULTILINE
+            flags=re.MULTILINE,
         )
 
         self.found_image_references.update(found_images)
@@ -469,7 +469,7 @@ class OLMBundle(object):
             r'^spec:\n',
             'spec:\n  relatedImages:\n{}\n'.format('\n'.join(related_images)),
             contents,
-            flags=re.MULTILINE
+            flags=re.MULTILINE,
         )
 
     @property
@@ -488,14 +488,14 @@ class OLMBundle(object):
     def operator_manifests_dir(self):
         return '{}/{}'.format(
             self.operator_clone_path,
-            self.operator_csv_config['manifests-dir'].rstrip('/')
+            self.operator_csv_config['manifests-dir'].rstrip('/'),
         )
 
     @property
     def operator_bundle_dir(self):
         return '{}/{}'.format(
             self.operator_manifests_dir,
-            self.operator_csv_config['bundle-dir'].rstrip('/')
+            self.operator_csv_config['bundle-dir'].rstrip('/'),
         )
 
     @property
@@ -548,7 +548,7 @@ class OLMBundle(object):
             # 4.1 channel in package YAML is "preview" or "stable", but directory name is "4.1"
             files = glob.glob('{}/{}/*'.format(
                 self.operator_manifests_dir,
-                '{MAJOR}.{MINOR}'.format(**self.runtime.group_config.vars)
+                '{MAJOR}.{MINOR}'.format(**self.runtime.group_config.vars),
             ))
         return files
 

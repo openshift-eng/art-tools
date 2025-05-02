@@ -10,7 +10,7 @@ class TestRebuildPipeline(TestCase):
             "type1|key1=value1|key2=value2|\n"
             "type2|key3=value3|key4=value4|\n"
             "type2|key5=value5|\n"
-            "type3\n"
+            "type3\n",
         )
         actual = record.parse_record_log(fake_file)
         expected = {
@@ -57,18 +57,18 @@ image_build_metrics|elapsed_wait_minutes=1|elapsed_total_minutes=13|task_count=1
                         'alias': 'containers_openshift-enterprise-haproxy-router_router',
                         'branch': 'release-4.12',
                         'origin_url': 'https://github.com/openshift-priv/router',
-                        'path': '/workspace/containers_openshift-enterprise-haproxy-router_router'
+                        'path': '/workspace/containers_openshift-enterprise-haproxy-router_router',
                     },
-                    'source_dockerfile_subpath': 'images/router/haproxy/Dockerfile.rhel8'
-                }
-            }
+                    'source_dockerfile_subpath': 'images/router/haproxy/Dockerfile.rhel8',
+                },
+            },
         )
 
     def test_get_failed_builds(self):
         failed_map = record.get_failed_builds(self.data)
         self.assertEqual(failed_map, {
             'openshift-enterprise-haproxy-router': 'n/a',
-            'ose-haproxy-router-base': 'brew/taskinfo?taskID=53138249'}
+            'ose-haproxy-router-base': 'brew/taskinfo?taskID=53138249'},
         )
 
     def test_determine_build_failure_ratio(self):

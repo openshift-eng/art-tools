@@ -38,7 +38,7 @@ class CgitAtomFeedEntry(NamedTuple):
 #
 DISTGIT_TYPES = {
     'image': ImageDistGitRepo,
-    'rpm': RPMDistGitRepo
+    'rpm': RPMDistGitRepo,
 }
 
 
@@ -244,7 +244,7 @@ class Metadata(MetadataBase):
                 title=et_entry.find('{http://www.w3.org/2005/Atom}title').text,
                 updated=dateutil.parser.parse(et_entry.find('{http://www.w3.org/2005/Atom}updated').text),
                 id=et_entry.find('{http://www.w3.org/2005/Atom}id').text,
-                content=et_entry.find('{http://www.w3.org/2005/Atom}content[@type="text"]').text
+                content=et_entry.find('{http://www.w3.org/2005/Atom}content[@type="text"]').text,
             )
             entry_list.append(entry)
 

@@ -59,7 +59,7 @@ class TestMetadata(TestCase):
         self.assertFalse(meta.is_rpm_exempt('bar')[0])
 
         meta.config = Model(dict_to_model={
-            'scan_sources': {'exempt_rpms': ['bar', 'foo*', 'barfoo?']}
+            'scan_sources': {'exempt_rpms': ['bar', 'foo*', 'barfoo?']},
         })
         self.assertTrue(meta.is_rpm_exempt('bar')[0])
         self.assertTrue(meta.is_rpm_exempt('foo')[0])
@@ -154,7 +154,7 @@ class TestMetadata(TestCase):
         # If listBuilds returns a build from an assembly that is not ours
         # get_latest_builds should not return it.
         builds = [
-            self.build_record(now, assembly='not_ours', el_target=8)
+            self.build_record(now, assembly='not_ours', el_target=8),
         ]
         self.assertIsNone(meta.get_latest_brew_build(default=None))
 
@@ -162,13 +162,13 @@ class TestMetadata(TestCase):
         # returned.
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, assembly='stream', el_target=8)
+            self.build_record(now, assembly='stream', el_target=8),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[1])
 
         # If there is a build for our assembly, it should be returned
         builds = [
-            self.build_record(now, assembly=runtime.assembly, el_target=8)
+            self.build_record(now, assembly=runtime.assembly, el_target=8),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[0])
 
@@ -177,7 +177,7 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, assembly=runtime.assembly, el_target=8)
+            self.build_record(now, assembly=runtime.assembly, el_target=8),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[2])
 
@@ -186,7 +186,7 @@ class TestMetadata(TestCase):
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, assembly=runtime.assembly, el_target=8)
+            self.build_record(now, assembly=runtime.assembly, el_target=8),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[3])
 
@@ -195,7 +195,7 @@ class TestMetadata(TestCase):
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, assembly=f'{runtime.assembly}b', el_target=8)
+            self.build_record(now, assembly=f'{runtime.assembly}b', el_target=8),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[1])
 
@@ -204,7 +204,7 @@ class TestMetadata(TestCase):
             self.build_record(now - datetime.timedelta(hours=5), assembly='stream', el_target=8),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now, assembly=f'{runtime.assembly}', el_target=7)
+            self.build_record(now, assembly=f'{runtime.assembly}', el_target=7),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[1])
 
@@ -229,7 +229,7 @@ class TestMetadata(TestCase):
             self.build_record(now - datetime.timedelta(hours=25), assembly='stream', el_target=8, release_prefix='99999.g1234567'),
             self.build_record(now - datetime.timedelta(hours=5), assembly=runtime.assembly, el_target=8),
             self.build_record(now, assembly='not_ours', el_target=8),
-            self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}', el_target=8)
+            self.build_record(now - datetime.timedelta(hours=8), assembly=f'{runtime.assembly}', el_target=8),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None, extra_pattern='*.g1234567.*'), builds[1])
 
@@ -253,7 +253,7 @@ class TestMetadata(TestCase):
         # Make sure basic RPM search works (no 'v' prefix for version)
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8, is_rpm=True),
-            self.build_record(now, assembly='stream', el_target=8, is_rpm=True)
+            self.build_record(now, assembly='stream', el_target=8, is_rpm=True),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[1])
 
@@ -268,7 +268,7 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly='not_ours', el_target=8, is_rpm=True),
             self.build_record(now, assembly='stream', el_target=7, is_rpm=True),
-            self.build_record(now - datetime.timedelta(hours=1), assembly='stream', el_target=8, is_rpm=True)
+            self.build_record(now - datetime.timedelta(hours=1), assembly='stream', el_target=8, is_rpm=True),
         ]
         self.assertEqual(meta.get_latest_brew_build(default=None), builds[1])  # Latest is el7 by one hour
         self.assertEqual(meta.get_latest_brew_build(default=None, el_target='7'), builds[1])
@@ -297,10 +297,10 @@ class TestMetadata(TestCase):
         # If we find that that the most recent distgit commit is newer than the build,
         # we must rebuild.
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=now, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=now, id='1234567'),
         ]
         builds = [
-            self.build_record(then, assembly=runtime.assembly, el_target=8, git_commit=None)
+            self.build_record(then, assembly=runtime.assembly, el_target=8, git_commit=None),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
@@ -308,33 +308,33 @@ class TestMetadata(TestCase):
         # we must rebuild. If there was a recent failed build, delay retrying to not
         # constantly flood brew.
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=now, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=now, id='1234567'),
         ]
         builds = [
             self.build_record(now - datetime.timedelta(minutes=5), assembly=runtime.assembly, el_target=8,
                               git_commit=None, build_state=BuildStates.FAILED),
             self.build_record(then, assembly=runtime.assembly, el_target=8,
-                              git_commit=None)
+                              git_commit=None),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
         # If we find that that the most recent distgit commit is OLDER than the
         # current build, no rebuild is necessary
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567'),
         ]
         builds = [
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=None)
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=None),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER)
 
         # Sanity check that failed builds and unrelated assemblies do not affect our queries
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567'),
         ]
         builds = [
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=None, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly='not_ours', el_target=8, git_commit=None)
+            self.build_record(now, assembly='not_ours', el_target=8, git_commit=None),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
@@ -362,35 +362,35 @@ class TestMetadata(TestCase):
 
         # Even if there is a el7 build, we won't find el8 and this results in no latest build
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=now, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=now, id='1234567'),
         ]
         builds = [
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7)
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
         # Now establish a build for each target, but don't satisfy currency condition yet.
         builds = [
             self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
         builds = [
             self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7, build_state=BuildStates.FAILED),
-            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
+            self.build_record(then, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_NEWER)
 
         # Now let's have the builds start satisfying currency
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567'),
         ]
 
         # If both builds are newer, no rebuild is necessary
         builds = [
             self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DISTGIT_ONLY_COMMIT_OLDER)
 
@@ -398,7 +398,7 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7, build_state=BuildStates.FAILED),
             self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8)
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
@@ -406,7 +406,7 @@ class TestMetadata(TestCase):
         builds = [
             self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8, build_state=BuildStates.FAILED),
             self.build_record(then - datetime.timedelta(hours=7), assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=8),
-            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7)
+            self.build_record(now, assembly=runtime.assembly, git_commit=None, is_rpm=True, el_target=7),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.DELAYING_NEXT_ATTEMPT)
 
@@ -430,8 +430,8 @@ class TestMetadata(TestCase):
             'source': {
                 'git': {
                     'url': 'git@github.com:openshift/release.git',
-                }
-            }
+                },
+            },
         })
 
         # If listBuilds returns nothing, we want to trigger a rebuild
@@ -443,20 +443,20 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=f'{runtime.assembly}extra', el_target=8, git_commit=ls_remote_commit)  # Close but not quite our assembly
+            self.build_record(now, assembly=f'{runtime.assembly}extra', el_target=8, git_commit=ls_remote_commit),  # Close but not quite our assembly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NO_LATEST_BUILD)
 
         meta.cgit_atom_feed = Mock()
         meta.cgit_atom_feed.return_value = [
-            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567')
+            CgitAtomFeedEntry(title='', content='', updated=then, id='1234567'),
         ]
 
         # In this scenario, we have a build newer than distgit's commit, but it's git.<> release
         # component does not match the current upstream ls-remote commit. This means there is
         # a new build required.
         builds = [
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='abcdefg')
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit='abcdefg'),
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.NEW_UPSTREAM_COMMIT)
 
@@ -467,7 +467,7 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly='not_ours', el_target=8, git_commit=ls_remote_commit),
             self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit)  # This one should match perfectly
+            self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit),  # This one should match perfectly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
@@ -476,7 +476,7 @@ class TestMetadata(TestCase):
             self.build_record(now, assembly='not_ours', el_target=8),
             self.build_record(now, assembly=runtime.assembly, el_target=8, build_state=BuildStates.FAILED),
             self.build_record(now, assembly=runtime.assembly, el_target=8, git_commit=ls_remote_commit, build_state=BuildStates.FAILED),
-            self.build_record(now, assembly='stream', el_target=8, git_commit=ls_remote_commit)  # This one should match perfectly
+            self.build_record(now, assembly='stream', el_target=8, git_commit=ls_remote_commit),  # This one should match perfectly
         ]
         self.assertEqual(meta.needs_rebuild().code, RebuildHintCode.BUILD_IS_UP_TO_DATE)
 
@@ -538,13 +538,13 @@ class TestMetadata(TestCase):
         meta = Metadata("image", runtime, data_obj)
 
         runtime.group_config = Model(dict_to_model={
-            "konflux": {}
+            "konflux": {},
         })
 
         meta.config = Model(dict_to_model={
             "konflux": {
-                "network_mode": "hermetic"
-            }
+                "network_mode": "hermetic",
+            },
         })
 
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
@@ -556,13 +556,13 @@ class TestMetadata(TestCase):
         meta = Metadata("image", runtime, data_obj)
 
         meta.config = Model(dict_to_model={
-            "konflux": {}
+            "konflux": {},
         })
 
         runtime.group_config = Model(dict_to_model={
             "konflux": {
-                "network_mode": "hermetic"
-            }
+                "network_mode": "hermetic",
+            },
         })
 
         self.assertEqual(meta.get_konflux_network_mode(), "hermetic")
@@ -574,11 +574,11 @@ class TestMetadata(TestCase):
         meta = Metadata("image", runtime, data_obj)
 
         meta.config = Model(dict_to_model={
-            "konflux": {}
+            "konflux": {},
         })
 
         runtime.group_config = Model(dict_to_model={
-            "konflux": {}
+            "konflux": {},
         })
 
         self.assertEqual(meta.get_konflux_network_mode(), "open")
@@ -591,14 +591,14 @@ class TestMetadata(TestCase):
 
         meta.config = Model(dict_to_model={
             "konflux": {
-                "network_mode": "internal-only"
-            }
+                "network_mode": "internal-only",
+            },
         })
 
         runtime.group_config = Model(dict_to_model={
             "konflux": {
-                "network_mode": "hermetic"
-            }
+                "network_mode": "hermetic",
+            },
         })
 
         self.assertEqual(meta.get_konflux_network_mode(), "internal-only")

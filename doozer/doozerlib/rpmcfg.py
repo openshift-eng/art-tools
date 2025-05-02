@@ -64,7 +64,7 @@ class RPMMetadata(Metadata):
             self.specfile = os.path.join(self.source_path, self.source.specfile)
             if not os.path.isfile(self.specfile):
                 raise ValueError('{} config specified a spec file that does not exist: {}'.format(
-                    self.config_filename, self.specfile
+                    self.config_filename, self.specfile,
                 ))
         else:
             with Dir(self.source_path):
@@ -111,7 +111,7 @@ class RPMMetadata(Metadata):
             "set_env": {
                 "PATH": path,
                 "BREW_EVENT": f'{self.runtime.brew_event}',
-                "BREW_TAG": f'{self.candidate_brew_tag()}'
+                "BREW_TAG": f'{self.candidate_brew_tag()}',
             },
             "runtime_assembly": self.runtime.assembly,
             "release_name": "",

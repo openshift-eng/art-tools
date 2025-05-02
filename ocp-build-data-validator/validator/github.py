@@ -168,7 +168,7 @@ def has_permitted_repo(data):
         'openshift/node-problem-detector',  # max version 3.11
         'openshift/kube-state-metrics',  # max version 3.11
         'openshift/c2s-install',  # max version 3.11
-        'org/repo'  # For testing
+        'org/repo',  # For testing
     ]
     regex = re.compile(r'^git@(?P<host>[^:]+):(?P<org>[^/]+)/(?P<repo>.*?)(\.git)?$')
     try:

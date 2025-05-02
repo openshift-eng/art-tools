@@ -6,7 +6,7 @@ from functional_tests import constants
 class FindBugsQETestCase(unittest.TestCase):
     def test_find_bugs_qe(self):
         cmd = constants.ELLIOTT_CMD + [
-            "--assembly=stream", "--group=openshift-4.6", "find-bugs:qe", '--noop'
+            "--assembly=stream", "--group=openshift-4.6", "find-bugs:qe", '--noop',
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(result.returncode, 0,

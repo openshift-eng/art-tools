@@ -455,11 +455,11 @@ class KonfluxFbcRebaser:
                         "source": source,
                         "mirrors": [
                             constants.KONFLUX_DEFAULT_IMAGE_REPO,
-                        ]
+                        ],
                     }
                     for source in source_repos
-                ]
-            }
+                ],
+            },
         }
         return image_digest_mirror_set
 

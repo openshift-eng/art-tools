@@ -8,7 +8,7 @@ class FindBugsSweepTestCase(unittest.TestCase):
         cmd = constants.ELLIOTT_CMD + [
             "--group=openshift-4.11",
             "--assembly=4.11.36",  # This assembly has a pinned bug
-            "find-bugs:sweep"
+            "find-bugs:sweep",
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(result.returncode, 0,

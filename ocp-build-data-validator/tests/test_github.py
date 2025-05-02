@@ -26,9 +26,9 @@ class TestGitHub(unittest.TestCase):
                 'source': {
                     'git': {
                         'url': 'git@github.com:openshift-priv/myrepo',
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
 
         (url, err) = github.validate(data, {})
@@ -43,9 +43,9 @@ class TestGitHub(unittest.TestCase):
                 'source': {
                     'git': {
                         'url': 'git@github.com:openshift-priv/myrepo',
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
 
         (url, err) = github.validate(data, {})
@@ -73,9 +73,9 @@ class TestGitHub(unittest.TestCase):
                             'fallback': 'fallback-branch',
                         },
                         'url': 'git@github.com:openshift-priv/myrepo',
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
 
         (url, err) = github.validate(data, {'vars': {'MAJOR': 4, 'MINOR': 2}})
@@ -102,9 +102,9 @@ class TestGitHub(unittest.TestCase):
                             'fallback': 'fallback-branch',
                         },
                         'url': 'git@github.com:openshift-priv/myrepo',
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
 
         (url, err) = github.validate(data, {'vars': {'MAJOR': 4, 'MINOR': 2}})
@@ -128,9 +128,9 @@ class TestGitHub(unittest.TestCase):
                             'fallback': 'fallback-branch',
                         },
                         'url': 'git@github.com:openshift-priv/repo',
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
 
         (url, err) = github.validate(data, {'vars': {'MAJOR': 4, 'MINOR': 2}})
@@ -164,8 +164,8 @@ class TestGitHub(unittest.TestCase):
                         'url': 'git@github.com:org/repo',
                     },
                     'path': 'my/custom/path',
-                }
-            }
+                },
+            },
         }
 
         (url, err) = github.validate(data, {'vars': {'MAJOR': 4, 'MINOR': 2}})
@@ -187,8 +187,8 @@ class TestGitHub(unittest.TestCase):
                             'fallback': 'fallback-branch',
                         },
                         'url': 'git@github.com:org/repo',
-                    }
-                }
+                    },
+                },
             },
             'update-csv': {
                 'manifests-dir': 'my-manifests',
@@ -224,7 +224,7 @@ class TestGitHub(unittest.TestCase):
                         'url': 'git@github.com:org/repo.git',
                     },
                     'path': 'my/custom/path',
-                }
+                },
             },
             'update-csv': {
                 'manifests-dir': 'my-manifests',
@@ -246,9 +246,9 @@ class TestGitHub(unittest.TestCase):
                             'fallback': 'fallback-branch',
                         },
                         'url': 'git@github.com:openshift-priv/repo',
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
         group_cfg = {
             'vars': {'MAJOR': 4, 'MINOR': 2},
@@ -278,8 +278,8 @@ class TestGitHub(unittest.TestCase):
                             'fallback': 'fallback-branch',
                         },
                         'url': 'git@github.com:org/repo',
-                    }
-                }
+                    },
+                },
             },
             'update-csv': {
                 'manifests-dir': 'my-manifests',
@@ -302,9 +302,9 @@ class TestGitHub(unittest.TestCase):
                                 'fallback': 'fallback-branch',
                             },
                             'url': url,
-                        }
-                    }
-                }
+                        },
+                    },
+                },
             }
 
         self.assertFalse(github.uses_ssh(data('https://host/org/repo')))
@@ -322,9 +322,9 @@ class TestGitHub(unittest.TestCase):
                                 'fallback': 'fallback-branch',
                             },
                             'url': f'git@github.com:{repo}.git',
-                        }
-                    }
-                }
+                        },
+                    },
+                },
             }
 
         self.assertTrue(github.has_permitted_repo(data('openshift-priv/my-repo')))

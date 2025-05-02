@@ -40,7 +40,7 @@ class ImagesHealthPipeline:
             "assembly": "stream",
             "outcome": "both",
             "art-job-url": "",
-            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}'
+            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}',
         }
 
         query_string = urllib.parse.urlencode(params)
@@ -134,10 +134,10 @@ class ImagesHealthPipeline:
                 'name': image_meta.distgit_key,
                 'group': self.runtime.group_config.name,
                 'engine': engine,
-                'assembly': 'stream'
+                'assembly': 'stream',
             },
             order_by='start_time',
-            limit=self.limit
+            limit=self.limit,
         )]
         return results
 

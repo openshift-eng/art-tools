@@ -185,7 +185,7 @@ class TestImageInspector(IsolatedAsyncioTestCase):
         get_build_id.return_value = 12345
         brew_build_inspector.get_build_id.return_value = 12345
         get_image_meta.return_value = mock.MagicMock(autospec=image.ImageMetadata, config={
-            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]
+            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
         })
         image_arch.return_value = "x86_64"
         get_repodata_threadsafe.return_value = Repodata(
@@ -193,7 +193,7 @@ class TestImageInspector(IsolatedAsyncioTestCase):
             primary_rpms=[
                 Rpm.from_dict({'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'}),
                 Rpm.from_dict({'name': 'bar', 'version': '1.1.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'bar-1.1.0-1.el9'}),
-            ]
+            ],
         )
         get_installed_rpm_dicts.return_value = [
             {'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'},

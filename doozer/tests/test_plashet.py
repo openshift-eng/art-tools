@@ -63,8 +63,8 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake2-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         builder._get_builds = MagicMock(return_value=[
             {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
@@ -84,8 +84,8 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         builder._get_builds = MagicMock(return_value=[
             {"id": 1, "build_id": 1, "name": "fake1", "nvr": "fake1-1.2.3-1.el8"},
@@ -108,13 +108,13 @@ class TestPlashetBuilder(TestCase):
         meta_configs = {
             "fake1": Model({
                 "is": {
-                    "el8": "fake1-1.2.3-1.el8"
-                }
+                    "el8": "fake1-1.2.3-1.el8",
+                },
             }),
             "fake2": Model({
                 "is": {
-                    "el8": "fake2-1.2.3-1.el8"
-                }
+                    "el8": "fake2-1.2.3-1.el8",
+                },
             }),
         }
         builder._get_builds = MagicMock(return_value=[
@@ -170,8 +170,8 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         image_meta = Model({
             "distgit_key": "fake-image",
@@ -198,8 +198,8 @@ class TestPlashetBuilder(TestCase):
                     {"el8": "fake3-1.2.3-1.el8"},
                     {"el7": "fake2-1.2.3-1.el7"},
                     {"el7": "fake2-1.2.3-1.el7"},
-                ]
-            }
+                ],
+            },
         })
         actual = builder.from_rhcos_deps(8, "art1", Model(), {})
         self.assertEqual([b["nvr"] for b in actual.values()], ["fake1-1.2.3-1.el8", "fake2-1.2.3-1.el8", "fake3-1.2.3-1.el8"])

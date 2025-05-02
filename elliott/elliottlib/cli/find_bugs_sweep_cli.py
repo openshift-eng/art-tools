@@ -36,7 +36,7 @@ class FindBugsMode:
         func = bug_tracker_obj.cve_tracker_search if self.cve_only else bug_tracker_obj.search
         return func(
             self.status,
-            verbose=verbose
+            verbose=verbose,
         )
 
 
@@ -459,11 +459,11 @@ def print_report(bugs: type_bug_list, output: str = 'text') -> None:
                     "status": bug.status,
                     "date": str(bug.creation_time_parsed()),
                     "summary": bug.summary[:60],
-                    "url": bug.weburl
+                    "url": bug.weburl,
                 }
                 for bug in bugs
             ],
-            indent=4
+            indent=4,
         ))
 
     else:  # output == 'text'

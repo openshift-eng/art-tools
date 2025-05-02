@@ -170,7 +170,7 @@ PRESENT advisory. Here are some examples:
     builds: List[brew.Build] = parallel_results_with_progress(
         nvrps,
         lambda nvrp: errata.get_brew_build(f'{nvrp[0]}-{nvrp[1]}-{nvrp[2]}',
-                                           nvrp[3], session=requests.Session())
+                                           nvrp[3], session=requests.Session()),
     )
 
     _json_dump(as_json, builds, kind, tag_pv_map)

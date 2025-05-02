@@ -42,7 +42,7 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                      is_invalid_tracker_bug=lambda: False),
             flexmock(id="OCPBUGS-2", target_release=['4.6.z'], depends_on=['OCPBUGS-3'],
                      status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False,
-                     is_invalid_tracker_bug=lambda: False)
+                     is_invalid_tracker_bug=lambda: False),
         ]
 
         flexmock(JIRABugTracker).should_receive("search").and_return(bugs)
@@ -69,13 +69,13 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
             flexmock(id="OCPBUGS-1", target_release=['4.6.z'], depends_on=['OCPBUGS-4'],
                      status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
             flexmock(id="OCPBUGS-2", target_release=['4.6.z'], depends_on=['OCPBUGS-3'],
-                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False)
+                     status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
         ]
         depend_on_bugs = [
             flexmock(id="OCPBUGS-3", target_release=['4.7.z'], status='MODIFIED',
                      is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
             flexmock(id="OCPBUGS-4", target_release=['4.7.z'], status='Release Pending',
-                     is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False)
+                     is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
         ]
         blocking_bugs_map = {
             bugs[0]: [depend_on_bugs[1]],
@@ -116,13 +116,13 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
                      is_invalid_tracker_bug=lambda: False, is_flaw_bug=lambda: False),
             flexmock(id="OCPBUGS-2", target_release=['4.6.z'], depends_on=['OCPBUGS-3'],
                      status='ON_QA', is_ocp_bug=lambda: True, is_tracker_bug=lambda: False,
-                     is_invalid_tracker_bug=lambda: False, is_flaw_bug=lambda: False)
+                     is_invalid_tracker_bug=lambda: False, is_flaw_bug=lambda: False),
         ]
         depend_on_bugs = [
             flexmock(id="OCPBUGS-3", target_release=['4.7.z'], status='MODIFIED',
                      is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
             flexmock(id="OCPBUGS-4", target_release=['4.7.z'], status='Release Pending',
-                     is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False)
+                     is_ocp_bug=lambda: True, is_tracker_bug=lambda: False, is_invalid_tracker_bug=lambda: False),
         ]
         blocking_bugs_map = {
             bugs[0]: [depend_on_bugs[1]],
@@ -167,14 +167,14 @@ class VerifyAttachedBugs(IsolatedAsyncioTestCase):
         bugs = [
             flexmock(id="OCPBUGS-1", is_ocp_bug=lambda: True),
             flexmock(id="OCPBUGS-2", is_ocp_bug=lambda: True),
-            flexmock(id="OCPBUGS-3", is_ocp_bug=lambda: True)
+            flexmock(id="OCPBUGS-3", is_ocp_bug=lambda: True),
         ]
         flexmock(BugValidator).should_receive("get_attached_bugs").and_return(
-            {1: {bugs[0]}, 2: {bugs[1]}, 3: {bugs[2]}}
+            {1: {bugs[0]}, 2: {bugs[1]}, 3: {bugs[2]}},
         )
         flexmock(BugValidator).should_receive("validate").and_return()
         flexmock(verify_attached_bugs_cli).should_receive("categorize_bugs_by_type").and_return(
-            {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}}, []
+            {'image': {bugs[2]}, 'rpm': {bugs[1]}, 'extras': {bugs[0]}}, [],
         )
 
         result = runner.invoke(cli, ['-g', 'openshift-4.6', '--assembly', '4.6.50', 'verify-attached-bugs'])
@@ -230,7 +230,7 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         expected = (
             {
                 advisory_id_1: {jira_bug_map[jira_bugs[0]], jira_bug_map[jira_bugs[1]], bz_bug_map[bz_bugs[0]]},
-                advisory_id_2: {jira_bug_map[jira_bugs[2]], bz_bug_map[bz_bugs[1]], bz_bug_map[bz_bugs[2]]}
+                advisory_id_2: {jira_bug_map[jira_bugs[2]], bz_bug_map[bz_bugs[1]], bz_bug_map[bz_bugs[2]]},
             }
         )
         self.assertEqual(actual, expected)
@@ -248,11 +248,11 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         bugs = [
             flexmock(id="OCPBUGS-1", target_release=['4.6.z'], depends_on=['OCPBUGS-4']),
             flexmock(id="OCPBUGS-2", target_release=['4.6.z'], depends_on=['OCPBUGS-3', 4]),
-            flexmock(id=2, target_release=['4.6.z'], depends_on=[1, 3])
+            flexmock(id=2, target_release=['4.6.z'], depends_on=[1, 3]),
         ]
         depend_on_jira_bugs = [
             flexmock(id="OCPBUGS-3", target_release=['4.6.z'], component='foo', is_ocp_bug=lambda: True),
-            flexmock(id="OCPBUGS-4", target_release=['4.7.z'], component='foo', is_ocp_bug=lambda: True)
+            flexmock(id="OCPBUGS-4", target_release=['4.7.z'], component='foo', is_ocp_bug=lambda: True),
         ]
         depend_on_bz_bugs = [
             flexmock(id=1, target_release=['4.7.z'], component='foo', is_ocp_bug=lambda: True),
@@ -273,7 +273,7 @@ class TestBugValidator(IsolatedAsyncioTestCase):
         expected = {
             bugs[0]: [depend_on_jira_bugs[1]],
             bugs[1]: [depend_on_bz_bugs[2]],
-            bugs[2]: [depend_on_bz_bugs[0]]
+            bugs[2]: [depend_on_bz_bugs[0]],
         }
         self.assertEqual(actual, expected)
         await validator.close()

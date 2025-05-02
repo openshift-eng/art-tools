@@ -744,7 +744,7 @@ class ScanOshCli:
             for build in builds:
                 build_package_mapping[build["package_name"]] = {
                     "build": build,
-                    "tag": tag
+                    "tag": tag,
                 }
 
         # Get the list of excluded package names from group.yml

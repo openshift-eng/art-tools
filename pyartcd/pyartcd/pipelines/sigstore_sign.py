@@ -24,7 +24,7 @@ class SigstorePipeline:
         doozer_data_path = os.environ.get("DOOZER_DATA_PATH") or constants.OCP_BUILD_DATA_URL
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.runtime.working_dir,
-            self.group, self.assembly, doozer_data_path
+            self.group, self.assembly, doozer_data_path,
         )
         self.releases_config = await util.load_releases_config(
             group=self.group,
@@ -161,6 +161,6 @@ async def sigstore_sign_container(
     pipeline = await SigstorePipeline.create(
         runtime, group, assembly,
         multi, sign_release, verify_release,
-        pullspecs
+        pullspecs,
     )
     await pipeline.run()

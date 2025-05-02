@@ -177,7 +177,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             start_search=start_search,
             where={
                 'engine': [Engine.BREW, Engine.KONFLUX],
-                'name': ['ironic', 'ose-installer']
+                'name': ['ironic', 'ose-installer'],
             },
             order_by='start_time', sorting='ASC', limit=10), None)
         query_mock.assert_called_once_with(
@@ -192,7 +192,7 @@ class TestKonfluxDB(IsolatedAsyncioTestCase):
             [Row(('ironic', '1.0.0', '3'), {'name': 0, 'version': 1, 'release': 2})],
             [],
             [],
-            [Row(('ironic', '1.0.0', '2'), {'name': 0, 'version': 1, 'release': 2}), Row(('ironic', '1.0.0', '1'), {'name': 0, 'version': 1, 'release': 2})]
+            [Row(('ironic', '1.0.0', '2'), {'name': 0, 'version': 1, 'release': 2}), Row(('ironic', '1.0.0', '1'), {'name': 0, 'version': 1, 'release': 2})],
         ]
         mock_query_async.side_effect = [
             MagicMock(total_rows=len(batch), __iter__=MagicMock(return_value=iter(batch)))

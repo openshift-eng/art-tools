@@ -112,7 +112,7 @@ class KonfluxRebaser:
             dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
                 "group": self._runtime.group,
                 "assembly_name": self._runtime.assembly,
-                "distgit_key": metadata.distgit_key
+                "distgit_key": metadata.distgit_key,
             })
 
             self._logger.info(f"Rebasing {metadata.qualified_key} to {dest_branch}")
@@ -303,7 +303,7 @@ class KonfluxRebaser:
 
                 build = asyncio.run(parent_metadata.get_latest_build(
                     el_target=f'el{parent_metadata.branch_el_target()}',
-                    engine=Engine.KONFLUX
+                    engine=Engine.KONFLUX,
                 ))
 
                 if not build:
@@ -315,7 +315,7 @@ class KonfluxRebaser:
             if parent_metadata.private_fix is None:
                 raise IOError(
                     f"Parent image {member} doesn't have .p? flag determined. "
-                    "This indicates a bug in Doozer. Please report this issue."
+                    "This indicates a bug in Doozer. Please report this issue.",
                 )
             private_fix = parent_metadata.private_fix
             return f"{image_repo}:{parent_metadata.image_name_short}-{uuid_tag}", private_fix
@@ -494,7 +494,7 @@ class KonfluxRebaser:
                     # --no-merges because the merge bot is not the real author
                     # --diff-filter=a to omit the "first" commit in a shallow clone which may not be the author
                     #   (though this means when the only commit is the initial add, that is omitted)
-                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name)
+                    'git log --no-merges --diff-filter=a -n 1 --pretty=format:%H {}'.format(dockerfile_name),
                 )
                 if rc == 0:
                     rc, ae, err = exectools.cmd_gather('git show -s --pretty=format:%ae {}'.format(sha))
@@ -772,7 +772,7 @@ class KonfluxRebaser:
             df_lines.extend([
                 '',
                 '# RHEL version in final image must match the one in ART\'s config',
-                f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]'
+                f'RUN source /etc/os-release && [ "$PLATFORM_ID" == platform:el{el_version} ]',
             ])
 
         df_content = "\n".join(df_lines)
@@ -836,7 +836,7 @@ class KonfluxRebaser:
         konflux_lines += [
             "ENV ART_BUILD_ENGINE=konflux",
             "ENV ART_BUILD_DEPS_METHOD=cachi2",
-            f"ENV ART_BUILD_NETWORK={network_mode}"
+            f"ENV ART_BUILD_NETWORK={network_mode}",
         ]
 
         # Three modes for handling upstreams depending on old
@@ -965,7 +965,7 @@ class KonfluxRebaser:
                 # repo source code available there.
                 "COPY . $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/",
                 # Cachito also writes a pem file which some builds erference: https://github.com/openshift/console/blob/52510bcb417e44808c07970f09d448fc49787087/Dockerfile#L41 .
-                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem"
+                "ADD https://certs.corp.redhat.com/certs/Current-IT-Root-CAs.pem $REMOTE_SOURCES_DIR/cachito-gomod-with-deps/app/registry-ca.pem",
             ]
 
         konflux_lines += [
@@ -977,7 +977,7 @@ class KonfluxRebaser:
                 "USER 0",
                 "RUN mkdir -p /tmp/yum_temp; mv /etc/yum.repos.d/*.repo /tmp/yum_temp/ || true",
                 f"COPY .oit/{self.repo_type}.repo /etc/yum.repos.d/",
-                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}"
+                f"ADD {constants.KONFLUX_REPO_CA_BUNDLE_HOST}/{constants.KONFLUX_REPO_CA_BUNDLE_FILENAME} {constants.KONFLUX_REPO_CA_BUNDLE_TMP_PATH}",
             ]
 
         if network_mode == "internal-only":
@@ -1025,7 +1025,7 @@ class KonfluxRebaser:
                      "USER 0",
                      "RUN rm -f /etc/yum.repos.d/* && cp /tmp/yum_temp/* /etc/yum.repos.d/ || true",
                      f"{user_to_set if user_to_set else ''}",
-                     "# End Konflux-specific steps\n\n"
+                     "# End Konflux-specific steps\n\n",
                      ]
 
             dfp.add_lines(*lines)
@@ -1333,8 +1333,8 @@ class KonfluxRebaser:
                     {
                         'name': 'cachito-gomod-with-deps',  # The remote source name is always `cachito-gomod-with-deps` for backward compatibility even if gomod is not used.
                         'remote_source': remote_source,
-                    }
-                ]
+                    },
+                ],
             })
 
         if metadata.image_build_method is not Missing and metadata.image_build_method != "osbs2":
@@ -1521,7 +1521,7 @@ class KonfluxRebaser:
             0,
             "",
             "# Failed matching upstream equivalent, ART configuration was used to rebase parent images",
-            ""
+            "",
         )
 
         return None
@@ -1628,7 +1628,7 @@ class KonfluxRebaser:
                 SOURCE_GIT_URL=source.public_upstream_url,
                 SOURCE_DATE_EPOCH=str(int(source.committer_date.timestamp())),
                 OS_GIT_VERSION=f'{build_update_envs["OS_GIT_VERSION"]}-{source.commit_hash_short}',
-                OS_GIT_COMMIT=f'{source.commit_hash_short}'
+                OS_GIT_COMMIT=f'{source.commit_hash_short}',
             ))
 
             merge_env_line = f"ENV {env_merge_line_flag} " + get_env_set_list(env_vars_from_source)
@@ -1755,7 +1755,7 @@ class KonfluxRebaser:
                 assert meta is not None
                 build = asyncio.run(meta.get_latest_build(
                     el_target=f'el{meta.branch_el_target()}',
-                    engine=Engine.KONFLUX
+                    engine=Engine.KONFLUX,
                 ))
                 if not build:
                     raise ValueError(f'Could not find latest build for {meta.distgit_key}')
@@ -1790,7 +1790,7 @@ class KonfluxRebaser:
             'MINOR': y,
             'SUBMINOR': z,
             'RELEASE': release,
-            'FULL_VER': '{}-{}'.format(version, release.split('.')[0])
+            'FULL_VER': '{}-{}'.format(version, release.split('.')[0]),
         }
 
         manifests_dir = csv_config.get('manifests-dir', 'manifests')

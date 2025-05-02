@@ -79,7 +79,7 @@ class GroupRuntime(runtime.GroupRuntime):
 
         self._group_config = model.Model(await util.load_group_config(
             self.group, self.assembly, None,
-            self.doozer_data_path, self.doozer_data_gitref
+            self.doozer_data_path, self.doozer_data_gitref,
         ))
         return self
 

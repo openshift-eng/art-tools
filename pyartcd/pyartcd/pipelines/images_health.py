@@ -30,7 +30,7 @@ class ImagesHealthPipeline:
             'doozer',
             f'--working-dir={self.doozer_working}',
             f'--group=openshift-{self.version}',
-            'images:health'
+            'images:health',
         ]
         _, out, err = await exectools.cmd_gather_async(cmd, stderr=None)
         self.report = json.loads(out.strip())

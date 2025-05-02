@@ -161,7 +161,7 @@ class KonfluxBuildCli:
             image_repo=self.image_repo,
             skip_checks=self.skip_checks,
             dry_run=self.dry_run,
-            plr_template=self.plr_template
+            plr_template=self.plr_template,
         )
         builder = KonfluxImageBuilder(config=config, record_logger=runtime.record_logger)
         tasks = []

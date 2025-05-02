@@ -281,7 +281,7 @@ def images_rebase(runtime: Runtime, version: Optional[str], release: Optional[st
 
     if version and not runtime.valid_version(version):
         raise ValueError(
-            "invalid version string: {}, expecting like v3.4 or v1.2.3".format(version)
+            "invalid version string: {}, expecting like v3.4 or v1.2.3".format(version),
         )
 
     runtime.clone_distgits()
@@ -835,7 +835,7 @@ def images_push(runtime, tag, version_release, to_defaults, late_only, to, filte
                 img.distgit_repo().push_image(tag, to_defaults, additional_registries,
                                               version_release_tuple=version_release_tuple, dry_run=dry_run, registry_config_dir=runtime.registry_config_dir, filter_by_os=filter_by_os),
             items,
-            n_threads=4
+            n_threads=4,
         )
         results = results.get()
 
@@ -1133,10 +1133,10 @@ def distgit_config_template(url):
         },
         "name": dfp.labels['name'],
         "from": {
-            "image": dfp.baseimage
+            "image": dfp.baseimage,
         },
         "labels": {},
-        "owners": []
+        "owners": [],
     }
 
     branch = url[url.index("?h=") + 3:]
@@ -1155,7 +1155,7 @@ def distgit_config_template(url):
         'architecture',
         'io.k8s.display-name',
         'io.k8s.description',
-        'io.openshift.tags'
+        'io.openshift.tags',
     ]
 
     for ml in managed_labels:

@@ -11,7 +11,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
             url="https://git.example.com/repo.git",
             branch="my-branch",
             local_dir="/path/to/repo",
-            logger=None
+            logger=None,
         )
 
     @patch("pathlib.Path.exists", return_value=False)

@@ -45,7 +45,7 @@ class DataObj(object):
         result = {
             'key': self.key,
             'path': self.path,
-            'data': self.data
+            'data': self.data,
         }
         return str(result)
 
@@ -170,7 +170,7 @@ class GitData(object):
         else:
             raise ValueError(
                 'Invalid data_path: {} - invalid scheme: {}'
-                .format(self.data_path, data_url.scheme)
+                .format(self.data_path, data_url.scheme),
             )
 
         if self.sub_dir:

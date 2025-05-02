@@ -553,8 +553,8 @@ def oc_image_info(
             'auths': {
                 pullspec.split('/')[0]: {
                     'auth': auth,
-                }
-            }
+                },
+            },
         }))
         registry_config_file.flush()
         return run_oc(auth_file=registry_config_file.name)
@@ -592,7 +592,7 @@ def oc_image_info_show_multiarch(
         pullspec, '--show-multiarch',
         registry_config=registry_config,
         registry_username=registry_username,
-        registry_password=registry_password
+        registry_password=registry_password,
     )
 
 
@@ -662,8 +662,8 @@ async def oc_image_info_async(
             'auths': {
                 pullspec.split('/')[0]: {
                     'auth': auth,
-                }
-            }
+                },
+            },
         }))
         registry_config_file.flush()
         return await run_oc(auth_file=registry_config_file.name)

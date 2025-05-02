@@ -292,13 +292,13 @@ images:
                                     "is": {
                                         "el8": "foo-v1.2.3-1.el8",
                                         "el7": "foo-v1.2.3-1.el7",
-                                    }
-                                }
-                            }]
-                        }
-                    }
-                }
-            }
+                                    },
+                                },
+                            }],
+                        },
+                    },
+                },
+            },
         }
         self.assertEqual(actual, expected)
 
@@ -317,13 +317,13 @@ images:
                                 "metadata": {
                                     "is": {
                                         "nvr": "foo-container-v1.2.3-1",
-                                    }
-                                }
-                            }]
-                        }
-                    }
-                }
-            }
+                                    },
+                                },
+                            }],
+                        },
+                    },
+                },
+            },
         }
         self.assertEqual(actual, expected)
 
@@ -340,10 +340,10 @@ images:
             "releases": {
                 "art0001": {
                     "assembly": {
-                        "type": "custom"
-                    }
-                }
-            }
+                        "type": "custom",
+                    },
+                },
+            },
         }
         pipeline = RebuildPipeline(runtime, group="openshift-4.9", assembly="art0001", plashet_remote=constants.PLASHET_REMOTES[0],
                                    type=RebuildType.RPM, dg_key="foo", ocp_build_data_url='')
@@ -376,19 +376,19 @@ images:
         group_config = load_group_config.return_value = {
             "arches": ["x86_64", "s390x"],
             "signing_advisory": 12345,
-            "branch": "rhaos-4.9-rhel-8"
+            "branch": "rhaos-4.9-rhel-8",
         }
         load_releases_config.return_value = {
             "releases": {
                 "art0001": {
                     "assembly": {
-                        "type": "custom"
-                    }
-                }
-            }
+                        "type": "custom",
+                    },
+                },
+            },
         }
         image_meta = _get_meta_config.return_value = {
-            "enabled_repos": ["fake-basis"]
+            "enabled_repos": ["fake-basis"],
         }
         plashets = _build_plashets.return_value = [
             PlashetBuildResult("fake-basis", Path("/path/to/local/dir1"), "https://example.com/dir1"),
@@ -424,16 +424,16 @@ images:
         group_config = load_group_config.return_value = {
             "arches": ["x86_64", "s390x"],
             "signing_advisory": 12345,
-            "branch": "rhaos-4.9-rhel-8"
+            "branch": "rhaos-4.9-rhel-8",
         }
         load_releases_config.return_value = {
             "releases": {
                 "art0001": {
                     "assembly": {
-                        "type": "custom"
-                    }
-                }
-            }
+                        "type": "custom",
+                    },
+                },
+            },
         }
         plashets = _build_plashets.return_value = [
             PlashetBuildResult("fake-basis", Path("/path/to/local/dir1"), "https://example.com/dir1"),

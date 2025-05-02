@@ -35,9 +35,9 @@ def unauthorized():
         'headers': {
             'www-authenticate': [{
                 'key': 'WWW-Authenticate',
-                'value': 'Basic'
+                'value': 'Basic',
             }],
-        }
+        },
     }
 
 
@@ -48,9 +48,9 @@ def redirect(uri: str, code: int = 302, description="Found"):
         'headers': {
             "location": [{
                 'key': 'Location',
-                "value": str(uri)
+                "value": str(uri),
             }],
-        }
+        },
     }
 
 
@@ -93,11 +93,11 @@ def get_secrets_manager_secret_dict(secret_name):
     # We need to read in the secret from AWS SecretManager
     secrets_client = boto3.client(
         service_name='secretsmanager',
-        region_name='us-east-1'
+        region_name='us-east-1',
     )
     try:
         get_secret_value_response = secrets_client.get_secret_value(
-            SecretId=secret_name
+            SecretId=secret_name,
         )
     except:
         raise

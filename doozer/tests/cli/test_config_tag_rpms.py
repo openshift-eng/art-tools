@@ -75,7 +75,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         group_config = Model({
             "vars": {
                 "RHCOS_EL_MAJOR": "9",
-                "RHCOS_EL_MINOR": "4"
+                "RHCOS_EL_MINOR": "4",
             },
             "rpm_deliveries": [
                 {
@@ -84,8 +84,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "target_tag": "test-target-tag",
-                }
-            ]
+                },
+            ],
         })
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
@@ -125,7 +125,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                 "foo-1.0.1-1": [],
                 "bar-1.0.1-1": [{"active": False}],
                 "bar-1.0.2-1": [],
-            }[build]
+            }[build],
         }
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         await cli.run()
@@ -140,7 +140,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         group_config = Model({
             "vars": {
                 "RHCOS_EL_MAJOR": "9",
-                "RHCOS_EL_MINOR": "4"
+                "RHCOS_EL_MINOR": "4",
             },
             "rpm_deliveries": [
                 {
@@ -149,8 +149,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "target_tag": "test-target-tag",
-                }
-            ]
+                },
+            ],
         })
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
@@ -159,13 +159,13 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             'nvr': 'kernel-5.14.0-284.28.1.el9_2',
             'version': '5.14.0',
             'name': 'kernel',
-            'release': '284.28.1.el9_2'
+            'release': '284.28.1.el9_2',
         }
         kernel_rt_build = {
             'nvr': 'kernel-rt-5.14.0-284.28.1.rt14.313.el9_2',
             'version': '5.14.0',
             'name': 'kernel-rt',
-            'release': '284.28.1.rt14.313.el9_2'
+            'release': '284.28.1.rt14.313.el9_2',
         }
 
         def _get_tagged_builds(session: koji.ClientSession,
@@ -191,7 +191,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             }[nvr] for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
-            "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build]
+            "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build],
         }
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         await cli.run()
@@ -210,7 +210,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
         group_config = Model({
             "vars": {
                 "RHCOS_EL_MAJOR": "9",
-                "RHCOS_EL_MINOR": "2"
+                "RHCOS_EL_MINOR": "2",
             },
             "rpm_deliveries": [
                 {
@@ -219,8 +219,8 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
                     "integration_tag": "test-integration-tag",
                     "stop_ship_tag": "test-stop-ship-tag",
                     "target_tag": "test-target-tag",
-                }
-            ]
+                },
+            ],
         })
         runtime = MagicMock(assembly_type=AssemblyTypes.STREAM, group_config=group_config)
         koji_api = runtime.build_retrying_koji_client.return_value
@@ -229,13 +229,13 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             'nvr': 'kernel-5.14.0-284.28.1.el9_2',
             'version': '5.14.0',
             'name': 'kernel',
-            'release': '284.28.1.el9_2'
+            'release': '284.28.1.el9_2',
         }
         kernel_rt_build = {
             'nvr': 'kernel-rt-5.14.0-284.31.1.rt14.313.el9_2',
             'version': '5.14.0',
             'name': 'kernel-rt',
-            'release': '284.31.1.rt14.313.el9_2'
+            'release': '284.31.1.rt14.313.el9_2',
         }
 
         def _get_tagged_builds(session: koji.ClientSession,
@@ -262,7 +262,7 @@ class TestRpmDelivery(IsolatedAsyncioTestCase):
             }[nvr] for nvr in nvr_list
         ]
         koji_api.queryHistory.side_effect = lambda tables, build, tag: {
-            "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build]
+            "tag_listing": {kernel_build['nvr']: [], kernel_rt_build['nvr']: []}[build],
         }
         cli = TagRPMsCli(runtime=runtime, dry_run=False, as_json=False)
         with self.assertRaisesRegex(ValueError, "Version mismatch"):

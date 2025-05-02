@@ -125,7 +125,7 @@ class TestFindBugsKernelClonesCli(IsolatedAsyncioTestCase):
             "jira_issues": [
                 {"key": "FOO-1", "summary": "test bug 1", "status": "Verified"},
                 {"key": "FOO-2", "summary": "test bug 2", "status": "ON_QA"},
-            ]
+            ],
         }
         out = StringIO()
         FindBugsKernelClonesCli._print_report(report, out=out)
@@ -159,7 +159,7 @@ FOO-2	ON_QA	test bug 2
                         "prod_brew_tag": "rhaos-4.14-rhel-9",
                     },
                 },
-            }
+            },
         )
         found_bugs = [
             MagicMock(spec=Issue, **{
@@ -192,7 +192,7 @@ FOO-2	ON_QA	test bug 2
                 {'key': 'FOO-1', 'summary': 'Fake bug 1', 'status': 'New'},
                 {'key': 'FOO-2', 'summary': 'Fake bug 2', 'status': 'Assigned'},
                 {'key': 'FOO-3', 'summary': 'Fake bug 3', 'status': 'ON_QA'},
-            ]
+            ],
         }
         _print_report.assert_called_once_with(expected_report, ANY)
 
@@ -221,7 +221,7 @@ FOO-2	ON_QA	test bug 2
                         "prod_brew_tag": "rhaos-4.14-rhel-9",
                     },
                 },
-            }
+            },
         )
         found_bugs = [
             MagicMock(spec=Issue, **{
@@ -255,6 +255,6 @@ FOO-2	ON_QA	test bug 2
                 {'key': 'FOO-1', 'summary': 'Fake bug 1', 'status': 'New'},
                 {'key': 'FOO-2', 'summary': 'Fake bug 2', 'status': 'Assigned'},
                 {'key': 'FOO-3', 'summary': 'Fake bug 3', 'status': 'ON_QA'},
-            ]
+            ],
         }
         _print_report.assert_called_once_with(expected_report, ANY)

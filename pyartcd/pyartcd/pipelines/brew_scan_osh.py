@@ -57,7 +57,7 @@ class OshScan:
             if self.specific_nvrs:
                 cmd += [
                     "--nvrs",
-                    f"{','.join(self.specific_nvrs)}"
+                    f"{','.join(self.specific_nvrs)}",
                 ]
 
             if self.all_builds:
@@ -67,7 +67,7 @@ class OshScan:
             if last_brew_event:
                 cmd += [
                     "--since",
-                    f"{last_brew_event}"
+                    f"{last_brew_event}",
                 ]
 
         if self.create_jira_tickets:

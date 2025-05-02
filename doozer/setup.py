@@ -14,7 +14,7 @@ setup(
     author_email="aos-team-art@redhat.com",
     setup_requires=['setuptools>=65.5.1', 'setuptools_scm'],
     use_scm_version={
-        "root": ".."
+        "root": "..",
     },
     description="CLI tool for managing and automating Red Hat software releases",
     long_description=open('README.md').read(),
@@ -24,8 +24,8 @@ setup(
     include_package_data=True,
     entry_points={
         'console_scripts': [
-            'doozer = doozerlib.cli.__main__:main'
-        ]
+            'doozer = doozerlib.cli.__main__:main',
+        ],
     },
     install_requires=INSTALL_REQUIRES,
     test_suite='tests',
@@ -45,5 +45,5 @@ setup(
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Build Tools",
         "Natural Language :: English",
-    ]
+    ],
 )

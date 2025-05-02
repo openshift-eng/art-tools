@@ -40,11 +40,11 @@ class QuayDoomsdaySync:
             "oc", "adm", "release", "mirror",
             f"quay.io/openshift-release-dev/ocp-release:{self.version}-{arch}",
             "--keep-manifest-list",
-            f"--to-dir={self.workdir}/{path}"
+            f"--to-dir={self.workdir}/{path}",
         ]
         aws_cmd = [
             "aws", "s3", "sync", f"{self.workdir}/{path}",
-            f"s3://ocp-doomsday-registry/release-image/{path}"
+            f"s3://ocp-doomsday-registry/release-image/{path}",
         ]
 
         # Setup tenacity retry behavior for calling mirror_cmd and aws_cmd

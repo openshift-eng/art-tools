@@ -131,7 +131,7 @@ class OSBS2Builder:
         if error:
             raise OSBS2BuildError(
                 f"Giving up after {retries} failed attempt(s): {message}",
-                task_id, task_url
+                task_id, task_url,
             )
 
         if build_info:

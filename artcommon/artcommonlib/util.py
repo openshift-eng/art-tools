@@ -353,7 +353,7 @@ async def _limit_concurrency(tasks: List, limit: int):
             return
 
         done, pending = await asyncio.wait(
-            pending, return_when=asyncio.FIRST_COMPLETED
+            pending, return_when=asyncio.FIRST_COMPLETED,
         )
         while done:
             yield done.pop()

@@ -67,8 +67,8 @@ async def gather_opm(
                     'auths': {
                         auth.registry_url or "quay.io": {
                             'auth': auth_token,
-                        }
-                    }
+                        },
+                    },
                 })
 
     if not auth_content:

@@ -31,7 +31,7 @@ previous_packages = [
     "ovn",
     "podman",
     "python3-openvswitch",
-    "spdlog"
+    "spdlog",
 ]
 
 ironic_previous_packages_for_4_15_plus = [
@@ -134,7 +134,7 @@ def plashet_config_for_major_minor(major, minor):
             "include_embargoed": False,
             "embargoed_tags": [],
             "include_previous_packages": [],
-        }
+        },
     }
 
 
@@ -232,7 +232,7 @@ async def build_plashets(stream: str, release: str,
             include_previous_packages=config['include_previous_packages'],
             data_path=data_path,
             dry_run=dry_run,
-            doozer_working=doozer_working
+            doozer_working=doozer_working,
         )
 
         logger.info('Plashet repo for %s created: %s', repo_type, local_path)
@@ -278,7 +278,7 @@ async def build_plashet_from_tags(group_param: str, assembly: str, base_dir: os.
         "config:plashet",
         "--base-dir", str(base_dir),
         "--name", name,
-        "--repo-subdir", "os"
+        "--repo-subdir", "os",
     ]
     for arch in arches:
         cmd.extend(["--arch", arch, signing_mode])

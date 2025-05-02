@@ -25,7 +25,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
         self.assertEqual(
             "csi-provisioner-container-v4.9.0-42",
-            vaocli._nvr_for_operand_pullspec(runtime, "something")
+            vaocli._nvr_for_operand_pullspec(runtime, "something"),
         )
 
     @patch("requests.get", autospec=True)
@@ -44,7 +44,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
 
         self.assertEqual(
             "ptp-operator.4.11.0-202303240327",
-            vaocli._download_bundle_csv(bundle_build)['metadata']['name']
+            vaocli._download_bundle_csv(bundle_build)['metadata']['name'],
         )
 
     @patch("elliottlib.cli.verify_attached_operators_cli.red_print")  # suppress output
@@ -94,7 +94,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
         self.assertEqual(
             {'openshift4/ose-metallb-operator', 'openshift4/ose-metallb-rhel8-operator'},
             vaocli._get_cdn_repos({42}, 'nvr1'),
-            "returns external repos for nvr1 and not nvr2"
+            "returns external repos for nvr1 and not nvr2",
         )
 
     @patch("elliottlib.cli.verify_attached_operators_cli.red_print")  # capture output

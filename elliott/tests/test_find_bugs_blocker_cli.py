@@ -22,13 +22,13 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         bz_bug = flexmock(
             id=1, created_days_ago=lambda: 33,
             cf_pm_score='score', component='OLM',
-            status='ON_DEV', summary='summary'
+            status='ON_DEV', summary='summary',
         )
 
         jira_bug = flexmock(
             id='OCPBUGS-1', created_days_ago=lambda: 34,
             cf_pm_score='score', component='OLM',
-            status='ON_QA', summary='summary'
+            status='ON_QA', summary='summary',
         )
 
         flexmock(JIRABugTracker).should_receive("blocker_search").and_return([jira_bug])

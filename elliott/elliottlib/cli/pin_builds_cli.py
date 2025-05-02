@@ -89,9 +89,9 @@ class AssemblyPinBuildsCli:
         out = {
             "releases": {
                 self.runtime.assembly: {
-                    "assembly": self.assembly_config.primitive()
-                }
-            }
+                    "assembly": self.assembly_config.primitive(),
+                },
+            },
         }
         return out, assembly_changed
 
@@ -124,7 +124,7 @@ class AssemblyPinBuildsCli:
             # Avoid filtering by source_url
             # because it can be inconsistent bw public and private upstream url
             "outcome": KonfluxBuildOutcome.SUCCESS.value,
-            "engine": self.runtime.build_system
+            "engine": self.runtime.build_system,
         }
 
         # TODO: A component can have multiple builds for the same commit. We need to handle this case.
@@ -147,7 +147,7 @@ class AssemblyPinBuildsCli:
         LOGGER.info('Fetching url %s', pr_api_url)
         response = requests.get(pr_api_url, headers={
             "Authorization": f"token {auth_token}",
-            "Accept": "application/json"
+            "Accept": "application/json",
         })
         response.raise_for_status()
         json_data = response.json()
@@ -184,7 +184,7 @@ class AssemblyPinBuildsCli:
             image_pin = {
                 "distgit_key": dg_key,
                 "metadata": {
-                    "is": {"nvr": i}
+                    "is": {"nvr": i},
                 },
                 "why": self.why,
             }
@@ -214,7 +214,7 @@ class AssemblyPinBuildsCli:
             rpm_pin = {
                 "distgit_key": dg_key,
                 "metadata": {
-                    "is": {f"el{el_v}": r}
+                    "is": {f"el{el_v}": r},
                 },
                 "why": self.why,
             }
@@ -259,7 +259,7 @@ class AssemblyPinBuildsCli:
             rpm_pin = {
                 f"el{el_v}": r,
                 "why": self.why,
-                "non_gc_tag": "insert tag here if needed"
+                "non_gc_tag": "insert tag here if needed",
             }
             pinned_non_art_rpms[r] = rpm_pin
             changed = True
@@ -292,7 +292,7 @@ class AssemblyPinBuildsCli:
                     rhcos_info[container_conf.name] = {"images": {}}
                 pullspec = get_container_pullspec(
                     finder.rhcos_build_meta(build_id),
-                    container_conf or finder.get_primary_container_conf()
+                    container_conf or finder.get_primary_container_conf(),
                 )
                 rhcos_info[container_conf.name]["images"][arch] = pullspec
 

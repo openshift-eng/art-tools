@@ -14,7 +14,7 @@ def validate(file, data):
         'rpm': rpm_schema.validate,
         'ignore': ignore_validate,
         'releases': releases_schema.validate,
-        'shipment': shipment_schema.validate
+        'shipment': shipment_schema.validate,
     }.get(support.get_artifact_type(file), err)(file, data)
 
 

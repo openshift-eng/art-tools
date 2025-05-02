@@ -38,7 +38,7 @@ class DoozerRunnerTestCase(unittest.TestCase):
             *user_arg,
             '--cache-dir', self.dz_cache_dir,
             '--working-dir', self.dz_working_dir,
-            *args
+            *args,
         ]
 
         print(f'Running doozer with: {cmd}', file=sys.stderr)

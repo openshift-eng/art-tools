@@ -189,7 +189,7 @@ class FindBugsKernelClonesCli:
                 if self.update_tracker:
                     early_kernel.comment_on_tracker(
                         logger, self.dry_run, jira_client, tracker,
-                        [f"Build(s) {nvrs} was/were already tagged into {candidate}."]
+                        [f"Build(s) {nvrs} was/were already tagged into {candidate}."],
                         # do not reword, see NOTE in method
                     )
 
@@ -244,6 +244,6 @@ def find_bugs_kernel_clones_cli(
         bugs=issues,
         move=move,
         update_tracker=update_tracker,
-        dry_run=dry_run
+        dry_run=dry_run,
     )
     cli.run()

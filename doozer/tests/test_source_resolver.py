@@ -16,7 +16,7 @@ class SourceResolverTestCase(TestCase):
         return SourceResolver(
             sources_base_dir="/path/to/sources",
             cache_dir="/path/to/cache",
-            group_config=Model()
+            group_config=Model(),
         )
 
     def test_get_remote_branch_ref(self):

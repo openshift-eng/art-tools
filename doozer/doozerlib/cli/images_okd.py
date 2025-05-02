@@ -238,8 +238,8 @@ class CiOperatorImageConfig:
         build_args = [  # Used by some images to differentiate output during prow/ci-operator based builds.
             {
                 'name': 'TAGS',
-                'value': 'scos'
-            }
+                'value': 'scos',
+            },
         ]
         if image_meta.config.content.source.okd_alignment.build_args:
             build_args.extend(image_meta.config.content.source.okd_alignment.build_args.primitive())
@@ -263,7 +263,7 @@ class CiOperatorImageConfig:
                     'gpgcheck = 0',
                     'sslverify = false',
                     'skip_if_unavailable = true',
-                    ''
+                    '',
                 ])
 
             repo_lines = '\n'.join(repo_def_lines)
@@ -275,20 +275,20 @@ cat << EOF > /etc/yum.repos.d/art.repo
 EOF
         """,
                     'from': ci_operator_image_names[self.base_image],
-                    'to': intermediate_tag
-                }
+                    'to': intermediate_tag,
+                },
             }
 
             base_obj = {
                 'build_args': build_args,
                 'from': intermediate_tag,
-                'to': self.payload_tag
+                'to': self.payload_tag,
             }
 
         else:
             base_obj = {
                 'build_args': build_args,
-                'to': self.payload_tag
+                'to': self.payload_tag,
             }
 
             if self.base_image:
@@ -311,7 +311,7 @@ EOF
 
         for coordinate, replacements in self.replacements.items():
             inputs[ci_operator_image_names[coordinate]] = {
-                'as': replacements
+                'as': replacements,
             }
 
         if inputs:
@@ -336,8 +336,8 @@ class CiOperatorConfig:
                 {
                     'namespace': promotion_namespace,
                     'name': promotion_imagestream,
-                }
-            ]
+                },
+            ],
         }
         self.build_root = None
         self.releases = dict()
@@ -402,10 +402,10 @@ class CiOperatorConfig:
                 '*': {
                     'requests': {
                         'cpu': '100m',
-                        'memory': '200Mi'
-                    }
-                }
-            }
+                        'memory': '200Mi',
+                    },
+                },
+            },
         }
         if raw_steps:
             config['raw_steps'] = raw_steps
@@ -413,7 +413,7 @@ class CiOperatorConfig:
             config['base_images'] = base_images
         if self.build_root:
             config['build_root'] = {
-                'image_stream_tag': self.build_root
+                'image_stream_tag': self.build_root,
             }
         if self.releases:
             config['releases'] = self.releases
@@ -660,7 +660,7 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
             # ci-operator configuration, even if it is not building anything, fails if there is no
             # build root. Just get the default golang.
             default_build_root = resolve_okd_from_entry(runtime, image_meta, Model({
-                'stream': 'rhel-9-golang'
+                'stream': 'rhel-9-golang',
             }), okd_version=okd_version)
             desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(default_build_root)
 
@@ -769,8 +769,8 @@ async def images_okd_prs(runtime, github_access_token, ignore_missing_images, ok
             'integration': {
                 # 'include_built_images': True,
                 'namespace': 'origin',
-                'name': f'scos-{okd_version}'
-            }
+                'name': f'scos-{okd_version}',
+            },
         })
 
         stage_names = extract_stage_names(dfp)

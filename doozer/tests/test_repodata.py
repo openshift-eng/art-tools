@@ -237,7 +237,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         actual = finder.find_non_latest_rpms(
             [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
             repodatas,
-            logger
+            logger,
         )
         self.assertEqual(actual, [])
 
@@ -275,12 +275,12 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         actual = finder.find_non_latest_rpms(
             [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
             repodatas,
-            logger
+            logger,
         )
         expected = [
             ('b-0:1.0.0-el8.x86_64', 'b-0:2.0.0-el8.x86_64', 'alfa-x86_64'),
             ('c-0:1.0.0-el8.x86_64', 'c-0:3.0.0-el8.x86_64', 'bravo-x86_64'),
-            ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64')
+            ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64'),
         ]
         self.assertEqual(actual, expected)
 
@@ -333,7 +333,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         arch="x86_64",
                         rpms={
                             "e-0:1.0.0-el8.x86_64",
-                        }
+                        },
                     ),
                     RpmModule(
                         name="e",
@@ -343,7 +343,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         arch="x86_64",
                         rpms={
                             "e-0:1.1.0-el8.x86_64",
-                        }
+                        },
                     ),
                     RpmModule(
                         name="e",
@@ -353,7 +353,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         arch="x86_64",
                         rpms={
                             "e-0:3.0.0-el8.x86_64",
-                        }
+                        },
                     ),
                     RpmModule(
                         name="e",
@@ -364,7 +364,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         rpms={
                             "e-0:2.0.0-el8.x86_64",
                             "f-0:2.0.0-el8.x86_64",
-                        }
+                        },
                     ),
                 ],
             ),
@@ -373,7 +373,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         actual = finder.find_non_latest_rpms(
             [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
             repodatas,
-            logger
+            logger,
         )
         expected = [
             ('b-0:1.0.0-el8.x86_64', 'b-0:2.0.0-el8.x86_64', 'alfa-x86_64'),

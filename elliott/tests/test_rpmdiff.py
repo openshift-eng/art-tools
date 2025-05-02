@@ -8,7 +8,7 @@ class TestRPMDiffClient(unittest.TestCase):
     def setUp(self):
         self.client = rpmdiff.RPMDiffClient(
             "https://rpmdiff.example.com",
-            session=mock.MagicMock()
+            session=mock.MagicMock(),
         )
 
     def test_get_token(self):
@@ -37,7 +37,7 @@ class TestRPMDiffClient(unittest.TestCase):
                 {"result_id": 1, "score": 0},
                 {"result_id": 2, "score": 3},
                 {"result_id": 3, "score": 4},
-            ]
+            ],
         }
         self.client.session.get.return_value.json.return_value = response
         actual = self.client.get_test_results(12345)
@@ -49,7 +49,7 @@ class TestRPMDiffClient(unittest.TestCase):
                 {"waiver_id": 1},
                 {"waiver_id": 2},
                 {"waiver_id": 3},
-            ]
+            ],
         }
         self.client.session.get.return_value.json.return_value = response
         actual = self.client.list_waivers("foo", 123)

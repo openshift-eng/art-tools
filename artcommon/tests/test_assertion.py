@@ -49,7 +49,7 @@ class TestAssert(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             assertion.isfile(
                 file_missing,
-                "file missing: {}".format(file_missing)
+                "file missing: {}".format(file_missing),
             )
 
         # Should raise IsADirectory

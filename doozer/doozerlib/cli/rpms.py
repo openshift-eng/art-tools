@@ -360,7 +360,7 @@ async def update_konflux_db(runtime, rpm: RPMMetadata, record: dict):
             build_pipeline_url=str(build["task_id"]),
             pipeline_commit='n/a',
             nvr=nvr,
-            build_id=str(build["build_id"])
+            build_id=str(build["build_id"]),
         )
 
         runtime.konflux_db.bind(KonfluxBuildRecord)

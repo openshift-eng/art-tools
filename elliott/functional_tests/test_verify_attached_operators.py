@@ -33,7 +33,7 @@ class TestVerifyAttachedOperators(unittest.TestCase):
         spec = "ose-csi-external-provisioner@sha256:cb191fcfe71ce6da60e73697aaa9b3164c1f0566150d3bffb8004598284d767a"
         self.assertEqual(
             "csi-provisioner-container-v4.9.0-202109302317.p0.git.7736e72.assembly.stream",
-            verify_attached_operators_cli._nvr_for_operand_pullspec(runtime, spec)
+            verify_attached_operators_cli._nvr_for_operand_pullspec(runtime, spec),
         )
 
     def test_verify_attached_operators_ok(self):

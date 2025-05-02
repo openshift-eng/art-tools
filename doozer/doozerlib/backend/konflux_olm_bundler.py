@@ -223,7 +223,7 @@ class KonfluxOlmBundleRebaser:
                     "internal_pullspec": old_pullspec,
                     "public_pullspec": new_pullspec,
                 } for name, (old_pullspec, new_pullspec, nvr) in operands.items()
-            }
+            },
         })
         async with aiofiles.open(oit_dir / 'olm_bundle_info.yaml', 'w') as f:
             await f.write(content)
@@ -279,7 +279,7 @@ class KonfluxOlmBundleRebaser:
             new_pullspec = '{}/{}@{}'.format(
                 'registry.redhat.io',  # hardcoded until appregistry is dead
                 f'{new_namespace}/{image_short_name}',
-                image_sha
+                image_sha,
             )
             new_content = new_content.replace(pullspec, new_pullspec)
             found_images[image_short_name] = (pullspec, new_pullspec, image_nvr)
@@ -345,7 +345,7 @@ class KonfluxOlmBundleRebaser:
         bundle_df.labels['name'] = metadata.get_olm_bundle_image_name()
         bundle_df.labels['version'] = '{}.{}'.format(
             operator_df.labels['version'],
-            operator_df.labels['release']
+            operator_df.labels['release'],
         )
         bundle_df.labels = {
             **bundle_df.labels,

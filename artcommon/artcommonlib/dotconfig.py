@@ -11,7 +11,7 @@ import shutil
 VALID_EXT = [
     'yaml',
     'yml',
-    'json'
+    'json',
 ]
 
 

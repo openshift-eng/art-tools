@@ -258,7 +258,7 @@ class PrepareReleasePipeline:
                 subtask = subtasks[1]
                 self._jira_client.add_comment(
                     subtask,
-                    "prepare release job : {}".format(os.environ.get("BUILD_URL"))
+                    "prepare release job : {}".format(os.environ.get("BUILD_URL")),
                 )
                 self._jira_client.assign_to_me(subtask)
                 self._jira_client.close_task(subtask)
@@ -560,7 +560,7 @@ class PrepareReleasePipeline:
         result = subprocess.run(cmd, stdout=PIPE, stderr=PIPE, check=False, universal_newlines=True, cwd=self.working_dir)
         if result.returncode != 0:
             raise IOError(
-                f"Command {cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
+                f"Command {cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}",
             )
         _LOGGER.info(result.stdout)
         match = re.search(r"Found ([0-9]+) bugs", str(result.stdout))
@@ -587,10 +587,10 @@ class PrepareReleasePipeline:
         result = subprocess.run(create_cmd, check=False, stdout=PIPE, stderr=PIPE, universal_newlines=True, cwd=self.working_dir)
         if result.returncode != 0:
             raise IOError(
-                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}"
+                f"Command {create_cmd} returned {result.returncode}: stdout={result.stdout}, stderr={result.stderr}",
             )
         match = re.search(
-            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout
+            r"https:\/\/errata\.devel\.redhat\.com\/advisory\/([0-9]+)", result.stdout,
         )
         advisory_num = int(match[1])
         _LOGGER.info("Created %s advisory %s", art_advisory_key, advisory_num)
@@ -630,7 +630,7 @@ class PrepareReleasePipeline:
                 group_config = f.read()
             for impetus, advisory in advisories.items():
                 new_group_config = re.sub(
-                    fr"^(\s+{impetus}:)\s*[0-9]+$", fr"\1 {advisory}", group_config, count=1, flags=re.MULTILINE
+                    fr"^(\s+{impetus}:)\s*[0-9]+$", fr"\1 {advisory}", group_config, count=1, flags=re.MULTILINE,
                 )
                 group_config = new_group_config
             # freeze automation

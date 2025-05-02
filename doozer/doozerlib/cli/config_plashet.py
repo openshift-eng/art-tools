@@ -91,7 +91,7 @@ def update_advisory_builds(config, errata_session, advisory_id, nvres, nvr_produ
         add_builds_payload.append({
             "product_version": nvr_product_version[nvr],
             "build": nvr,
-            "file_types": ['rpm']
+            "file_types": ['rpm'],
         })
 
     if add_builds_payload:

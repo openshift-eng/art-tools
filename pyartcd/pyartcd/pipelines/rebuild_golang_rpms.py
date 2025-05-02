@@ -78,7 +78,7 @@ class RebuildGolangRPMsPipeline:
             _LOGGER.info('Determining golang rpms and their build versions')
             go_nvr_map = elliottutil.get_golang_rpm_nvrs(
                 [(n['name'], n['version'], n['release']) for n in rpms],
-                _LOGGER
+                _LOGGER,
             )
             for go_v, nvrs in go_nvr_map.items():
                 nvr_s = [f'{n[0]}-{n[1]}-{n[2]}' for n in nvrs]

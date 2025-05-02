@@ -108,7 +108,7 @@ will need updating. This command helps with that.
                 current = getattr(advisory, f)
                 lines_to_match = [
                     "This advisory contains the RPM packages for Red Hat OpenShift Container Platform {version}",
-                    "quay.io/openshift-release-dev/ocp-release:{version}"
+                    "quay.io/openshift-release-dev/ocp-release:{version}",
                 ]
                 for line in lines_to_match:
                     search_line = line.format(version=search_version)

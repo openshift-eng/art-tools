@@ -68,7 +68,7 @@ class SlackClient:
             await self._client.reactions_add(
                 channel=response.data["channel"],
                 name=reaction,
-                timestamp=response.data["ts"]
+                timestamp=response.data["ts"],
             )
 
         return response.data

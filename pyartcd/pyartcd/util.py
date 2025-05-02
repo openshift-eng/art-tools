@@ -105,7 +105,7 @@ async def load_releases_config(group: str, data_path: str = constants.OCP_BUILD_
         f'--data-path={data_path}',
         f'--group={group}',
         'config:read-releases',
-        '--yaml'
+        '--yaml',
     ]
 
     try:
@@ -126,7 +126,7 @@ async def load_assembly(group: str, assembly: str, key: str = '',
         f'--assembly={assembly}',
         'config:read-assembly',
         '--yaml',
-        key
+        key,
     ]
 
     try:
@@ -177,7 +177,7 @@ async def kinit():
             '-k',
             '-t',
             keytab_file,
-            keytab_user
+            keytab_user,
         ]
         await exectools.cmd_assert_async(cmd)
     else:
@@ -257,7 +257,7 @@ async def get_freeze_automation(version: str, doozer_data_path: str = constants.
         group_param,
         'config:read-group',
         '--default=no',
-        'freeze_automation'
+        'freeze_automation',
     ]
     _, out, _ = await exectools.cmd_gather_async(cmd)
     return out.strip()
@@ -461,7 +461,7 @@ Please direct any questions to the Automated Release Tooling team (#forum-ocp-ar
         mail_client.send_mail(
             to=val['owners'],
             subject=email_subject,
-            content=explanation_body
+            content=explanation_body,
         )
 
 
@@ -508,7 +508,7 @@ Thanks for your help!\n"""
         mail_client.send_mail(
             to=owners,
             subject=email_subject,
-            content=explanation_body
+            content=explanation_body,
         )
 
 
@@ -586,7 +586,7 @@ The following logs are just the container build portion of the OSBS build:
         mail_client.send_mail(
             to=['aos-art-automation+failed-ocp-build@redhat.com', owner],
             subject=f'Failed OCP build of {failure["image"]}:{failure["version"]}',
-            content=explanation_body
+            content=explanation_body,
         )
 
 

@@ -38,7 +38,7 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         template_file = Path('/path/to/template.yaml')
         await generate_basic_template(catalog_file, template_file)
         mock_gather_opm.assert_called_once_with([
-            'alpha', 'convert-template', 'basic', '-o', 'yaml', '--', str(catalog_file)
+            'alpha', 'convert-template', 'basic', '-o', 'yaml', '--', str(catalog_file),
         ], stdout=mock_open.return_value.__enter__.return_value)
 
     @patch("builtins.open")
@@ -49,7 +49,7 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         auth = MagicMock(spec=OpmRegistryAuth)
         await render_catalog_from_template(template_file, catalog_file, auth=auth)
         mock_gather_opm.assert_called_once_with([
-            'alpha', 'render-template', 'basic', '--migrate-level', 'none', '-o', 'yaml', '--', str(template_file)
+            'alpha', 'render-template', 'basic', '--migrate-level', 'none', '-o', 'yaml', '--', str(template_file),
         ], stdout=mock_open.return_value.__enter__.return_value, auth=auth)
 
         with self.assertRaises(ValueError, msg="Invalid migrate level: invalid"):
@@ -64,5 +64,5 @@ class TestOpm(unittest.IsolatedAsyncioTestCase):
         await generate_dockerfile(dest_dir, dc_dir_name, base_image, builder_image)
         mock_gather_opm.assert_called_once_with(
             ['generate', 'dockerfile', '--builder-image', builder_image, '--base-image', base_image, '--', dc_dir_name],
-            cwd=dest_dir
+            cwd=dest_dir,
         )

@@ -181,6 +181,6 @@ async def scan_fips(runtime: Runtime, nvrs: str, all_images: bool, clean: bool):
     fips_pipeline = ScanFipsCli(runtime=runtime,
                                 nvrs=nvrs.split(",") if nvrs else None,
                                 all_images=all_images,
-                                clean=clean
+                                clean=clean,
                                 )
     await fips_pipeline.run()

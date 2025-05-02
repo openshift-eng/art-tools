@@ -56,12 +56,12 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             'ppc64le': 'rhel-7-for-power-le-ose-4.2-rpms',
             's390x': 'rhel-7-for-system-z-ose-4.2-rpms',
             'optional': True,
-        }
+        },
     }
     repo_config_extras = {
         'conf': {
             'extra_options': {
-                'module_hotfixes': 1
+                'module_hotfixes': 1,
             },
             'enabled': 1,
             'baseurl': {
@@ -75,7 +75,7 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             'ppc64le': 'rhel-7-for-power-le-ose-4.2-rpms',
             's390x': 'rhel-7-for-system-z-ose-4.2-rpms',
             'optional': True,
-        }
+        },
     }
 
     no_baseurl_repo = {
@@ -84,7 +84,7 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             'ppc64le': 'rhel-7-for-power-le-ose-4.2-rpms',
             's390x': 'rhel-7-for-system-z-ose-4.2-rpms',
             'optional': True,
-        }
+        },
     }
     no_config_sets_repo = {
         'conf': {
@@ -93,8 +93,8 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
                 'ppc64le': 'http://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.4-rhel-8-build/latest/ppc64le/',
                 's390x': 'http://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.4-rhel-8-build/latest/s390x/',
                 'x86_64': 'http://download-node-02.eng.bos.redhat.com/brewroot/repos/rhaos-4.4-rhel-8-build/latest/x86_64/',
-            }
-        }
+            },
+        },
     }
     enabled_no_baseurl_repo = {
         'conf': {
@@ -105,7 +105,7 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             'ppc64le': 'rhel-7-for-power-le-ose-4.2-rpms',
             's390x': 'rhel-7-for-system-z-ose-4.2-rpms',
             'optional': True,
-        }
+        },
     }
     no_config_set_arches_repo = {
         'conf': {
@@ -117,7 +117,7 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
         },
         'content_set': {
             'optional': True,
-        }
+        },
     }
     arches = ['x86_64', 'ppc64le', 's390x']
     test_repo = 'rhaos-4.4-rhel-8-build'
@@ -198,7 +198,7 @@ class TestRepo(unittest.IsolatedAsyncioTestCase):
             },
             'content_set': {
                 'optional': True,
-            }
+            },
         }
 
         repo = Repo('kernel-repo', repo_data, ['x86_64'])

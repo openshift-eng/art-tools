@@ -158,7 +158,7 @@ class GenAssemblyPipeline:
             "doozer",
             "--group", self.group,
             "--assembly", "stream",
-            "--build-system", self.build_system
+            "--build-system", self.build_system,
         ]
         if self.arches:
             cmd.append("--arches")
@@ -185,7 +185,7 @@ class GenAssemblyPipeline:
             "doozer",
             "--group", self.group,
             "--assembly", "stream",
-            "--build-system", self.build_system
+            "--build-system", self.build_system,
         ]
         if self.arches:
             cmd.append("--arches")

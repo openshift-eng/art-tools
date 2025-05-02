@@ -42,7 +42,7 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
         f'--assembly={assembly}',
         f'--working-dir={runtime.doozer_working}',
         f'--group=openshift-{version}@{data_gitref}' if data_gitref else f'--group=openshift-{version}',
-        f'--data-path={data_path}'
+        f'--data-path={data_path}',
     ]
     if only:
         cmd.append(f'--images={only}')
@@ -69,7 +69,7 @@ async def olm_bundle(runtime: Runtime, version: str, assembly: str, data_path: s
             coro=exectools.cmd_assert_async(cmd),
             lock=lock,
             lock_name=lock_name,
-            lock_id=lock_identifier
+            lock_id=lock_identifier,
         )
 
         # Parse doozer record.log

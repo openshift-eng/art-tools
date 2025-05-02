@@ -42,15 +42,15 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 image_pullspec='registry/image@sha256:digest1',
                 image_tag='tag1',
                 rebase_repo_url='https://github.com/test/repo1',
-                rebase_commitish='foobar'
+                rebase_commitish='foobar',
             ),
             Mock(
                 nvr='test-nvr-2',
                 image_pullspec='registry/image@sha256:digest2',
                 image_tag='tag2',
                 rebase_repo_url='https://github.com/test/repo2',
-                rebase_commitish='test'
-            )
+                rebase_commitish='test',
+            ),
         ]
         # `name` attribute is special so set it after creation
         # https://docs.python.org/3/library/unittest.mock.html#mock-names-and-the-name-attribute
@@ -65,7 +65,7 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 for_bundle=self.for_bundle,
                 for_fbc=self.for_fbc,
                 builds=['test-nvr-1', 'test-nvr-2'],
-                dry_run=self.dry_run
+                dry_run=self.dry_run,
             )
 
             await cli.run()
@@ -75,10 +75,10 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                 'kind': 'Snapshot',
                 'metadata': {
                     'labels': {
-                        'test.appstudio.openshift.io/type': 'override'
+                        'test.appstudio.openshift.io/type': 'override',
                     },
                     'name': 'ose-4-18-timestamp',
-                    'namespace': 'test-namespace'
+                    'namespace': 'test-namespace',
                 },
                 'spec': {
                     'application': 'openshift-4-18',
@@ -87,8 +87,8 @@ class TestCreateSnapshotCli(IsolatedAsyncioTestCase):
                                     'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}}},
                                    {'containerImage': 'registry/image@sha256:digest2',
                                     'name': 'ose-4-18-component2',
-                                    'source': {'git': {'revision': 'test', 'url': 'https://github.com/test/repo2'}}}]
-                }
+                                    'source': {'git': {'revision': 'test', 'url': 'https://github.com/test/repo2'}}}],
+                },
             })
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
@@ -153,17 +153,17 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             'kind': 'Snapshot',
             'metadata': {
                 'labels': {
-                    'test.appstudio.openshift.io/type': 'override'
+                    'test.appstudio.openshift.io/type': 'override',
                 },
                 'name': 'ose-4-18-timestamp',
-                'namespace': 'test-namespace'
+                'namespace': 'test-namespace',
             },
             'spec': {
                 'application': 'openshift-4-18',
                 'components': [{'containerImage': 'registry/image@sha256:digest1',
                                 'name': 'ose-4-18-component1',
-                                'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}}}]
-            }
+                                'source': {'git': {'revision': 'foobar', 'url': 'https://github.com/test/repo1'}}}],
+            },
         }
         self.konflux_client._get.return_value = Model(snapshot)
         mock_oc_image_info.return_value = {
@@ -172,10 +172,10 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
                     "Labels": {
                         "com.redhat.component": "test-component",
                         "version": f"v{self.major}.{self.minor}.0",
-                        "release": "assembly.test.el8"
-                    }
-                }
-            }
+                        "release": "assembly.test.el8",
+                    },
+                },
+            },
         }
         expected_nvrs = [f"test-component-v{self.major}.{self.minor}.0-assembly.test.el8"]
         cli = GetSnapshotCli(
@@ -185,7 +185,7 @@ class TestGetSnapshotCli(IsolatedAsyncioTestCase):
             for_bundle=self.for_bundle,
             for_fbc=self.for_fbc,
             snapshot='test-snapshot',
-            dry_run=self.dry_run
+            dry_run=self.dry_run,
         )
         actual_nvrs = await cli.run()
         self.konflux_client._get.assert_called_once_with(API_VERSION, KIND_SNAPSHOT, 'test-snapshot')

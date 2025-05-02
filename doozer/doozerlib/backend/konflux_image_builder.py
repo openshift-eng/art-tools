@@ -121,7 +121,7 @@ class KonfluxImageBuilder:
                 dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
                     "group": metadata.runtime.group,
                     "assembly_name": metadata.runtime.assembly,
-                    "distgit_key": metadata.distgit_key
+                    "distgit_key": metadata.distgit_key,
                 })
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
@@ -145,7 +145,7 @@ class KonfluxImageBuilder:
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
             additional_tags = [
-                f"{metadata.image_name_short}-{version}-{release}"
+                f"{metadata.image_name_short}-{version}-{release}",
             ]
 
             # Wait for parent members to be built
@@ -392,7 +392,7 @@ class KonfluxImageBuilder:
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
-            sast=sast
+            sast=sast,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
@@ -519,7 +519,7 @@ class KonfluxImageBuilder:
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
-            'pipeline_commit': 'n/a'  # TODO: populate this
+            'pipeline_commit': 'n/a',  # TODO: populate this
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
@@ -634,7 +634,7 @@ class KonfluxImageBuilder:
                             # The caller should capture logs they are interested
                             # in and stuff it into the associated containerStatus
                             # entry.
-                            'log_output': container_status.get('log_output')
+                            'log_output': container_status.get('log_output'),
                         }
                         containers_info.append(container_info)
 

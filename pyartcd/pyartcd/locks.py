@@ -44,67 +44,67 @@ LOCK_POLICY = {
     Lock.OLM_BUNDLE: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.OLM_BUNDLE_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.MIRRORING_RPMS: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.PLASHET: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD: {
         'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_KONFLUX: {
         'retry_count': 36000 * 1,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.KONFLUX_MASS_REBUILD: {
         'retry_count': 36000 * 8,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SIGNING: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.BUILD_SYNC_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
     Lock.SCAN_KONFLUX: {
         'retry_count': 36000,
         'retry_delay_min': 0.1,
-        'lock_timeout': DEFAULT_LOCK_TIMEOUT
+        'lock_timeout': DEFAULT_LOCK_TIMEOUT,
     },
 }
 
@@ -147,7 +147,7 @@ class LockManager(Aioredlock):
             [redis.redis_url(use_ssl)],
             internal_lock_timeout=lock_policy['lock_timeout'],
             retry_count=lock_policy['retry_count'],
-            retry_delay_min=lock_policy['retry_delay_min']
+            retry_delay_min=lock_policy['retry_delay_min'],
         )
 
     async def lock(self, resource, *args, **kwargs):

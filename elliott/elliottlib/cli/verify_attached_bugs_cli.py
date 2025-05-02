@@ -398,7 +398,7 @@ class BugValidator:
             elif complain:
                 self._complain(
                     f"bug {b.id} target release {b.target_release} is not in "
-                    f"{self.target_releases}. Does it belong in this release?"
+                    f"{self.target_releases}. Does it belong in this release?",
                 )
         return filtered_bugs
 

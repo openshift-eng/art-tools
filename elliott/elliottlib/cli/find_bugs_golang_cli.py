@@ -704,6 +704,6 @@ async def find_bugs_golang_cli(runtime: Runtime, pullspec: str, cve_ids, tracker
         force_update_tracker=force_update_tracker,
         art_jira=art_jira,
         exclude_bug_statuses=exclude_bug_statuses,
-        dry_run=dry_run
+        dry_run=dry_run,
     )
     await cli.run()

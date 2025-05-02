@@ -29,9 +29,9 @@ class TestImageSchema(unittest.TestCase):
                         'branch': {
                             'target': 'test',
                         },
-                        'url': url
-                    }
-                }
+                        'url': url,
+                    },
+                },
             },
             'name': '1234',
             'from': {},
@@ -47,9 +47,9 @@ class TestImageSchema(unittest.TestCase):
                         'branch': {
                             'target': 'test',
                         },
-                        'url': url
-                    }
-                }
+                        'url': url,
+                    },
+                },
             },
             'name': '1234',
             'from': {},
@@ -84,5 +84,5 @@ class TestImageSchema(unittest.TestCase):
         }
         self.assertIn(
             "is not valid",
-            image_schema.validate('filename', data)
+            image_schema.validate('filename', data),
         )

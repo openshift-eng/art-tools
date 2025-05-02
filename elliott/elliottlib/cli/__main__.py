@@ -244,7 +244,7 @@ written out to summary_results.json.
             click.echo(f"{image} from payload has version {vr} which does not match {all_advisory_nvrs[image]} from advisory")
             payload_doesnt_match_errata[image] = {
                 'payload': vr,
-                'errata': all_advisory_nvrs[image]
+                'errata': all_advisory_nvrs[image],
             }
 
     if missing_in_errata:  # check if missing images are already shipped or pending to ship

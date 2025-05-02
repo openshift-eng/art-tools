@@ -9,7 +9,7 @@ class SnapshotTestCases(unittest.TestCase):
     def test_snapshot_new(self):
         cmd = constants.ELLIOTT_CMD + [
             "--assembly=stream", "--group=openshift-4.18", "snapshot", "new",
-            "sriov-network-operator-v4.18.0-202502251712.p0.gf496851.assembly.stream.el9"
+            "sriov-network-operator-v4.18.0-202502251712.p0.gf496851.assembly.stream.el9",
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(result.returncode, 0,
@@ -19,7 +19,7 @@ class SnapshotTestCases(unittest.TestCase):
     def test_snapshot_get(self):
         cmd = constants.ELLIOTT_CMD + [
             "--assembly=stream", "--group=openshift-4.18", "snapshot", "get",
-            "ose-4-18-202503121723"
+            "ose-4-18-202503121723",
         ]
         result = subprocess.run(cmd, capture_output=True)
         self.assertEqual(result.returncode, 0,

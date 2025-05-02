@@ -36,7 +36,7 @@ class BuildSyncPipeline:
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.working_dir,
             self.group, self.assembly,
-            self.data_path, self.doozer_data_gitref
+            self.data_path, self.doozer_data_gitref,
         )
         return self
 
@@ -134,7 +134,7 @@ class BuildSyncPipeline:
         self.supported_arches = await branch_arches(
             group=f'openshift-{self.version}',
             assembly=self.assembly,
-            build_system=self.build_system
+            build_system=self.build_system,
         )
         self.logger.info('Supported arches for this build: %s', ', '.join(self.supported_arches))
 
@@ -354,7 +354,7 @@ class BuildSyncPipeline:
             cmd.append(f'--images={self.images}')
         cmd.extend([
             f'--working-dir={mirror_working}',
-            f'--data-path={self.data_path}'
+            f'--data-path={self.data_path}',
         ])
         group_param = f'--group=openshift-{self.version}'
         if self.doozer_data_gitref:
@@ -364,7 +364,7 @@ class BuildSyncPipeline:
         cmd.extend([
             'release:gen-payload',
             f'--output-dir={GEN_PAYLOAD_ARTIFACTS_OUT_DIR}',
-            '--apply'
+            '--apply',
         ])
         if self.emergency_ignore_issues:
             cmd.append('--emergency-ignore-issues')
@@ -555,7 +555,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
         exclude_arches=exclude_arches,
         skip_multiarch_payload=skip_multiarch_payload,
         embargo_permit_ack=embargo_permit_ack,
-        build_system=build_system
+        build_system=build_system,
     )
 
     if build_system == 'brew':
@@ -585,7 +585,7 @@ async def build_sync(runtime: Runtime, version: str, assembly: str, publish: boo
                 coro=pipeline.run(),
                 lock=lock,
                 lock_name=lock_name,
-                lock_id=lock_identifier
+                lock_id=lock_identifier,
             )
         else:
             await pipeline.run()

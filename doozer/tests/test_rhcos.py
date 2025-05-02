@@ -250,7 +250,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
         cmd_assert_mock.return_value = ('{"config": {"config": {"Labels": {"version": "412.86.bogus"}}}}', None)
         pullspecs = {'machine-os-content': 'spam@eggs'}
         self.runtime.group_config.rhcos = Model({
-            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]
+            "enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"],
         })
         repos = Repos(
             {
@@ -258,13 +258,13 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
                 "rhel-8-appstream-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
                 "rhel-8-rt-rpms": {"conf": {"baseurl": {"x86_64": "fake_url"}}, "content_set": {"default": "fake"}},
             },
-            ["x86_64", "s390x", "ppc64le", "aarch64"]
+            ["x86_64", "s390x", "ppc64le", "aarch64"],
         )
         runtime = MagicMock(
             repos=repos,
             group_config=Model({
-                "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]}
-            })
+                "rhcos": {"enabled_repos": ["rhel-8-baseos-rpms", "rhel-8-appstream-rpms"]},
+            }),
         )
         runtime.get_major_minor_fields.return_value = 4, 12
         get_repodata_threadsafe.return_value = Repodata(
@@ -272,7 +272,7 @@ class TestRhcos(unittest.IsolatedAsyncioTestCase):
             primary_rpms=[
                 Rpm.from_dict({'name': 'foo', 'version': '1.0.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'foo-1.0.0-1.el9'}),
                 Rpm.from_dict({'name': 'bar', 'version': '1.1.0', 'release': '1.el9', 'epoch': '0', 'arch': 'x86_64', 'nvr': 'bar-1.1.0-1.el9'}),
-            ]
+            ],
         )
         get_os_metadata_rpm_list.return_value = [
             ['foo', '0', '1.0.0', '1.el9', 'x86_64'],

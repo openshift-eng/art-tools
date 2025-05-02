@@ -47,7 +47,7 @@ class TestGenPayloadCli(TestCase):
 
         gacli = flexmock(GenAssemblyCli(
             runtime=MagicMock(assembly='custom', arches=['amd64']),
-            nightlies=['4.13.0-0.nightly-2022-12-01-153811']
+            nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
         ))
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
@@ -60,7 +60,7 @@ class TestGenPayloadCli(TestCase):
         """
 
         gacli = flexmock(GenAssemblyCli(
-            runtime=MagicMock(assembly='stream')
+            runtime=MagicMock(assembly='stream'),
         ))
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
@@ -76,7 +76,7 @@ class TestGenPayloadCli(TestCase):
             runtime=MagicMock(assembly='stream', arches=['amd64']),
             nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
             auto_previous=True,
-            previous_list='4.y.z'
+            previous_list='4.y.z',
         ))
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
@@ -93,7 +93,7 @@ class TestGenPayloadCli(TestCase):
             runtime=MagicMock(assembly='stream', arches=['amd64']),
             nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
             custom=True,
-            auto_previous=True
+            auto_previous=True,
         ))
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
@@ -103,7 +103,7 @@ class TestGenPayloadCli(TestCase):
             runtime=MagicMock(assembly='stream', arches=['amd64']),
             nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
             custom=True,
-            previous_list='4.y.z'
+            previous_list='4.y.z',
         ))
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
@@ -113,7 +113,7 @@ class TestGenPayloadCli(TestCase):
             runtime=MagicMock(assembly='stream', arches=['amd64']),
             nightlies=['4.13.0-0.nightly-2022-12-01-153811'],
             custom=True,
-            in_flight=True
+            in_flight=True,
         ))
         gacli.should_receive('_exit_with_error').once()
         gacli._validate_params()
@@ -151,11 +151,11 @@ class TestGenPayloadCli(TestCase):
         gacli._get_release_pullspecs()
         self.assertEqual(
             gacli.release_pullspecs,
-            {'x86_64': 'registry.ci.openshift.org/ocp/release:4.13.0-0.nightly-2022-12-01-153811'}
+            {'x86_64': 'registry.ci.openshift.org/ocp/release:4.13.0-0.nightly-2022-12-01-153811'},
         )
         self.assertEqual(
             gacli.reference_releases_by_arch,
-            {'x86_64': '4.13.0-0.nightly-2022-12-01-153811'}
+            {'x86_64': '4.13.0-0.nightly-2022-12-01-153811'},
         )
 
         gacli = GenAssemblyCli(
@@ -167,15 +167,15 @@ class TestGenPayloadCli(TestCase):
             gacli.release_pullspecs,
             {
                 'x86_64': 'registry.ci.openshift.org/ocp/release:4.13.0-0.nightly-2022-12-01-153811',
-                'aarch64': 'registry.ci.openshift.org/ocp-arm64/release-arm64:4.13.0-0.nightly-arm64-2022-12-05-151453'
-            }
+                'aarch64': 'registry.ci.openshift.org/ocp-arm64/release-arm64:4.13.0-0.nightly-arm64-2022-12-05-151453',
+            },
         )
         self.assertEqual(
             gacli.reference_releases_by_arch,
             {
                 'x86_64': '4.13.0-0.nightly-2022-12-01-153811',
-                'aarch64': '4.13.0-0.nightly-arm64-2022-12-05-151453'
-            }
+                'aarch64': '4.13.0-0.nightly-arm64-2022-12-05-151453',
+            },
         )
 
     def test_multi_nighly_arch(self):
@@ -192,7 +192,7 @@ class TestGenPayloadCli(TestCase):
             runtime=runtime,
             nightlies=[
                 '4.13.0-0.nightly-2022-12-01-153811',
-                '4.13.0-0.nightly-2022-12-01-140621'
+                '4.13.0-0.nightly-2022-12-01-140621',
             ],
         )
         with self.assertRaises(ValueError):
@@ -230,11 +230,11 @@ class TestGenPayloadCli(TestCase):
         gacli._get_release_pullspecs()
         self.assertEqual(
             gacli.release_pullspecs,
-            {'x86_64': 'quay.io/openshift-release-dev/ocp-release:4.11.18-x86_64'}
+            {'x86_64': 'quay.io/openshift-release-dev/ocp-release:4.11.18-x86_64'},
         )
         self.assertEqual(
             gacli.reference_releases_by_arch,
-            {}
+            {},
         )
 
     def test_multi_standard_arch(self):
@@ -249,7 +249,7 @@ class TestGenPayloadCli(TestCase):
             runtime=runtime,
             standards=[
                 '4.11.18-x86_64',
-                '4.11.19-x86_64'
+                '4.11.19-x86_64',
             ],
         )
         with self.assertRaises(ValueError):
@@ -304,7 +304,7 @@ class TestGenPayloadCli(TestCase):
         release_jira = "ART-123"
         runtime.get_releases_config.return_value = Model({'releases': {'rc.0': {'assembly': {'group': {
             'advisories': advisories,
-            'release_jira': release_jira
+            'release_jira': release_jira,
         }}}}})
         runtime.get_major_minor_fields.return_value = (4, 12)
         gacli = GenAssemblyCli(runtime=runtime, gen_assembly_name='rc.1')

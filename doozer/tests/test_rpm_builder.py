@@ -34,9 +34,9 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
                     "git": {"url": "git@github.com:openshift-priv/foo.git", "branch": {"target": "release-4.8"}},
                     "specfile": "foo.spec",
                     "modifications": [
-                        {"action": "add", "command": ["my-command", "--my-arg"]}
+                        {"action": "add", "command": ["my-command", "--my-arg"]},
                     ],
-                }
+                },
             },
             "targets": ["rhaos-4.4-rhel-8-candidate", "rhaos-4.4-rhel-7-candidate"],
         })
@@ -96,7 +96,7 @@ class TestRPMBuilder(IsolatedAsyncioTestCase):
                                               'version': '1.2.3',
                                               'release': '202104070000.test.p0.g3f17b42',
                                               'io.openshift.build.commit.id': '3f17b42b8aa7d294c0d2b6f946af5fe488f3a722',
-                                              'io.openshift.build.source-location': None}
+                                              'io.openshift.build.source-location': None},
                                           )
         dg.push_async.assert_called_once()
 

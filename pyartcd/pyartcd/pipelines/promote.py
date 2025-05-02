@@ -55,7 +55,7 @@ class PromotePipeline:
         self = cls(*args, **kwargs)
         self.group_runtime = await GroupRuntime.create(
             self.runtime.config, self.runtime.working_dir,
-            self.group, self.assembly
+            self.group, self.assembly,
         )
         return self
 
@@ -150,7 +150,7 @@ class PromotePipeline:
         group_config = self.group_runtime.group_config
         releases_config = await util.load_releases_config(
             group=self.group,
-            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL
+            data_path=self._doozer_env_vars.get("DOOZER_DATA_PATH", None) or constants.OCP_BUILD_DATA_URL,
         )
         if releases_config.get("releases", {}).get(self.assembly) is None:
             raise ValueError(f"To promote this release, assembly {self.assembly} must be explicitly defined in releases.yml.")
@@ -416,7 +416,7 @@ class PromotePipeline:
                     if subtask.fields.status.name != "Closed":
                         self._jira_client.add_comment(
                             subtask,
-                            "promote release job : {}".format(os.environ.get("BUILD_URL"))
+                            "promote release job : {}".format(os.environ.get("BUILD_URL")),
                         )
                         self._jira_client.assign_to_me(subtask)
                         self._jira_client.close_task(subtask)
@@ -439,7 +439,7 @@ class PromotePipeline:
                             coro=self.sign_artifacts(release_name, client_type, release_infos, message_digests),
                             lock=lock,
                             lock_name=lock.value.format(signing_env=self.signing_env),
-                            lock_id=lock_identifier
+                            lock_id=lock_identifier,
                         )
                     else:
                         self._logger.warning("[DRY RUN] will sign artifacts without locking")
@@ -495,7 +495,7 @@ class PromotePipeline:
                         continue
                     manifest_arch = brew_arch_for_go_arch(manifest["platform"]["architecture"])
                     manifests_ent[manifest_arch] = {
-                        "digest": manifest["digest"]
+                        "digest": manifest["digest"],
                     }
 
             from_release = release_info.get("references", {}).get("metadata", {}).get("annotations", {}).get("release.openshift.io/from-release")
@@ -984,7 +984,7 @@ class PromotePipeline:
             f"--group={self.group}",
             "get",
             "--json", "-",
-            "--", f"{advisory}"
+            "--", f"{advisory}",
         ]
         async with self._elliott_lock:
             _, stdout, _ = await exectools.cmd_gather_async(cmd, env=self._elliott_env_vars, stderr=None)
@@ -1039,7 +1039,7 @@ class PromotePipeline:
             "elliott",
             f"--assembly={self.assembly}",
             f"--group={self.group}",
-            "verify-attached-bugs"
+            "verify-attached-bugs",
         ]
         if verify_flaws:
             cmd.append("--verify-flaws")
@@ -1167,11 +1167,11 @@ class PromotePipeline:
                             "tags": [
                                 {
                                     "name": get_primary_container_name(self.group_runtime),
-                                    "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"}
-                                }
-                            ]
-                        }
-                    }
+                                    "annotations": {"io.openshift.build.versions": "machine-os=00.00.212301010000-0"},
+                                },
+                            ],
+                        },
+                    },
                 }
                 major, minor = isolate_major_minor_in_group(self.group)
                 go_arch_suffix = go_suffix_for_arch(arch, is_private=False)
@@ -1262,7 +1262,7 @@ class PromotePipeline:
             # dest_manifest_list is the final top-level manifest-list
             dest_manifest_list = {
                 "image": dest_image_pullspec,
-                "manifests": []
+                "manifests": [],
             }
             build_tasks = []
             for manifest in source_manifest_list["manifests"]:
@@ -1279,8 +1279,8 @@ class PromotePipeline:
                     'image': arch_payload_dest,
                     'platform': {
                         'os': 'linux',
-                        'architecture': arch
-                    }
+                        'architecture': arch,
+                    },
                 })
                 # Add task to build arch-specific heterogeneous payload
                 metadata = metadata.copy() if metadata else {}
@@ -1354,7 +1354,7 @@ class PromotePipeline:
                 auth_opt = f"--docker-cfg={auth_file}"
 
         cmd = [
-            "manifest-tool", auth_opt, "push", "from-spec", "--", f"{dest_manifest_list_path}"
+            "manifest-tool", auth_opt, "push", "from-spec", "--", f"{dest_manifest_list_path}",
         ]
 
         if self.runtime.dry_run:
@@ -1457,10 +1457,10 @@ class PromotePipeline:
                     'digest': manifest['digest'],
                     'platform': {
                         'architecture': manifest['config']['architecture'],
-                        'os': manifest['config']['os']
-                    }
+                        'os': manifest['config']['os'],
+                    },
                 } for manifest in info
-            ]
+            ],
         }
 
         return manifests
@@ -1511,7 +1511,7 @@ class PromotePipeline:
             "--import-mode=PreserveOriginal",
             "--",
             image_pullspec,
-            image_stream_tag
+            image_stream_tag,
         ]
         if self.runtime.dry_run:
             self._logger.warning("[DRY RUN] Would have run %s", cmd)
@@ -1545,7 +1545,7 @@ class PromotePipeline:
                 self._logger.log(
                     logging.INFO if retry_state.attempt_number < 1 else logging.WARNING,
                     'Release payload for "%s" arch is in the "%s" phase. Will check again in %s seconds.',
-                    arch, retry_state.outcome.result(), retry_state.next_action.sleep
+                    arch, retry_state.outcome.result(), retry_state.next_action.sleep,
                 )
         return await retry(
             stop=(stop_after_attempt(144)),  # wait for 10m * 144 = 1440m = 24 hours
@@ -1812,6 +1812,6 @@ async def promote(runtime: Runtime, group: str, assembly: str,
     pipeline = await PromotePipeline.create(
         runtime, group, assembly, skip_blocker_bug_check, skip_attached_bug_check, skip_image_list,
         skip_build_microshift, skip_signing, skip_sigstore, skip_cincinnati_prs, skip_ota_notification,
-        permit_overwrite, no_multi, multi_only, skip_mirror_binaries, use_multi_hack, signing_env
+        permit_overwrite, no_multi, multi_only, skip_mirror_binaries, use_multi_hack, signing_env,
     )
     await pipeline.run()

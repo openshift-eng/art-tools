@@ -106,7 +106,7 @@ class TestBuildStatusDetector(TestCase):
             self.assertEqual(actual, expected)
             get_builds_tags.return_value = [
                 [{"name": "foo-released"}],
-                [{"name": "bar-candidate"}, {"name": "bar-released"}, ]
+                [{"name": "bar-candidate"}, {"name": "bar-released"}, ],
             ]
             expected = {1, 2}
             actual = BuildStatusDetector(MagicMock(), MagicMock()).find_shipped_builds(build_ids)

@@ -117,43 +117,43 @@ class TestAdvisoryImages(unittest.TestCase):
                 'target': {
                     'repos': {
                         'redhat-openshift3-ose-kube-rbac-proxy': {
-                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1']
-                        }
+                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1'],
+                        },
                     },
                     'external_repos': {
-                        "openshift3/ose-kube-rbac-proxy": {}
-                    }
-                }
-            }
+                        "openshift3/ose-kube-rbac-proxy": {},
+                    },
+                },
+            },
         },
         'jenkins-subordinate-base-rhel7-container-v3.11.154-1': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift3-jenkins-subordinate-base-rhel7': {
-                            'tags': ['v3.11', 'v3.11.154', 'v3.11.154-1']
-                        }
+                            'tags': ['v3.11', 'v3.11.154', 'v3.11.154-1'],
+                        },
                     },
                     'external_repos': {
-                        "openshift3/jenkins-subordinate-base-rhel7": {}
-                    }
-                }
-            }
+                        "openshift3/jenkins-subordinate-base-rhel7": {},
+                    },
+                },
+            },
         },
         'openshift-enterprise-pod-container-v3.11.154-1': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift3-ose-pod': {
-                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1']
-                        }
+                            'tags': ['latest', 'v3.11', 'v3.11.154', 'v3.11.154-1'],
+                        },
                     },
                     'external_repos': {
-                        "openshift3/ose-pod": {}
-                    }
-                }
-            }
-        }
+                        "openshift3/ose-pod": {},
+                    },
+                },
+            },
+        },
     }
 
     mocked_ocp4_response = {
@@ -162,44 +162,44 @@ class TestAdvisoryImages(unittest.TestCase):
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-cluster-autoscaler': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
         'cluster-monitoring-operator-container-v4.2.5-201911121709': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-cluster-monitoring-operator': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
         'cluster-node-tuning-operator-container-v4.2.5-201911121709': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-cluster-node-tuning-operator': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
         'golang-github-openshift-oauth-proxy-container-v4.2.5-201911121709': {
             'docker': {
                 'target': {
                     'repos': {
                         'redhat-openshift4-ose-oauth-proxy': {
-                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709']
-                        }
-                    }
-                }
-            }
+                            'tags': ['4.2', 'latest', 'v4.2.5', 'v4.2.5-201911121709'],
+                        },
+                    },
+                },
+            },
         },
     }
 

@@ -94,7 +94,7 @@ class AsyncSignatory:
         # e.g. /queue/Consumer.openshift-art-bot.artcd.VirtualTopic.eng.robosignatory.art.sign
         consumer_queue = self.CONSUMER_QUEUE_TEMPLATE.format_map({
             "service_account": service_account,
-            "subscription": self.subscription_name
+            "subscription": self.subscription_name,
         })
         self._receiver = await self._umb.subscribe(consumer_queue, self.subscription_name)
         # Start a task to handle messages received from the consumer queue
@@ -333,11 +333,11 @@ class SigstoreSignatory:
             self._logger.info("%s is a release image with name %s", pullspec, this_rn)
             if release_name != this_rn:
                 errors[pullspec] = RuntimeError(
-                    f"release image at {pullspec} has release name {this_rn}, not the expected {release_name}"
+                    f"release image at {pullspec} has release name {this_rn}, not the expected {release_name}",
                 )
             elif self.verify_release and not await self.verify_legacy_signature(img_info):
                 errors[pullspec] = RuntimeError(
-                    f"release image at {pullspec} does not have a required legacy signature"
+                    f"release image at {pullspec} does not have a required legacy signature",
                 )
             else:
                 if self.sign_components:

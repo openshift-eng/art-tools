@@ -108,14 +108,14 @@ releases:
             ("releases", OrderedDict([
                 ("4.12.98", OrderedDict()),
                 ("4.12.97", OrderedDict()),
-            ]))
+            ])),
         ])
         fn = MagicMock(return_value=OrderedDict([
             ("releases", OrderedDict([
                 ("4.12.99", OrderedDict()),
                 ("4.12.98", OrderedDict()),
                 ("4.12.97", OrderedDict()),
-            ]))
+            ])),
         ]))
         git_repo.return_value.commit_push.return_value = True
         api = gh_api.return_value

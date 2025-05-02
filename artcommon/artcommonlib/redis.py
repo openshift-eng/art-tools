@@ -26,7 +26,7 @@ def redis_url(use_ssl=True):
         protocol='rediss' if use_ssl else 'redis',
         redis_password=os.environ['REDIS_SERVER_PASSWORD'],
         redis_host=constants.REDIS_HOST,
-        redis_port=constants.REDIS_PORT
+        redis_port=constants.REDIS_PORT,
     )
 
 

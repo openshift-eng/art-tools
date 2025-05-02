@@ -264,13 +264,13 @@ class KonfluxClient:
             "apiVersion": API_VERSION,
             "kind": KIND_APPLICATION,
             "metadata": {
-                "name": name
+                "name": name,
             },
             "spec": {
                 "displayName": display_name,
                 "appModelRepository": {"url": ""},
                 "gitOpsRepository": {"url": ""},
-            }
+            },
         }
         return obj
 
@@ -291,7 +291,7 @@ class KonfluxClient:
                     "build.appstudio.openshift.io/status": '{"pac":{"state":"disabled"}}',  # will raise PRs to upstream repos (openshift-priv) if this is not set to false
                     # "build.appstudio.openshift.io/request": "configure-pac",
                     "mintmaker.appstudio.redhat.com/disabled": "true",  # https://gitlab.cee.redhat.com/konflux/docs/users/-/blob/main/topics/mintmaker/user.md#offboarding-a-repository
-                }
+                },
             },
             "spec": {
                 "application": application,
@@ -300,9 +300,9 @@ class KonfluxClient:
                     "git": {
                         "url": source_url,
                         "revision": revision,
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
         if image_repo:
             obj["spec"]["containerImage"] = image_repo
@@ -443,25 +443,25 @@ class KonfluxClient:
                     "name": "sbom-syft-generate",
                     "computeResources": {
                         "requests": {
-                            "memory": "5Gi"
+                            "memory": "5Gi",
                         },
                         "limits": {
-                            "memory": "10Gi"
-                        }
-                    }
-                }]
+                            "memory": "10Gi",
+                        },
+                    },
+                }],
             }]
         if has_sast_task:
             task_run_specs += [{
                 "pipelineTaskName": "sast-shell-check",
                 "computeResources": {
                     "requests": {
-                        "memory": "10Gi"
+                        "memory": "10Gi",
                     },
                     "limits": {
-                        "memory": "10Gi"
-                    }
-                }
+                        "memory": "10Gi",
+                    },
+                },
             }]
 
         obj["spec"]["taskRunSpecs"] = task_run_specs
@@ -539,7 +539,7 @@ class KonfluxClient:
             dockerfile=dockerfile,
             pipelinerun_template_url=pipelinerun_template_url,
             prefetch=prefetch,
-            sast=sast
+            sast=sast,
         )
         if self.dry_run:
             fake_pipelinerun = resource.ResourceInstance(self.dyn_client, pipelinerun_manifest)
@@ -590,7 +590,7 @@ class KonfluxClient:
                 "metadata": {"name": pipelinerun_name, "namespace": namespace},
                 "apiVersion": "tekton.dev/v1",
                 "kind": "PipelineRun",
-                "status": {"conditions": [{"status": "True"}]}
+                "status": {"conditions": [{"status": "True"}]},
             }
             self._logger.warning(f"[DRY RUN] Would have waited for PipelineRun {pipelinerun_name} to complete")
             return resource.ResourceInstance(self.dyn_client, pipelinerun), resource.ResourceList(self.dyn_client, api_version="v1", kind="Pod")
@@ -629,7 +629,7 @@ class KonfluxClient:
                         # while waiting for a long pipelinerun. If we somehow miss
                         # an event, it also ensures we will come back and check
                         # the object with an explicit get at least once per period.
-                        timeout_seconds=5 * 60
+                        timeout_seconds=5 * 60,
                     ):
                         assert isinstance(event, Dict)
                         cancel_pipelinerun = False  # If set to true, an attempt will be made to cancel the pipelinerun within the loop
@@ -706,7 +706,7 @@ class KonfluxClient:
                                                 log_response = corev1_client.read_namespaced_pod_log(
                                                     name=pod_name,
                                                     namespace=namespace,
-                                                    container=container_name
+                                                    container=container_name,
                                                 )
                                                 # stuff log information into the container_status, so that it can be
                                                 # included in the bigquery database.
@@ -733,10 +733,10 @@ class KonfluxClient:
                                     namespace=namespace,
                                     body={
                                         'spec': {
-                                            'status': 'Cancelled'
-                                        }
+                                            'status': 'Cancelled',
+                                        },
                                     },
-                                    content_type="application/merge-patch+json"
+                                    content_type="application/merge-patch+json",
                                 )
                             except:
                                 self._logger.error('Error trying to cancel PipelineRun %s', pipelinerun_name)
@@ -779,7 +779,7 @@ class KonfluxClient:
                 "metadata": {"name": release_name, "namespace": namespace},
                 "apiVersion": API_VERSION,
                 "kind": KIND_RELEASE,
-                "status": {"conditions": [{"type": "Released", "status": "True", "reason": "Succeeded"}]}
+                "status": {"conditions": [{"type": "Released", "status": "True", "reason": "Succeeded"}]},
             }
             self._logger.info(f"[DRY RUN] Would have waited for Release {release_name} to complete")
             return resource.ResourceInstance(self.dyn_client, release)
@@ -798,7 +798,7 @@ class KonfluxClient:
                         namespace=namespace,
                         serialize=False,
                         field_selector=f"metadata.name={release_name}",
-                        timeout_seconds=5 * 60
+                        timeout_seconds=5 * 60,
                     )
                     for event in release_obj:
                         assert isinstance(event, Dict)

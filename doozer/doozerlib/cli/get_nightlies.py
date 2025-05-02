@@ -208,7 +208,7 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
                 raise ValueError("Token empty, might not be logged in to correct cluster")
 
             headers = {
-                "Authorization": f"Bearer {token}"
+                "Authorization": f"Bearer {token}",
             }
 
         async with aiohttp.ClientSession() as session:

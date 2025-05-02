@@ -233,7 +233,7 @@ class AssemblyInspector:
                     f"Found outdated RPM ({installed_nvr}) "
                     f"installed in {rhcos_build.build_id} ({rhcos_build.brew_arch})"
                     f" when {newest_nvr} is available in repo {repo}",
-                    component="rhcos", code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD
+                    component="rhcos", code=AssemblyIssueCode.OUTDATED_RPMS_IN_STREAM_BUILD,
                 ))
 
         return issues

@@ -286,7 +286,7 @@ class UpdateGolangPipeline:
                 build = builds[0]
                 go_nvr_map = elliottutil.get_golang_container_nvrs(
                     [(build['name'], build['version'], build['release'])],
-                    _LOGGER
+                    _LOGGER,
                 )  # {'1.20.12-2.el9_3': {('openshift-golang-builder-container', 'v1.20.12',
                 # '202403212137.el9.g144a3f8.el9')}}
                 builder_go_vr = list(go_nvr_map.keys())[0]
@@ -440,7 +440,7 @@ class UpdateGolangPipeline:
             "images:rebase",
             "--version", version,
             "--release", release,
-            "--message", f"bumping to {version}-{release}"
+            "--message", f"bumping to {version}-{release}",
         ]
         if not self.dry_run:
             cmd.append("--push")
@@ -455,7 +455,7 @@ class UpdateGolangPipeline:
             "--group", branch,
             "images:build",
             "--repo-type", "unsigned",
-            "--push-to-defaults"
+            "--push-to-defaults",
         ]
         if self.dry_run:
             cmd.append("--dry-run")

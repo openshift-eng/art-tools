@@ -39,32 +39,32 @@ class TestUtil(unittest.TestCase):
         test_cases = [
             {
                 'bugs': [flexmock(id=1, target_release='4.8.0')],
-                'expected': ('', True)
+                'expected': ('', True),
             },
             {
                 'bugs': [flexmock(id=2, target_release=[])],
-                'expected': ('', True)
+                'expected': ('', True),
             },
             {
                 'bugs': [flexmock(id=3, target_release=['4.8'])],
-                'expected': ('4.8', False)
+                'expected': ('4.8', False),
             },
             {
                 'bugs': [flexmock(id=4, target_release=['4.8.0'])],
-                'expected': ('4.8.0', False)
+                'expected': ('4.8.0', False),
             },
             {
                 'bugs': [flexmock(id=5, target_release=['4.8.0', '4.7.z'])],
-                'expected': ('4.8.0', False)
+                'expected': ('4.8.0', False),
             },
             # bugs belonging to different versions should raise error
             {
                 'bugs': [flexmock(id=4, target_release=['4.8.0']), flexmock(id=5, target_release=['4.7.z'])],
-                'expected': ('', True)
+                'expected': ('', True),
             },
             {
                 'bugs': [flexmock(id=4, target_release=['4.8.0']), flexmock(id=5, target_release=['4.8.z'])],
-                'expected': ('4.8.0', False)
+                'expected': ('4.8.0', False),
             },
         ]
 
@@ -89,13 +89,13 @@ class TestUtil(unittest.TestCase):
                 'extra': {'image': {'parent_image_builds': {
                     'registry-proxy.engineering.redhat.com/rh-osbs/openshift-golang-builder@sha256:8e1cfc7198db25b97ce6f42e147b5c07d9725015ea971d04c91fe1249b565c80': {
                         'id': 1977952,
-                        'nvr': 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca'
+                        'nvr': 'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca',
                     },
                     'registry-proxy.engineering.redhat.com/rh-osbs/openshift-ose-base:v4.11.0-202205301910.p0.gf1330f6.assembly.stream': {
                         'id': 2031610,
-                        'nvr': 'openshift-enterprise-base-container-v4.11.0-202205301910.p0.gf1330f6.assembly.stream'
+                        'nvr': 'openshift-enterprise-base-container-v4.11.0-202205301910.p0.gf1330f6.assembly.stream',
                     }}}},
-            }]
+            }],
         )
         expected = {'openshift-golang-builder-container-v1.18.0-202204191948.sha1patch.el8.g4d4caca': {nvrs[0]}}
         actual = util.get_golang_container_nvrs(nvrs, None)
@@ -109,7 +109,7 @@ class TestUtil(unittest.TestCase):
                 'name': 'openshift-golang-builder-container',
                 'release': '202204191948.sha1patch.el8.g4d4caca',
                 'version': 'v1.18.0',
-            }]
+            }],
         )
         go_version = '1.18.0-2.module+el8.7.0+14880+f5e30240'
         flexmock(util).should_receive("golang_builder_version").and_return(go_version)

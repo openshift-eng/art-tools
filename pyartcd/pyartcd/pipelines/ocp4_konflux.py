@@ -81,7 +81,7 @@ class KonfluxOcp4Pipeline:
             f'--working-dir={self.runtime.doozer_working}',
             f'--data-path={data_path}',
             '--build-system=konflux',
-            group_param
+            group_param,
         ]
 
         self.build_plan = BuildPlan(BuildStrategy(image_build_strategy))
@@ -226,7 +226,7 @@ class KonfluxOcp4Pipeline:
             doozer_data_gitref=self.data_gitref,
             build_system='konflux',
             exclude_arches=exclude_arches,
-            SKIP_MULTI_ARCH_PAYLOAD=False
+            SKIP_MULTI_ARCH_PAYLOAD=False,
         )
 
     async def init_build_plan(self):
@@ -349,7 +349,7 @@ class KonfluxOcp4Pipeline:
             lock_name=Lock.KONFLUX_MASS_REBUILD.value,
             lock_id=self.lock_identifier,
             ocp_version=self.version,
-            version_queue_name=queue
+            version_queue_name=queue,
         )
 
     async def run(self):
@@ -433,5 +433,5 @@ async def ocp4(runtime: Runtime, image_build_strategy: str, image_list: Optional
             coro=pipeline.run(),
             lock=Lock.BUILD_KONFLUX,
             lock_name=Lock.BUILD_KONFLUX.value.format(version=version),
-            lock_id=lock_identifier
+            lock_id=lock_identifier,
         )

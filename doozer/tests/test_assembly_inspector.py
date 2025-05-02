@@ -18,8 +18,8 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                     "integration_tag": "my-integration-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
                     "target_tag": "my-target-tag",
-                }
-            ]
+                },
+            ],
         }))
         brew_session = MagicMock()
         brew_session.listTags.return_value = [
@@ -30,7 +30,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         await ai.initialize()
         ai.assembly_type = AssemblyTypes.STANDARD
         rpm_packages = {
-            "kernel": {"nvr": "kernel-1.2.3-1", "id": 1}
+            "kernel": {"nvr": "kernel-1.2.3-1", "id": 1},
         }
         issues = ai._check_installed_packages_for_rpm_delivery("foo", "foo-1.2.3-1", rpm_packages)
         self.assertEqual(issues, [])
@@ -53,8 +53,8 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
                     "integration_tag": "my-integration-tag",
                     "stop_ship_tag": "my-stop-ship-tag",
                     "target_tag": "my-target-tag",
-                }
-            ]
+                },
+            ],
         }))
         brew_session = MagicMock()
         brew_session.listTags.return_value = [
@@ -65,7 +65,7 @@ class TestAssemblyInspector(IsolatedAsyncioTestCase):
         ai.assembly_type = AssemblyTypes.STANDARD
         build_inspector = MagicMock()
         build_inspector.get_all_installed_package_build_dicts.return_value = {
-            "kernel": {"nvr": "kernel-1.2.3-1", "id": 1}
+            "kernel": {"nvr": "kernel-1.2.3-1", "id": 1},
         }
         issues = ai.check_installed_rpms_in_image("foo", build_inspector, None)
         self.assertEqual(issues, [])

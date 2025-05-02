@@ -21,7 +21,7 @@ class TestFindBugsMode(unittest.TestCase):
         config = {
             'target_release': ['4.3.0', '4.3.z'],
             'product': "product",
-            'server': "server"
+            'server': "server",
         }
         bug_tracker = BugzillaBugTracker(config)
         find_bugs = FindBugsMode(status=['foo', 'bar'], cve_only=False)
@@ -100,7 +100,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
             cf_pm_score='score',
             component='OLM',
             status='ON_QA',
-            summary='summary'
+            summary='summary',
         )
 
         flexmock(BugzillaBugTracker).should_receive("get_config").and_return({'target_release': ['4.6.z']})
@@ -242,7 +242,7 @@ class FindBugsSweepTestCase(unittest.IsolatedAsyncioTestCase):
         flexmock(sweep_cli).should_receive("categorize_bugs_by_type").and_return({
             "image": set(image_bugs),
             "rpm": set(rpm_bugs),
-            "extras": set(extras_bugs)
+            "extras": set(extras_bugs),
         }, [])
         flexmock(Runtime).should_receive("get_default_advisories").and_return({'image': 123, 'rpm': 123, 'extras': 123,
                                                                               'metadata': 123})

@@ -402,7 +402,7 @@ class ConfigScanSources:
                 image_meta,
                 RebuildHint(
                     RebuildHintCode.ARCHES_CHANGE,
-                    f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}')
+                    f'Arches of {build_record.nvr}: ({build_arches}) does not match target arches {target_arches}'),
             )
 
     @skip_check_if_changing
@@ -423,7 +423,7 @@ class ConfigScanSources:
         rc, attestation, error = await exectools.cmd_gather_async(cmd)
         if rc != 0:
             raise IOError(
-                f"Failed to get SLSA attestation for {build_record.image_pullspec}: {error}"
+                f"Failed to get SLSA attestation for {build_record.image_pullspec}: {error}",
             )
 
         try:
@@ -457,7 +457,7 @@ class ConfigScanSources:
         upstream_commit_hash = self.find_upstream_commit_hash(image_meta)
         upstream_commit_build_record = await image_meta.get_latest_build(
             engine=Engine.KONFLUX.value,
-            extra_patterns={'commitish': upstream_commit_hash}
+            extra_patterns={'commitish': upstream_commit_hash},
         )
 
         # No build from latest upstream commit: handle accordingly
@@ -490,7 +490,7 @@ class ConfigScanSources:
         # Check whether a build attempt with this commit has failed before.
         failed_commit_build_record = await image_meta.get_latest_build(
             extra_patterns={'commitish': upstream_commit_hash},
-            outcome=KonfluxBuildOutcome.FAILURE
+            outcome=KonfluxBuildOutcome.FAILURE,
         )
 
         # If not, this is a net-new upstream commit. Build it.
@@ -739,7 +739,7 @@ class ConfigScanSources:
                 self.add_image_meta_change(
                     image_meta,
                     RebuildHint(RebuildHintCode.PACKAGE_CHANGE,
-                                f'Image includes {rpm} which is also about to change')
+                                f'Image includes {rpm} which is also about to change'),
                 )
                 return
 
@@ -754,7 +754,7 @@ class ConfigScanSources:
             self.add_image_meta_change(
                 image_meta,
                 RebuildHint(RebuildHintCode.PACKAGE_CHANGE,
-                            ";\n".join(rebuild_hints))
+                            ";\n".join(rebuild_hints)),
             )
         else:
             self.logger.info('No package changes detected for %s', build_record.nvr)
@@ -841,7 +841,7 @@ class ConfigScanSources:
             upstream_commit_build_record = await rpm_meta.get_latest_build(
                 el_target=el_target,
                 extra_patterns={'commitish': upstream_commit_hash},
-                engine=Engine.BREW.value
+                engine=Engine.BREW.value,
             )
 
             if not upstream_commit_build_record:
@@ -914,11 +914,11 @@ class ConfigScanSources:
                 image_results.append({
                     'name': dgk,
                     'changed': is_changing,
-                    'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}')
+                    'reason': self.assessment_reason.get(f'{image_meta.qualified_key}+{is_changing}'),
                 })
 
         results = dict(
-            images=image_results
+            images=image_results,
         )
 
         self.logger.debug(f'scan-sources coordinate: results:\n{yaml.safe_dump(results, indent=4)}')

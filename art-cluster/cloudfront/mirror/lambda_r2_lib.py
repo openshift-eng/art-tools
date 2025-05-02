@@ -30,12 +30,12 @@ def get_secrets_manager_secret_dict(secret_name):
         # a role that allows access to necessary secrets.
         secrets_client = boto3.client(
             service_name='secretsmanager',
-            region_name='us-east-1'
+            region_name='us-east-1',
         )
 
     try:
         get_secret_value_response = secrets_client.get_secret_value(
-            SecretId=secret_name
+            SecretId=secret_name,
         )
     except:
         raise

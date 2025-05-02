@@ -486,7 +486,7 @@ class ImageMetadata(Metadata):
             if rebuild_hints:
                 return self, RebuildHint(
                     RebuildHintCode.PACKAGE_CHANGE,
-                    ";\n".join(rebuild_hints)
+                    ";\n".join(rebuild_hints),
                 )
         return self, RebuildHint(RebuildHintCode.BUILD_IS_UP_TO_DATE, 'No change detected')
 

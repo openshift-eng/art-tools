@@ -81,7 +81,7 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.4.9.el700.hi', '4.9'),
             ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
             ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
-            ('1.2.3-y.el9.p1.assembly.test', 'test')
+            ('1.2.3-y.el9.p1.assembly.test', 'test'),
         ]
 
         for t in test_cases:
@@ -97,7 +97,7 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.4.9.el7', 7),
             ('1.2.3-y.p.p1.assembly.art12398.el199', 199),
             ('1.2.3-y.p.p1.assembly.art12398', None),
-            ('1.2.3-y.p.p1.assembly.4.7.e.8', None)
+            ('1.2.3-y.p.p1.assembly.4.7.e.8', None),
         ]
 
         for t in test_cases:

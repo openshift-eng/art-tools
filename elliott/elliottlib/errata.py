@@ -69,7 +69,7 @@ class Advisory(Erratum):
             self.addBuilds(
                 buildlist=[build.nvr for build in builds if build.product_version == pv],
                 release=pv,
-                file_types={build.nvr: [file_type] for build in builds if build.product_version == pv}
+                file_types={build.nvr: [file_type] for build in builds if build.product_version == pv},
             )
 
         build_nvrs = sorted(build.nvr for build in builds)
@@ -267,7 +267,7 @@ def new_erratum(et_data, errata_type, boilerplate_name, release_date=None, creat
         qe_group=et_data['quality_responsibility_name'],
         owner_email=package_owner,
         manager_email=manager,
-        date=release_date
+        date=release_date,
     )
 
     if create:
@@ -791,7 +791,7 @@ def create_batch(release_version, release_date):
         "release_name": "RHOSE ASYNC - AUTO",
         "release_date": release_date,
         "description": f"OCP {release_version}",
-        "is_active": True
+        "is_active": True,
     }
     response = ErrataConnector()._post("/api/v1/batches", json=data)
     if response.status_code != requests.codes.created:

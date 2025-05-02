@@ -88,7 +88,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 assembly="prod",
                 assembly_type=AssemblyTypes.STREAM,
                 releases_config=Mock(releases=dict(prod="assembly definition")),
-            )
+            ),
         )
         with self.assertRaises(ValueError):
             gpcli.validate_parameters()
@@ -168,7 +168,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         )
         gpcli = flexmock(
             rgp_cli.GenPayloadCli(runtime=rt, skip_gc_tagging=False),
-            generate_id_tags_list=lambda *_: []
+            generate_id_tags_list=lambda *_: [],
         )
 
         # mock out AI to return a list of build dicts with incrementing IDs
@@ -441,7 +441,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
         self.assertEqual(lines, [
             "eggs_manifest_src=eggs_manifest_pullspec",
             "eggs_src=eggs_pullspec",
-            "spam_src=spam_pullspec"
+            "spam_src=spam_pullspec",
         ])  # rhcos notably absent from mirroring
 
     @patch("doozerlib.cli.release_gen_payload.PayloadGenerator.build_payload_istag")
@@ -482,7 +482,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 rhcos=dict(s390x=payload_entries["rhcos"]),
                 spam=dict(),  # embargoed
                 eggs=dict(s390x=payload_entries["eggs"]),
-            )
+            ),
         })
         gpcli.write_imagestream_artifact_file.assert_awaited_once_with(
             "ocp-s390x", "release-s390x", ["rhcos", "eggs"], True)
@@ -502,7 +502,7 @@ class TestGenPayloadCli(IsolatedAsyncioTestCase):
                 rhcos=dict(s390x=payload_entries["rhcos"]),
                 spam=dict(),  # embargoed
                 eggs=dict(s390x=payload_entries["eggs"]),
-            )
+            ),
         })
         gpcli.write_imagestream_artifact_file.assert_awaited_once_with(
             "ocp-s390x-priv", "release-s390x-priv", ["rhcos", "spam", "eggs"], True)
@@ -565,14 +565,14 @@ spec:
         mar_mock.side_effect = lambda apiobj, func, *_: func(apiobj)
         # return a stub inconsistency annotation
         binc_mock.side_effect = lambda issues: {
-            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues)
+            "release.openshift.io/inconsistency": ",".join(str(it) for it in issues),
         }
 
         istream_apiobj = Mock(oc.APIObject, model=oc.Model(dict(
             metadata=dict(),
             spec=dict(tags=[
                 dict(name="spam"),
-            ])
+            ]),
         )))
         new_istags = [dict(name="eggs")]
 
@@ -631,7 +631,7 @@ spec:
                 "from": dict(kind="DockerImage", name="quay.io/org/repo@sha256:abcdef"),
                 "name": "spam",
                 "importPolicy": {"importMode": "PreserveOriginal"},
-            }
+            },
         )
         gpcli.create_multi_manifest_list.assert_not_awaited()
 
@@ -646,7 +646,7 @@ spec:
                 "from": dict(kind="DockerImage", name="new-manifest-list-pullspec"),
                 "name": "spam",
                 "importPolicy": {"importMode": "PreserveOriginal"},
-            }
+            },
         )
         gpcli.create_multi_manifest_list.assert_awaited_once_with("spam", arch_to_payload_entry, "ocp")
 
@@ -699,7 +699,7 @@ spec:
                 multi_release_name="relname",
                 multi_specs={False: {"cluster-version-operator": dict(arch=Mock(dest_pullspec="dest"))}},
                 private_mode=False),
-            "some_pullspec"
+            "some_pullspec",
         )
         gpcli.create_multi_release_manifest_list.assert_awaited_once_with(
             {"arch": "quay.io/org/repo:spam-arch"}, 'isname', 'quay.io/org/repo:spam')
@@ -753,7 +753,7 @@ manifests:
                 dict(name=as_multi_release_name("spam4"), annotations={'release.openshift.io/phase': 'Rejected'}),
                 dict(name=as_multi_release_name("spam5"), annotations={'release.openshift.io/phase': 'Rejected'}),
                 dict(name=as_multi_release_name("spam6"), annotations={'release.openshift.io/phase': 'Accepted'}),
-            ])
+            ]),
         )))
         gpcli.should_receive("ensure_imagestream_apiobj").once().and_return(istream_apiobj)
 
@@ -797,7 +797,7 @@ manifests:
                 dict(name=as_multi_release_name("spam7"), annotations={'release.openshift.io/phase': 'Rejected'}),
                 dict(name=as_multi_release_name("spam8"), annotations={'release.openshift.io/phase': 'Rejected'}),
                 dict(name=as_multi_release_name("spam9"), annotations={'release.openshift.io/phase': 'Rejected'}),
-            ])
+            ]),
         )))
         gpcli.should_receive("ensure_imagestream_apiobj").once().and_return(istream_apiobj)
 

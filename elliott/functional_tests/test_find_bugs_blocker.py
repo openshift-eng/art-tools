@@ -8,8 +8,8 @@ class FindBugsBlockerTestCase(unittest.TestCase):
         out = subprocess.check_output(
             constants.ELLIOTT_CMD
             + [
-                "--assembly=stream", "--group=openshift-4.6", "find-bugs:blocker", '--exclude-status=ON_QA'
-            ]
+                "--assembly=stream", "--group=openshift-4.6", "find-bugs:blocker", '--exclude-status=ON_QA',
+            ],
         )
         result = out.decode("utf-8")
         self.assertRegex(result, "Found \\d+ bugs")

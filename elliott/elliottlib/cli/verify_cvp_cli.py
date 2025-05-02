@@ -107,7 +107,7 @@ async def verify_cvp_cli(runtime: Runtime, all_images, nvrs, include_content_set
                 "passed": _reconstruct_test_results(passed),
                 "failed": _reconstruct_test_results(failed),
                 "missing": _reconstruct_test_results(missing),
-            }
+            },
         }
 
         if include_content_set_check:

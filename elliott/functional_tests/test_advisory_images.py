@@ -13,7 +13,7 @@ class AdvisoryImagesTestCase(unittest.TestCase):
             + [
                 "--assembly=test",
                 "--group=openshift-4.2", "advisory-images",
-            ]
+            ],
         )
         self.assertIn("\n#########\n", out.decode("utf-8"))
 
@@ -22,8 +22,8 @@ class AdvisoryImagesTestCase(unittest.TestCase):
             constants.ELLIOTT_CMD
             + [
                 "--assembly=test",
-                "advisory-images", "--advisory", "65127"
-            ]
+                "advisory-images", "--advisory", "65127",
+            ],
         )
         self.assertIn("\n#########\n", out.decode("utf-8"))
 

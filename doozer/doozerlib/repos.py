@@ -399,34 +399,34 @@ class Repos(object):
             "criteria": {
                 "fields": [
                     "id",
-                    "notes"
+                    "notes",
                 ],
                 "filters": {
                     "notes.arch": {
                         "$in": [
-                            arch
-                        ]
+                            arch,
+                        ],
                     },
                     # per CLOUDWF-4852 content sets may now be specified as pulp repo names.
                     "$or": [
                         {
                             "notes.content_set": {
-                                "$in": names
-                            }
+                                "$in": names,
+                            },
                         }, {
                             "id": {
-                                "$in": names
-                            }
-                        }
-                    ]
-                }
-            }
+                                "$in": names,
+                            },
+                        },
+                    ],
+                },
+            },
         }
 
         headers = {
             'Content-Type': "application/json",
             'Authorization': "Basic cWE6cWE=",  # qa:qa
-            'Cache-Control': "no-cache"
+            'Cache-Control': "no-cache",
         }
 
         # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp

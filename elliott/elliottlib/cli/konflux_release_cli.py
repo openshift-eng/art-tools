@@ -160,7 +160,7 @@ class CreateReleaseCli:
             "spec": {
                 "releasePlan": release_plan,
                 "snapshot": snapshot,
-            }
+            },
         }
         if release_config.data:
             release_obj["spec"]["data"] = release_config.data

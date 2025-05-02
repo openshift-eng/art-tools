@@ -22,9 +22,9 @@ def unauthorized():
         'headers': {
             'www-authenticate': [{
                 'key': 'WWW-Authenticate',
-                'value': 'Basic'
+                'value': 'Basic',
             }],
-        }
+        },
     }
 
 
@@ -35,9 +35,9 @@ def redirect(uri: str, code: int = 302, description="Found"):
         'headers': {
             "location": [{
                 'key': 'Location',
-                "value": str(uri)
+                "value": str(uri),
             }],
-        }
+        },
     }
 
 
@@ -49,15 +49,15 @@ def not_found(description="File Not Found"):
             'cache-control': [
                 {
                     'key': 'Cache-Control',
-                    'value': 'max-age=0'
-                }
+                    'value': 'max-age=0',
+                },
             ],
             "content-type": [
                 {
                     'key': 'Content-Type',
-                    'value': 'text/html'
-                }
-            ]
+                    'value': 'text/html',
+                },
+            ],
         },
         'body': 'File not found',
     }
@@ -238,7 +238,7 @@ def lambda_handler(event: Dict, context: Dict):
                 # When the browser hits that presigned URL, the S3 API will find the
                 # content-disposition preference in the encoding, and return that back to
                 # the browser along with the file content.
-                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"'
+                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"',
             },
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )

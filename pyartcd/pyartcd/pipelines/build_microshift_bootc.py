@@ -76,7 +76,7 @@ class BuildMicroShiftBootcPipeline:
         await oc.registry_login(self.runtime)
         self.releases_config = await load_releases_config(
             group=self.group,
-            data_path=self._doozer_env_vars["DOOZER_DATA_PATH"]
+            data_path=self._doozer_env_vars["DOOZER_DATA_PATH"],
         )
         self.assembly_type = get_assembly_type(self.releases_config, self.assembly)
         bootc_build = await self._rebase_and_build_bootc()
@@ -95,7 +95,7 @@ class BuildMicroShiftBootcPipeline:
             "skopeo",
             "inspect",
             f"docker://{bootc_build.image_pullspec}",
-            "--raw"
+            "--raw",
         ]
         _, out, _ = await exectools.cmd_gather_async(cmd)
         manifest_list = json.loads(out)
@@ -109,7 +109,7 @@ class BuildMicroShiftBootcPipeline:
                 await self.sync_to_quay(bootc_build.image_pullspec, ART_PROD_IMAGE_REPO)
                 # sync per-arch bootc-pullspec.txt to mirror
                 await asyncio.gather(
-                    *(self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}") for arch, digest in digest_by_arch.items())
+                    *(self.sync_to_mirror(arch, bootc_build.el_target, f"{ART_PROD_IMAGE_REPO}@{digest}") for arch, digest in digest_by_arch.items()),
                 )
         else:
             self._logger.warning("Skipping sync to quay.io/openshift-release-dev/ocp-v4.0-art-dev since in dry-run mode")
@@ -184,7 +184,7 @@ class BuildMicroShiftBootcPipeline:
             outcome=KonfluxBuildOutcome.SUCCESS,
             engine=Engine.KONFLUX,
             artifact_type=ArtifactType.IMAGE,
-            el_target='el9'
+            el_target='el9',
         )
         return cast(Optional[KonfluxBuildRecord], build)
 
@@ -305,7 +305,7 @@ class BuildMicroShiftBootcPipeline:
             "beta:images:konflux:build",
             "--image-repo", KONFLUX_DEFAULT_IMAGE_REPO,
             "--konflux-kubeconfig", kubeconfig,
-            "--konflux-namespace", "ocp-art-tenant"
+            "--konflux-namespace", "ocp-art-tenant",
         ]
         if self.runtime.dry_run:
             build_cmd.append("--dry-run")

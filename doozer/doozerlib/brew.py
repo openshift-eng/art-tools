@@ -170,7 +170,7 @@ async def watch_task_async(session: koji.ClientSession, log_f: Callable, task_id
     terminate_event = threading.Event()
     try:
         error = await exectools.to_thread(
-            watch_task, session, log_f, task_id, terminate_event
+            watch_task, session, log_f, task_id, terminate_event,
         )
     except (asyncio.CancelledError, KeyboardInterrupt):
         terminate_event.set()
@@ -188,7 +188,7 @@ async def watch_tasks_async(session: koji.ClientSession, log_f: Callable, task_i
     terminate_event = threading.Event()
     try:
         errors = await exectools.to_thread(
-            watch_tasks, session, log_f, task_ids, terminate_event
+            watch_tasks, session, log_f, task_ids, terminate_event,
         )
     except (asyncio.CancelledError, KeyboardInterrupt):
         terminate_event.set()
@@ -764,7 +764,7 @@ class KojiWrapper(koji.ClientSession):
                     caching_key = json.dumps({
                         'method_name': name,
                         'args': args,
-                        'kwargs': kwargs
+                        'kwargs': kwargs,
                     }, sort_keys=True)
                     result = self._get_cache_result(caching_key, Missing)
                     if result is not Missing:
@@ -807,5 +807,5 @@ def brew_event_from_datetime(datetime_obj: datetime, koji_api) -> int:
     """
     return koji_api.getLastEvent(
         KojiWrapperOpts(brew_event_aware=False),
-        before=datetime_obj.timestamp()
+        before=datetime_obj.timestamp(),
     )['id']

@@ -581,7 +581,7 @@ class BugTracker:
         bug_tracker = flaw_bug_tracker
         flaw_bugs = bug_tracker.get_flaw_bugs(
             list(set(sum([t.corresponding_flaw_bug_ids for t in tracker_bugs], []))),
-            verbose=verbose
+            verbose=verbose,
         )
         flaw_tracker_map = {bug.id: {'bug': bug, 'trackers': []}
                             for bug in flaw_bugs}
@@ -748,7 +748,7 @@ class JIRABugTracker(BugTracker):
             self.field_target_version: [{'name': self.config.get('target_release')[0]}],  # Target Version
             'summary': bug_title,
             'labels': keywords,
-            'description': bug_description
+            'description': bug_description,
         }
         if noop:
             logger.info(f"Would have created JIRA Issue with status={target_status} and fields={fields}")
@@ -819,14 +819,14 @@ class JIRABugTracker(BugTracker):
             status=status,
             with_target_release=True,
             search_filter=search_filter,
-            custom_query='and "Release Blocker" = "Approved"'
+            custom_query='and "Release Blocker" = "Approved"',
         )
         return self._search(query, verbose=verbose, **kwargs)
 
     def search(self, status, search_filter='default', verbose=False):
         query = self._query(
             status=status,
-            search_filter=search_filter
+            search_filter=search_filter,
         )
         return self._search(query, verbose=verbose)
 
@@ -1224,7 +1224,7 @@ class SearchFilter(object):
 
     def tostring(self, number):
         return SearchFilter.pattern.format(
-            number, self.field, self.operator, urllib.parse.quote(self.value)
+            number, self.field, self.operator, urllib.parse.quote(self.value),
         )
 
 

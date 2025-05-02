@@ -138,5 +138,5 @@ def extract_baremetal_installer(release_pullspec: str, path: str, arch: str, cmd
         cli_verb='adm',
         oc_args=args,
         check_status=True,
-        return_value=True
+        return_value=True,
     )

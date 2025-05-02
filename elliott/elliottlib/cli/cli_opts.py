@@ -1,15 +1,15 @@
 CLI_OPTS = {
     'data_path': {
         'env': 'ELLIOTT_DATA_PATH',
-        'help': 'Git URL or File Path to build data'
+        'help': 'Git URL or File Path to build data',
     },
     'group': {
         'env': 'ELLIOTT_GROUP',
-        'help': 'Sub-group directory or branch to pull build data'
+        'help': 'Sub-group directory or branch to pull build data',
     },
     'working_dir': {
         'env': 'ELLIOTT_WORKING_DIR',
-        'help': 'Persistent working directory to use'
+        'help': 'Persistent working directory to use',
     },
 }
 

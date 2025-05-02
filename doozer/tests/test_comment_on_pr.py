@@ -87,7 +87,7 @@ class TestCommentOnPr(unittest.TestCase):
         comment_on_pr = CommentOnPr(self.distgit_dir, self.nvr, self.build_id, self.distgit_name)
         # Mocking the labels dictionary of the DockerfileParser object
         mock_parser.return_value.labels = {
-            "io.openshift.build.commit.url": "https://github.com/openshift/origin/commit/660e0c785a2c9b1fd5fad33cbcffd77a6d84ccb5"
+            "io.openshift.build.commit.url": "https://github.com/openshift/origin/commit/660e0c785a2c9b1fd5fad33cbcffd77a6d84ccb5",
         }
 
         # Calling the get_source_details method

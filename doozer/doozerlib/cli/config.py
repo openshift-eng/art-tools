@@ -28,7 +28,7 @@ CONFIG_RUNTIME_OPTS = {
     'disabled': True,         # show all, including disabled/wip
     'prevent_cloning': True,  # raise exception is somehow we try to clone
     'config_only': True,      # only initialize config and nothing else
-    'group_only': False       # only initialize group, logging and nothing else
+    'group_only': False,       # only initialize group, logging and nothing else
 }
 
 option_config_commit_msg = click.option("--message", "-m", metavar='MSG', help="Commit message for config change.", default=None)

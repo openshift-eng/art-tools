@@ -42,7 +42,7 @@ class CheckBugsPipeline:
 
         return {
             'version': self.version,
-            'issues': self.issues
+            'issues': self.issues,
         }
 
     async def _find_blockers(self):
@@ -53,7 +53,7 @@ class CheckBugsPipeline:
             f'--group=openshift-{self.version}',
             f'--working-dir={self.artcd_working}',
             'find-bugs:blocker',
-            '--output=slack'
+            '--output=slack',
         ]
         rc, out, err = await exectools.cmd_gather_async(cmd)
 
@@ -80,7 +80,7 @@ class CheckBugsPipeline:
             '--assembly=stream',
             f'--working-dir={self.artcd_working}',
             'verify-bugs',
-            '--output=slack'
+            '--output=slack',
         ]
         rc, out, err = await exectools.cmd_gather_async(cmd, check=False)
 

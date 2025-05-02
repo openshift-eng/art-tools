@@ -65,9 +65,9 @@ def lambda_handler(event: Dict, context: Dict):
             'headers': {
                 'location': [{
                     'key': 'Location',
-                    'value': f'https://{S3_BUCKET_NAME}.s3.amazonaws.com{uri}'
-                }]
-            }
+                    'value': f'https://{S3_BUCKET_NAME}.s3.amazonaws.com{uri}',
+                }],
+            },
         }
         return response
 

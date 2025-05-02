@@ -198,7 +198,7 @@ class RHCOSBuildFinder:
                 return None, None
             return build_id, rhcos.get_container_pullspec(
                 self.rhcos_build_meta(build_id),
-                container_conf or self.get_primary_container_conf()
+                container_conf or self.get_primary_container_conf(),
             )
 
 
@@ -441,7 +441,7 @@ class RHCOSBuildInspector:
                 "version": version,
                 "release": release,
                 "arch": arch,
-                "nvr": f"{name}-{version}-{release}"
+                "nvr": f"{name}-{version}-{release}",
             } for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
         ]
 
