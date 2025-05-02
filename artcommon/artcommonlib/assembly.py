@@ -15,7 +15,6 @@ class AssemblyTypes(Enum):
 
 
 class AssemblyIssueCode(Enum):
-
     # A class of issue so severe that we should not allow permits around it.
     IMPERMISSIBLE = 0
 
@@ -81,6 +80,7 @@ class AssemblyIssue:
     An encapsulation of an issue with an assembly. Some issues are critical for any
     assembly and some are on relevant for assemblies we intend for GA.
     """
+
     def __init__(self, msg: str, component: str, code: AssemblyIssueCode = AssemblyIssueCode.IMPERMISSIBLE):
         """
         :param msg: A human readable message describing the issue.
@@ -101,7 +101,7 @@ class AssemblyIssue:
         return {
             "code": self.code.value,
             "component": self.component,
-            "msg": self.msg
+            "msg": self.msg,
         }
 
 
@@ -140,8 +140,12 @@ def assembly_config_struct(releases_config: Model, assembly: typing.Optional[str
             key_struct = target_assembly[key]
             if hasattr(key_struct, "primitive"):
                 key_struct = key_struct.primitive()
-            key_struct = _merger(key_struct, parent_config_struct.primitive() if hasattr(
-                parent_config_struct, "primitive") else parent_config_struct)
+            key_struct = _merger(
+                key_struct,
+                parent_config_struct.primitive()
+                if hasattr(parent_config_struct, "primitive")
+                else parent_config_struct,
+            )
         else:
             key_struct = parent_config_struct
     else:
@@ -349,7 +353,9 @@ def assembly_streams_config(releases_config: Model, assembly: typing.Optional[st
     return Model(dict_to_model=_merger(target_assembly_streams.primitive(), streams_config.primitive()))
 
 
-def assembly_metadata_config(releases_config: Model, assembly: typing.Optional[str], meta_type: str, distgit_key: str, meta_config: Model) -> Model:
+def assembly_metadata_config(
+    releases_config: Model, assembly: typing.Optional[str], meta_type: str, distgit_key: str, meta_config: Model
+) -> Model:
     """
     Returns a group member's metadata configuration based on the assembly information
     and the initial file-based config.
@@ -368,13 +374,19 @@ def assembly_metadata_config(releases_config: Model, assembly: typing.Optional[s
 
     if target_assembly.basis.assembly:  # Does this assembly inherit from another?
         # Recursive apply ancestor assemblies
-        meta_config = assembly_metadata_config(releases_config, target_assembly.basis.assembly, meta_type, distgit_key, meta_config)
+        meta_config = assembly_metadata_config(
+            releases_config, target_assembly.basis.assembly, meta_type, distgit_key, meta_config
+        )
 
     config_dict = meta_config.primitive()
 
     component_list = target_assembly.members[f'{meta_type}s']
     for component_entry in component_list:
-        if component_entry.distgit_key == '*' or component_entry.distgit_key == distgit_key and component_entry.metadata:
+        if (
+            component_entry.distgit_key == '*'
+            or component_entry.distgit_key == distgit_key
+            and component_entry.metadata
+        ):
             config_dict = _merger(component_entry.metadata.primitive(), config_dict)
 
     return Model(dict_to_model=config_dict)

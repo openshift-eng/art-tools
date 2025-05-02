@@ -25,6 +25,7 @@ LOGGER = logutil.get_logger(__name__)
 class Repo(object):
     """Represents a single yum repository and provides sane ways to
     access each property based on the arch or repo type."""
+
     def __init__(self, name, data, valid_arches, gpgcheck=True):
         self.name = name
         self._valid_arches = valid_arches
@@ -59,16 +60,23 @@ class Repo(object):
         includepkgs_str = conf.get('extra_options', {}).get('includepkgs', "")
         self.includepkgs = pkgs_to_list(includepkgs_str)
 
-        excludepkgs_str = (conf.get('extra_options', {}).get('exclude', "")
-                           or conf.get('extra_options', {}).get('excludepkgs', ""))
+        excludepkgs_str = conf.get('extra_options', {}).get('exclude', "") or conf.get('extra_options', {}).get(
+            'excludepkgs', ""
+        )
         self.excludepkgs = pkgs_to_list(excludepkgs_str)
 
         self.cs_optional = self._data.content_set.get('optional', False)
 
         self.repotypes = DEFAULT_REPOTYPES
         self.baseurl(DEFAULT_REPOTYPES[0], self._valid_arches[0])  # run once just to populate self.repotypes
-        self.reposync_enabled = True if self._data.reposync.enabled is Missing or self._data.reposync.enabled else self._data.reposync.enabled
-        self.reposync_latest_only = True if self._data.reposync.latest_only is Missing or self._data.reposync.latest_only else False
+        self.reposync_enabled = (
+            True
+            if self._data.reposync.enabled is Missing or self._data.reposync.enabled
+            else self._data.reposync.enabled
+        )
+        self.reposync_latest_only = (
+            True if self._data.reposync.latest_only is Missing or self._data.reposync.latest_only else False
+        )
 
         # A yum repo's repodata directory (e.g. https://rhsm-pulp.corp.redhat.com/content/eus/rhel8/8.6/x86_64/appstream/os/repodata/)
         # contains repository metadata.
@@ -142,7 +150,9 @@ class Repo(object):
                 if self._data.content_set['optional'] is not Missing and self._data.content_set['optional']:
                     return ''
                 else:
-                    raise ValueError('{} does not contain a content_set for {} and no default was provided.'.format(self.name, arch))
+                    raise ValueError(
+                        '{} does not contain a content_set for {} and no default was provided.'.format(self.name, arch)
+                    )
             return self._data.content_set['default']
         else:
             return self._data.content_set[arch]
@@ -202,14 +212,20 @@ class Repo(object):
             result += line
 
         # Usually, gpgcheck will not be specified, in build metadata, but don't override if it is there
-        if self._data.conf.get('gpgcheck', None) is None and self._data.conf.get('extra_options', {}).get('gpgcheck', None) is None:
+        if (
+            self._data.conf.get('gpgcheck', None) is None
+            and self._data.conf.get('extra_options', {}).get('gpgcheck', None) is None
+        ):
             # If we are building a signed repo file, and overall gpgcheck is desired
             if repotype == 'signed' and self.gpgcheck:
                 result += 'gpgcheck = 1\n'
             else:
                 result += 'gpgcheck = 0\n'
 
-        if self._data.conf.get('gpgkey', None) is None and self._data.conf.get('extra_options', {}).get('gpgkey', None) is None:
+        if (
+            self._data.conf.get('gpgkey', None) is None
+            and self._data.conf.get('extra_options', {}).get('gpgkey', None) is None
+        ):
             # This key will bed used only if gpgcheck=1
             result += 'gpgkey = file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release\n'
 
@@ -245,8 +261,10 @@ class Repo(object):
         # includepkgs does not override excludepkgs
         # so apply it after excludepkgs
         if self.includepkgs:
-            LOGGER.info(f"Only including packages from {name} based on following patterns: {self.includepkgs}. "
-                        "All other packages will be excluded.")
+            LOGGER.info(
+                f"Only including packages from {name} based on following patterns: {self.includepkgs}. "
+                "All other packages will be excluded."
+            )
             filtered_rpms = []
             for rpm in repodata.primary_rpms:
                 # rpm should match at least one include pattern to be included
@@ -307,6 +325,7 @@ class Repos(object):
     Represents the entire collection of repos and provides
     automatic content_set and repo conf file generation.
     """
+
     def __init__(self, repos: Dict[str, Dict], arches: List[str], gpgcheck=True):
         self._arches = arches
         self._repos: Dict[str, Repo] = {}
@@ -350,7 +369,6 @@ class Repos(object):
 
         result = ''
         for r in self._repos.values():
-
             enabled = r.enabled  # If enabled in group.yml, it will always be enabled.
             if enabled_repos and (r.name in enabled_repos or '*' in enabled_repos):
                 enabled = True
@@ -365,7 +383,9 @@ class Repos(object):
                 # When generating a repo file for multi-arch builds, we need all arches in the same repo file.
                 for iarch in r.arches:
                     section_name = '{}-{}'.format(r.name, iarch)
-                    result += r.conf_section(repo_type, enabled=enabled, arch=iarch, section_name=section_name, konflux=konflux)
+                    result += r.conf_section(
+                        repo_type, enabled=enabled, arch=iarch, section_name=section_name, konflux=konflux
+                    )
 
         for er in empty_repos:
             result += EMPTY_REPO.format(er)
@@ -399,34 +419,35 @@ class Repos(object):
             "criteria": {
                 "fields": [
                     "id",
-                    "notes"
+                    "notes",
                 ],
                 "filters": {
                     "notes.arch": {
                         "$in": [
-                            arch
-                        ]
+                            arch,
+                        ],
                     },
                     # per CLOUDWF-4852 content sets may now be specified as pulp repo names.
                     "$or": [
                         {
                             "notes.content_set": {
-                                "$in": names
-                            }
-                        }, {
+                                "$in": names,
+                            },
+                        },
+                        {
                             "id": {
-                                "$in": names
-                            }
-                        }
-                    ]
-                }
-            }
+                                "$in": names,
+                            },
+                        },
+                    ],
+                },
+            },
         }
 
         headers = {
             'Content-Type': "application/json",
             'Authorization': "Basic cWE6cWE=",  # qa:qa
-            'Cache-Control': "no-cache"
+            'Cache-Control': "no-cache",
         }
 
         # as of 2023-06-09 authentication is required to validate content sets with rhsm-pulp
@@ -437,7 +458,10 @@ class Repos(object):
         for i in range(retry_count):
             try:
                 response = requests.request(
-                    "POST", url, data=json.dumps(payload), headers=headers,
+                    "POST",
+                    url,
+                    data=json.dumps(payload),
+                    headers=headers,
                     cert=(cs_auth_cert, cs_auth_key),
                 )
                 break

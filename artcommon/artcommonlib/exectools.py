@@ -24,8 +24,7 @@ from urllib.request import urlopen
 
 from future.utils import as_native_str
 from opentelemetry import trace
-from opentelemetry.trace.propagation.tracecontext import \
-    TraceContextTextMapPropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from tenacity import stop_after_attempt, wait_fixed
 
 from artcommonlib import logutil
@@ -46,17 +45,18 @@ class RetryException(Exception):
     """
     Provide a custom exception for retry failures
     """
+
     pass
 
 
 class WrapException(Exception):
-    """ https://bugs.python.org/issue13831 """
+    """https://bugs.python.org/issue13831"""
+
     def __init__(self):
         super(WrapException, self).__init__()
         exc_type, exc_value, exc_tb = sys.exc_info()
         self.exception = exc_value
-        self.formatted = "".join(
-            traceback.format_exception(exc_type, exc_value, exc_tb))
+        self.formatted = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
 
     @as_native_str()
     def __str__(self):
@@ -91,14 +91,24 @@ def urlopen_assert(url_or_req, httpcode=200, retries=3):
     :param retries: The number of retries to permit
     :return: The success result of urlopen (or a RetryException will be thrown)
     """
-    return retry(retries, lambda: urlopen(url_or_req),
-                 check_f=lambda req: req.code == httpcode,
-                 wait_f=lambda x: time.sleep(30))
+    return retry(
+        retries, lambda: urlopen(url_or_req), check_f=lambda req: req.code == httpcode, wait_f=lambda x: time.sleep(30)
+    )
 
 
-def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_env=None, strip=False,
-               log_stdout: bool = False, log_stderr: bool = True, timeout: Optional[int] = None,
-               cwd: Optional[str] = None) -> Tuple[str, str]:
+def cmd_assert(
+    cmd,
+    realtime=False,
+    retries=1,
+    pollrate=60,
+    on_retry=None,
+    set_env=None,
+    strip=False,
+    log_stdout: bool = False,
+    log_stderr: bool = True,
+    timeout: Optional[int] = None,
+    cwd: Optional[str] = None,
+) -> Tuple[str, str]:
     """
     Run a command, logging (using exec_cmd) and raise an exception if the
     return code of the command indicates failure.
@@ -123,16 +133,22 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_e
 
     for try_num in range(0, retries):
         if try_num > 0:
-            logger.debug(
-                "cmd_assert: Failed {} times. Retrying in {} seconds: {}".
-                format(try_num, pollrate, cmd))
+            logger.debug("cmd_assert: Failed {} times. Retrying in {} seconds: {}".format(try_num, pollrate, cmd))
             time.sleep(pollrate)
             if on_retry is not None:
                 # Run the recovery command between retries. Nothing to collect or assert -- just try it.
                 cmd_gather(on_retry, set_env)
 
-        result, stdout, stderr = cmd_gather(cmd, set_env=set_env, realtime=realtime, strip=strip,
-                                            log_stdout=log_stdout, log_stderr=log_stderr, timeout=timeout, cwd=cwd)
+        result, stdout, stderr = cmd_gather(
+            cmd,
+            set_env=set_env,
+            realtime=realtime,
+            strip=strip,
+            log_stdout=log_stdout,
+            log_stderr=log_stderr,
+            timeout=timeout,
+            cwd=cwd,
+        )
         if result == SUCCESS:
             break
 
@@ -145,9 +161,16 @@ def cmd_assert(cmd, realtime=False, retries=1, pollrate=60, on_retry=None, set_e
     return stdout, stderr
 
 
-def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, realtime=False, strip=False,
-               log_stdout=False, log_stderr=True, timeout: Optional[int] = None,
-               cwd: Optional[str] = None) -> Tuple[int, str, str]:
+def cmd_gather(
+    cmd: Union[str, List],
+    set_env: Optional[Dict[str, str]] = None,
+    realtime=False,
+    strip=False,
+    log_stdout=False,
+    log_stderr=True,
+    timeout: Optional[int] = None,
+    cwd: Optional[str] = None,
+) -> Tuple[int, str, str]:
     """
     Runs a command and returns rc,stdout,stderr as a tuple.
 
@@ -195,8 +218,8 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
         logger.info(f'{cmd_info}: Executing:cmd_gather: {" ".join(cmd_list)}')
         try:
             proc = subprocess.Popen(
-                cmd_list, cwd=cwd, env=env,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+                cmd_list, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
+            )
         except OSError as exc:
             description = "{}: Errored:\nException:\n{}\nIs {} installed?".format(cmd_info, exc, cmd_list[0])
             logger.error(description)
@@ -269,12 +292,16 @@ def cmd_gather(cmd: Union[str, List], set_env: Optional[Dict[str, str]] = None, 
 
         if rc:
             logger.debug(
-                "{}: Exited with error: {}\nstdout>>{}<<\nstderr>>{}<<\n".
-                format(cmd_info, rc, log_output_stdout, log_output_stderr))
+                "{}: Exited with error: {}\nstdout>>{}<<\nstderr>>{}<<\n".format(
+                    cmd_info, rc, log_output_stdout, log_output_stderr
+                )
+            )
         else:
             logger.debug(
-                "{}: Exited with: {}\nstdout>>{}<<\nstderr>>{}<<\n".
-                format(cmd_info, rc, log_output_stdout, log_output_stderr))
+                "{}: Exited with: {}\nstdout>>{}<<\nstderr>>{}<<\n".format(
+                    cmd_info, rc, log_output_stdout, log_output_stderr
+                )
+            )
 
     if strip:
         out = out.strip()
@@ -292,9 +319,11 @@ def timer(out_method, msg):
         yield
     finally:
         time_elapsed = datetime.now() - start_time
-        entry = (f'Time elapsed (hh:mm:ss.ms) {time_elapsed} in {os.path.basename(caller.filename)}:{caller.lineno} '
-                 f'from {os.path.basename(caller_caller.filename)}:{caller_caller.lineno}:'
-                 f'{caller_caller.code_context[0].strip() if caller_caller.code_context else ""} : {msg}')
+        entry = (
+            f'Time elapsed (hh:mm:ss.ms) {time_elapsed} in {os.path.basename(caller.filename)}:{caller.lineno} '
+            f'from {os.path.basename(caller_caller.filename)}:{caller_caller.lineno}:'
+            f'{caller_caller.code_context[0].strip() if caller_caller.code_context else ""} : {msg}'
+        )
         out_method(entry)
 
 
@@ -380,8 +409,17 @@ def fire_and_forget(cwd, shell_cmd, quiet=True):
     else:  # Python 3.2+ and Unix
         kwargs.update(start_new_session=True)
 
-    p = subprocess.Popen(f'{shell_cmd}', env=os.environ.copy(), shell=True, stdin=None, stdout=None, stderr=None,
-                         cwd=cwd, close_fds=True, **kwargs)
+    p = subprocess.Popen(
+        f'{shell_cmd}',
+        env=os.environ.copy(),
+        shell=True,
+        stdin=None,
+        stdout=None,
+        stderr=None,
+        cwd=cwd,
+        close_fds=True,
+        **kwargs,
+    )
     assert not p.poll()
 
 
@@ -401,9 +439,7 @@ def parallel_exec(f, args, n_threads=None) -> MapResult:
     # `unpack_tuple_args` is a workaround that unpacks the tuple as arguments for the function
     # passed to `ThreadPool.map_async`.
     # `starmap_async` can be used in the future when we don't keep compatibility with Python 2.
-    ret = pool.map_async(
-        wrap_exception(unpack_tuple_args(f)),
-        [(a, terminate_event) for a in args])
+    ret = pool.map_async(wrap_exception(unpack_tuple_args(f)), [(a, terminate_event) for a in args])
     pool.close()
     try:
         # `wait` without a timeout disables signal handling
@@ -417,23 +453,27 @@ def parallel_exec(f, args, n_threads=None) -> MapResult:
 
 
 def wrap_exception(func):
-    """ Decorate a function, wrap exception if it occurs. """
+    """Decorate a function, wrap exception if it occurs."""
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
         except Exception:
             raise WrapException()
+
     return wrapper
 
 
 def unpack_tuple_args(func):
-    """ Decorate a function for unpacking the tuple argument `args`
-        This is used to workaround Python 3 lambda not unpacking tuple arguments (PEP-3113)
+    """Decorate a function for unpacking the tuple argument `args`
+    This is used to workaround Python 3 lambda not unpacking tuple arguments (PEP-3113)
     """
+
     @functools.wraps(func)
     def wrapper(args):
         return func(*args)
+
     return wrapper
 
 
@@ -464,7 +504,7 @@ async def manifest_tool(options, dry_run=False):
 
 @start_as_current_span_async(TRACER, "cmd_gather_async")
 async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> Tuple[Optional[int], str, str]:
-    """ Runs a command asynchronously and returns rc,stdout,stderr as a tuple
+    """Runs a command asynchronously and returns rc,stdout,stderr as a tuple
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec
@@ -517,7 +557,7 @@ async def cmd_gather_async(cmd: Union[List[str], str], check: bool = True, **kwa
 
 @start_as_current_span_async(TRACER, "cmd_assert_async")
 async def cmd_assert_async(cmd: Union[List[str], str], check: bool = True, **kwargs) -> int:
-    """ Runs a command and optionally raises an exception if the return code of the command indicates failure.
+    """Runs a command and optionally raises an exception if the return code of the command indicates failure.
     :param cmd <string|list>: A shell command
     :param check: If check is True and the exit code was non-zero, it raises a ChildProcessError
     :param kwargs: Other arguments passing to asyncio.subprocess.create_subprocess_exec

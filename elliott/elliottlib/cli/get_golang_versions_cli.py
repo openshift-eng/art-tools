@@ -4,61 +4,57 @@ from artcommonlib import rhcos, format_util, logutil
 from artcommonlib.format_util import green_print
 from artcommonlib.rpm_utils import parse_nvr
 from elliottlib import util, errata
-from elliottlib.cli.common import (cli, find_default_advisory,
-                                   use_default_advisory_option)
+from elliottlib.cli.common import cli, find_default_advisory, use_default_advisory_option
 from elliottlib.cli.common import click_coroutine
 
 _LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("go", short_help="Get version of Go for advisory builds")
-@click.option("--release", "-r",
-              help="Release/nightly pullspec to inspect builds for")
-@click.option('--advisory', '-a', 'advisory_id', type=int,
-              help="The advisory ID to fetch builds from")
+@click.option("--release", "-r", help="Release/nightly pullspec to inspect builds for")
+@click.option('--advisory', '-a', 'advisory_id', type=int, help="The advisory ID to fetch builds from")
 @use_default_advisory_option
-@click.option('--nvrs', '-n',
-              help="Brew nvrs to show go version for. Comma separated")
-@click.option('--components', '-c',
-              help="Only show go versions for these components (rpms/images) in advisory. Comma separated")
-@click.option('-o', '--output',
-              type=click.Choice(['json', 'text']),
-              default='text', help='Output format')
+@click.option('--nvrs', '-n', help="Brew nvrs to show go version for. Comma separated")
+@click.option(
+    '--components', '-c', help="Only show go versions for these components (rpms/images) in advisory. Comma separated"
+)
+@click.option('-o', '--output', type=click.Choice(['json', 'text']), default='text', help='Output format')
 @click.option('--report', '-R', 'report', is_flag=True, default=False)
 @click.pass_obj
 @click_coroutine
-async def get_golang_versions_cli(runtime, release, advisory_id, default_advisory_type, nvrs, components, output,
-                                  report):
+async def get_golang_versions_cli(
+    runtime, release, advisory_id, default_advisory_type, nvrs, components, output, report
+):
     """
-    Get the Go version for brew builds specified via nvrs / advisory / release
+        Get the Go version for brew builds specified via nvrs / advisory / release
 
-    Usage:
+        Usage:
 
-\b
-    $ elliott go -a 76557
+    \b
+        $ elliott go -a 76557
 
-    List go version for all golang builds in the given advisory
+        List go version for all golang builds in the given advisory
 
-\b
-    $ elliott go -a 79683 -c ironic-container,ose-ovirt-csi-driver-container
+    \b
+        $ elliott go -a 79683 -c ironic-container,ose-ovirt-csi-driver-container
 
-    List go version for the given brew components in the advisory
+        List go version for the given brew components in the advisory
 
-\b
-    $ elliott -g openshift-4.12 --assembly 4.12.13 go --use-default-advisory image
+    \b
+        $ elliott -g openshift-4.12 --assembly 4.12.13 go --use-default-advisory image
 
-    Use default advisory for a group/assembly
+        Use default advisory for a group/assembly
 
-\b
-    $ elliott go -n podman-3.0.1-6.el8,podman-1.9.3-3.rhaos4.6.el8
+    \b
+        $ elliott go -n podman-3.0.1-6.el8,podman-1.9.3-3.rhaos4.6.el8
 
-    List go version for given brew nvrs
+        List go version for given brew nvrs
 
-\b
-    $ elliott go -r registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-04-24-145153
+    \b
+        $ elliott go -r registry.ci.openshift.org/ocp/release:4.14.0-0.nightly-2023-04-24-145153
 
-    List go version for given release pullspec
-"""
+        List go version for given release pullspec
+    """
     count_options = sum(map(bool, [advisory_id, nvrs, default_advisory_type, release]))
     if count_options > 1:
         raise click.BadParameter("Use only one of --release, --advisory, --nvrs, --use-default-advisory")

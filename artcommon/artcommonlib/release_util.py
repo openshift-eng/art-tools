@@ -37,7 +37,7 @@ def isolate_assembly_in_release(release: str) -> Optional[str]:
     if el_pos > asm_pos:
         release, _ = split_el_suffix_in_release(release)
 
-    return release[asm_pos + len(assembly_prefix):]
+    return release[asm_pos + len(assembly_prefix) :]
 
 
 def isolate_el_version_in_release(release: str) -> Optional[int]:

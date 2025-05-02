@@ -1,4 +1,3 @@
-
 import os
 import traceback
 from typing import Optional, Tuple
@@ -12,8 +11,9 @@ from pyartcd.runtime import Runtime
 
 
 class ScanForKernelBugsPipeline:
-    def __init__(self, runtime: Runtime, data_path: Optional[str], group: str,
-                 reconcile: bool, trackers: Tuple[str, ...]) -> None:
+    def __init__(
+        self, runtime: Runtime, data_path: Optional[str], group: str, reconcile: bool, trackers: Tuple[str, ...]
+    ) -> None:
         self._runtime = runtime
         self.data_path = data_path or runtime.config.get("build_config", {}).get("ocp_build_data_url")
         self.group = group
@@ -45,13 +45,15 @@ class ScanForKernelBugsPipeline:
             raise
 
     async def _clone_kernel_bugs(self):
-        """ Run `elliott find-bugs:kernel --clone`
+        """Run `elliott find-bugs:kernel --clone`
         :return: a dict containing which packages have been tagged and untagged
         """
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", "stream",
+            "--group",
+            self.group,
+            "--assembly",
+            "stream",
             "find-bugs:kernel",
             "--clone",
             "--update-tracker",
@@ -65,13 +67,15 @@ class ScanForKernelBugsPipeline:
         await exectools.cmd_assert_async(cmd, env=self._elliott_env_vars)
 
     async def _move_kernel_bugs(self):
-        """ Run `elliott find-bugs:kernel-clones --move`
+        """Run `elliott find-bugs:kernel-clones --move`
         :return: a dict containing which packages have been tagged and untagged
         """
         cmd = [
             "elliott",
-            "--group", self.group,
-            "--assembly", "stream",
+            "--group",
+            self.group,
+            "--assembly",
+            "stream",
             "find-bugs:kernel-clones",
             "--move",
             "--update-tracker",
@@ -84,22 +88,36 @@ class ScanForKernelBugsPipeline:
 
 
 @cli.command("scan-for-kernel-bugs", short_help="Scan for kernel bugs")
-@click.option("--data-path", metavar='BUILD_DATA', default=None,
-              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.12")
-@click.option("--reconcile",
-              is_flag=True,
-              help="Update summary, description, etc for already cloned Jira bugs")
-@click.option("--tracker", "trackers", metavar='JIRA_KEY', multiple=True,
-              help="Find kernel bugs by the specified KMAINT tracker JIRA_KEY")
+@click.option(
+    "--data-path",
+    metavar='BUILD_DATA',
+    default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
+    help="The group of components on which to operate. e.g. openshift-4.12",
+)
+@click.option("--reconcile", is_flag=True, help="Update summary, description, etc for already cloned Jira bugs")
+@click.option(
+    "--tracker",
+    "trackers",
+    metavar='JIRA_KEY',
+    multiple=True,
+    help="Find kernel bugs by the specified KMAINT tracker JIRA_KEY",
+)
 @pass_runtime
 @click_coroutine
-async def scan_for_kernel_bugs_cli(runtime: Runtime, data_path: Optional[str], group: str,
-                                   reconcile: bool, trackers: Tuple[str, ...]):
-    """ This job scans KMAINT Jira tracker for kernel bugs in Bugzilla, clones them into OCP Jira,
+async def scan_for_kernel_bugs_cli(
+    runtime: Runtime, data_path: Optional[str], group: str, reconcile: bool, trackers: Tuple[str, ...]
+):
+    """This job scans KMAINT Jira tracker for kernel bugs in Bugzilla, clones them into OCP Jira,
     and move their statuses.
     """
-    pipeline = ScanForKernelBugsPipeline(runtime=runtime, data_path=data_path, group=group,
-                                         reconcile=reconcile, trackers=trackers)
+    pipeline = ScanForKernelBugsPipeline(
+        runtime=runtime, data_path=data_path, group=group, reconcile=reconcile, trackers=trackers
+    )
     await pipeline.run()

@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import logging
@@ -7,10 +6,8 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple, cast
 from urllib.parse import urljoin
 
 import aiohttp
-from aiohttp.client_exceptions import (ClientResponseError,
-                                       ServerDisconnectedError)
-from tenacity import (before_sleep_log, retry, retry_if_exception_type,
-                      stop_after_attempt, wait_exponential)
+from aiohttp.client_exceptions import ClientResponseError, ServerDisconnectedError
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from artcommonlib.arch_util import brew_arch_for_go_arch
 from artcommonlib.exectools import limit_concurrency
@@ -21,11 +18,11 @@ from elliottlib.util import all_same, parse_nvr
 
 
 class CVPInspector:
-
     CVP_TEST_CASE_SANITY = "cvp.rhproduct.default.sanity"
 
-    def __init__(self, group_config: Dict, image_metas: Iterable[ImageMetadata],
-                 logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self, group_config: Dict, image_metas: Iterable[ImageMetadata], logger: Optional[logging.Logger] = None
+    ) -> None:
         self._resultsdb_api = ResultsDBAPI()
         self._group_config = group_config
         self._image_metas = list(image_metas)
@@ -42,11 +39,10 @@ class CVPInspector:
         await self._resultsdb_api.close()
 
     async def latest_sanity_test_results(self, nvrs: Iterable[str]) -> Dict[str, Optional[Dict]]:
-        """ Get latest CVP test results for specified build NVRs
-        """
+        """Get latest CVP test results for specified build NVRs"""
         nvr_results = {}
         nvrs = set(nvrs)
-        results = await self._resultsdb_api.get_latest_results((self.CVP_TEST_CASE_SANITY, ), nvrs)
+        results = await self._resultsdb_api.get_latest_results((self.CVP_TEST_CASE_SANITY,), nvrs)
         for r in results:
             nvr = r["data"]["item"][0]
             if nvr in nvr_results:
@@ -57,7 +53,7 @@ class CVPInspector:
         return nvr_results
 
     def categorize_test_results(self, nvr_results: Dict[str, Optional[Dict]]):
-        """ Categorize CVP sanity test results
+        """Categorize CVP sanity test results
         :return: (passed, failed, missing)
         """
         missing = {}
@@ -80,9 +76,13 @@ class CVPInspector:
         return passed, failed, missing
 
     async def get_sanity_test_optional_results(self, test_results: Iterable[Dict]):
-        @retry(reraise=True, stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=1, max=10),
-               retry=(retry_if_exception_type((ServerDisconnectedError, ClientResponseError))),
-               before_sleep=before_sleep_log(self._logger, logging.WARNING))
+        @retry(
+            reraise=True,
+            stop=stop_after_attempt(5),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=(retry_if_exception_type((ServerDisconnectedError, ClientResponseError))),
+            before_sleep=before_sleep_log(self._logger, logging.WARNING),
+        )
         @limit_concurrency(limit=32)
         async def _fetch(url):
             r = await session.get(url)
@@ -103,8 +103,10 @@ class CVPInspector:
             optional_results = await asyncio.gather(*futures)
         return optional_results
 
-    def categorize_sanity_test_optional_results(self, nvr_results: Dict[str, Optional[Dict]], included_checks: Set[str] = set()):
-        """ Categorize CVP sanity test optional results
+    def categorize_sanity_test_optional_results(
+        self, nvr_results: Dict[str, Optional[Dict]], included_checks: Set[str] = set()
+    ):
+        """Categorize CVP sanity test optional results
         :return: (passed, failed, missing)
         """
         missing = {}
@@ -114,14 +116,20 @@ class CVPInspector:
             if not result:
                 missing[nvr] = result
                 continue
-            failed_checks = [check["name"] for check in result["checks"] if (not included_checks or check["name"] in included_checks) and not check["ok"]]
+            failed_checks = [
+                check["name"]
+                for check in result["checks"]
+                if (not included_checks or check["name"] in included_checks) and not check["ok"]
+            ]
             if failed_checks:
                 failed[nvr] = result
             else:
                 passed[nvr] = result
         return passed, failed, missing
 
-    async def diagnostic_sanity_test_optional_checks(self, build: Dict, checks: List[Dict], included_checks: Set[str] = set()):
+    async def diagnostic_sanity_test_optional_checks(
+        self, build: Dict, checks: List[Dict], included_checks: Set[str] = set()
+    ):
         if not checks:
             return None
         bad_checks = [check for check in checks if not check["ok"]]
@@ -213,7 +221,9 @@ class CVPInspector:
         for item in check_details:
             arch = brew_arch_for_go_arch(item["arch"])
             report.setdefault("unreleased_rpms", {}).setdefault("symptom", {})[arch] = item["unreleased_rpms"]
-            report.setdefault("not_covered_parent_image_rpms", {}).setdefault("symptom", {})[arch] = item["not_covered_parent_image_rpms"]
+            report.setdefault("not_covered_parent_image_rpms", {}).setdefault("symptom", {})[arch] = item[
+                "not_covered_parent_image_rpms"
+            ]
             report.setdefault("not_covered_rpms", {}).setdefault("symptom", {})[arch] = item["not_covered_rpms"]
             report.setdefault("redundant_cs", {}).setdefault("symptom", {})[arch] = item["redundant_cs"]
 
@@ -224,8 +234,12 @@ class CVPInspector:
                 self._logger.info("Processing build log...")
                 # looking for lines in brew logs like
                 # `2020-07-18 10:52:00,888 - atomic_reactor.plugins.imagebuilder - INFO -  java-11-openjdk      i686   1:11.0.8.10-0.el7_8 rhel-server-rpms-x86_64  215 k`
-                pattern = re.compile(r"atomic_reactor\.(?:plugins\.imagebuilder|tasks\.binary_container_build) - INFO -\s+(?P<name>[\w.-]+)\s+(?P<arch>\w+)\s+(?P<VRE>[\w.:-]+)\s+(?P<repo>[\w.-]+)\s+(?P<size>[\d.]+\s+\w)")
-                self._build_log_cache[(nvr, arch)] = build_log = [line for line in orig_build_log.splitlines() if line and pattern.search(line)]
+                pattern = re.compile(
+                    r"atomic_reactor\.(?:plugins\.imagebuilder|tasks\.binary_container_build) - INFO -\s+(?P<name>[\w.-]+)\s+(?P<arch>\w+)\s+(?P<VRE>[\w.:-]+)\s+(?P<repo>[\w.-]+)\s+(?P<size>[\d.]+\s+\w)"
+                )
+                self._build_log_cache[(nvr, arch)] = build_log = [
+                    line for line in orig_build_log.splitlines() if line and pattern.search(line)
+                ]
             return build_log
 
         for test_name, value in report.items():
@@ -242,34 +256,44 @@ class CVPInspector:
                 for arch, content_sets in symptom.items():
                     build_log = await _get_build_log(nvr, arch)
                     repos = {self._content_set_to_repo_names[cs] for cs in content_sets}
-                    used_repos[arch] = {repo for repo in repos if any(map(lambda line: f"{repo}-{arch}" in line, build_log))}
+                    used_repos[arch] = {
+                        repo for repo in repos if any(map(lambda line: f"{repo}-{arch}" in line, build_log))
+                    }
                     unused_repos[arch] = repos - used_repos[arch]
                 if all_same(used_repos.values()):
                     t = next(iter(used_repos.values()))
                     if t:
-                        prescription.append({
-                            "action": "add_non_shipping_repos",
-                            "value": sorted(t),
-                        })
+                        prescription.append(
+                            {
+                                "action": "add_non_shipping_repos",
+                                "value": sorted(t),
+                            }
+                        )
                 else:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Inconsistent used repos among arches",
-                        "value": {k: sorted(used_repos[k]) for k in sorted(used_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Inconsistent used repos among arches",
+                            "value": {k: sorted(used_repos[k]) for k in sorted(used_repos)},
+                        }
+                    )
                 if all_same(unused_repos.values()):
                     t = next(iter(unused_repos.values()))
                     if t:
-                        prescription.append({
-                            "action": "remove_repos",
-                            "value": sorted(t),
-                        })
+                        prescription.append(
+                            {
+                                "action": "remove_repos",
+                                "value": sorted(t),
+                            }
+                        )
                 else:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Inconsistent unused repos among arches",
-                        "value": {k: sorted(unused_repos[k]) for k in sorted(unused_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Inconsistent unused repos among arches",
+                            "value": {k: sorted(unused_repos[k]) for k in sorted(unused_repos)},
+                        }
+                    )
 
             elif test_name == "not_covered_rpms":
                 missing_repos: Dict[str, Set[str]] = {}
@@ -286,9 +310,16 @@ class CVPInspector:
                         # `2020-07-18 10:52:00,888 - atomic_reactor.plugins.imagebuilder - INFO -  java-11-openjdk      i686   1:11.0.8.10-0.el7_8 rhel-server-rpms-x86_64  215 k`
                         found = False
                         for line in build_log:
-                            if rpm_nvr["name"] in line and rpm_nvr["version"] in line and rpm_release in line and rpm_arch in line:
+                            if (
+                                rpm_nvr["name"] in line
+                                and rpm_nvr["version"] in line
+                                and rpm_release in line
+                                and rpm_arch in line
+                            ):
                                 line_split = line.split()
-                                repo_name = line_split[-3].rsplit("-", 1)[0]  # rhel-server-rpms-x86_64 ==> rhel-server-rpms
+                                repo_name = line_split[-3].rsplit("-", 1)[
+                                    0
+                                ]  # rhel-server-rpms-x86_64 ==> rhel-server-rpms
                                 if not self._group_config.get("repos", {}).get(repo_name):
                                     unknown_repos.setdefault(arch, set()).add(repo_name)
                                 else:
@@ -296,34 +327,44 @@ class CVPInspector:
                                 found = True
                                 break
                         if not found:
-                            self._logger.warning("Couldn't determine which repo has rpm %s in image %s %s", rpm, nvr, arch)
+                            self._logger.warning(
+                                "Couldn't determine which repo has rpm %s in image %s %s", rpm, nvr, arch
+                            )
                             rpms_not_found[arch].add(rpm)
                 if all_same(missing_repos.values()):
                     t = next(iter(missing_repos.values()))
                     if t:
-                        prescription.append({
-                            "action": "add_repos",
-                            "value": sorted(t),
-                        })
+                        prescription.append(
+                            {
+                                "action": "add_repos",
+                                "value": sorted(t),
+                            }
+                        )
                 else:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Inconsistent missing repos among arches",
-                        "value": {k: sorted(missing_repos[k]) for k in sorted(missing_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Inconsistent missing repos among arches",
+                            "value": {k: sorted(missing_repos[k]) for k in sorted(missing_repos)},
+                        }
+                    )
                 if unknown_repos:
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Repos used in build are unknown to ocp-build-data",
-                        "value": {k: sorted(unknown_repos[k]) for k in sorted(unknown_repos)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Repos used in build are unknown to ocp-build-data",
+                            "value": {k: sorted(unknown_repos[k]) for k in sorted(unknown_repos)},
+                        }
+                    )
                 if any(map(lambda arch: rpms_not_found[arch], rpms_not_found)):
                     t = next(iter(rpms_not_found.values()))
-                    prescription.append({
-                        "action": "warn",
-                        "note": "Didn't find rpms in build logs. CVP bug?",
-                        "value": {k: sorted(rpms_not_found[k]) for k in sorted(rpms_not_found)},
-                    })
+                    prescription.append(
+                        {
+                            "action": "warn",
+                            "note": "Didn't find rpms in build logs. CVP bug?",
+                            "value": {k: sorted(rpms_not_found[k]) for k in sorted(rpms_not_found)},
+                        }
+                    )
 
             elif test_name == "not_covered_parent_image_rpms":
                 parent_builds = self._get_parent_builds(build)
@@ -332,10 +373,12 @@ class CVPInspector:
                     dg_key = self.component_distgit_keys.get(nvre["name"])
                     if dg_key:
                         b["dg_key"] = dg_key
-                prescription.append({
-                    "action": "see_parent_builds",
-                    "value": parent_builds,
-                })
+                prescription.append(
+                    {
+                        "action": "see_parent_builds",
+                        "value": parent_builds,
+                    }
+                )
 
         return report
 

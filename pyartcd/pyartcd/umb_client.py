@@ -15,7 +15,7 @@ STOMP_DEFAULT_PORT = 61613
 
 
 def parse_stomp_uri(uri: str):
-    """ Parses a stomp URI.
+    """Parses a stomp URI.
     Examples:
       stomp://umb.stage.api.redhat.com:61612
       stomp+tcp://umb.stage.api.redhat.com:61612
@@ -32,7 +32,7 @@ def parse_stomp_uri(uri: str):
 
 
 def parse_broker_uri(uri: str):
-    """ Parses a broker URI or a failover URI.
+    """Parses a broker URI or a failover URI.
     Examples:
       stomp+ssl://umb.stage.api.redhat.com:61612
       failover:(stomp+ssl://umb-broker03.api.redhat.com:61612,stomp+ssl://umb-broker04.api.redhat.com:61612)
@@ -53,7 +53,7 @@ def parse_broker_uri(uri: str):
 
 
 class AsyncUMBReceiver:
-    """ Provides an interface to iterate received messages from the subscription.
+    """Provides an interface to iterate received messages from the subscription.
 
     Example:
     ```
@@ -88,7 +88,7 @@ class AsyncUMBReceiver:
         self._queue.put_nowait(None)  # None represents "EOF"
 
     def close_threadsafe(self):
-        """ close() is not thread-safe.
+        """close() is not thread-safe.
         This method can be called from another thread
         to schedule the event loop in the main thread to close it soon.
         """
@@ -96,7 +96,7 @@ class AsyncUMBReceiver:
 
 
 class UMBClientConnectionListener(stomp.ConnectionListener):
-    """ This class is used internally by AsyncUMBClient to handle stomp.py events.
+    """This class is used internally by AsyncUMBClient to handle stomp.py events.
 
     stomp.py calls "on_*" methods from a separate thread when an event occurs.
     Be careful to avoid race condition!
@@ -250,12 +250,7 @@ class AsyncUMBClient:
     ```
     """
 
-    def __init__(
-        self,
-        uri: str,
-        cert_file: Optional[str] = None,
-        key_file: Optional[str] = None
-    ):
+    def __init__(self, uri: str, cert_file: Optional[str] = None, key_file: Optional[str] = None):
         conn = self._create_connection(uri, cert_file, key_file)
         self._listener = UMBClientConnectionListener(self)
         conn.set_listener("", self._listener)
@@ -276,30 +271,30 @@ class AsyncUMBClient:
 
     def __del__(self):
         if self.connected:
-            warnings.warn(
-                f"Unclosed UMB connection {self!r}", ResourceWarning)
+            warnings.warn(f"Unclosed UMB connection {self!r}", ResourceWarning)
 
     @property
     def connected(self):
-        """ Returns True if already connected
-        """
+        """Returns True if already connected"""
         return self._conn.is_connected()
 
     def on_disconnected(self):
-        """ Handles disconnection.
+        """Handles disconnection.
         This method is called by the listener from another thread.
         """
+
         def _handle_disconnected():
             if self._sender_loop:
                 sender_loop = self._sender_loop
                 sender_loop.call_soon_threadsafe(sender_loop.stop)  # This will cause the sender thread to exit
                 self._sender_loop = None
                 self._sender_thread = None
+
         self._main_loop.call_soon_threadsafe(_handle_disconnected)
 
     @staticmethod
     def _sender_thread_func(loop: asyncio.AbstractEventLoop):
-        """ Thread function of the sender thread
+        """Thread function of the sender thread
         :param loop: a loop to be associated with the thread
         """
         # Start an event loop and run until loop.stop() is called
@@ -307,13 +302,8 @@ class AsyncUMBClient:
         loop.run_forever()
 
     @staticmethod
-    def _create_connection(
-        uri: str,
-        cert_file: Optional[str] = None,
-        key_file: Optional[str] = None
-    ):
-        """ Creates and configures a stomp connection
-        """
+    def _create_connection(uri: str, cert_file: Optional[str] = None, key_file: Optional[str] = None):
+        """Creates and configures a stomp connection"""
         parsed_uris = parse_broker_uri(uri)
         host_and_ports = [(hostname, port) for _, hostname, port in parsed_uris]
         conn = stomp.StompConnection11(host_and_ports=host_and_ports)  # UMB supports Stomp v1.1 protocol
@@ -323,7 +313,7 @@ class AsyncUMBClient:
         return conn
 
     async def _call_in_sender_thread(self, func: Callable):
-        """ Calls a function in the sender thread (thread-safe)
+        """Calls a function in the sender thread (thread-safe)
         :param func: the function to call
         :return: return value of the function call
         """
@@ -337,6 +327,7 @@ class AsyncUMBClient:
                 fut.get_loop().call_soon_threadsafe(fut.set_result, result)
             except Exception as ex:
                 fut.get_loop().call_soon_threadsafe(fut.set_exception, ex)
+
         self._sender_loop.call_soon_threadsafe(callback)
         return await fut
 
@@ -346,7 +337,9 @@ class AsyncUMBClient:
         _LOGGER.info("Connecting to message bus...")
         if not self._sender_loop:
             self._sender_loop = asyncio.new_event_loop()
-            self._sender_thread = threading.Thread(target=self._sender_thread_func, args=(self._sender_loop, ), daemon=True)
+            self._sender_thread = threading.Thread(
+                target=self._sender_thread_func, args=(self._sender_loop,), daemon=True
+            )
             self._sender_thread.start()
         receipt = str(uuid.uuid4())
         fut = self._main_loop.create_future()
@@ -359,8 +352,7 @@ class AsyncUMBClient:
         _LOGGER.info("Connected")
 
     async def disconnect(self):
-        """ Disconnect from the message broker and wait for the receipt
-        """
+        """Disconnect from the message broker and wait for the receipt"""
         if not self.connected:
             return
         _LOGGER.info("Disconnecting from message bus...")
@@ -375,7 +367,7 @@ class AsyncUMBClient:
         _LOGGER.info("Disconnected")
 
     async def subscribe(self, destination: str, id: str):
-        """ Subscribe to a destination
+        """Subscribe to a destination
         :param destination: a queue or topic
         :param id: subscription ID
         :return: an instance of AsyncUMBReceiver for receiving messages for the subscription
@@ -383,11 +375,13 @@ class AsyncUMBClient:
         subscription_id = id or str(uuid.uuid4())
         receiver = AsyncUMBReceiver(id=subscription_id)
         self._listener.add_receiver(subscription_id, receiver)
-        await self._call_in_sender_thread(lambda: self._conn.subscribe(destination=destination, id=subscription_id, ack="client-individual"))
+        await self._call_in_sender_thread(
+            lambda: self._conn.subscribe(destination=destination, id=subscription_id, ack="client-individual")
+        )
         return receiver
 
     async def unsubscribe(self, id: str):
-        """ Unsubscribes from the queue or topic
+        """Unsubscribes from the queue or topic
         :param id: subscription ID
         """
         receiver = self._listener._receivers.get(id)
@@ -397,25 +391,25 @@ class AsyncUMBClient:
         self._listener.remove_receiver(id, close=True)
 
     async def send(self, destination: str, body: str):
-        """ Sends a message to the broker and wait for the receipt
-        """
+        """Sends a message to the broker and wait for the receipt"""
         receipt = str(uuid.uuid4())
         _LOGGER.debug("Sending message %s to %s...", body, destination)
         fut = self._main_loop.create_future()
         self._listener.add_future(receipt, fut)
         try:
-            await self._call_in_sender_thread(lambda: self._conn.send(
-                body=body,
-                destination=destination,
-                headers={"receipt": receipt},
-            ))
+            await self._call_in_sender_thread(
+                lambda: self._conn.send(
+                    body=body,
+                    destination=destination,
+                    headers={"receipt": receipt},
+                )
+            )
             await fut
         finally:
             self._listener.remove_future(receipt)
 
     async def ack(self, message_id: str, subscription: str):
-        """ Acknowledges 'consumption' of a message by id.
-        """
+        """Acknowledges 'consumption' of a message by id."""
         receipt = str(uuid.uuid4())
         fut = self._main_loop.create_future()
         self._listener.add_future(receipt, fut)
@@ -426,8 +420,7 @@ class AsyncUMBClient:
             self._listener.remove_future(receipt)
 
     async def nack(self, message_id: str, subscription: str):
-        """ Notifies the message broker that a message was not consumed.
-        """
+        """Notifies the message broker that a message was not consumed."""
         receipt = str(uuid.uuid4())
         fut = self._main_loop.create_future()
         self._listener.add_future(receipt, fut)

@@ -13,7 +13,6 @@ from pyartcd.runtime import Runtime
 
 
 class Ocp4ScanPipeline:
-
     def __init__(self, runtime: Runtime, version: str, data_path: Optional[str] = None):
         self.runtime = runtime
         self.version = version
@@ -64,7 +63,7 @@ class Ocp4ScanPipeline:
                 assembly='stream',
                 rpm_list=rpm_list,
                 image_list=image_list,
-                comment_on_pr=True
+                comment_on_pr=True,
             )
 
         elif self.rhcos_inconsistent:
@@ -92,12 +91,12 @@ class Ocp4ScanPipeline:
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
-                build_system="brew"
+                build_system="brew",
             )
             jenkins.start_build_sync(
                 build_version=self.version,
                 assembly="stream",
-                build_system="konflux"
+                build_system="konflux",
             )
 
         else:
@@ -112,9 +111,11 @@ class Ocp4ScanPipeline:
         """
 
         # Run doozer scan-sources
-        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} ' \
-              f'--group=openshift-{self.version} ' \
-              f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]} --rebase-priv'
+        cmd = (
+            f'doozer --data-path={self.data_path} --assembly stream --working-dir={self._doozer_working} '
+            f'--group=openshift-{self.version} '
+            f'config:scan-sources --yaml --ci-kubeconfig {os.environ["KUBECONFIG"]} --rebase-priv'
+        )
         if self.runtime.dry_run:
             cmd += ' --dry-run'
         _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
@@ -152,8 +153,9 @@ class Ocp4ScanPipeline:
 
         slack_client = self.runtime.new_slack_client()
         slack_client.bind_channel(self.version)
-        message = \
+        message = (
             f':warning: @release-artists, some issues have arisen during scan-sources for *{self.version}* :warning:'
+        )
         slack_response = await slack_client.say(message)
 
         slack_thread = slack_response["message"]["ts"]
@@ -165,9 +167,11 @@ class Ocp4ScanPipeline:
         Check for RHCOS inconsistencies by calling doozer inspect:stream INCONSISTENT_RHCOS_RPMS
         """
 
-        cmd = f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} ' \
-              f'--group openshift-{self.version} ' \
-              f'inspect:stream INCONSISTENT_RHCOS_RPMS --strict'
+        cmd = (
+            f'doozer --data-path={self.data_path} --assembly stream --working-dir {self._doozer_working} '
+            f'--group openshift-{self.version} '
+            f'inspect:stream INCONSISTENT_RHCOS_RPMS --strict'
+        )
         try:
             _, out, _ = await exectools.cmd_gather_async(cmd, stderr=None)
             self.logger.info(out)
@@ -193,7 +197,9 @@ async def ocp4_scan(runtime: Runtime, version: str):
         lock_name = lock.value.format(version=version)
         lock_identifier = jenkins.get_build_path()
         if not lock_identifier:
-            runtime.logger.warning('Env var BUILD_URL has not been defined: a random identifier will be used for the locks')
+            runtime.logger.warning(
+                'Env var BUILD_URL has not been defined: a random identifier will be used for the locks'
+            )
 
         # Scheduled builds are already being skipped if the lock is already acquired.
         # For manual builds, we need to check if the build and scan locks are already acquired,
@@ -207,7 +213,7 @@ async def ocp4_scan(runtime: Runtime, version: str):
                 lock=build_lock,
                 lock_name=build_lock_name,
                 lock_id=lock_identifier,
-                skip_if_locked=True
+                skip_if_locked=True,
             )
 
         await locks.run_with_lock(
@@ -215,7 +221,7 @@ async def ocp4_scan(runtime: Runtime, version: str):
             lock=lock,
             lock_name=lock_name,
             lock_id=lock_identifier,
-            skip_if_locked=True
+            skip_if_locked=True,
         )
 
     if pipeline.skipped:

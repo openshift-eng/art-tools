@@ -3,20 +3,16 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
-from artcommonlib.konflux.konflux_build_record import (
-    KonfluxBuildOutcome, KonfluxBundleBuildRecord)
+from artcommonlib.konflux.konflux_build_record import KonfluxBuildOutcome, KonfluxBundleBuildRecord
 
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
-from doozerlib.backend.konflux_fbc import (KonfluxFbcBuilder,
-                                           KonfluxFbcImporter,
-                                           KonfluxFbcRebaser)
+from doozerlib.backend.konflux_fbc import KonfluxFbcBuilder, KonfluxFbcImporter, KonfluxFbcRebaser
 from doozerlib.image import ImageMetadata
 from doozerlib.opm import OpmRegistryAuth, yaml
 
 
 class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc")
         self.group = "test-group"
@@ -40,7 +36,7 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             commit_message=self.commit_message,
             fbc_repo=self.fbc_repo,
             auth=OpmRegistryAuth(path="/path/to/auth.json"),
-            logger=self.logger
+            logger=self.logger,
         )
 
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._update_dir")
@@ -91,9 +87,13 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("pathlib.Path.mkdir")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_package_name", new_callable=AsyncMock)
-    @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_catalog_blobs_from_index_image", new_callable=AsyncMock)
+    @patch(
+        "doozerlib.backend.konflux_fbc.KonfluxFbcImporter._get_catalog_blobs_from_index_image", new_callable=AsyncMock
+    )
     @patch("doozerlib.backend.konflux_fbc.opm")
-    async def test_update_dir(self, mock_opm, mock_get_catalog_blobs, mock_get_package_name, mock_mkdir: MagicMock, mock_open, mock_rmtree):
+    async def test_update_dir(
+        self, mock_opm, mock_get_catalog_blobs, mock_get_package_name, mock_mkdir: MagicMock, mock_open, mock_rmtree
+    ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         build_repo = MagicMock()
@@ -114,24 +114,30 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         mock_get_package_name.assert_called_once_with(metadata)
         mock_get_catalog_blobs.assert_called_once_with(index_image, "test-package")
         self.assertEqual(mock_org_catalog_file.getvalue(), '---\nname: test-package\nschema: olm.package\n')
-        mock_mkdir.assert_has_calls([
-            call(parents=True, exist_ok=True),
-            call(parents=True, exist_ok=True),
-            call(parents=True, exist_ok=True),
-        ])
+        mock_mkdir.assert_has_calls(
+            [
+                call(parents=True, exist_ok=True),
+                call(parents=True, exist_ok=True),
+                call(parents=True, exist_ok=True),
+            ]
+        )
         mock_opm.generate_basic_template.assert_called_once()
         mock_opm.render_catalog_from_template.assert_called_once()
         mock_opm.generate_dockerfile.assert_called_once()
-        mock_rmtree.assert_has_calls([
-            call(self.base_dir.joinpath("catalog-migrate")),
-            call(self.base_dir.joinpath("catalog-templates")),
-        ])
+        mock_rmtree.assert_has_calls(
+            [
+                call(self.base_dir.joinpath("catalog-migrate")),
+                call(self.base_dir.joinpath("catalog-templates")),
+            ]
+        )
 
     @patch("doozerlib.backend.konflux_fbc.opm.render")
     async def test_render_index_image(self, mock_render):
         actual = await self.importer._render_index_image("test-index-image-pullspec")
         self.assertEqual(actual, mock_render.return_value)
-        mock_render.assert_called_once_with("test-index-image-pullspec", auth=OpmRegistryAuth(path='/path/to/auth.json'))
+        mock_render.assert_called_once_with(
+            "test-index-image-pullspec", auth=OpmRegistryAuth(path='/path/to/auth.json')
+        )
 
     def test_filter_catalog_blobs(self):
         catalog_blobs = [
@@ -146,14 +152,20 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         ]
         actual = self.importer._filter_catalog_blobs(catalog_blobs, {"test-package2", "test-package3"})
         self.assertEqual(actual.keys(), {"test-package2", "test-package3"})
-        self.assertListEqual(actual["test-package2"], [
-            {"schema": "olm.package", "name": "test-package2"},
-            {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
-        ])
-        self.assertListEqual(actual["test-package3"], [
-            {"schema": "olm.package", "name": "test-package3"},
-            {"schema": "olm.channel", "name": "test-channel3", "package": "test-package3"},
-        ])
+        self.assertListEqual(
+            actual["test-package2"],
+            [
+                {"schema": "olm.package", "name": "test-package2"},
+                {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
+            ],
+        )
+        self.assertListEqual(
+            actual["test-package3"],
+            [
+                {"schema": "olm.package", "name": "test-package3"},
+                {"schema": "olm.channel", "name": "test-channel3", "package": "test-package3"},
+            ],
+        )
 
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcImporter._render_index_image")
     async def test_get_catalog_blobs_from_index_image(self, mock_render_index_image):
@@ -168,10 +180,13 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
             {"schema": "olm.package", "name": "test-package4"},
         ]
         actual = await self.importer._get_catalog_blobs_from_index_image(index_image, "test-package")
-        self.assertEqual(actual, [
-            {"schema": "olm.package", "name": "test-package"},
-            {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
-        ])
+        self.assertEqual(
+            actual,
+            [
+                {"schema": "olm.package", "name": "test-package"},
+                {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
+            ],
+        )
         mock_render_index_image.assert_called_once_with(index_image)
 
     @patch("pathlib.Path.open")
@@ -182,8 +197,8 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
         metadata.distgit_key = "test-distgit-key"
         metadata.config = {
             "update-csv": {
-                "manifests-dir": "test-manifests-dir"
-            }
+                "manifests-dir": "test-manifests-dir",
+            },
         }
         source_resolver = runtime.source_resolver
         source_resolver.get_source_dir.return_value = Path("/tmp/source-dir")
@@ -195,7 +210,6 @@ class TestKonfluxFbcImporter(unittest.IsolatedAsyncioTestCase):
 
 
 class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc_rebaser")
         self.group = "test-group"
@@ -217,7 +231,7 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
             commit_message=self.commit_message,
             push=self.push,
             fbc_repo=self.fbc_repo,
-            upcycle=self.upcycle
+            upcycle=self.upcycle,
         )
 
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._rebase_dir")
@@ -293,7 +307,15 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     @patch("pathlib.Path.open")
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_image_info", new_callable=AsyncMock)
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcRebaser._fetch_olm_bundle_blob", new_callable=AsyncMock)
-    async def test_rebase_dir(self, mock_fetch_olm_bundle_blob, mock_fetch_olm_bundle_image_info, mock_open, mock_is_file, mock_mkdir, MockDockerfileParser):
+    async def test_rebase_dir(
+        self,
+        mock_fetch_olm_bundle_blob,
+        mock_fetch_olm_bundle_image_info,
+        mock_open,
+        mock_is_file,
+        mock_mkdir,
+        MockDockerfileParser,
+    ):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
         build_repo = MagicMock()
@@ -317,44 +339,64 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                         "name": "test-image-name",
                         "operators.operatorframework.io.bundle.channels.v1": "test-channel",
                         "operators.operatorframework.io.bundle.channel.default.v1": "test-default-channel",
-                        "operators.operatorframework.io.bundle.package.v1": "test-package"
-                    }
-                }
-            }
+                        "operators.operatorframework.io.bundle.package.v1": "test-package",
+                    },
+                },
+            },
         }
         mock_fetch_olm_bundle_blob.return_value = (
-            "test-bundle-name.1.2.3", "test-package", {
+            "test-bundle-name.1.2.3",
+            "test-package",
+            {
                 "schema": "olm.bundle",
                 "name": "test-bundle-name.1.2.3",
                 "package": "test-package",
-                "properties": [{
-                    "type": "olm.csv.metadata",
-                    "value": {
-                        "annotations": {
-                            "olm.skipRange": ">=4.8.0 <4.17.0"
-                        }
+                "properties": [
+                    {
+                        "type": "olm.csv.metadata",
+                        "value": {
+                            "annotations": {
+                                "olm.skipRange": ">=4.8.0 <4.17.0",
+                            },
+                        },
                     }
-                }],
+                ],
                 "relatedImages": [
                     {"name": "", "image": "example.com/test-bundle@1"},
-                    {"name": "test-operator", "image": "example.com/test-operator@2"}
-                ]
-            })
+                    {"name": "test-operator", "image": "example.com/test-operator@2"},
+                ],
+            },
+        )
         mock_dfp = MockDockerfileParser.return_value
         mock_dfp.envs = {}
         mock_dfp.labels = {}
 
         org_catalog_blobs = [
             {"schema": "olm.package", "name": "test-package", "defaultChannel": "test-default-channel"},
-            {"schema": "olm.channel", "name": "test-channel", "package": "test-package", "entries": [
-                {"name": "test-bundle-name.1.0.0", "skipRange": ">=4.8.0 <4.17.0"},
-                {"name": "test-bundle-name.1.0.1", "skipRange": ">=4.8.0 <4.17.0"},
-                {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0", "skips": ["test-bundle-name.0.0.9", "test-bundle-name.1.0.0", "test-bundle-name.1.0.1"]}
-            ]},
-            {"schema": "olm.bundle", "name": "test-bundle-name.1.0.0", "package": "test-package", "properties": [], "relatedImages": [
-                {"name": "", "image": "example.com/openshift/test-bundle@1"},
-                {"name": "test-operator", "image": "example.com/test-operator@2"}
-            ]}
+            {
+                "schema": "olm.channel",
+                "name": "test-channel",
+                "package": "test-package",
+                "entries": [
+                    {"name": "test-bundle-name.1.0.0", "skipRange": ">=4.8.0 <4.17.0"},
+                    {"name": "test-bundle-name.1.0.1", "skipRange": ">=4.8.0 <4.17.0"},
+                    {
+                        "name": "test-bundle-name.1.1.0",
+                        "skipRange": ">=4.8.0 <4.17.0",
+                        "skips": ["test-bundle-name.0.0.9", "test-bundle-name.1.0.0", "test-bundle-name.1.0.1"],
+                    },
+                ],
+            },
+            {
+                "schema": "olm.bundle",
+                "name": "test-bundle-name.1.0.0",
+                "package": "test-package",
+                "properties": [],
+                "relatedImages": [
+                    {"name": "", "image": "example.com/openshift/test-bundle@1"},
+                    {"name": "test-operator", "image": "example.com/test-operator@2"},
+                ],
+            },
         ]
         org_catalog_file = StringIO()
         yaml.dump_all(org_catalog_blobs, org_catalog_file)
@@ -367,29 +409,50 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch_olm_bundle_image_info.assert_called_once_with(bundle_build)
         mock_fetch_olm_bundle_blob.assert_called_once_with(bundle_build)
-        self.assertDictContainsSubset({
-            "__doozer_group": "test-group",
-            "__doozer_key": "test-distgit-key",
-            "__doozer_version": "1.0.0",
-            "__doozer_release": "1",
-            "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
-        }, mock_dfp.envs)
-        self.assertDictContainsSubset({
-            "io.openshift.build.source-location": "https://example.com/foo-operator.git",
-            "io.openshift.build.commit.id": "beefdead",
-        }, mock_dfp.labels)
+        self.assertDictContainsSubset(
+            {
+                "__doozer_group": "test-group",
+                "__doozer_key": "test-distgit-key",
+                "__doozer_version": "1.0.0",
+                "__doozer_release": "1",
+                "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
+            },
+            mock_dfp.envs,
+        )
+        self.assertDictContainsSubset(
+            {
+                "io.openshift.build.source-location": "https://example.com/foo-operator.git",
+                "io.openshift.build.commit.id": "beefdead",
+            },
+            mock_dfp.labels,
+        )
 
         result_catalog_file.seek(0)
         result_catalog_blobs = list(yaml.load_all(result_catalog_file))
         result_catalog_blobs = self.rebaser._catagorize_catalog_blobs(result_catalog_blobs)
         self.assertEqual(result_catalog_blobs.keys(), {"test-package"})
-        self.assertEqual(result_catalog_blobs["test-package"]["olm.channel"]["test-channel"]["entries"], [
-            {"name": "test-bundle-name.1.0.0", "skipRange": ">=4.8.0 <4.17.0"},
-            {"name": "test-bundle-name.1.0.1", "skipRange": ">=4.8.0 <4.17.0"},
-            {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0"},
-            {"name": "test-bundle-name.1.2.3", "skipRange": ">=4.8.0 <4.17.0", "skips": ["test-bundle-name.0.0.9", "test-bundle-name.1.0.0", "test-bundle-name.1.0.1", "test-bundle-name.1.1.0"]}
-        ])
-        self.assertEqual(result_catalog_blobs["test-package"]["olm.bundle"].keys(), {"test-bundle-name.1.0.0", "test-bundle-name.1.2.3"})
+        self.assertEqual(
+            result_catalog_blobs["test-package"]["olm.channel"]["test-channel"]["entries"],
+            [
+                {"name": "test-bundle-name.1.0.0", "skipRange": ">=4.8.0 <4.17.0"},
+                {"name": "test-bundle-name.1.0.1", "skipRange": ">=4.8.0 <4.17.0"},
+                {"name": "test-bundle-name.1.1.0", "skipRange": ">=4.8.0 <4.17.0"},
+                {
+                    "name": "test-bundle-name.1.2.3",
+                    "skipRange": ">=4.8.0 <4.17.0",
+                    "skips": [
+                        "test-bundle-name.0.0.9",
+                        "test-bundle-name.1.0.0",
+                        "test-bundle-name.1.0.1",
+                        "test-bundle-name.1.1.0",
+                    ],
+                },
+            ],
+        )
+        self.assertEqual(
+            result_catalog_blobs["test-package"]["olm.bundle"].keys(),
+            {"test-bundle-name.1.0.0", "test-bundle-name.1.2.3"},
+        )
 
         images_mirror_set_file.seek(0)
         images_mirror_set = yaml.load(images_mirror_set_file)
@@ -414,10 +477,9 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                     {
                         "name": "",
                         "image": "registry.redhat.io/openshift4/pf-status-relay-operator-bundle@sha256:d62745a5780f4224d49fad22be910e426cf3bfc3150b0e4cdc00fa69a6983a9b",
-                    }
-
-                ]
-            }
+                    },
+                ],
+            },
         ]
         result = self.rebaser._generate_image_digest_mirror_set(olm_bundle_blobs)
         self.assertEqual(len(result["spec"]["imageDigestMirrors"]), 4)
@@ -433,10 +495,10 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
                         "name": "test-image-name",
                         "operators.operatorframework.io.bundle.channels.v1": "test-channel",
                         "operators.operatorframework.io.bundle.channel.default.v1": "test-default-channel",
-                        "operators.operatorframework.io.bundle.package.v1": "test-package"
-                    }
-                }
-            }
+                        "operators.operatorframework.io.bundle.package.v1": "test-package",
+                    },
+                },
+            },
         }
         actual = await self.rebaser._fetch_olm_bundle_image_info(bundle_build)
         labels = actual["config"]["config"]["Labels"]
@@ -449,14 +511,28 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_olm_bundle_blob(self, mock_render):
         bundle_build = MagicMock(spec=KonfluxBundleBuildRecord)
         bundle_build.image_pullspec = "test-image-pullspec"
-        mock_render.return_value = [{
-            "schema": "olm.bundle",
-            "name": "test-bundle-name",
-            "package": "test-package",
-            "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}]
-        }]
+        mock_render.return_value = [
+            {
+                "schema": "olm.bundle",
+                "name": "test-bundle-name",
+                "package": "test-package",
+                "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}],
+            }
+        ]
         actual = await self.rebaser._fetch_olm_bundle_blob(bundle_build)
-        self.assertEqual(actual, ("test-bundle-name", "test-package", {"schema": "olm.bundle", "name": "test-bundle-name", "package": "test-package", "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}]}))
+        self.assertEqual(
+            actual,
+            (
+                "test-bundle-name",
+                "test-package",
+                {
+                    "schema": "olm.bundle",
+                    "name": "test-bundle-name",
+                    "package": "test-package",
+                    "properties": [{"type": "olm.csv.metadata", "value": {"annotations": {}}}],
+                },
+            ),
+        )
         mock_render.assert_called_once_with("test-image-pullspec", migrate=True, auth=ANY)
 
     def test_categorize_catalog_blobs(self):
@@ -471,17 +547,32 @@ class TestKonfluxFbcRebaser(unittest.IsolatedAsyncioTestCase):
         actual = self.rebaser._catagorize_catalog_blobs(catalog_blobs)
         self.assertEqual(actual.keys(), {"test-package", "test-package2"})
         self.assertEqual(actual["test-package"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
-        self.assertEqual(actual["test-package"]["olm.package"]["test-package"], {"schema": "olm.package", "name": "test-package"})
-        self.assertEqual(actual["test-package"]["olm.channel"]["test-channel"], {"schema": "olm.channel", "name": "test-channel", "package": "test-package"})
-        self.assertEqual(actual["test-package"]["olm.bundle"]["test-bundle"], {"schema": "olm.bundle", "name": "test-bundle", "package": "test-package"})
+        self.assertEqual(
+            actual["test-package"]["olm.package"]["test-package"], {"schema": "olm.package", "name": "test-package"}
+        )
+        self.assertEqual(
+            actual["test-package"]["olm.channel"]["test-channel"],
+            {"schema": "olm.channel", "name": "test-channel", "package": "test-package"},
+        )
+        self.assertEqual(
+            actual["test-package"]["olm.bundle"]["test-bundle"],
+            {"schema": "olm.bundle", "name": "test-bundle", "package": "test-package"},
+        )
         self.assertEqual(actual["test-package2"].keys(), {"olm.package", "olm.channel", "olm.bundle"})
-        self.assertEqual(actual["test-package2"]["olm.package"]["test-package2"], {"schema": "olm.package", "name": "test-package2"})
-        self.assertEqual(actual["test-package2"]["olm.channel"]["test-channel2"], {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"})
-        self.assertEqual(actual["test-package2"]["olm.bundle"]["test-bundle2"], {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"})
+        self.assertEqual(
+            actual["test-package2"]["olm.package"]["test-package2"], {"schema": "olm.package", "name": "test-package2"}
+        )
+        self.assertEqual(
+            actual["test-package2"]["olm.channel"]["test-channel2"],
+            {"schema": "olm.channel", "name": "test-channel2", "package": "test-package2"},
+        )
+        self.assertEqual(
+            actual["test-package2"]["olm.bundle"]["test-bundle2"],
+            {"schema": "olm.bundle", "name": "test-bundle2", "package": "test-package2"},
+        )
 
 
 class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
-
     def setUp(self):
         self.base_dir = Path("/tmp/konflux_fbc_builder")
         self.group = "test-group"
@@ -514,21 +605,27 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
                 pipelinerun_template_url=self.pipelinerun_template_url,
                 dry_run=self.dry_run,
                 record_logger=self.record_logger,
-                logger=self.logger
+                logger=self.logger,
             )
 
     async def test_start_build(self):
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "foo"
-        build_repo = MagicMock(spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef")
+        build_repo = MagicMock(
+            spec=BuildRepo, https_url="https://example.com/foo.git", branch="test-branch", commit_hash="deadbeef"
+        )
         kube_client = self.kube_client
         kube_client.build_pipeline_url.return_value = "https://example.com/pipelinerun/test-pipeline-run-name"
         pplr = kube_client.start_pipeline_run_for_image_build.return_value = MagicMock(
-            **{"metadata.name": "test-pipeline-run-name"}
+            **{"metadata.name": "test-pipeline-run-name"},
         )
 
-        result = await self.builder._start_build(metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger)
-        kube_client.ensure_application.assert_awaited_once_with(name="fbc-test-group-foo", display_name="fbc-test-group-foo")
+        result = await self.builder._start_build(
+            metadata, build_repo, output_image="test-image-pullspec", arches=["x86_64", "s390x"], logger=self.logger
+        )
+        kube_client.ensure_application.assert_awaited_once_with(
+            name="fbc-test-group-foo", display_name="fbc-test-group-foo"
+        )
         kube_client.ensure_component.assert_awaited_once_with(
             name="fbc-test-group-foo",
             application="fbc-test-group-foo",
@@ -561,7 +658,9 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
-    async def test_build(self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists):
+    async def test_build(
+        self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
+    ):
         mock_konflux_client = self.kube_client
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
@@ -569,12 +668,22 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
         mock_konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipeline")
-        mock_start_build.return_value = (MagicMock(**{"metadata.name": "test-pipelinerun-name"}), "https://example.com/pipeline")
-        mock_pipelinerun = {"metadata": {"name": "test-pipelinerun-name"}, "status": {"conditions": [{"type": "Succeeded", "status": "True"}]}}
+        mock_start_build.return_value = (
+            MagicMock(**{"metadata.name": "test-pipelinerun-name"}),
+            "https://example.com/pipeline",
+        )
+        mock_pipelinerun = {
+            "metadata": {"name": "test-pipelinerun-name"},
+            "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
+        }
         mock_konflux_client.wait_for_pipelinerun.return_value = (mock_pipelinerun, [])
 
         mock_dfp = MockDockerfileParser.return_value
-        mock_dfp.envs = {"__doozer_version": "1.0.0", "__doozer_release": "1", "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1"}
+        mock_dfp.envs = {
+            "__doozer_version": "1.0.0",
+            "__doozer_release": "1",
+            "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
+        }
         mock_dfp.labels = {}
 
         await self.builder.build(metadata)
@@ -585,16 +694,36 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
             logger=ANY,
         )
         build_repo.ensure_source.assert_called_once_with(strict=True)
-        MockDockerfileParser.assert_called_once_with(str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile")))
+        MockDockerfileParser.assert_called_once_with(
+            str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile"))
+        )
         all_arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
-        mock_update_konflux_db.assert_has_awaits([
-            call(metadata, build_repo, mock_start_build.return_value[0], KonfluxBuildOutcome.PENDING, all_arches, logger=ANY),
-            call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
-        ])
-        mock_konflux_client.wait_for_pipelinerun.assert_called_once_with("test-pipelinerun-name", namespace="test-namespace")
+        mock_update_konflux_db.assert_has_awaits(
+            [
+                call(
+                    metadata,
+                    build_repo,
+                    mock_start_build.return_value[0],
+                    KonfluxBuildOutcome.PENDING,
+                    all_arches,
+                    logger=ANY,
+                ),
+                call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
+            ]
+        )
+        mock_konflux_client.wait_for_pipelinerun.assert_called_once_with(
+            "test-pipelinerun-name", namespace="test-namespace"
+        )
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
-            status=0, name='test-distgit-key', message='Success', task_id='test-pipelinerun-name', task_url='https://example.com/pipeline', fbc_nvr='test-distgit-key-fbc-1.0.0-1', bundle_nvrs='foo-bundle-1.0.0-1')
+            status=0,
+            name='test-distgit-key',
+            message='Success',
+            task_id='test-pipelinerun-name',
+            task_url='https://example.com/pipeline',
+            fbc_nvr='test-distgit-key-fbc-1.0.0-1',
+            bundle_nvrs='foo-bundle-1.0.0-1',
+        )
         MockBuildRepo.from_local_dir.assert_not_called()
 
     @patch("pathlib.Path.exists", return_value=True)
@@ -602,7 +731,9 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
     @patch("doozerlib.backend.konflux_fbc.KonfluxFbcBuilder._start_build")
     @patch("doozerlib.backend.konflux_fbc.BuildRepo", spec=BuildRepo)
     @patch("doozerlib.backend.konflux_fbc.DockerfileParser")
-    async def test_build_with_existing_repo(self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists):
+    async def test_build_with_existing_repo(
+        self, MockDockerfileParser, MockBuildRepo, mock_start_build, mock_update_konflux_db: AsyncMock, mock_exists
+    ):
         mock_konflux_client = self.kube_client
         metadata = MagicMock(spec=ImageMetadata)
         metadata.distgit_key = "test-distgit-key"
@@ -610,24 +741,54 @@ class TestKonfluxFbcBuilder(unittest.IsolatedAsyncioTestCase):
         build_repo.local_dir = self.base_dir.joinpath(metadata.distgit_key)
         mock_konflux_client.start_pipeline_run_for_image_build = AsyncMock()
         mock_konflux_client.build_pipeline_url = MagicMock(return_value="https://example.com/pipeline")
-        mock_start_build.return_value = (MagicMock(**{"metadata.name": "test-pipelinerun-name"}), "https://example.com/pipeline")
-        mock_pipelinerun = {"metadata": {"name": "test-pipelinerun-name"}, "status": {"conditions": [{"type": "Succeeded", "status": "True"}]}}
+        mock_start_build.return_value = (
+            MagicMock(**{"metadata.name": "test-pipelinerun-name"}),
+            "https://example.com/pipeline",
+        )
+        mock_pipelinerun = {
+            "metadata": {"name": "test-pipelinerun-name"},
+            "status": {"conditions": [{"type": "Succeeded", "status": "True"}]},
+        }
         mock_konflux_client.wait_for_pipelinerun.return_value = (mock_pipelinerun, [])
 
         mock_dfp = MockDockerfileParser.return_value
-        mock_dfp.envs = {"__doozer_version": "1.0.0", "__doozer_release": "1", "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1"}
+        mock_dfp.envs = {
+            "__doozer_version": "1.0.0",
+            "__doozer_release": "1",
+            "__doozer_bundle_nvrs": "foo-bundle-1.0.0-1",
+        }
         mock_dfp.labels = {}
 
         await self.builder.build(metadata)
         MockBuildRepo.assert_not_called()
-        MockDockerfileParser.assert_called_once_with(str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile")))
+        MockDockerfileParser.assert_called_once_with(
+            str(self.base_dir.joinpath(metadata.distgit_key, "catalog.Dockerfile"))
+        )
         all_arches = list(KonfluxClient.SUPPORTED_ARCHES.keys())
-        mock_update_konflux_db.assert_has_awaits([
-            call(metadata, build_repo, mock_start_build.return_value[0], KonfluxBuildOutcome.PENDING, all_arches, logger=ANY),
-            call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
-        ])
-        mock_konflux_client.wait_for_pipelinerun.assert_called_once_with("test-pipelinerun-name", namespace="test-namespace")
+        mock_update_konflux_db.assert_has_awaits(
+            [
+                call(
+                    metadata,
+                    build_repo,
+                    mock_start_build.return_value[0],
+                    KonfluxBuildOutcome.PENDING,
+                    all_arches,
+                    logger=ANY,
+                ),
+                call(metadata, build_repo, mock_pipelinerun, KonfluxBuildOutcome.SUCCESS, all_arches, logger=ANY),
+            ]
+        )
+        mock_konflux_client.wait_for_pipelinerun.assert_called_once_with(
+            "test-pipelinerun-name", namespace="test-namespace"
+        )
         self.builder._record_logger.add_record.assert_called_once_with(
             "build_fbc_konflux",
-            status=0, name='test-distgit-key', message='Success', task_id='test-pipelinerun-name', task_url='https://example.com/pipeline', fbc_nvr='test-distgit-key-fbc-1.0.0-1', bundle_nvrs='foo-bundle-1.0.0-1')
+            status=0,
+            name='test-distgit-key',
+            message='Success',
+            task_id='test-pipelinerun-name',
+            task_url='https://example.com/pipeline',
+            fbc_nvr='test-distgit-key-fbc-1.0.0-1',
+            bundle_nvrs='foo-bundle-1.0.0-1',
+        )
         MockBuildRepo.from_local_dir.assert_awaited_once_with(self.base_dir.joinpath(metadata.distgit_key), ANY)

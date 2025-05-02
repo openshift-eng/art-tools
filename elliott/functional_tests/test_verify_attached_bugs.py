@@ -126,16 +126,19 @@ class VerifyBugs(unittest.TestCase):
         cmd = constants.ELLIOTT_CMD + [
             "--group=openshift-4.12",
             "--assembly=4.12.73",
-            "verify-attached-bugs"
+            "verify-attached-bugs",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0, msg=f"stdout: {result.stdout.decode('utf-8')}, stderr: {result.stderr.decode('utf-8')}")
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout: {result.stdout.decode('utf-8')}, stderr: {result.stderr.decode('utf-8')}",
+        )
         # TODO: check for expected output
 
     def test_verify_attached_bugs_wrong(self):
         out = subprocess.run(
-            constants.ELLIOTT_CMD
-            + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
+            constants.ELLIOTT_CMD + ["--group", "openshift-4.6", "verify-attached-bugs", "60089"],  # 4.5 RHSA
             capture_output=True,
             encoding='utf-8',
         )

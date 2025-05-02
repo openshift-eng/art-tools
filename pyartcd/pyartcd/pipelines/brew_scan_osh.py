@@ -1,6 +1,7 @@
 """
 This job scans the candidate tags for a particular version, and triggers scans for builds that are tagged into it.
 """
+
 import click
 from typing import Optional
 from artcommonlib import exectools
@@ -10,8 +11,16 @@ from pyartcd.cli import cli, pass_runtime, click_coroutine
 
 
 class OshScan:
-    def __init__(self, runtime: Runtime, version: str, check_triggered: Optional[bool], email: Optional[str],
-                 nvrs: Optional[list], all_builds: Optional[bool], create_jira_tickets: Optional[bool]):
+    def __init__(
+        self,
+        runtime: Runtime,
+        version: str,
+        check_triggered: Optional[bool],
+        email: Optional[str],
+        nvrs: Optional[list],
+        all_builds: Optional[bool],
+        create_jira_tickets: Optional[bool],
+    ):
         self.runtime = runtime
         self.email = email
         self.version = version
@@ -57,7 +66,7 @@ class OshScan:
             if self.specific_nvrs:
                 cmd += [
                     "--nvrs",
-                    f"{','.join(self.specific_nvrs)}"
+                    f"{','.join(self.specific_nvrs)}",
                 ]
 
             if self.all_builds:
@@ -67,7 +76,7 @@ class OshScan:
             if last_brew_event:
                 cmd += [
                     "--since",
-                    f"{last_brew_event}"
+                    f"{last_brew_event}",
                 ]
 
         if self.create_jira_tickets:
@@ -92,19 +101,42 @@ class OshScan:
 @cli.command("scan-osh")
 @click.option("--version", required=True, help="openshift version eg: 4.15")
 @click.option("--email", required=False, help="Additional email to which the results of the scan should be sent out to")
-@click.option("--nvrs", required=False, help="Comma separated list to trigger scans specifically. Will not check candidate tags")
-@click.option("--check-triggered", required=False, is_flag=True, default=False, help="Triggers scans for NVRs only after checking if they haven't already")
+@click.option(
+    "--nvrs", required=False, help="Comma separated list to trigger scans specifically. Will not check candidate tags"
+)
+@click.option(
+    "--check-triggered",
+    required=False,
+    is_flag=True,
+    default=False,
+    help="Triggers scans for NVRs only after checking if they haven't already",
+)
 @click.option("--all-builds", required=False, is_flag=True, default=False, help="Check all builds in candidate tags")
-@click.option("--create-jira-tickets", required=False, is_flag=True, default=False, help="Create OCPBUGS ticket for a package if vulnerabilities exist")
+@click.option(
+    "--create-jira-tickets",
+    required=False,
+    is_flag=True,
+    default=False,
+    help="Create OCPBUGS ticket for a package if vulnerabilities exist",
+)
 @pass_runtime
 @click_coroutine
-async def scan_osh(runtime: Runtime, version: str, email: str, nvrs: str, check_triggered: bool, all_builds: bool,
-                   create_jira_tickets: bool):
-    pipeline = OshScan(runtime=runtime,
-                       email=email,
-                       version=version,
-                       nvrs=nvrs.split(",") if nvrs else None,
-                       check_triggered=check_triggered,
-                       all_builds=all_builds,
-                       create_jira_tickets=create_jira_tickets)
+async def scan_osh(
+    runtime: Runtime,
+    version: str,
+    email: str,
+    nvrs: str,
+    check_triggered: bool,
+    all_builds: bool,
+    create_jira_tickets: bool,
+):
+    pipeline = OshScan(
+        runtime=runtime,
+        email=email,
+        version=version,
+        nvrs=nvrs.split(",") if nvrs else None,
+        check_triggered=check_triggered,
+        all_builds=all_builds,
+        create_jira_tickets=create_jira_tickets,
+    )
     await pipeline.run()

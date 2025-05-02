@@ -55,8 +55,7 @@ async def get_release_image_info(pullspec: str, raise_if_not_found: bool = False
 
 async def registry_login(runtime: Runtime):
     try:
-        await exectools.cmd_gather_async(
-            f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
+        await exectools.cmd_gather_async(f'oc --kubeconfig {os.environ["KUBECONFIG"]} registry login')
 
     except KeyError:
         runtime.logger.error('KUBECONFIG env var must be defined!')
@@ -68,7 +67,9 @@ async def registry_login(runtime: Runtime):
 
 
 @retry(reraise=True, stop=stop_after_attempt(3))
-def common_oc_wrapper(cmd_result_name: str, cli_verb: str, oc_args: List[str], check_status: bool = True, return_value: bool = False) -> (int, str):
+def common_oc_wrapper(
+    cmd_result_name: str, cli_verb: str, oc_args: List[str], check_status: bool = True, return_value: bool = False
+) -> (int, str):
     # cmd_result_name: Result obj name in log
     # cli_verb: first command group
     # oc_args: args list of command
@@ -120,7 +121,9 @@ def extract_release_client_tools(release_pullspec: str, path_arg: str, single_ar
     common_oc_wrapper("extract_tools", "adm", args, True, False)
 
 
-def extract_baremetal_installer(release_pullspec: str, path: str, arch: str, cmd: str = 'openshift-baremetal-install') -> (int, str):
+def extract_baremetal_installer(
+    release_pullspec: str, path: str, arch: str, cmd: str = 'openshift-baremetal-install'
+) -> (int, str):
     """
     Extract baremetal-installer binary to specified location
     :param release_pullspec: e.g. quay.io/openshift-release-dev/ocp-release:4.14.0-ec.2-x86_64
@@ -130,13 +133,23 @@ def extract_baremetal_installer(release_pullspec: str, path: str, arch: str, cmd
 
     cmd_os = f'linux/{arch}'
     # oc adm release extract --command=openshift-baremetal-install -n=ocp --to <path> <pullspec>
-    args = ['release', 'extract', f'--command={cmd}', '-n=ocp', '--from',
-            release_pullspec, '--filter-by-os', cmd_os, '--command-os', cmd_os,
-            f'--to={path}']
+    args = [
+        'release',
+        'extract',
+        f'--command={cmd}',
+        '-n=ocp',
+        '--from',
+        release_pullspec,
+        '--filter-by-os',
+        cmd_os,
+        '--command-os',
+        cmd_os,
+        f'--to={path}',
+    ]
     return common_oc_wrapper(
         cmd_result_name='extract_baremetal',
         cli_verb='adm',
         oc_args=args,
         check_status=True,
-        return_value=True
+        return_value=True,
     )

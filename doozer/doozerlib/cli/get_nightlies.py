@@ -18,21 +18,41 @@ from doozerlib.runtime import Runtime
 logger = logutil.get_logger(__name__)
 
 
-@cli.command("get-nightlies", short_help="Determine set(s) of accepted nightlies with matching contents for all architectures")
-@click.option("--matching", metavar="NIGHTLY_NAME", multiple=True, help="Only report nightlies with the same content as named nightly")
+@cli.command(
+    "get-nightlies", short_help="Determine set(s) of accepted nightlies with matching contents for all architectures"
+)
+@click.option(
+    "--matching",
+    metavar="NIGHTLY_NAME",
+    multiple=True,
+    help="Only report nightlies with the same content as named nightly",
+)
 @click.option("--allow-inconsistency", is_flag=True, help="Allow nightlies that fail deeper consistency checks")
 @click.option("--allow-pending", is_flag=True, help="Include nightlies that have not completed tests")
 @click.option("--allow-rejected", is_flag=True, help="Include nightlies that have failed tests")
-@click.option("--exclude-arch", "exclude_arches", metavar="ARCH", multiple=True, help="Exclude arch(es) normally included in this version (multi,aarch64,...)")
+@click.option(
+    "--exclude-arch",
+    "exclude_arches",
+    metavar="ARCH",
+    multiple=True,
+    help="Exclude arch(es) normally included in this version (multi,aarch64,...)",
+)
 @click.option("--limit", default=1, type=int, metavar='NUM', help="Number of sets of nightlies to print")
 @click.option("--details", is_flag=True, help="Print some nightly details including RHCOS build id")
 @click.option("--latest", is_flag=True, help="Just get the latest nightlies for all arches (accepted or not)")
 @click.pass_obj
 @click_coroutine
-async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arches: Tuple[str, ...],
-                        allow_inconsistency: bool,
-                        allow_pending: bool,
-                        allow_rejected: bool, limit: int, details: bool, latest: bool):
+async def get_nightlies(
+    runtime: Runtime,
+    matching: Tuple[str, ...],
+    exclude_arches: Tuple[str, ...],
+    allow_inconsistency: bool,
+    allow_pending: bool,
+    allow_rejected: bool,
+    limit: int,
+    details: bool,
+    latest: bool,
+):
     """
     Find set(s) including a nightly for each arch with matching contents
     according to source commits and NVRs (or in the case of RHCOS containers,
@@ -103,21 +123,24 @@ async def get_nightlies(runtime: Runtime, matching: Tuple[str, ...], exclude_arc
 
     # make lists of nightly objects per arch
     try:
-        nightlies = await find_rc_nightlies(runtime, include_arches, allow_pending, allow_rejected, matching, private_nightly)
+        nightlies = await find_rc_nightlies(
+            runtime, include_arches, allow_pending, allow_rejected, matching, private_nightly
+        )
         nightlies_for_arch: Dict[str, List[Nightly]] = {
-            arch: [Nightly(nightly_info=n) for n in nightlies]
-            for arch, nightlies in nightlies.items()
+            arch: [Nightly(nightly_info=n) for n in nightlies] for arch, nightlies in nightlies.items()
         }
     except NoMatchingNightlyException as ex:
         red_print(ex)
         exit(1)
 
     # retrieve release info for each nightly image (with concurrency)
-    await asyncio.gather(*[
-        nightly.populate_nightly_release_data()
-        for arch, nightlies in nightlies_for_arch.items()
-        for nightly in nightlies
-    ])
+    await asyncio.gather(
+        *[
+            nightly.populate_nightly_release_data()
+            for arch, nightlies in nightlies_for_arch.items()
+            for nightly in nightlies
+        ]
+    )
 
     # find sets of nightlies where all arches have equivalent content
     inconsistent_nightly_sets = []
@@ -169,15 +192,24 @@ def determine_arch_list(runtime: Runtime, exclude_arches: Set[str]) -> Set[str]:
 
 class NoMatchingNightlyException(Exception):
     """Indicates one or more nightlies that were requested to match were not found"""
+
     pass
 
 
 class EmptyArchException(Exception):
     """Indicates there are no (accepted) nightlies for an arch"""
+
     pass
 
 
-async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: bool, allow_rejected: bool, matching: Sequence[str] = [], private_nightly: bool = False) -> Dict[str, List[Dict]]:
+async def find_rc_nightlies(
+    runtime: Runtime,
+    arches: Set[str],
+    allow_pending: bool,
+    allow_rejected: bool,
+    matching: Sequence[str] = [],
+    private_nightly: bool = False,
+) -> Dict[str, List[Dict]]:
     """
     Retrieve current nightly dicts for each arch, in order RC gives them (most
     recent to oldest). Filter to Accepted unless allow_pending/rejected is true.
@@ -208,7 +240,7 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
                 raise ValueError("Token empty, might not be logged in to correct cluster")
 
             headers = {
-                "Authorization": f"Bearer {token}"
+                "Authorization": f"Bearer {token}",
             }
 
         async with aiohttp.ClientSession() as session:
@@ -216,14 +248,8 @@ async def find_rc_nightlies(runtime: Runtime, arches: Set[str], allow_pending: b
                 data = await resp.json()
 
         # filter them per parameters
-        nightlies: List[Dict] = [
-            nightly for nightly in (data.get("tags") or [])
-            if nightly["phase"] in allowed_phases
-        ]
-        matched_nightlies: List[Dict] = [
-            nightly for nightly in nightlies
-            if nightly["name"] in matching
-        ]
+        nightlies: List[Dict] = [nightly for nightly in (data.get("tags") or []) if nightly["phase"] in allowed_phases]
+        matched_nightlies: List[Dict] = [nightly for nightly in nightlies if nightly["name"] in matching]
         if matched_nightlies:
             nightlies = matched_nightlies  # no need to look at others in this arch
             for nightly in matched_nightlies:
@@ -286,9 +312,13 @@ class Nightly:
     """
 
     def __init__(
-            self, nightly_info: Dict = None, release_image_info: Dict = None,
-            name: str = None, phase: str = None, pullspec: str = None):
-
+        self,
+        nightly_info: Dict = None,
+        release_image_info: Dict = None,
+        name: str = None,
+        phase: str = None,
+        pullspec: str = None,
+    ):
         self.nightly_info = nightly_info or {}
         self.release_image_info = release_image_info or {}
 
@@ -330,9 +360,7 @@ class Nightly:
         # NOTE: required stand-in member "pod" is hardcoded
         pod_commit = self.commit_for_tag["pod"]
         self.commit_for_tag = {
-            tag: commit
-            for tag, commit in self.commit_for_tag.items()
-            if tag == "pod" or commit != pod_commit
+            tag: commit for tag, commit in self.commit_for_tag.items() if tag == "pod" or commit != pod_commit
         }
 
     def __eq__(self, other: 'Nightly'):
@@ -373,10 +401,9 @@ class Nightly:
 
     async def populate_nightly_content(self, runtime, arch: str):
         """Retrieve image NVRs and RHCOS build data concurrently for deeper comparison"""
-        await asyncio.gather(*(
-            self.retrieve_image_info_async(self.pullspec_for_tag[tag])
-            for tag in self.commit_for_tag
-        ))
+        await asyncio.gather(
+            *(self.retrieve_image_info_async(self.pullspec_for_tag[tag]) for tag in self.commit_for_tag)
+        )
         if not self.rhcos_inspector:
             ps4tag = {tag: self.pullspec_for_tag[tag] for tag in self.rhcos_tag_names}
             self.rhcos_inspector = RHCOSBuildInspector(runtime, ps4tag, arch)
@@ -401,7 +428,9 @@ class Nightly:
             other_commit = other.commit_for_tag.get(tag)
             if not commit or not other_commit:
                 continue  # ignore missing or non-group entries
-            self_nvr, other_nvr = await asyncio.gather(*(self.retrieve_nvr_for_tag(tag), other.retrieve_nvr_for_tag(tag)))
+            self_nvr, other_nvr = await asyncio.gather(
+                *(self.retrieve_nvr_for_tag(tag), other.retrieve_nvr_for_tag(tag))
+            )
             if self_nvr != other_nvr:
                 if self_nvr[0] != other_nvr[0]:
                     # give alt images (where components differ for the same tag) a pass.
@@ -419,16 +448,19 @@ class Nightly:
         """Check that the two have the same RHCOS contents according to build records"""
         for nightly in (self, other):
             if not nightly.rhcos_inspector:
-                raise Exception(f"No rhcos_inspector for nightly {nightly}, should have called populate_nightly_content first")
+                raise Exception(
+                    f"No rhcos_inspector for nightly {nightly}, should have called populate_nightly_content first"
+                )
             nightly._rhcos_rpms = {
-                nevra[0]: (nevra[2], nevra[3])
-                for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
+                nevra[0]: (nevra[2], nevra[3]) for nevra in nightly.rhcos_inspector.get_os_metadata_rpm_list()
             }
 
         logger.debug(f"comparing {self.rhcos_inspector} and {other.rhcos_inspector}")
         for rpm_name, vr in self._rhcos_rpms.items():
             if rpm_name in other._rhcos_rpms and vr != other._rhcos_rpms[rpm_name]:
-                logger.warning(f"{self.name} differs from {other.name} because '{rpm_name}' version-release {vr} != {other._rhcos_rpms[rpm_name]}")
+                logger.warning(
+                    f"{self.name} differs from {other.name} because '{rpm_name}' version-release {vr} != {other._rhcos_rpms[rpm_name]}"
+                )
                 return False
 
         return True
@@ -488,10 +520,9 @@ class NightlySet:
 
     async def populate_nightly_content(self, runtime):
         """Prepare Nightlys for deeper (more expensive) comparison"""
-        await asyncio.gather(*(
-            nightly.populate_nightly_content(runtime, arch)
-            for arch, nightly in self.nightly_for_arch.items()
-        ))
+        await asyncio.gather(
+            *(nightly.populate_nightly_content(runtime, arch) for arch, nightly in self.nightly_for_arch.items())
+        )
 
     async def deeper_equivalence(self) -> bool:
         """Check that all Nightlys have deeper equivalency"""

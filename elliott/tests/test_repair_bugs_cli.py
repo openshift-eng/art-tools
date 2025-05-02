@@ -26,8 +26,10 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("get_bug").with_args("OCPBUGS-1").and_return(jira_bug)
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'repair-bugs', '--id', '1', '--id', 'OCPBUGS-1', '--to',
-                                     'ON_QA', '-a', '99999'])
+        result = runner.invoke(
+            cli,
+            ['-g', 'openshift-4.6', 'repair-bugs', '--id', '1', '--id', 'OCPBUGS-1', '--to', 'ON_QA', '-a', '99999'],
+        )
         self.assertEqual(result.exit_code, 0)
 
     def test_repair_placeholder_jira_bug(self):
@@ -40,8 +42,21 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(JIRABugTracker).should_receive("login").and_return(client)
         flexmock(JIRABugTracker).should_receive("get_bug").with_args("OCPBUGS-1").and_return(bug)
         flexmock(JIRABugTracker).should_receive("update_bug_status").once()
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'repair-bugs', '--close-placeholder', '--id', 'OCPBUGS-1',
-                                     '--to', 'ON_QA', '-a', '99999'])
+        result = runner.invoke(
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'repair-bugs',
+                '--close-placeholder',
+                '--id',
+                'OCPBUGS-1',
+                '--to',
+                'ON_QA',
+                '-a',
+                '99999',
+            ],
+        )
         if result.exit_code != 0:
             exc_type, exc_value, exc_traceback = result.exc_info
             t = "\n".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -58,7 +73,22 @@ class RepairBugsTestCase(unittest.TestCase):
         flexmock(BugzillaBugTracker).should_receive("get_bug").with_args(1).and_return(bug)
         flexmock(BugzillaBugTracker).should_receive("update_bug_status").once()
         flexmock(BugzillaBugTracker).should_receive("add_comment").once()
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'repair-bugs', '--id', '1', '--to', 'ON_QA', '--comment', 'close bug', '-a', '99999'])
+        result = runner.invoke(
+            cli,
+            [
+                '-g',
+                'openshift-4.6',
+                'repair-bugs',
+                '--id',
+                '1',
+                '--to',
+                'ON_QA',
+                '--comment',
+                'close bug',
+                '-a',
+                '99999',
+            ],
+        )
         self.assertIn("1 bugs successfully modified", result.output)
         self.assertEqual(result.exit_code, 0)
 
@@ -85,8 +115,10 @@ class RepairBugsTestCase(unittest.TestCase):
         advisory = flexmock(errata_bugs=[1], jira_issues=["OCPBUGS-1"])
         flexmock(Advisory).new_instances(advisory)
 
-        result = runner.invoke(cli, ['-g', 'openshift-4.6', 'repair-bugs', '--auto', '--to', 'ON_QA', '--comment',
-                                     'close bug', '-a', '99999'])
+        result = runner.invoke(
+            cli,
+            ['-g', 'openshift-4.6', 'repair-bugs', '--auto', '--to', 'ON_QA', '--comment', 'close bug', '-a', '99999'],
+        )
         self.assertIn("1 bugs successfully modified", result.output)
         self.assertEqual(result.exit_code, 0)
 

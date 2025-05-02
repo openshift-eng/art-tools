@@ -1,7 +1,12 @@
 import itertools
 from artcommonlib import exectools, gitdata
-from artcommonlib.assembly import AssemblyTypes, assembly_type, assembly_basis_event, assembly_group_config, \
-    assembly_streams_config
+from artcommonlib.assembly import (
+    AssemblyTypes,
+    assembly_type,
+    assembly_basis_event,
+    assembly_group_config,
+    assembly_streams_config,
+)
 from artcommonlib.model import Model, Missing
 from artcommonlib.pushd import Dir
 from artcommonlib.util import isolate_el_version_in_brew_tag, deep_merge
@@ -130,10 +135,14 @@ class Runtime(GroupRuntime):
         self.stream_overrides: Dict[str, str] = {}  # Dict of stream name -> pullspec from command line.
 
         self.upstreams: List[str] = []  # Click option. A list of upstream source commit to use.
-        self.upstream_commitish_overrides: Dict[str, str] = {}  # Dict from distgit key name to upstream source commit to use.
+        self.upstream_commitish_overrides: Dict[
+            str, str
+        ] = {}  # Dict from distgit key name to upstream source commit to use.
 
         self.downstreams: List[str] = []  # Click option. A list of distgit commits to checkout.
-        self.downstream_commitish_overrides: Dict[str, str] = {}  # Dict from distgit key name to distgit commit to check out.
+        self.downstream_commitish_overrides: Dict[
+            str, str
+        ] = {}  # Dict from distgit key name to distgit commit to check out.
 
         self._logger = None
 
@@ -270,7 +279,9 @@ class Runtime(GroupRuntime):
         if self.assembly:
             replace_vars['runtime_assembly'] = self.assembly
             if self.assembly_type is not AssemblyTypes.STREAM:
-                replace_vars['release_name'] = util.get_release_name_for_assembly(self.group, self.get_releases_config(), self.assembly)
+                replace_vars['release_name'] = util.get_release_name_for_assembly(
+                    self.group, self.get_releases_config(), self.assembly
+                )
         return replace_vars
 
     def init_state(self):
@@ -284,12 +295,19 @@ class Runtime(GroupRuntime):
         with io.open(self.state_file, 'w', encoding='utf-8') as f:
             yaml.safe_dump(self.state, f, default_flow_style=False)
 
-    def initialize(self, mode='images', clone_distgits=True,
-                   validate_content_sets=False,
-                   no_group=False, clone_source=None, disabled=None,
-                   prevent_cloning: bool = False, config_only: bool = False, group_only: bool = False,
-                   build_system: str = None):
-
+    def initialize(
+        self,
+        mode='images',
+        clone_distgits=True,
+        validate_content_sets=False,
+        no_group=False,
+        clone_source=None,
+        disabled=None,
+        prevent_cloning: bool = False,
+        config_only: bool = False,
+        group_only: bool = False,
+        build_system: str = None,
+    ):
         if self.initialized:
             return
 
@@ -386,7 +404,9 @@ class Runtime(GroupRuntime):
         for upstream in self.downstreams:
             override_distgit_key = upstream[0]
             override_commitish = upstream[1]
-            self._logger.warning(f'Downstream distgit for {override_distgit_key} will be checked out to {override_commitish}')
+            self._logger.warning(
+                f'Downstream distgit for {override_distgit_key} will be checked out to {override_commitish}'
+            )
             self.downstream_commitish_overrides[override_distgit_key] = override_commitish
 
         self.resolve_metadata()
@@ -410,11 +430,15 @@ class Runtime(GroupRuntime):
         self.group_dir = self.gitdata.data_dir
         self.group_config = self.get_group_config()
 
-        self.hotfix = False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
+        self.hotfix = (
+            False  # True indicates builds should be tagged with associated hotfix tag for the artifacts branch
+        )
 
         if self.group_config.assemblies.enabled or self.enable_assemblies:
             if re.fullmatch(r'[\w.-]+', self.assembly) is None or self.assembly[0] == '.' or self.assembly[-1] == '.':
-                raise ValueError('Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).')
+                raise ValueError(
+                    'Assembly names may only consist of alphanumerics, ., and _, but not start or end with a dot (.).'
+                )
         else:
             # If assemblies are not enabled for the group,
             # ignore this argument throughout doozer.
@@ -435,7 +459,9 @@ class Runtime(GroupRuntime):
         self.assembly_basis_event = assembly_basis_event(self.get_releases_config(), self.assembly)
         if self.assembly_basis_event:
             if self.brew_event:
-                raise IOError(f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.')
+                raise IOError(
+                    f'Cannot run with assembly basis event {self.assembly_basis_event} and --brew-event at the same time.'
+                )
             # If the assembly has a basis event, we constrain all brew calls to that event.
             self.brew_event = self.assembly_basis_event
             self._logger.info(f'Constraining brew event to assembly basis for {self.assembly}: {self.brew_event}')
@@ -481,7 +507,6 @@ class Runtime(GroupRuntime):
                     self.source_resolver.register_source_alias(key, val)
 
         with Dir(self.group_dir):
-
             # Flattens multiple comma/space delimited lists like [ 'x', 'y,z' ] into [ 'x', 'y', 'z' ]
             def flatten_list(names):
                 if not names:
@@ -506,7 +531,9 @@ class Runtime(GroupRuntime):
 
             if cli_arches_override:  # Highest priority overrides on command line
                 self.arches = cli_arches_override
-            elif self.group_config.arches_override:  # Allow arches_override in group.yaml to temporarily override GA architectures
+            elif (
+                self.group_config.arches_override
+            ):  # Allow arches_override in group.yaml to temporarily override GA architectures
                 self.arches = self.group_config.arches_override
             else:
                 self.arches = self.group_config.get('arches', ['x86_64'])
@@ -530,14 +557,17 @@ class Runtime(GroupRuntime):
             if self.group_config.name != self.group:
                 raise IOError(
                     f"Name in group.yml ({self.group_config.name}) does not match group name ({self.group}). Someone "
-                    "may have copied this group without updating group.yml (make sure to check branch)")
+                    "may have copied this group without updating group.yml (make sure to check branch)"
+                )
 
             if self.branch is None:
                 if self.group_config.branch is not Missing:
                     self.branch = self.group_config.branch
                     self._logger.info("Using branch from group.yml: %s" % self.branch)
                 else:
-                    self._logger.info("No branch specified either in group.yml or on the command line; all included images will need to specify their own.")
+                    self._logger.info(
+                        "No branch specified either in group.yml or on the command line; all included images will need to specify their own."
+                    )
             else:
                 self._logger.info("Using branch from command line: %s" % self.branch)
 
@@ -550,8 +580,7 @@ class Runtime(GroupRuntime):
                         regexen.append(re.compile(val))
                     except Exception as e:
                         raise ValueError(
-                            "could not compile image build log regex for group:\n{}\n{}"
-                            .format(val, e)
+                            "could not compile image build log regex for group:\n{}\n{}".format(val, e),
                         )
                 scanner.matches = regexen
 
@@ -579,7 +608,9 @@ class Runtime(GroupRuntime):
 
             def _register_name_in_bundle(name_in_bundle: str, distgit_key: str):
                 if name_in_bundle in self.name_in_bundle_map:
-                    raise ValueError(f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}")
+                    raise ValueError(
+                        f"Image {distgit_key} has name_in_bundle={name_in_bundle}, which is already taken by image {self.name_in_bundle_map[name_in_bundle]}"
+                    )
                 self.name_in_bundle_map[name_in_bundle] = img.key
 
             for img in image_name_data.values():
@@ -596,32 +627,50 @@ class Runtime(GroupRuntime):
                     short_name_with_ose = "ose-" + short_name_without_ose
                     _register_name_in_bundle(short_name_with_ose, img.key)
 
-            image_data = self.gitdata.load_data(path='images', keys=image_keys,
-                                                exclude=image_ex,
-                                                replace_vars=replace_vars,
-                                                filter_funcs=None if len(image_keys) else filter_func)
+            image_data = self.gitdata.load_data(
+                path='images',
+                keys=image_keys,
+                exclude=image_ex,
+                replace_vars=replace_vars,
+                filter_funcs=None if len(image_keys) else filter_func,
+            )
 
             try:
-                rpm_data = self.gitdata.load_data(path='rpms', keys=rpm_keys,
-                                                  exclude=rpm_ex,
-                                                  replace_vars=replace_vars,
-                                                  filter_funcs=None if len(rpm_keys) else filter_func)
+                rpm_data = self.gitdata.load_data(
+                    path='rpms',
+                    keys=rpm_keys,
+                    exclude=rpm_ex,
+                    replace_vars=replace_vars,
+                    filter_funcs=None if len(rpm_keys) else filter_func,
+                )
             except gitdata.GitDataPathException:
                 # some older versions have no RPMs, that's ok.
                 rpm_data = {}
 
             missed_include = set(image_keys + rpm_keys) - set(list(image_data.keys()) + list(rpm_data.keys()))
             if len(missed_include) > 0:
-                raise DoozerFatalError('The following images or rpms were either missing or filtered out: {}'.format(', '.join(missed_include)))
+                raise DoozerFatalError(
+                    'The following images or rpms were either missing or filtered out: {}'.format(
+                        ', '.join(missed_include)
+                    )
+                )
 
             if mode in ['images', 'both']:
                 for i in image_data.values():
                     if i.key not in self.image_map:
-                        metadata = ImageMetadata(self, i, self.upstream_commitish_overrides.get(i.key), clone_source=clone_source, prevent_cloning=prevent_cloning)
+                        metadata = ImageMetadata(
+                            self,
+                            i,
+                            self.upstream_commitish_overrides.get(i.key),
+                            clone_source=clone_source,
+                            prevent_cloning=prevent_cloning,
+                        )
                         self.image_map[metadata.distgit_key] = metadata
                         self.component_map[metadata.get_component_name()] = metadata
                 if not self.image_map:
-                    self._logger.warning("No image metadata directories found for given options within: {}".format(self.group_dir))
+                    self._logger.warning(
+                        "No image metadata directories found for given options within: {}".format(self.group_dir)
+                    )
 
                 for image in self.image_map.values():
                     image.resolve_parent()
@@ -630,7 +679,11 @@ class Runtime(GroupRuntime):
                 for image in self.image_map.values():
                     for child in image.children:
                         if image.is_ancestor(child):
-                            raise DoozerFatalError('{} cannot be both a parent and dependent of {}'.format(child.distgit_key, image.distgit_key))
+                            raise DoozerFatalError(
+                                '{} cannot be both a parent and dependent of {}'.format(
+                                    child.distgit_key, image.distgit_key
+                                )
+                            )
 
                 self.generate_image_tree()
 
@@ -639,11 +692,19 @@ class Runtime(GroupRuntime):
                     if clone_source is None:
                         # Historically, clone_source defaulted to True for rpms.
                         clone_source = True
-                    metadata = RPMMetadata(self, r, self.upstream_commitish_overrides.get(r.key), clone_source=clone_source, prevent_cloning=prevent_cloning)
+                    metadata = RPMMetadata(
+                        self,
+                        r,
+                        self.upstream_commitish_overrides.get(r.key),
+                        clone_source=clone_source,
+                        prevent_cloning=prevent_cloning,
+                    )
                     self.rpm_map[metadata.distgit_key] = metadata
                     self.component_map[metadata.get_component_name()] = metadata
                 if not self.rpm_map:
-                    self._logger.warning("No rpm metadata directories found for given options within: {}".format(self.group_dir))
+                    self._logger.warning(
+                        "No rpm metadata directories found for given options within: {}".format(self.group_dir)
+                    )
 
         # Make sure that the metadata is not asking us to check out the same exact distgit & branch.
         # This would almost always indicate someone has checked in duplicate metadata into a group.
@@ -651,7 +712,11 @@ class Runtime(GroupRuntime):
         for meta in list(self.rpm_map.values()) + list(self.image_map.values()):
             key = '{}/{}/#{}'.format(meta.namespace, meta.name, meta.branch())
             if key in no_collide_check:
-                raise IOError('Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}'.format(key, meta.config_filename, no_collide_check[key].config_filename))
+                raise IOError(
+                    'Complete duplicate distgit & branch; something wrong with metadata: {} from {} and {}'.format(
+                        key, meta.config_filename, no_collide_check[key].config_filename
+                    )
+                )
             no_collide_check[key] = meta
 
         if clone_distgits:
@@ -763,7 +828,11 @@ class Runtime(GroupRuntime):
         be thrown.
         """
         if self.freeze_automation == FREEZE_AUTOMATION_YES:
-            raise DoozerFatalError('Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.'.format(FREEZE_AUTOMATION_YES))
+            raise DoozerFatalError(
+                'Automation (builds / mutations) for this group is currently frozen (freeze_automation set to {}). Coordinate with the group owner to change this if you believe it is incorrect.'.format(
+                    FREEZE_AUTOMATION_YES
+                )
+            )
 
     def image_metas(self) -> List[ImageMetadata]:
         return list(self.image_map.values())
@@ -866,7 +935,9 @@ class Runtime(GroupRuntime):
                 <Clayton Coleman> Yes, Get with the naming system or get out of town
                 """
                 if not image_meta.image_name_short.startswith("ose-"):
-                    raise ValueError(f"{image_meta.distgit_key} does not conform to payload naming convention with image name: {image_meta.image_name_short}")
+                    raise ValueError(
+                        f"{image_meta.distgit_key} does not conform to payload naming convention with image name: {image_meta.image_name_short}"
+                    )
 
                 payload_images.append(image_meta)
 
@@ -999,11 +1070,17 @@ class Runtime(GroupRuntime):
         if stream_name in self.stream_overrides:
             return Model(dict_to_model={'image': self.stream_overrides[stream_name]})
 
-        matched_streams = list(itertools.islice(((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2))
+        matched_streams = list(
+            itertools.islice(
+                ((n, s) for n, s in self.streams.items() if stream_name == n or stream_name in s.get('aliases', [])), 2
+            )
+        )
         if len(matched_streams) == 0:
             raise IOError(f"Unable to find definition for stream '{stream_name}'")
         if len(matched_streams) > 1:
-            raise IOError(f"Stream name is ambiguous. Found multiple streams with name '{stream_name}': {', '.join([s[0] for s in matched_streams])}")
+            raise IOError(
+                f"Stream name is ambiguous. Found multiple streams with name '{stream_name}': {', '.join([s[0] for s in matched_streams])}"
+            )
         return Model(dict_to_model=matched_streams[0][1])
 
     def get_stream_names(self):
@@ -1014,7 +1091,7 @@ class Runtime(GroupRuntime):
 
     @property
     def git_cache_dir(self):
-        """ Returns the directory where git repos are cached.
+        """Returns the directory where git repos are cached.
         :return: The directory. None if caching is disabled.
         """
         if not self.cache_dir:
@@ -1024,7 +1101,9 @@ class Runtime(GroupRuntime):
     def export_sources(self, output):
         self._logger.info('Writing sources to {}'.format(output))
         with io.open(output, 'w', encoding='utf-8') as sources_file:
-            yaml.dump({k: v.source_path for k, v in self.source_resolutions.items()}, sources_file, default_flow_style=False)
+            yaml.dump(
+                {k: v.source_path for k, v in self.source_resolutions.items()}, sources_file, default_flow_style=False
+            )
 
     def auto_version(self, repo_type):
         """
@@ -1038,21 +1117,27 @@ class Runtime(GroupRuntime):
 
         repo_url = self.repos['rhel-server-ose-rpms'].baseurl(repo_type, 'x86_64')
         self._logger.info(
-            "Getting version from atomic-openshift package in {}".format(
-                repo_url)
+            "Getting version from atomic-openshift package in {}".format(repo_url),
         )
 
         # create a randomish repo name to avoid erroneous cache hits
         repoid = "oit" + datetime.datetime.now().strftime("%s")
-        version_query = ["/usr/bin/repoquery", "--quiet", "--tempcache",
-                         "--repoid", repoid,
-                         "--repofrompath", repoid + "," + repo_url,
-                         "--queryformat", "%{VERSION}",
-                         "atomic-openshift"]
+        version_query = [
+            "/usr/bin/repoquery",
+            "--quiet",
+            "--tempcache",
+            "--repoid",
+            repoid,
+            "--repofrompath",
+            repoid + "," + repo_url,
+            "--queryformat",
+            "%{VERSION}",
+            "atomic-openshift",
+        ]
         rc, auto_version, err = exectools.cmd_gather(version_query)
         if rc != 0:
             raise RuntimeError(
-                "Unable to get OCP version from RPM repository: {}".format(err)
+                "Unable to get OCP version from RPM repository: {}".format(err),
             )
 
         version = "v" + auto_version.strip()
@@ -1077,10 +1162,7 @@ class Runtime(GroupRuntime):
         with exectools.timer(self._logger.info, 'Full runtime clone'):
             if n_threads is None:
                 n_threads = self.global_opts['distgit_threads']
-            return exectools.parallel_exec(
-                lambda m, _: m.distgit_repo(),
-                self.all_metas(),
-                n_threads=n_threads).get()
+            return exectools.parallel_exec(lambda m, _: m.distgit_repo(), self.all_metas(), n_threads=n_threads).get()
 
     def push_distgits(self, n_threads=None):
         self.assert_mutation_is_permitted()
@@ -1088,9 +1170,8 @@ class Runtime(GroupRuntime):
         if n_threads is None:
             n_threads = self.global_opts['distgit_threads']
         return exectools.parallel_exec(
-            lambda m, _: m.distgit_repo().push(),
-            self.all_metas(),
-            n_threads=n_threads).get()
+            lambda m, _: m.distgit_repo().push(), self.all_metas(), n_threads=n_threads
+        ).get()
 
     def get_el_targeted_default_branch(self, el_target: Optional[Union[str, int]] = None):
         if not self.branch:
@@ -1147,14 +1228,21 @@ class Runtime(GroupRuntime):
 
         if self.data_path is None:
             raise DoozerFatalError(
-                ("No metadata path provided. Must be set via one of:\n"
-                 "* data_path key in {}\n"
-                 "* doozer --data-path [PATH|URL]\n"
-                 "* Environment variable DOOZER_DATA_PATH\n"
-                 ).format(self.cfg_obj.full_path))
+                (
+                    "No metadata path provided. Must be set via one of:\n"
+                    "* data_path key in {}\n"
+                    "* doozer --data-path [PATH|URL]\n"
+                    "* Environment variable DOOZER_DATA_PATH\n"
+                ).format(self.cfg_obj.full_path)
+            )
 
-        self.gitdata = gitdata.GitData(data_path=self.data_path, clone_dir=self.working_dir,
-                                       commitish=self.group_commitish, reclone=self.upcycle, logger=self._logger)
+        self.gitdata = gitdata.GitData(
+            data_path=self.data_path,
+            clone_dir=self.working_dir,
+            commitish=self.group_commitish,
+            reclone=self.upcycle,
+            logger=self._logger,
+        )
         self.data_dir = self.gitdata.data_dir
 
     def get_rpm_config(self) -> dict:

@@ -15,7 +15,9 @@ TARBALL_SOURCES_REMOTE_BASE_DIR = "ocp-client-handoff"
 
 
 class TarballSourcesPipeline:
-    def __init__(self, runtime: Runtime, group: str, assembly: str, components: Iterable[str], advisories: Iterable[int]) -> None:
+    def __init__(
+        self, runtime: Runtime, group: str, assembly: str, components: Iterable[str], advisories: Iterable[int]
+    ) -> None:
         self.runtime = runtime
         self.group = group
         self.assembly = assembly
@@ -59,14 +61,25 @@ class TarballSourcesPipeline:
         new_issue = self._create_jira(advisories, tarball_files)
         if self.runtime.dry_run:
             new_issue_key = "FAKE-123"
-            self.runtime.logger.warning("[DRY RUN] A JIRA ticket should have been created. Using fake JIRA issue key %s", new_issue_key)
+            self.runtime.logger.warning(
+                "[DRY RUN] A JIRA ticket should have been created. Using fake JIRA issue key %s", new_issue_key
+            )
         else:
             new_issue_key = new_issue.key
         new_issue_url = urljoin(f"{self.runtime.config['jira']['url']}/browse/", quote(new_issue_key))
         print(f"Created JIRA ticket: {new_issue_url}")
 
     async def _create_tarball_sources(self, advisories: Iterable[int], source_directory: str):
-        cmd = ["elliott", "--debug", f"--group={self.group}", f"--assembly={self.assembly}", "tarball-sources", "create", "--force", f"--out-dir={source_directory}"]
+        cmd = [
+            "elliott",
+            "--debug",
+            f"--group={self.group}",
+            f"--assembly={self.assembly}",
+            "tarball-sources",
+            "create",
+            "--force",
+            f"--out-dir={source_directory}",
+        ]
         for c in self.components:
             cmd.append(f"--component={c}")
         for ad in advisories:
@@ -79,7 +92,16 @@ class TarballSourcesPipeline:
 
     async def _copy_to_spmm_utils(self, source_directory: str):
         remote = f"{constants.SPMM_UTILS_REMOTE_HOST}:{TARBALL_SOURCES_REMOTE_BASE_DIR}"
-        cmd = ["rsync", "-avz", "--no-perms", "--no-owner", "--omit-dir-times", "--no-group", f"{source_directory}", f"{remote}"]
+        cmd = [
+            "rsync",
+            "-avz",
+            "--no-perms",
+            "--no-owner",
+            "--omit-dir-times",
+            "--no-group",
+            f"{source_directory}",
+            f"{remote}",
+        ]
         if self.runtime.dry_run:
             self.runtime.logger.warning("[DRY RUN] Would have run: %s", cmd)
             return
@@ -97,19 +119,32 @@ The following sources are uploaded to {urlparse(constants.SPMM_UTILS_REMOTE_HOST
 Attaching source tarballs to be published on ftp.redhat.com as in https://projects.engineering.redhat.com/browse/RCMTEMPL-6549
 """.strip()
         if self.runtime.dry_run:
-            self.runtime.logger.warning("[DRY RUN] Would have created JIRA ticket to CLOUDDST: summary=%s, description=%s", summary, description)
+            self.runtime.logger.warning(
+                "[DRY RUN] Would have created JIRA ticket to CLOUDDST: summary=%s, description=%s", summary, description
+            )
             return None
         new_issue = self._jira_client.create_issue("CLOUDDST", "Ticket", summary, description)
         return new_issue
 
 
 @cli.command("tarball-sources")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.9")
-@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True,
-              help="The name of an assembly. e.g. 4.9.1")
-@click.option("--advisory", "-a", "advisories", metavar="ADVISORY", type=int, multiple=True,
-              help="Advisory number. If unspecified, use the advisory number from ocp-build-data.")
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
+    help="The group of components on which to operate. e.g. openshift-4.9",
+)
+@click.option("--assembly", metavar="ASSEMBLY_NAME", required=True, help="The name of an assembly. e.g. 4.9.1")
+@click.option(
+    "--advisory",
+    "-a",
+    "advisories",
+    metavar="ADVISORY",
+    type=int,
+    multiple=True,
+    help="Advisory number. If unspecified, use the advisory number from ocp-build-data.",
+)
 @pass_runtime
 @click_coroutine
 async def tarball_sources(runtime: Runtime, group: str, assembly: str, advisories: Tuple[int, ...]):

@@ -11,48 +11,94 @@ from artcommonlib.util import deep_merge, isolate_major_minor_in_group
 class TestUtil(unittest.TestCase):
     def test_convert_remote_git_to_https(self):
         # git@ to https
-        self.assertEqual(util.convert_remote_git_to_https('git@github.com:openshift/aos-cd-jobs.git'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('git@github.com:openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
         # https to https (no-op)
-        self.assertEqual(util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
         # https to https, remove suffix
-        self.assertEqual(util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs.git'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('https://github.com/openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
         # ssh to https
-        self.assertEqual(util.convert_remote_git_to_https('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
-                         'https://github.com/openshift/aos-cd-jobs')
+        self.assertEqual(
+            util.convert_remote_git_to_https('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
+            'https://github.com/openshift/aos-cd-jobs',
+        )
 
     def test_convert_remote_git_to_ssh(self):
         # git@ to https
-        self.assertEqual(util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
         # https to https (no-op)
-        self.assertEqual(util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
         # https to https, remove suffix
-        self.assertEqual(util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('https://github.com/openshift/aos-cd-jobs'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
         # ssh to https
-        self.assertEqual(util.convert_remote_git_to_ssh('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
-                         'git@github.com:openshift/aos-cd-jobs.git')
+        self.assertEqual(
+            util.convert_remote_git_to_ssh('ssh://ocp-build@github.com/openshift/aos-cd-jobs.git'),
+            'git@github.com:openshift/aos-cd-jobs.git',
+        )
 
     def test_find_latest_builds(self):
         builds = [
-            {"id": 13, "name": "a-container", "version": "v1.2.3", "release": "3.assembly.stream.el8", "tag_name": "tag1"},
-            {"id": 12, "name": "a-container", "version": "v1.2.3", "release": "2.assembly.hotfix_a.el9", "tag_name": "tag1"},
-            {"id": 11, "name": "a-container", "version": "v1.2.3", "release": "1.assembly.hotfix_a", "tag_name": "tag1"},
+            {
+                "id": 13,
+                "name": "a-container",
+                "version": "v1.2.3",
+                "release": "3.assembly.stream.el8",
+                "tag_name": "tag1",
+            },
+            {
+                "id": 12,
+                "name": "a-container",
+                "version": "v1.2.3",
+                "release": "2.assembly.hotfix_a.el9",
+                "tag_name": "tag1",
+            },
+            {
+                "id": 11,
+                "name": "a-container",
+                "version": "v1.2.3",
+                "release": "1.assembly.hotfix_a",
+                "tag_name": "tag1",
+            },
             {"id": 23, "name": "b-container", "version": "v1.2.3", "release": "3.assembly.test", "tag_name": "tag1"},
-            {"id": 22, "name": "b-container", "version": "v1.2.3", "release": "2.assembly.hotfix_b", "tag_name": "tag1"},
+            {
+                "id": 22,
+                "name": "b-container",
+                "version": "v1.2.3",
+                "release": "2.assembly.hotfix_b",
+                "tag_name": "tag1",
+            },
             {"id": 21, "name": "b-container", "version": "v1.2.3", "release": "1.assembly.stream", "tag_name": "tag1"},
             {"id": 33, "name": "c-container", "version": "v1.2.3", "release": "3", "tag_name": "tag1"},
-            {"id": 32, "name": "c-container", "version": "v1.2.3", "release": "2.assembly.hotfix_b", "tag_name": "tag1"},
+            {
+                "id": 32,
+                "name": "c-container",
+                "version": "v1.2.3",
+                "release": "2.assembly.hotfix_b",
+                "tag_name": "tag1",
+            },
             {"id": 31, "name": "c-container", "version": "v1.2.3", "release": "1", "tag_name": "tag1"},
         ]
         actual = build_util.find_latest_builds(builds, "stream")
@@ -81,7 +127,7 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.4.9.el700.hi', '4.9'),
             ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
             ('1.2.3-y.p.p1.assembly.art12398.el10', 'art12398'),
-            ('1.2.3-y.el9.p1.assembly.test', 'test')
+            ('1.2.3-y.el9.p1.assembly.test', 'test'),
         ]
 
         for t in test_cases:
@@ -97,7 +143,7 @@ class TestUtil(unittest.TestCase):
             ('1.2.3-y.p.p1.assembly.4.9.el7', 7),
             ('1.2.3-y.p.p1.assembly.art12398.el199', 199),
             ('1.2.3-y.p.p1.assembly.art12398', None),
-            ('1.2.3-y.p.p1.assembly.4.7.e.8', None)
+            ('1.2.3-y.p.p1.assembly.4.7.e.8', None),
         ]
 
         for t in test_cases:
@@ -240,7 +286,9 @@ class TestSoftwareLifecyclePhase(unittest.TestCase):
         expected = "202107021907"
         self.assertEqual(actual, expected)
 
-        actual = release_util.isolate_timestamp_in_release("foo-container-v4.8.0-202106152230.p0.g25122f5.assembly.stream")
+        actual = release_util.isolate_timestamp_in_release(
+            "foo-container-v4.8.0-202106152230.p0.g25122f5.assembly.stream"
+        )
         expected = "202106152230"
         self.assertEqual(actual, expected)
 

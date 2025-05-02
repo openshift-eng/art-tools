@@ -14,12 +14,13 @@ logging.basicConfig(filename='tests_functional.log', filemode='w+', level=loggin
 
 
 class DoozerRunnerTestCase(unittest.TestCase):
-
     def __init__(self, *args, **kwargs):
         super(DoozerRunnerTestCase, self).__init__(*args, **kwargs)
         self.dz_working_dir = os.environ.get('DOOZER_WORKING_DIR', None)
         if not self.dz_working_dir:
-            raise IOError('Please set DOOZER_WORKING_DIR to a non-existent directory on a mount with sufficient storage')
+            raise IOError(
+                'Please set DOOZER_WORKING_DIR to a non-existent directory on a mount with sufficient storage'
+            )
 
         self.dz_cache_dir = os.environ.get('DOOZER_CACHE_DIR', None)
         if not self.dz_cache_dir:
@@ -36,9 +37,11 @@ class DoozerRunnerTestCase(unittest.TestCase):
         cmd = [
             *DOOZER_CMD,
             *user_arg,
-            '--cache-dir', self.dz_cache_dir,
-            '--working-dir', self.dz_working_dir,
-            *args
+            '--cache-dir',
+            self.dz_cache_dir,
+            '--working-dir',
+            self.dz_working_dir,
+            *args,
         ]
 
         print(f'Running doozer with: {cmd}', file=sys.stderr)

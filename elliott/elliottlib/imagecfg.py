@@ -5,7 +5,6 @@ logger = logutil.get_logger(__name__)
 
 
 class ImageMetadata(Metadata):
-
     def __init__(self, runtime, data_obj):
         super(ImageMetadata, self).__init__('image', runtime, data_obj)
 

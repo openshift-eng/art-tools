@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from setuptools import setup, find_packages
 import sys
+
 if sys.version_info < (3, 8):
     sys.exit('Sorry, Python < 3.8 is not supported.')
 
@@ -13,7 +14,7 @@ setup(
     author_email="aos-team-art@redhat.com",
     setup_requires=['setuptools>=65.5.1', 'setuptools_scm'],
     use_scm_version={
-        "root": ".."
+        "root": "..",
     },
     description="Common library files used by ART tools",
     url="https://github.com/openshift-eng/art-tools/tree/main/artcommon",
@@ -36,5 +37,5 @@ setup(
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Build Tools",
         "Natural Language :: English",
-    ]
+    ],
 )

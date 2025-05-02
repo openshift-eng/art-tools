@@ -19,7 +19,10 @@ class TestRebaser(TestCase):
         """
 
         actual = KonfluxRebaser.split_dockerfile_into_stages(dfp)
-        expected = [[{'FROM': 'base'}, {'LABEL': 'foo="bar baz"'}, {'USER': '1000'}], [{'FROM': 'base2'}, {'USER': '2000'}, {'RUN': 'commands'}]]
+        expected = [
+            [{'FROM': 'base'}, {'LABEL': 'foo="bar baz"'}, {'USER': '1000'}],
+            [{'FROM': 'base2'}, {'USER': '2000'}, {'RUN': 'commands'}],
+        ]
 
         self.assertEqual(len(actual), 2)
         self.assertEqual(actual, expected)

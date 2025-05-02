@@ -12,12 +12,9 @@ _LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("go:report", short_help="Report about golang streams configured in streams.yml")
-@click.option('--ocp-versions',
-              help="OCP versions to show report for. e.g. `4.14`. Comma separated")
+@click.option('--ocp-versions', help="OCP versions to show report for. e.g. `4.14`. Comma separated")
 @click.option("--ignore-rhel", is_flag=True, help="Ignore rhel version and instead only show go version")
-@click.option('-o', '--output',
-              type=click.Choice(['json', 'text']),
-              default='text', help='Output format')
+@click.option('-o', '--output', type=click.Choice(['json', 'text']), default='text', help='Output format')
 @click.pass_obj
 def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, output: str):
     """
@@ -27,7 +24,7 @@ def get_golang_report_cli(runtime, ocp_versions: str, ignore_rhel: bool, output:
 
     $ elliott go:report --versions 4.11,4.12,4.13,4.14,4.15,4.16
 
-"""
+    """
     results = {}
 
     for ocp_version in ocp_versions.split(","):
@@ -86,8 +83,14 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
     rpm_rhel_target_map = {}
     for rpm_meta in runtime.rpm_metas():
         rpm_name = rpm_meta.config_filename.replace('.yml', '')
-        golang_rpms = {'microshift', 'openshift-clients', 'openshift', 'ose-aws-ecr-image-credential-provider',
-                       'ose-azure-acr-image-credential-provider', 'ose-gcp-gcr-image-credential-provider'}
+        golang_rpms = {
+            'microshift',
+            'openshift-clients',
+            'openshift',
+            'ose-aws-ecr-image-credential-provider',
+            'ose-azure-acr-image-credential-provider',
+            'ose-gcp-gcr-image-credential-provider',
+        }
         if rpm_name not in golang_rpms:
             _LOGGER.debug(f"Skipping rpm {rpm_name} since it is not a golang rpm")
             continue
@@ -119,8 +122,11 @@ def golang_report_for_version(runtime, ocp_version: str, ignore_rhel: bool):
             continue
         out.append({"go_version": golang_version, "building_rpm_count": len(rpms)})
 
-    out = sorted(out, key=lambda x: x['building_image_count']
-                 if 'building_image_count' in x else x['building_rpm_count'], reverse=True)
+    out = sorted(
+        out,
+        key=lambda x: x['building_image_count'] if 'building_image_count' in x else x['building_rpm_count'],
+        reverse=True,
+    )
     return out
 
 

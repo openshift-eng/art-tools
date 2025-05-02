@@ -14,7 +14,7 @@ example_erratum_filtered_list = [
         "respin_count": 1,
         "pushcount": 0,
         "content_types": [
-            "docker"
+            "docker",
         ],
         "timestamps": {
             "issue_date": "2018-03-08T14:07:14Z",
@@ -23,7 +23,7 @@ example_erratum_filtered_list = [
             "status_time": "2018-03-13T14:17:34Z",
             "security_sla": None,
             "created_at": "2018-03-08T14:07:14Z",
-            "updated_at": "2018-03-13T14:17:34Z"
+            "updated_at": "2018-03-13T14:17:34Z",
         },
         "flags": {
             "text_ready": False,
@@ -37,16 +37,16 @@ example_erratum_filtered_list = [
             "rhnqa": True,
             "closed": False,
             "sign_requested": False,
-            "embargo_undated": False
+            "embargo_undated": False,
         },
         "product": {
             "id": 79,
             "name": "Red Hat OpenShift Enterprise",
-            "short_name": "RHOSE"
+            "short_name": "RHOSE",
         },
         "release": {
             "id": 436,
-            "name": "RHOSE ASYNC"
+            "name": "RHOSE ASYNC",
         },
         "people": {
             "assigned_to": "dma@redhat.com",
@@ -55,14 +55,14 @@ example_erratum_filtered_list = [
             "docs_group": "Default",
             "doc_reviewer": "adellape@redhat.com",
             "devel_group": "Default",
-            "package_owner": "smunilla@redhat.com"
+            "package_owner": "smunilla@redhat.com",
         },
         "content": {
             "topic": "An update is now available for Red Hat OpenShift Container Platform 3.7, 3.6, 3.5, 3.4, and 3.3.",
             "description": "OpenShift Container Platform by Red Hat is the company's cloud computing Platform-as-a-Service (PaaS) solution designed for on-premise or private cloud deployments.\n\nThis advisory contains the container images for this release. See the following advisory for the RPM packages and full list of security fixes for this release:\n\nhttps://access.redhat.com/errata/RHSA-2018:0475\n\nThis update contains the following images:\n\nopenshift3/ose:v3.3.1.46.11-20\nopenshift3/node:v3.3.1.46.11-21\n\nopenshift3/ose:v3.4.1.44.38-20\nopenshift3/node:v3.4.1.44.38-21\n\nopenshift3/node:v3.5.5.31.48-20\n\nopenshift3/node:v3.6.173.0.96-20\n\nopenshift3/node:v3.7.23-21\n\nAll OpenShift Container Platform 3.7, 3.6, 3.5, 3.4, and 3.3 users are advised to upgrade to these updated images.",
             "solution": "For details on how to apply this update, which includes the changes described in this advisory, refer to:\n\nhttps://access.redhat.com/articles/11258",
-            "keywords": ""
-        }
+            "keywords": "",
+        },
     },
     {
         "id": 32916,
@@ -83,7 +83,7 @@ example_erratum_filtered_list = [
             "status_time": "2018-03-02T15:19:08Z",
             "security_sla": None,
             "created_at": "2018-03-02T15:19:08Z",
-            "updated_at": "2018-03-07T20:47:23Z"
+            "updated_at": "2018-03-07T20:47:23Z",
         },
         "flags": {
             "text_ready": False,
@@ -97,16 +97,16 @@ example_erratum_filtered_list = [
             "rhnqa": False,
             "closed": False,
             "sign_requested": False,
-            "embargo_undated": False
+            "embargo_undated": False,
         },
         "product": {
             "id": 79,
             "name": "Red Hat OpenShift Enterprise",
-            "short_name": "RHOSE"
+            "short_name": "RHOSE",
         },
         "release": {
             "id": 436,
-            "name": "RHOSE ASYNC"
+            "name": "RHOSE ASYNC",
         },
         "people": {
             "assigned_to": "wsun@redhat.com",
@@ -115,15 +115,15 @@ example_erratum_filtered_list = [
             "docs_group": "Default",
             "doc_reviewer": "docs-errata-list@redhat.com",
             "devel_group": "Default",
-            "package_owner": "smunilla@redhat.com"
+            "package_owner": "smunilla@redhat.com",
         },
         "content": {
             "topic": "Red Hat OpenShift Container Platform releases 3.5.z are now available with updates to packages and images that fix several bugs and add enhancements.",
             "description": "Red Hat OpenShift Container Platform is the company's cloud computing Platform-as-a-Service (PaaS) solution designed for on-premise or private cloud deployments.\n\nThis advisory contains the RPM packages for Red Hat OpenShift Container Platform 3.5.z. See the following advisory for the container images for this release:\n\nhttps://access.redhat.com/errata/RHBA-2018:0114\n\nSpace precludes documenting all of the bug fixes and enhancements in this advisory. See the following Release Notes documentation, which will be updated shortly for this release, for details about these changes:\n\nhttps://docs.openshift.com/container-platform/3.5/release_notes/ocp_3_5_release_notes.html\n\nAll OpenShift Container Platform 3.5 users are advised to upgrade to these updated packages and images.",
             "solution": "Before applying this update, make sure all previously released errata relevant to your system have been applied.\n\nFor OpenShift Container Platform 3.5 see the following documentation, which will be updated shortly for release 3.5.z, for important instructions on how to upgrade your cluster and fully apply this asynchronous errata update:\n\nhttps://docs.openshift.com/container-platform/3.5/release_notes/ocp_3_5_release_notes.html\n\nThis update is available via the Red Hat Network. Details on how to use the Red Hat Network to apply this update are available at https://access.redhat.com/articles/11258.",
-            "keywords": ""
-        }
-    }
+            "keywords": "",
+        },
+    },
 ]
 
 
@@ -200,16 +200,16 @@ example_erratum = {
                 "filelist_locked": 0,
                 "group_id": 436,
                 "resolution": "",
-                "embargo_undated": False
-            }
-        }
+                "embargo_undated": False,
+            },
+        },
     },
     "who": {
         "user": {
             "preferences": {
                 "default_filter_id": "1",
                 "full_width_layout": "1",
-                "color_scheme": "pink"
+                "color_scheme": "pink",
             },
             "user_organization_id": 142,
             "receives_mail": True,
@@ -218,8 +218,8 @@ example_erratum = {
             "orgchart_id": None,
             "email_address": None,
             "id": 3003255,
-            "realname": "Tim Bielawa"
-        }
+            "realname": "Tim Bielawa",
+        },
     },
     "bugs": {
         "idsfixed": [],
@@ -292,9 +292,9 @@ example_erratum = {
                 "filelist_locked": 0,
                 "group_id": 436,
                 "resolution": "",
-                "embargo_undated": False
-            }
-        }
+                "embargo_undated": False,
+            },
+        },
     },
     "content": {
         "content": {
@@ -316,14 +316,14 @@ example_erratum = {
             "product_version_text": None,
             "cve": "",
             "id": 30494,
-            "crossref": ""
-        }
+            "crossref": "",
+        },
     },
     "params": {
         "action": "show",
         "controller": "api/v1/erratum",
         "id": "32916",
-        "format": "json"
+        "format": "json",
     },
     "errata": {
         "rhba": {
@@ -389,9 +389,9 @@ example_erratum = {
             "filelist_locked": 0,
             "group_id": 436,
             "resolution": "",
-            "embargo_undated": False
-        }
-    }
+            "embargo_undated": False,
+        },
+    },
 }
 
 rpm_build_unattached_json = {
@@ -399,7 +399,7 @@ rpm_build_unattached_json = {
     "nvr": "ansible-service-broker-1.0.21-1.el7",
     "package": {
         "id": 38747,
-        "name": "ansible-service-broker"
+        "name": "ansible-service-broker",
     },
     "released_errata": None,
     "all_errata": [],
@@ -411,8 +411,8 @@ rpm_build_unattached_json = {
             "type": "rpm",
             "arch": {
                 "id": 24,
-                "name": "SRPMS"
-            }
+                "name": "SRPMS",
+            },
         },
         {
             "id": 5446316,
@@ -420,10 +420,10 @@ rpm_build_unattached_json = {
             "type": "rpm",
             "arch": {
                 "id": 8,
-                "name": "noarch"
-            }
-        }
-    ]
+                "name": "noarch",
+            },
+        },
+    ],
 }
 
 
@@ -436,15 +436,15 @@ image_build_attached_json = {
     "nvr": "template-service-broker-docker-v3.7.36-2",
     "package": {
         "id": 40328,
-        "name": "template-service-broker-docker"
+        "name": "template-service-broker-docker",
     },
     "released_errata": None,
     "all_errata": [
         {
             "id": 32337,
             "name": "RHBA-2018:32337",
-            "status": "NEW_FILES"
-        }
+            "status": "NEW_FILES",
+        },
     ],
     "rpms_signed": False,
     "files": [
@@ -454,10 +454,10 @@ image_build_attached_json = {
             "type": "tar",
             "arch": {
                 "id": 13,
-                "name": "x86_64"
-            }
-        }
-    ]
+                "name": "x86_64",
+            },
+        },
+    ],
 }
 
 
@@ -471,15 +471,15 @@ image_build_attached_open_json = {
     "nvr": "template-service-broker-docker-v3.7.36-2",
     "package": {
         "id": 40328,
-        "name": "template-service-broker-docker"
+        "name": "template-service-broker-docker",
     },
     "released_errata": None,
     "all_errata": [
         {
             "id": 32337,
             "name": "RHBA-2018:32337",
-            "status": "NEW_FILES"
-        }
+            "status": "NEW_FILES",
+        },
     ],
     "rpms_signed": False,
     "files": [
@@ -489,10 +489,10 @@ image_build_attached_open_json = {
             "type": "tar",
             "arch": {
                 "id": 13,
-                "name": "x86_64"
-            }
-        }
-    ]
+                "name": "x86_64",
+            },
+        },
+    ],
 }
 # END image_build_attached_open_json
 
@@ -506,15 +506,15 @@ image_build_attached_closed_json = {
     "nvr": "template-service-broker-docker-v3.7.36-2",
     "package": {
         "id": 40328,
-        "name": "template-service-broker-docker"
+        "name": "template-service-broker-docker",
     },
     "released_errata": None,
     "all_errata": [
         {
             "id": 90540,
             "name": "RHBA-2019:90540",
-            "status": "SHIPPED_LIVE"
-        }
+            "status": "SHIPPED_LIVE",
+        },
     ],
     "rpms_signed": False,
     "files": [
@@ -524,10 +524,10 @@ image_build_attached_closed_json = {
             "type": "tar",
             "arch": {
                 "id": 13,
-                "name": "x86_64"
-            }
-        }
-    ]
+                "name": "x86_64",
+            },
+        },
+    ],
 }
 # END image_build_attached_closed_json
 
@@ -536,7 +536,7 @@ image_build_unattached_json = {
     "nvr": "cri-o-docker-v3.7.37-1",
     "package": {
         "id": 39891,
-        "name": "cri-o-docker"
+        "name": "cri-o-docker",
     },
     "released_errata": None,
     "all_errata": [],
@@ -548,10 +548,10 @@ image_build_unattached_json = {
             "type": "tar",
             "arch": {
                 "id": 13,
-                "name": "x86_64"
-            }
-        }
-    ]
+                "name": "x86_64",
+            },
+        },
+    ],
 }
 
 rpm_build_attached_json = {
@@ -559,15 +559,15 @@ rpm_build_attached_json = {
     "nvr": "coreutils-8.22-21.el7",
     "package": {
         "id": 87,
-        "name": "coreutils"
+        "name": "coreutils",
     },
     "released_errata": None,
     "all_errata": [
         {
             "id": 30540,
             "name": "RHBA-2017:30540",
-            "status": "REL_PREP"
-        }
+            "status": "REL_PREP",
+        },
     ],
     "rpms_signed": True,
     "files": [
@@ -577,8 +577,8 @@ rpm_build_attached_json = {
             "type": "rpm",
             "arch": {
                 "id": 24,
-                "name": "SRPMS"
-            }
+                "name": "SRPMS",
+            },
         },
         {
             "id": 5256226,
@@ -586,8 +586,8 @@ rpm_build_attached_json = {
             "type": "rpm",
             "arch": {
                 "id": 17,
-                "name": "ppc"
-            }
+                "name": "ppc",
+            },
         },
         {
             "id": 5256227,
@@ -595,10 +595,10 @@ rpm_build_attached_json = {
             "type": "rpm",
             "arch": {
                 "id": 17,
-                "name": "ppc"
-            }
-        }
-    ]
+                "name": "ppc",
+            },
+        },
+    ],
 }
 
 rpm_build_unattached_json = {
@@ -606,7 +606,7 @@ rpm_build_unattached_json = {
     "nvr": "ansible-service-broker-1.0.21-1.el7",
     "package": {
         "id": 38747,
-        "name": "ansible-service-broker"
+        "name": "ansible-service-broker",
     },
     "released_errata": None,
     "all_errata": [],
@@ -618,8 +618,8 @@ rpm_build_unattached_json = {
             "type": "rpm",
             "arch": {
                 "id": 24,
-                "name": "SRPMS"
-            }
+                "name": "SRPMS",
+            },
         },
         {
             "id": 5446316,
@@ -627,10 +627,10 @@ rpm_build_unattached_json = {
             "type": "rpm",
             "arch": {
                 "id": 8,
-                "name": "noarch"
-            }
-        }
-    ]
+                "name": "noarch",
+            },
+        },
+    ],
 }
 
 # Output as one would get from (as of 2018-04-02):

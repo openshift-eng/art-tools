@@ -4,7 +4,6 @@ from validator.schema import rpm_schema
 
 
 class TestRpmSchema(unittest.TestCase):
-
     def test_validate_with_valid_data(self):
         valid_data = {
             'content': {},
@@ -22,8 +21,7 @@ class TestRpmSchema(unittest.TestCase):
                 'owner-a',
             ],
         }
-        self.assertEqual("Missing key: 'name'",
-                         rpm_schema.validate('filename', invalid_data))
+        self.assertEqual("Missing key: 'name'", rpm_schema.validate('filename', invalid_data))
 
     def test_supports_optional_targets(self):
         data = {

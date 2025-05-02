@@ -39,7 +39,10 @@ class CommentOnPr:
         """
         issue_comments = self.list_comments()
         for issue_comment in issue_comments:
-            if "[ART PR BUILD NOTIFIER]" in issue_comment["body"] and f"Distgit: {self.distgit_name}" in issue_comment["body"]:
+            if (
+                "[ART PR BUILD NOTIFIER]" in issue_comment["body"]
+                and f"Distgit: {self.distgit_name}" in issue_comment["body"]
+            ):
                 return True
         return False
 
@@ -50,15 +53,19 @@ class CommentOnPr:
         # https://docs.github.com/rest/reference/issues#create-an-issue-comment
 
         # Message to be posted to the comment
-        comment = "**[ART PR BUILD NOTIFIER]**\n\n" + \
-                  f"Distgit: {self.distgit_name}\n" + \
-                  "This PR has been included in build " + \
-                  f"[{self.nvr}]({BREWWEB_URL}/buildinfo" + \
-                  f"?buildID={self.build_id}).\n" + \
-                  "All builds following this will include this PR."
+        comment = (
+            "**[ART PR BUILD NOTIFIER]**\n\n"
+            + f"Distgit: {self.distgit_name}\n"
+            + "This PR has been included in build "
+            + f"[{self.nvr}]({BREWWEB_URL}/buildinfo"
+            + f"?buildID={self.build_id}).\n"
+            + "All builds following this will include this PR."
+        )
 
         self.gh_client.issues.create_comment(issue_number=self.pr["number"], body=comment)
-        LOGGER.info(f"[{self.distgit_name}] Successful commented on PR: https://github.com/{self.owner}/{self.repo}/pull/{self.pr['number']}")
+        LOGGER.info(
+            f"[{self.distgit_name}] Successful commented on PR: https://github.com/{self.owner}/{self.repo}/pull/{self.pr['number']}"
+        )
 
     def set_pr_from_commit(self):
         """

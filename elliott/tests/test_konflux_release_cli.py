@@ -4,8 +4,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from doozerlib.backend.konflux_client import API_VERSION, KIND_RELEASE, KIND_APPLICATION, KIND_RELEASE_PLAN
 from elliottlib.cli.konflux_release_watch_cli import WatchReleaseCli
 from elliottlib.cli.konflux_release_cli import CreateReleaseCli
-from elliottlib.shipment_model import (ShipmentConfig, Shipment, ShipmentEnv, Environments, Metadata, Snapshot, Spec,
-                                       Data, ReleaseNotes)
+from elliottlib.shipment_model import (
+    ShipmentConfig,
+    Shipment,
+    ShipmentEnv,
+    Environments,
+    Metadata,
+    Snapshot,
+    Spec,
+    Data,
+    ReleaseNotes,
+)
 from artcommonlib.model import Model
 
 
@@ -46,17 +55,17 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
             'kind': KIND_RELEASE,
             'metadata': {
                 'name': release,
-                'namespace': self.konflux_config['namespace']
+                'namespace': self.konflux_config['namespace'],
             },
             'status': {
                 'conditions': [
                     {
                         'type': 'Released',
                         'status': 'True',
-                        'reason': 'Succeeded'
+                        'reason': 'Succeeded',
                     },
-                ]
-            }
+                ],
+            },
         }
         self.konflux_client.wait_for_release.return_value = Model(release)
 
@@ -83,17 +92,17 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
             'kind': KIND_RELEASE,
             'metadata': {
                 'name': release,
-                'namespace': self.konflux_config['namespace']
+                'namespace': self.konflux_config['namespace'],
             },
             'status': {
                 'conditions': [
                     {
                         'type': 'Released',
                         'status': 'True',
-                        'reason': 'Skipped'
+                        'reason': 'Skipped',
                     },
-                ]
-            }
+                ],
+            },
         }
         self.konflux_client.wait_for_release.return_value = Model(release)
 
@@ -120,17 +129,17 @@ class TestWatchReleaseCli(IsolatedAsyncioTestCase):
             'kind': KIND_RELEASE,
             'metadata': {
                 'name': release,
-                'namespace': self.konflux_config['namespace']
+                'namespace': self.konflux_config['namespace'],
             },
             'status': {
                 'conditions': [
                     {
                         'type': 'Released',
                         'status': 'False',
-                        'reason': 'Failed'
+                        'reason': 'Failed',
                     },
-                ]
-            }
+                ],
+            },
         }
         self.konflux_client.wait_for_release.return_value = Model(release)
 
@@ -192,9 +201,9 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         topic="Topic for a test release for Red Hat Openshift.",
                         description="Description for a test release for Red Hat Openshift.",
                         solution="Solution for a test release for Red Hat Openshift.",
-                    )
-                )
-            )
+                    ),
+                ),
+            ),
         )
         self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
 
@@ -226,9 +235,9 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         'solution': shipment_config.shipment.data.releaseNotes.solution,
                         'issues': {},
                         'cves': [],
-                    }
-                }
-            }
+                    },
+                },
+            },
         }
         self.konflux_client._create.return_value = Model(expected_release)
 
@@ -239,7 +248,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
             dry_run=self.dry_run,
-            force=self.force
+            force=self.force,
         )
 
         result = await cli.run()
@@ -248,8 +257,12 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
         self.runtime.initialize.assert_called_once_with(with_shipment=True)
 
         # Verify resource existence was checked
-        self.konflux_client._get.assert_any_call(API_VERSION, KIND_APPLICATION, shipment_config.shipment.metadata.application)
-        self.konflux_client._get.assert_any_call(API_VERSION, KIND_RELEASE_PLAN, shipment_config.shipment.environments.stage.releasePlan)
+        self.konflux_client._get.assert_any_call(
+            API_VERSION, KIND_APPLICATION, shipment_config.shipment.metadata.application
+        )
+        self.konflux_client._get.assert_any_call(
+            API_VERSION, KIND_RELEASE_PLAN, shipment_config.shipment.environments.stage.releasePlan
+        )
 
         # Verify release was created with correct parameters
         self.konflux_client._create.assert_called_once_with(expected_release)
@@ -279,15 +292,15 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     },
                     "prod": {
                         "releasePlan": "test-prod-rp",
-                    }
+                    },
                 },
                 "snapshot": {
                     "name": "test-snapshot",
                     "spec": {
-                        "nvrs": ["test-nvr-1", "test-nvr-2"]
-                    }
-                }
-            }
+                        "nvrs": ["test-nvr-1", "test-nvr-2"],
+                    },
+                },
+            },
         }
         self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config
 
@@ -298,13 +311,16 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
             dry_run=self.dry_run,
-            force=self.force
+            force=self.force,
         )
 
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("1 validation error for ShipmentConfig\nshipment.metadata.assembly\n  Field required", str(context.exception))
+        self.assertIn(
+            "1 validation error for ShipmentConfig\nshipment.metadata.assembly\n  Field required",
+            str(context.exception),
+        )
 
     @patch("doozerlib.backend.konflux_client.KonfluxClient.from_kubeconfig")
     @patch("elliottlib.runtime.Runtime")
@@ -329,15 +345,15 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     },
                     "prod": {
                         "releasePlan": "test-prod-rp",
-                    }
+                    },
                 },
                 "snapshot": {
                     "name": "test-snapshot",
                     "spec": {
-                        "nvrs": ["test-nvr-1", "test-nvr-2"]
-                    }
-                }
-            }
+                        "nvrs": ["test-nvr-1", "test-nvr-2"],
+                    },
+                },
+            },
         }
         self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config
 
@@ -348,7 +364,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
             dry_run=self.dry_run,
-            force=self.force
+            force=self.force,
         )
 
         with self.assertRaises(ValueError) as context:
@@ -377,7 +393,7 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                     stage=ShipmentEnv(releasePlan="test-stage-rp"),
                     prod=ShipmentEnv(
                         releasePlan="test-prod-rp",
-                        advisoryInternalUrl="foo-bar"
+                        advisoryInternalUrl="foo-bar",
                     ),
                 ),
                 snapshot=Snapshot(name="test-snapshot", spec=Spec(nvrs=["test-nvr-1", "test-nvr-2"])),
@@ -388,9 +404,9 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         topic="Topic for a test release for Red Hat Openshift.",
                         description="Description for a test release for Red Hat Openshift.",
                         solution="Solution for a test release for Red Hat Openshift.",
-                    )
-                )
-            )
+                    ),
+                ),
+            ),
         )
         self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
 
@@ -442,9 +458,9 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
                         topic="Topic for a test release for Red Hat Openshift.",
                         description="Description for a test release for Red Hat Openshift.",
                         solution="Solution for a test release for Red Hat Openshift.",
-                    )
-                )
-            )
+                    ),
+                ),
+            ),
         )
         self.runtime.shipment_gitdata.load_yaml_file.return_value = shipment_config.model_dump(exclude_none=True)
 
@@ -465,11 +481,14 @@ class TestCreateReleaseCli(IsolatedAsyncioTestCase):
             konflux_config=self.konflux_config,
             image_repo_pull_secret=self.image_repo_pull_secret,
             dry_run=self.dry_run,
-            force=self.force
+            force=self.force,
         )
 
         with self.assertRaises(ValueError) as context:
             await cli.run()
 
-        self.assertIn("snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} "
-                      "extra={'test-nvr-3'}", str(context.exception))
+        self.assertIn(
+            "snapshot includes missing or extra nvrs than what's defined in spec: missing={'test-nvr-2'} "
+            "extra={'test-nvr-3'}",
+            str(context.exception),
+        )

@@ -41,8 +41,10 @@ def is_latest_build(ocp_version: str, el_v: int, nvr: str, koji_session) -> bool
         _LOGGER.info(f'{nvr} is the latest build in {build_tag}')
         return True
     override_tag = f'rhaos-{ocp_version}-rhel-{el_v}-override'
-    _LOGGER.info(f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
-                 f'build and then run `brew regen-repo {build_tag}` to make it available.')
+    _LOGGER.info(
+        f'{nvr} is not the latest build in {build_tag}. Run `brew tag {override_tag} {nvr}` to tag the '
+        f'build and then run `brew regen-repo {build_tag}` to make it available.'
+    )
     return False
 
 
@@ -63,8 +65,10 @@ async def is_latest_and_available(ocp_version: str, el_v: int, nvr: str, koji_se
     cmd = f'brew wait-repo {build_tag} --build {nvr} --request --timeout=1'
     rc, _, _ = await exectools.cmd_gather_async(cmd, check=False)
     if rc != 0:
-        _LOGGER.info(f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to '
-                     'make the build available.')
+        _LOGGER.info(
+            f'Build {nvr} is tagged but not available in {build_tag}. Run `brew regen-repo {build_tag} to '
+            'make the build available.'
+        )
         return False
     _LOGGER.info(f'{nvr} is available in {build_tag}')
     return True
@@ -94,8 +98,9 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
         if name != 'golang':
             raise ValueError(f'Only `golang` nvrs are supported, found package name: {name}')
         if go_version and go_version != parsed_nvr['version']:
-            raise ValueError(f'All nvrs should have the same golang version, found: {go_version} and'
-                             f' {parsed_nvr["version"]}')
+            raise ValueError(
+                f'All nvrs should have the same golang version, found: {go_version} and {parsed_nvr["version"]}'
+            )
         go_version = parsed_nvr['version']
 
         _, el_version = split_el_suffix_in_release(parsed_nvr['release'])
@@ -104,26 +109,29 @@ def extract_and_validate_golang_nvrs(ocp_version: str, go_nvrs: List[str]):
             raise ValueError(f'Cannot detect an el version in NVR {nvr}')
         el_version = int(el_version[2:])
         if el_version not in supported_els:
-            raise ValueError(f'Unsupported RHEL version detected for nvr {nvr}, supported versions are:'
-                             f' {supported_els}')
+            raise ValueError(
+                f'Unsupported RHEL version detected for nvr {nvr}, supported versions are: {supported_els}'
+            )
         if el_version in el_nvr_map:
-            raise ValueError(f'Cannot have two nvrs for the same rhel version: {nvr},'
-                             f' {el_nvr_map[el_version]}')
+            raise ValueError(f'Cannot have two nvrs for the same rhel version: {nvr}, {el_nvr_map[el_version]}')
         el_nvr_map[el_version] = nvr
     return go_version, el_nvr_map
 
 
-async def move_golang_bugs(ocp_version: str,
-                           cves: List[str] = None,
-                           nvrs: List[str] = None,
-                           components: List[str] = None,
-                           force_update_tracker: bool = False,
-                           dry_run: bool = False,
-                           ):
+async def move_golang_bugs(
+    ocp_version: str,
+    cves: List[str] = None,
+    nvrs: List[str] = None,
+    components: List[str] = None,
+    force_update_tracker: bool = False,
+    dry_run: bool = False,
+):
     cmd = [
         'elliott',
-        '--group', f'openshift-{ocp_version}',
-        '--assembly', 'stream',
+        '--group',
+        f'openshift-{ocp_version}',
+        '--assembly',
+        'stream',
         'find-bugs:golang',
         '--analyze',
         '--update-tracker',
@@ -145,15 +153,18 @@ async def move_golang_bugs(ocp_version: str,
 
 
 class UpdateGolangPipeline:
-    def __init__(self, runtime: Runtime,
-                 ocp_version: str,
-                 cves: List[str],
-                 force_update_tracker: bool,
-                 go_nvrs: List[str],
-                 art_jira: str,
-                 tag_builds: bool,
-                 scratch: bool = False,
-                 force_image_build: bool = False):
+    def __init__(
+        self,
+        runtime: Runtime,
+        ocp_version: str,
+        cves: List[str],
+        force_update_tracker: bool,
+        go_nvrs: List[str],
+        art_jira: str,
+        tag_builds: bool,
+        scratch: bool = False,
+        force_image_build: bool = False,
+    ):
         self.runtime = runtime
         self.dry_run = runtime.dry_run
         self.scratch = scratch
@@ -186,9 +197,13 @@ class UpdateGolangPipeline:
             jenkins.init_jenkins()
             jenkins.update_title(title_update)
         await self._slack_client.say_in_thread(f":construction: Updating golang for {self.ocp_version} :construction:")
-        cannot_proceed = not all(await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()]))
+        cannot_proceed = not all(
+            await asyncio.gather(*[self.process_build(el_v, nvr) for el_v, nvr in el_nvr_map.items()])
+        )
         if cannot_proceed:
-            raise ValueError('Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?')
+            raise ValueError(
+                'Cannot proceed until all builds are tagged and available, did you forget check TAG_BUILD?'
+            )
 
         _LOGGER.info('All builds are tagged and available!')
         await self._slack_client.say_in_thread("All golang builds are tagged and available!")
@@ -200,14 +215,14 @@ class UpdateGolangPipeline:
 
         if len(builder_nvrs) != len(el_nvr_map):  # builders not found for all rhel versions
             missing_in = el_nvr_map.keys() - builder_nvrs.keys()
-            _LOGGER.info(f"Builder images are missing for rhel versions: {missing_in}. "
-                         "Verifying builder branches are updated for building")
+            _LOGGER.info(
+                f"Builder images are missing for rhel versions: {missing_in}. "
+                "Verifying builder branches are updated for building"
+            )
             for el_v in missing_in:
                 self.verify_golang_builder_repo(el_v, go_version)
 
-            await asyncio.gather(*[
-                self._rebase_and_build(el_v, go_version) for el_v in missing_in
-            ])
+            await asyncio.gather(*[self._rebase_and_build(el_v, go_version) for el_v in missing_in])
 
             # Now all builders should be available in brew, try to fetch again
             builder_nvrs = self.get_existing_builders(el_nvr_map, go_version)
@@ -278,15 +293,17 @@ class UpdateGolangPipeline:
         builder_nvrs = {}
         for el_v, go_nvr in el_nvr_map.items():
             pattern = f"{component}-v{go_version}-*el{el_v}*"
-            builds = self.koji_session.listBuilds(packageID=package_id,
-                                                  state=BuildStates.COMPLETE.value,
-                                                  pattern=pattern,
-                                                  queryOpts={'limit': 1, 'order': '-creation_event_id'})
+            builds = self.koji_session.listBuilds(
+                packageID=package_id,
+                state=BuildStates.COMPLETE.value,
+                pattern=pattern,
+                queryOpts={'limit': 1, 'order': '-creation_event_id'},
+            )
             if builds:
                 build = builds[0]
                 go_nvr_map = elliottutil.get_golang_container_nvrs(
                     [(build['name'], build['version'], build['release'])],
-                    _LOGGER
+                    _LOGGER,
                 )  # {'1.20.12-2.el9_3': {('openshift-golang-builder-container', 'v1.20.12',
                 # '202403212137.el9.g144a3f8.el9')}}
                 builder_go_vr = list(go_nvr_map.keys())[0]
@@ -335,7 +352,9 @@ class UpdateGolangPipeline:
                 if alias in streams_content:
                     raise ValueError(f"Alias name {alias} already exists in streams.yml")
                 if alias in stream_alias_map:
-                    raise ValueError(f"Duplicate alias detected: {alias} is already mapped to {stream_alias_map[alias]}")
+                    raise ValueError(
+                        f"Duplicate alias detected: {alias} is already mapped to {stream_alias_map[alias]}"
+                    )
                 stream_alias_map[alias] = stream_name
 
         # first check if an exact stream is defined, if not check aliases
@@ -403,7 +422,9 @@ class UpdateGolangPipeline:
             for fork_branch in fork_repo.get_branches():
                 if fork_branch.name == branch_name:
                     fork_repo.get_git_ref(f"heads/{branch_name}").delete()
-            fork_branch = fork_repo.create_git_ref(f"refs/heads/{branch_name}", upstream_repo.get_branch(branch).commit.sha)
+            fork_branch = fork_repo.create_git_ref(
+                f"refs/heads/{branch_name}", upstream_repo.get_branch(branch).commit.sha
+            )
             _LOGGER.info(f"Created fork branch ref {fork_branch.ref}")
             output = io.BytesIO()
             yaml.dump(streams_content, output)
@@ -420,11 +441,17 @@ class UpdateGolangPipeline:
             build_url = jenkins.get_build_url()
             body = f"Created by job run {build_url}" if build_url else ""
             pr = upstream_repo.create_pull(title=title, body=body, base=branch, head=f"openshift-bot:{branch_name}")
-            _LOGGER.info(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
-            await self._slack_client.say_in_thread(f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}")
+            _LOGGER.info(
+                f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}"
+            )
+            await self._slack_client.say_in_thread(
+                f"PR created {pr.html_url} for {branch_name} to bump {self.ocp_version} golang builders to {go_version}"
+            )
         else:
             if self.tag_builds:
-                await self._slack_client.say_in_thread("No pr created, please double check if it's expected because new build get tagged.")
+                await self._slack_client.say_in_thread(
+                    "No pr created, please double check if it's expected because new build get tagged."
+                )
             else:
                 _LOGGER.info(f"No update needed in {branch}")
 
@@ -436,11 +463,15 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
-            "--group", branch,
+            "--group",
+            branch,
             "images:rebase",
-            "--version", version,
-            "--release", release,
-            "--message", f"bumping to {version}-{release}"
+            "--version",
+            version,
+            "--release",
+            release,
+            "--message",
+            f"bumping to {version}-{release}",
         ]
         if not self.dry_run:
             cmd.append("--push")
@@ -452,10 +483,12 @@ class UpdateGolangPipeline:
         cmd = [
             "doozer",
             f"--working-dir={self._doozer_working_dir}-{el_v}",
-            "--group", branch,
+            "--group",
+            branch,
             "images:build",
-            "--repo-type", "unsigned",
-            "--push-to-defaults"
+            "--repo-type",
+            "unsigned",
+            "--push-to-defaults",
         ]
         if self.dry_run:
             cmd.append("--dry-run")
@@ -486,20 +519,26 @@ class UpdateGolangPipeline:
 
         golang_repo = f'rhel-{el_v}-golang-rpms'
         if golang_repo not in group_config['repos']:
-            raise ValueError(f"Did not find {golang_repo} defined at "
-                             f"https://github.com/{owner}/{repo}/blob/{branch}/{filename}. If it's with a different "
-                             "name please correct it.")
+            raise ValueError(
+                f"Did not find {golang_repo} defined at "
+                f"https://github.com/{owner}/{repo}/blob/{branch}/{filename}. If it's with a different "
+                "name please correct it."
+            )
 
-        expected = {arch: f'{content_repo_url}/{arch}/'
-                    for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()}
+        expected = {
+            arch: f'{content_repo_url}/{arch}/' for arch in group_config['repos'][golang_repo]['conf']['baseurl'].keys()
+        }
 
         major, minor = group_config['vars']['MAJOR'], group_config['vars']['MINOR']
-        actual = {arch: val.format(MAJOR=major, MINOR=minor)
-                  for arch, val in group_config['repos'][golang_repo]['conf']['baseurl'].items()}
+        actual = {
+            arch: val.format(MAJOR=major, MINOR=minor)
+            for arch, val in group_config['repos'][golang_repo]['conf']['baseurl'].items()
+        }
 
         if expected != actual:
-            raise ValueError(f"Did not find repo {golang_repo} to have the expected urls. \nexpected="
-                             f"{expected}\nactual={actual}")
+            raise ValueError(
+                f"Did not find repo {golang_repo} to have the expected urls. \nexpected={expected}\nactual={actual}"
+            )
 
         _LOGGER.info(f"Builder branch {branch} has the expected content set urls")
 
@@ -517,20 +556,40 @@ class UpdateGolangPipeline:
 @click.option('--ocp-version', required=True, help='OCP version to update golang for, e.g. 4.16')
 @click.option('--scratch', is_flag=True, default=False, help='Build images in scratch mode')
 @click.option('--art-jira', required=True, help='Related ART Jira ticket e.g. ART-1234')
-@click.option('--cves', help='CVEs that are confirmed to be fixed in all given golang nvrs (comma separated). '
-                             'This will be used to fetch relevant Tracker bugs and move them to ON_QA state if '
-                             'determined to be fixed (nightly is found containing fixed builds). e.g. CVE-2024-1234')
-@click.option('--force-update-tracker', is_flag=True, default=False,
-              help='Force update found tracker bugs for the given CVEs, even if the latest nightly is not found containing fixed builds')
+@click.option(
+    '--cves',
+    help='CVEs that are confirmed to be fixed in all given golang nvrs (comma separated). '
+    'This will be used to fetch relevant Tracker bugs and move them to ON_QA state if '
+    'determined to be fixed (nightly is found containing fixed builds). e.g. CVE-2024-1234',
+)
+@click.option(
+    '--force-update-tracker',
+    is_flag=True,
+    default=False,
+    help='Force update found tracker bugs for the given CVEs, even if the latest nightly is not found containing fixed builds',
+)
 @click.option('--confirm', is_flag=True, default=False, help='Confirm to proceed with rebase and build')
-@click.option('--tag-builds', is_flag=True, default=False, help='Confirm to tag builds with override tag if they are not tagged')
+@click.option(
+    '--tag-builds', is_flag=True, default=False, help='Confirm to tag builds with override tag if they are not tagged'
+)
 @click.argument('go_nvrs', metavar='GO_NVRS...', nargs=-1, required=True)
-@click.option('--force-image-build', is_flag=True, default=False, help='Rebuild golang builder image regardless of if one exists')
+@click.option(
+    '--force-image-build', is_flag=True, default=False, help='Rebuild golang builder image regardless of if one exists'
+)
 @pass_runtime
 @click_coroutine
-async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, art_jira: str,
-                        cves: str, force_update_tracker: bool, confirm: bool, tag_builds: bool,
-                        go_nvrs: List[str], force_image_build: bool):
+async def update_golang(
+    runtime: Runtime,
+    ocp_version: str,
+    scratch: bool,
+    art_jira: str,
+    cves: str,
+    force_update_tracker: bool,
+    confirm: bool,
+    tag_builds: bool,
+    go_nvrs: List[str],
+    force_image_build: bool,
+):
     if not runtime.dry_run and not confirm:
         _LOGGER.info('--confirm is not set, running in dry-run mode')
         runtime.dry_run = True
@@ -539,5 +598,6 @@ async def update_golang(runtime: Runtime, ocp_version: str, scratch: bool, art_j
     if force_update_tracker and not cves:
         raise ValueError('CVEs must be provided with --force-update-tracker')
 
-    await UpdateGolangPipeline(runtime, ocp_version, cves, force_update_tracker,
-                               go_nvrs, art_jira, tag_builds, scratch, force_image_build).run()
+    await UpdateGolangPipeline(
+        runtime, ocp_version, cves, force_update_tracker, go_nvrs, art_jira, tag_builds, scratch, force_image_build
+    ).run()

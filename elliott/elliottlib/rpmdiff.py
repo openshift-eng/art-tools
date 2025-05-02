@@ -1,4 +1,3 @@
-
 from builtins import object
 import requests
 from requests_gssapi import HTTPSPNEGOAuth
@@ -32,7 +31,7 @@ class RPMDiffClient(object):
         return resp.json()["results"]
 
     def list_waivers(self, package_name, test, offset=0, limit=10):
-        """ List waivers.
+        """List waivers.
 
         https://rpmdiff-hub.host.prod.eng.bos.redhat.com/api/v1/waivers/
         """

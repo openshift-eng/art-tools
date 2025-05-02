@@ -1,6 +1,7 @@
 """
 Test the cli options functions
 """
+
 import unittest
 
 from elliottlib.cli import cli_opts
@@ -12,6 +13,7 @@ class TestCLI(unittest.TestCase):
 
     Each raises an exception if the asserted test fails.
     """
+
     def test_id_convert(self):
         self.assertEqual(cli_opts.id_convert(["1", "2", "3,4,5"]), [1, 2, 3, 4, 5])
         self.assertEqual(cli_opts.id_convert(["1,2,3", "4", "5"]), [1, 2, 3, 4, 5])

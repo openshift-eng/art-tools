@@ -6,6 +6,7 @@ from setuptools import setup
 
 def _get_version():
     from os.path import abspath, dirname, join
+
     filename = join(dirname(abspath(__file__)), '../doozerlib', 'VERSION')
     return open(filename).read().strip()
 
@@ -21,10 +22,8 @@ setup(
     packages=[],
     include_package_data=True,
     scripts=[
-        'rundoozer'
+        'rundoozer',
     ],
-
     install_requires=[],
-
-    dependency_links=[]
+    dependency_links=[],
 )

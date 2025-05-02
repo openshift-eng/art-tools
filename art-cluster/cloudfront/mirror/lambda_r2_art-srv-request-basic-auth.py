@@ -20,11 +20,13 @@ def unauthorized():
         'status': 401,
         'statusDescription': 'Unauthorized',
         'headers': {
-            'www-authenticate': [{
-                'key': 'WWW-Authenticate',
-                'value': 'Basic'
-            }],
-        }
+            'www-authenticate': [
+                {
+                    'key': 'WWW-Authenticate',
+                    'value': 'Basic',
+                }
+            ],
+        },
     }
 
 
@@ -33,11 +35,13 @@ def redirect(uri: str, code: int = 302, description="Found"):
         'status': code,
         'statusDescription': description,
         'headers': {
-            "location": [{
-                'key': 'Location',
-                "value": str(uri)
-            }],
-        }
+            "location": [
+                {
+                    'key': 'Location',
+                    "value": str(uri),
+                }
+            ],
+        },
     }
 
 
@@ -49,23 +53,22 @@ def not_found(description="File Not Found"):
             'cache-control': [
                 {
                     'key': 'Cache-Control',
-                    'value': 'max-age=0'
-                }
+                    'value': 'max-age=0',
+                },
             ],
             "content-type": [
                 {
                     'key': 'Content-Type',
-                    'value': 'text/html'
-                }
-            ]
+                    'value': 'text/html',
+                },
+            ],
         },
         'body': 'File not found',
     }
 
 
 class KeyifyList(object):
-    """ bisect does not support key= until 3.10. Eliminate this when Lambda supports 3.10.
-    """
+    """bisect does not support key= until 3.10. Eliminate this when Lambda supports 3.10."""
 
     def __init__(self, inner, key):
         self.inner = inner
@@ -101,7 +104,7 @@ def lambda_handler(event: Dict, context: Dict):
     }
     for prefix, link in links.items():
         if uri.startswith(prefix):
-            uri = link + uri[len(prefix):]
+            uri = link + uri[len(prefix) :]
             break
 
     if not uri.startswith('/pub') and uri != '/favicon.ico' and uri != '/robots.txt' and uri != '/404.html':
@@ -112,8 +115,7 @@ def lambda_handler(event: Dict, context: Dict):
                 # The one exception is if the user hits / without auth, we try to be friendly and redirect them..
                 return redirect("/pub/")
             return unauthorized()
-        auth_split = authorization[0]["value"].split(
-            maxsplit=1)  # Basic <base64> => ['Basic', '<base64>']
+        auth_split = authorization[0]["value"].split(maxsplit=1)  # Basic <base64> => ['Basic', '<base64>']
         if len(auth_split) != 2:
             return unauthorized()
         auth_schema, b64_auth_val = auth_split
@@ -133,7 +135,8 @@ def lambda_handler(event: Dict, context: Dict):
         if uri.startswith('/enterprise/') or uri.startswith('/libra/'):
             if not ENTERPRISE_SERVICE_ACCOUNTS:
                 ENTERPRISE_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS')
+                    'art_srv_request_basic_auth/ENTERPRISE_SERVICE_ACCOUNTS'
+                )
 
             if username in ENTERPRISE_SERVICE_ACCOUNTS:
                 # like `==`, but in a timing-safe way
@@ -149,7 +152,8 @@ def lambda_handler(event: Dict, context: Dict):
             if username.index('+') > 0:
                 if not POCKET_SERVICE_ACCOUNTS:
                     POCKET_SERVICE_ACCOUNTS = get_secrets_manager_secret_dict(
-                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS')
+                        'art_srv_request_basic_auth/POCKET_SERVICE_ACCOUNTS'
+                    )
                 pocket_name = username.split('+')[0]
                 if uri.startswith(f'/pockets/{pocket_name}/'):
                     if username in POCKET_SERVICE_ACCOUNTS:
@@ -238,7 +242,7 @@ def lambda_handler(event: Dict, context: Dict):
                 # When the browser hits that presigned URL, the S3 API will find the
                 # content-disposition preference in the encoding, and return that back to
                 # the browser along with the file content.
-                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"'
+                'ResponseContentDisposition': f'attachment; filename="{os.path.basename(file_key)}"',
             },
             ExpiresIn=20 * 60,  # Expire in 20 minutes
         )

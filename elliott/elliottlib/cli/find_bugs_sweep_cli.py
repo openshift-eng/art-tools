@@ -9,7 +9,7 @@ from artcommonlib import logutil, arch_util
 from artcommonlib.assembly import assembly_issues_config
 from artcommonlib.format_util import green_prefix, green_print
 from elliottlib.bzutil import BugTracker, Bug, JIRABug
-from elliottlib import (Runtime, bzutil, constants, errata)
+from elliottlib import Runtime, bzutil, constants, errata
 from elliottlib.cli import common
 from elliottlib.cli.common import click_coroutine
 from elliottlib.exceptions import ElliottFatalError
@@ -36,7 +36,7 @@ class FindBugsMode:
         func = bug_tracker_obj.cve_tracker_search if self.cve_only else bug_tracker_obj.search
         return func(
             self.status,
-            verbose=verbose
+            verbose=verbose,
         )
 
 
@@ -46,85 +46,103 @@ class FindBugsSweep(FindBugsMode):
 
 
 @common.cli.command("find-bugs:sweep", short_help="Sweep qualified bugs into advisories")
-@click.option("--add", "-a", 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help="Add found bugs to ADVISORY")
+@click.option("--add", "-a", 'advisory_id', type=int, metavar='ADVISORY', help="Add found bugs to ADVISORY")
 @common.use_default_advisory_option
-@click.option("--include-status", 'include_status',
-              multiple=True,
-              default=None,
-              required=False,
-              type=click.Choice(constants.VALID_BUG_STATES),
-              help="Include bugs of this status")
-@click.option("--exclude-status", 'exclude_status',
-              multiple=True,
-              default=None,
-              required=False,
-              type=click.Choice(constants.VALID_BUG_STATES),
-              help="Exclude bugs of this status")
-@click.option("--report",
-              required=False,
-              is_flag=True,
-              help="Output a detailed report of found bugs")
-@click.option('--output', '-o',
-              required=False,
-              type=click.Choice(['text', 'json', 'slack']),
-              default='text',
-              help='Applies chosen format to --report output')
-@click.option("--into-default-advisories",
-              is_flag=True,
-              help='Attaches bugs found to their correct default advisories, e.g. operator-related bugs go to '
-                   '"extras" instead of the default "image", bugs filtered into "none" are not attached at all.')
-@click.option('--brew-event', type=click.INT, required=False,
-              help='Only in sweep mode: SWEEP bugs that have changed to the desired status before the Brew event')
-@click.option("--cve-only",
-              is_flag=True,
-              help="Only find CVE trackers")
-@click.option("--advance-release",
-              is_flag=True,
-              help="If the release contains an advance advisory")
-@click.option("--permissive",
-              is_flag=True, default=False,
-              required=False,
-              help="Ignore bugs that are determined to be invalid and continue")
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--include-status",
+    'include_status',
+    multiple=True,
+    default=None,
+    required=False,
+    type=click.Choice(constants.VALID_BUG_STATES),
+    help="Include bugs of this status",
+)
+@click.option(
+    "--exclude-status",
+    'exclude_status',
+    multiple=True,
+    default=None,
+    required=False,
+    type=click.Choice(constants.VALID_BUG_STATES),
+    help="Exclude bugs of this status",
+)
+@click.option("--report", required=False, is_flag=True, help="Output a detailed report of found bugs")
+@click.option(
+    '--output',
+    '-o',
+    required=False,
+    type=click.Choice(['text', 'json', 'slack']),
+    default='text',
+    help='Applies chosen format to --report output',
+)
+@click.option(
+    "--into-default-advisories",
+    is_flag=True,
+    help='Attaches bugs found to their correct default advisories, e.g. operator-related bugs go to '
+    '"extras" instead of the default "image", bugs filtered into "none" are not attached at all.',
+)
+@click.option(
+    '--brew-event',
+    type=click.INT,
+    required=False,
+    help='Only in sweep mode: SWEEP bugs that have changed to the desired status before the Brew event',
+)
+@click.option("--cve-only", is_flag=True, help="Only find CVE trackers")
+@click.option("--advance-release", is_flag=True, help="If the release contains an advance advisory")
+@click.option(
+    "--permissive",
+    is_flag=True,
+    default=False,
+    required=False,
+    help="Ignore bugs that are determined to be invalid and continue",
+)
+@click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
 @click_coroutine
-async def find_bugs_sweep_cli(runtime: Runtime, advisory_id, default_advisory_type, include_status, exclude_status,
-                              report, output, into_default_advisories, brew_event, cve_only, advance_release,
-                              permissive, noop):
+async def find_bugs_sweep_cli(
+    runtime: Runtime,
+    advisory_id,
+    default_advisory_type,
+    include_status,
+    exclude_status,
+    report,
+    output,
+    into_default_advisories,
+    brew_event,
+    cve_only,
+    advance_release,
+    permissive,
+    noop,
+):
     """Find OCP bugs and (optional) add them to ADVISORY.
 
- The --group automatically determines the correct target-releases to search
-for bugs claimed to be fixed, but not yet attached to advisories.
-Security Tracker Bugs are validated with attached builds to advisories.
-If expected builds are not found then tracker bugs are not attached.
-default statuses: ['MODIFIED', 'ON_QA', 'VERIFIED']
+     The --group automatically determines the correct target-releases to search
+    for bugs claimed to be fixed, but not yet attached to advisories.
+    Security Tracker Bugs are validated with attached builds to advisories.
+    If expected builds are not found then tracker bugs are not attached.
+    default statuses: ['MODIFIED', 'ON_QA', 'VERIFIED']
 
-Using --use-default-advisory without a value set for the matching key
-in the build-data will cause an error and elliott will exit in a
-non-zero state. Use of this option silently overrides providing an
-advisory with the --add option.
+    Using --use-default-advisory without a value set for the matching key
+    in the build-data will cause an error and elliott will exit in a
+    non-zero state. Use of this option silently overrides providing an
+    advisory with the --add option.
 
-    List bugs that WOULD be swept into advisories (NOOP):
+        List bugs that WOULD be swept into advisories (NOOP):
 
-\b
-    $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep
+    \b
+        $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep
 
-    Sweep bugs for an assembly into the advisories defined
+        Sweep bugs for an assembly into the advisories defined
 
-\b
-    $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --into-default-advisories
+    \b
+        $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --into-default-advisories
 
-    Sweep rpm bugs into the rpm advisory defined
+        Sweep rpm bugs into the rpm advisory defined
 
-\b
-    $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --use-default-advisory rpm
+    \b
+        $ elliott -g openshift-4.8 --assembly 4.8.32 find-bugs:sweep --use-default-advisory rpm
 
-"""
+    """
     operator_bundle_advisory = "advance" if advance_release else "metadata"
 
     count_advisory_attach_flags = sum(map(bool, [advisory_id, default_advisory_type, into_default_advisories]))
@@ -141,11 +159,22 @@ advisory with the --add option.
     errors = []
     for b in [runtime.get_bug_tracker('jira'), runtime.get_bug_tracker('bugzilla')]:
         try:
-            bugs.extend(await find_and_attach_bugs(runtime, advisory_id, default_advisory_type, major_version, find_bugs_obj,
-                        output, brew_event,
-                        noop=noop, permissive=permissive,
-                        count_advisory_attach_flags=count_advisory_attach_flags,
-                        bug_tracker=b, operator_bundle_advisory=operator_bundle_advisory))
+            bugs.extend(
+                await find_and_attach_bugs(
+                    runtime,
+                    advisory_id,
+                    default_advisory_type,
+                    major_version,
+                    find_bugs_obj,
+                    output,
+                    brew_event,
+                    noop=noop,
+                    permissive=permissive,
+                    count_advisory_attach_flags=count_advisory_attach_flags,
+                    bug_tracker=b,
+                    operator_bundle_advisory=operator_bundle_advisory,
+                )
+            )
         except Exception as e:
             errors.append(e)
             logger.error(traceback.format_exc())
@@ -174,14 +203,16 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
         sweep_cutoff_timestamp = await get_sweep_cutoff_timestamp(runtime, cli_brew_event=brew_event)
         if sweep_cutoff_timestamp:
             utc_ts = datetime.utcfromtimestamp(sweep_cutoff_timestamp)
-            logger.info(f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
-                        f"cutoff time {utc_ts}...")
+            logger.info(
+                f"Filtering bugs that have changed ({len(bugs)}) to one of the desired statuses before the "
+                f"cutoff time {utc_ts}..."
+            )
             qualified_bugs = []
             unqualified_bugs = []
             for chunk_of_bugs in chunk(bugs, constants.BUG_LOOKUP_CHUNK_SIZE):
-                qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(chunk_of_bugs, find_bugs_obj.status,
-                                                                               sweep_cutoff_timestamp,
-                                                                               verbose=runtime.debug)
+                qualified_bugs_chunk = bug_tracker.filter_bugs_by_cutoff_event(
+                    chunk_of_bugs, find_bugs_obj.status, sweep_cutoff_timestamp, verbose=runtime.debug
+                )
                 qualified_bugs.extend(qualified_bugs_chunk)
                 not_qualified = {b.id for b in chunk_of_bugs} - {b.id for b in qualified_bugs_chunk}
                 unqualified_bugs.extend(list(not_qualified))
@@ -201,11 +232,15 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
 
     included_bug_ids, excluded_bug_ids = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
     if included_bug_ids & excluded_bug_ids:
-        raise ValueError(f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': "
-                         f"{included_bug_ids & excluded_bug_ids}")
+        raise ValueError(
+            f"The following {bug_tracker.type} bugs are defined in both 'include' and 'exclude': "
+            f"{included_bug_ids & excluded_bug_ids}"
+        )
     if included_bug_ids:
-        logger.warning(f"The following {bug_tracker.type} bugs will be additionally included because they are "
-                       f"explicitly defined in the assembly config: {included_bug_ids}")
+        logger.warning(
+            f"The following {bug_tracker.type} bugs will be additionally included because they are "
+            f"explicitly defined in the assembly config: {included_bug_ids}"
+        )
         # filter out bugs that are already swept in
         # so that we don't double add them
         bug_ids = {b.id for b in bugs}
@@ -214,19 +249,34 @@ async def get_bugs_sweep(runtime: Runtime, find_bugs_obj, brew_event, bug_tracke
         if find_bugs_obj.cve_only:
             logger.info("checking if cve tracker bug found in included bug list")
             included_bugs = [ib for ib in included_bugs if ib.is_tracker_bug()]
-            logger.info(f"filtered cve tracker bug from included bug list: {[getattr(ib, 'id') for ib in included_bugs]}")
+            logger.info(
+                f"filtered cve tracker bug from included bug list: {[getattr(ib, 'id') for ib in included_bugs]}"
+            )
         bugs.extend(included_bugs)
     if excluded_bug_ids:
-        logger.warning(f"The following {bug_tracker.type} bugs will be excluded because they are explicitly "
-                       f"defined in the assembly config: {excluded_bug_ids}")
+        logger.warning(
+            f"The following {bug_tracker.type} bugs will be excluded because they are explicitly "
+            f"defined in the assembly config: {excluded_bug_ids}"
+        )
         bugs = [bug for bug in bugs if bug.id not in excluded_bug_ids]
 
     return bugs
 
 
-async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_type, major_version,
-                               find_bugs_obj, output, brew_event, noop, permissive, count_advisory_attach_flags,
-                               bug_tracker, operator_bundle_advisory):
+async def find_and_attach_bugs(
+    runtime: Runtime,
+    advisory_id,
+    default_advisory_type,
+    major_version,
+    find_bugs_obj,
+    output,
+    brew_event,
+    noop,
+    permissive,
+    count_advisory_attach_flags,
+    bug_tracker,
+    operator_bundle_advisory,
+):
     if output == 'text':
         statuses = sorted(find_bugs_obj.status)
         tr = bug_tracker.target_release()
@@ -239,10 +289,14 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
 
     advisory_ids = runtime.get_default_advisories()
     included_bug_ids, _ = get_assembly_bug_ids(runtime, bug_tracker_type=bug_tracker.type)
-    bugs_by_type, _ = categorize_bugs_by_type(bugs, advisory_ids, included_bug_ids,
-                                              permissive=permissive,
-                                              major_version=major_version,
-                                              operator_bundle_advisory=operator_bundle_advisory)
+    bugs_by_type, _ = categorize_bugs_by_type(
+        bugs,
+        advisory_ids,
+        included_bug_ids,
+        permissive=permissive,
+        major_version=major_version,
+        operator_bundle_advisory=operator_bundle_advisory,
+    )
     for kind, kind_bugs in bugs_by_type.items():
         logger.info(f'{kind} bugs: {[b.id for b in kind_bugs]}')
 
@@ -263,11 +317,14 @@ async def find_and_attach_bugs(runtime: Runtime, advisory_id, default_advisory_t
         kind_bugs = bugs_by_type.get(advisory_type)
         if kind_bugs:
             if advisory_type not in advisory_ids:
-                logger.warning(f"Bugs were found for {advisory_type} but not attached because {advisory_type} advisory "
-                               "does not exist")
+                logger.warning(
+                    f"Bugs were found for {advisory_type} but not attached because {advisory_type} advisory "
+                    "does not exist"
+                )
                 continue
-            bug_tracker.attach_bugs([b.id for b in kind_bugs], advisory_id=advisory_ids[advisory_type], noop=noop,
-                                    verbose=runtime.debug)
+            bug_tracker.attach_bugs(
+                [b.id for b in kind_bugs], advisory_id=advisory_ids[advisory_type], noop=noop, verbose=runtime.debug
+            )
     return bugs
 
 
@@ -286,11 +343,15 @@ def get_assembly_bug_ids(runtime, bug_tracker_type):
     return included_bug_ids, excluded_bug_ids
 
 
-def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
-                            permitted_bug_ids, operator_bundle_advisory: str = "metadata",
-                            permissive=False, major_version: int = 4):
-
-    """ Categorize bugs into different types of advisories
+def categorize_bugs_by_type(
+    bugs: List[Bug],
+    advisory_id_map: Dict[str, int],
+    permitted_bug_ids,
+    operator_bundle_advisory: str = "metadata",
+    permissive=False,
+    major_version: int = 4,
+):
+    """Categorize bugs into different types of advisories
     :return: (bugs_by_type, issues) where bugs_by_type is a dict of {advisory_type: bugs} and issues is a list of issues
     """
     issues = []
@@ -349,8 +410,10 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
         logger.info(f'Tracker bug, component: {(b.id, b.whiteboard_component)}')
 
     if not advisory_id_map:
-        logger.info("Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
-                    "validate trackers.")
+        logger.info(
+            "Skipping sorting/attaching Tracker Bugs. Advisories with attached builds must be given to "
+            "validate trackers."
+        )
         return bugs_by_type, issues
 
     logger.info("Validating tracker bugs with builds in advisories..")
@@ -374,7 +437,9 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
             if kind == "microshift" and package_name == "microshift" and len(packages) == 0:
                 # microshift is special since it has a separate advisory, and it's build is attached
                 # after payload is promoted. So do not pre-emptively complain
-                logger.info(f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached")
+                logger.info(
+                    f"skip attach microshift bug {bug.id} to {advisory} because this advisory has no builds attached"
+                )
                 found.add(bug)
             elif (package_name in packages) or (package_name in exception_packages):
                 if package_name in packages:
@@ -395,15 +460,19 @@ def categorize_bugs_by_type(bugs: List[Bug], advisory_id_map: Dict[str, int],
     if not_found:
         still_not_found = not_found
         if permitted_bug_ids:
-            logger.info('The following bugs will be attached because they are '
-                        f'explicitly included in the assembly config: {permitted_bug_ids}')
+            logger.info(
+                'The following bugs will be attached because they are '
+                f'explicitly included in the assembly config: {permitted_bug_ids}'
+            )
             still_not_found = {b for b in not_found if b.id not in permitted_bug_ids}
 
         if still_not_found:
             still_not_found_with_component = [(b.id, b.whiteboard_component) for b in still_not_found]
-            message = ('No attached builds found in advisories for tracker bugs (bug, package): '
-                       f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
-                       f'ids in the assembly definition')
+            message = (
+                'No attached builds found in advisories for tracker bugs (bug, package): '
+                f'{still_not_found_with_component}. Either attach builds or explicitly include/exclude the bug '
+                f'ids in the assembly definition'
+            )
             if permissive:
                 logger.warning(f"{message} Ignoring them because --permissive.")
                 issues.append(message)
@@ -446,39 +515,46 @@ def print_report(bugs: type_bug_list, output: str = 'text') -> None:
     if output == 'slack':
         for bug in bugs:
             if bug.release_blocker:
-                click.echo("<{}|_Release blocker: Approved_> bug for <{}|{}> - {:<25s} ".format(approved_url, bug.weburl, bug.id, bug.component))
+                click.echo(
+                    "<{}|_Release blocker: Approved_> bug for <{}|{}> - {:<25s} ".format(
+                        approved_url, bug.weburl, bug.id, bug.component
+                    )
+                )
             else:
                 click.echo("<{}|{}> - {:<25s} ".format(bug.weburl, bug.id, bug.component))
 
     elif output == 'json':
-        print(json.dumps(
-            [
-                {
-                    "id": bug.id,
-                    "component": bug.component,
-                    "status": bug.status,
-                    "date": str(bug.creation_time_parsed()),
-                    "summary": bug.summary[:60],
-                    "url": bug.weburl
-                }
-                for bug in bugs
-            ],
-            indent=4
-        ))
+        print(
+            json.dumps(
+                [
+                    {
+                        "id": bug.id,
+                        "component": bug.component,
+                        "status": bug.status,
+                        "date": str(bug.creation_time_parsed()),
+                        "summary": bug.summary[:60],
+                        "url": bug.weburl,
+                    }
+                    for bug in bugs
+                ],
+                indent=4,
+            )
+        )
 
     else:  # output == 'text'
         green_print(
-            "{:<13s} {:<25s} {:<12s} {:<7s} {:<10s} {:60s}".format("ID", "COMPONENT", "STATUS", "SCORE", "AGE",
-                                                                   "SUMMARY"))
+            "{:<13s} {:<25s} {:<12s} {:<7s} {:<10s} {:60s}".format(
+                "ID", "COMPONENT", "STATUS", "SCORE", "AGE", "SUMMARY"
+            )
+        )
         for bug in bugs:
             days_ago = bug.created_days_ago()
             cf_pm_score = bug.cf_pm_score if hasattr(bug, "cf_pm_score") else '?'
-            click.echo("{:<13s} {:<25s} {:<12s} {:<7s} {:<3d} days   {:60s} ".format(str(bug.id),
-                                                                                     bug.component,
-                                                                                     bug.status,
-                                                                                     cf_pm_score,
-                                                                                     days_ago,
-                                                                                     bug.summary[:60]))
+            click.echo(
+                "{:<13s} {:<25s} {:<12s} {:<7s} {:<3d} days   {:60s} ".format(
+                    str(bug.id), bug.component, bug.status, cf_pm_score, days_ago, bug.summary[:60]
+                )
+            )
 
 
 async def get_sweep_cutoff_timestamp(runtime, cli_brew_event):
@@ -489,7 +565,8 @@ async def get_sweep_cutoff_timestamp(runtime, cli_brew_event):
     elif runtime.assembly_basis_event:
         logger.info(f"Determining approximate cutoff timestamp from basis event {runtime.assembly_basis_event}...")
         brew_api = runtime.build_retrying_koji_client()
-        sweep_cutoff_timestamp = await bzutil.approximate_cutoff_timestamp(runtime.assembly_basis_event, brew_api,
-                                                                           runtime.rpm_metas() + runtime.image_metas())
+        sweep_cutoff_timestamp = await bzutil.approximate_cutoff_timestamp(
+            runtime.assembly_basis_event, brew_api, runtime.rpm_metas() + runtime.image_metas()
+        )
 
     return sweep_cutoff_timestamp

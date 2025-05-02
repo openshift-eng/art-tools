@@ -7,7 +7,6 @@ from doozerlib import brew
 
 
 class TestKojiWrapper(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -41,14 +40,18 @@ class TestKojiWrapper(DoozerRunnerTestCase):
         def run_multicall():
             m = k.multicall()
             call_1 = m.getLastEvent(brew.KojiWrapperOpts(caching=True, return_metadata=True))
-            call_2 = m.getTag('rhaos-4.7-rhel-8-candidate')  # Note that if caching/metadata is true for one call in multicall, it is True for all
+            call_2 = m.getTag(
+                'rhaos-4.7-rhel-8-candidate'
+            )  # Note that if caching/metadata is true for one call in multicall, it is True for all
             m.call_all()
             call_1_meta: brew.KojiWrapperMetaReturn = call_1.result
             call_2_meta: brew.KojiWrapperMetaReturn = call_2.result
             return call_1_meta, call_2_meta
 
         c1_meta, c2_meta = run_multicall()
-        self.assertFalse(c1_meta.cache_hit)  # Though getLastEvent was cached above a single call, it has to be cached uniquely as a multiCall
+        self.assertFalse(
+            c1_meta.cache_hit
+        )  # Though getLastEvent was cached above a single call, it has to be cached uniquely as a multiCall
         self.assertFalse(c2_meta.cache_hit)  # cache_hit should be identical for every call
         self.assertEqual(c2_meta.result['id'], 70115)  # The numeric id for the tag should not change
 
@@ -88,9 +91,15 @@ class TestKojiWrapper(DoozerRunnerTestCase):
         # However, if you tell the wrapper you are aware of the lock, you may perform the call
         k.getLastEvent(brew.KojiWrapperOpts(brew_event_aware=True))
 
-        results = k.listTagged(test_tag, brew.KojiWrapperOpts(caching=True, logger=self.logger), package='openshift')  # This should be transparently locked in brew time by the wrapper
-        self.assertEqual(results[0]['task_id'], 34774198)  # since we are locked in the time. this task_id is locked in time
-        call_meta: brew.KojiWrapperMetaReturn = k.listTagged(test_tag, brew.KojiWrapperOpts(caching=True, return_metadata=True), package='openshift')  # Test to ensure caching is working with a brew event constraint.
+        results = k.listTagged(
+            test_tag, brew.KojiWrapperOpts(caching=True, logger=self.logger), package='openshift'
+        )  # This should be transparently locked in brew time by the wrapper
+        self.assertEqual(
+            results[0]['task_id'], 34774198
+        )  # since we are locked in the time. this task_id is locked in time
+        call_meta: brew.KojiWrapperMetaReturn = k.listTagged(
+            test_tag, brew.KojiWrapperOpts(caching=True, return_metadata=True), package='openshift'
+        )  # Test to ensure caching is working with a brew event constraint.
         self.assertTrue(call_meta.cache_hit)
         self.assertEqual(call_meta.result[0]['task_id'], 34774198)
 
@@ -99,7 +108,9 @@ class TestKojiWrapper(DoozerRunnerTestCase):
         # and thus we expect a different result.
         unlocked_k = brew.KojiWrapper(['https://brewhub.engineering.redhat.com/brewhub'])
         unlocked_results = unlocked_k.listTagged(test_tag, brew.KojiWrapperOpts(caching=True), package='openshift')
-        self.assertNotEqual(unlocked_results[0]['task_id'], 34774198)  # This was an unlocked query and we know the latest task has moved on
+        self.assertNotEqual(
+            unlocked_results[0]['task_id'], 34774198
+        )  # This was an unlocked query and we know the latest task has moved on
 
 
 if __name__ == "__main__":

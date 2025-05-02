@@ -1,11 +1,11 @@
-
 import threading
 
 
 class RecordLogger:
-    """ A class to log records of actions taken by Doozer that need to be communicated to outside systems.
+    """A class to log records of actions taken by Doozer that need to be communicated to outside systems.
     This class usually writes record.log file in the working directory
     """
+
     def __init__(self, path: str) -> None:
         self._record_log = open(path, "a", encoding='utf-8')
         self._log_lock = threading.Lock()
@@ -30,7 +30,7 @@ class RecordLogger:
         """
         record = "%s|" % record_type
         for k, v in kwargs.items():
-            assert ("\n" not in str(k))
+            assert "\n" not in str(k)
             # Make sure the values have no linefeeds as this would interfere with simple parsing.
             v = str(v).replace("\n", " ;;; ").replace("\r", "")
             record += "%s=%s|" % (k, v)

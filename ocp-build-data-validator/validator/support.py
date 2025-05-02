@@ -71,8 +71,7 @@ def resource_exists(url):
         # This is a private repository, and only used for 3.11. This will not change.
         return True
     if global_session.request_session:
-        return 200 <= global_session.request_session\
-            .head(url).status_code < 400
+        return 200 <= global_session.request_session.head(url).status_code < 400
     else:
         return 200 <= requests.head(url).status_code < 400
 
@@ -104,6 +103,4 @@ def get_distgit_branch(data, group_cfg):
 
 
 def replace_vars(text, vars_map):
-    return (text
-            .replace('{MAJOR}', str(vars_map['MAJOR']))
-            .replace('{MINOR}', str(vars_map['MINOR'])))
+    return text.replace('{MAJOR}', str(vars_map['MAJOR'])).replace('{MINOR}', str(vars_map['MINOR']))

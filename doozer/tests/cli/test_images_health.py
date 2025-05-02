@@ -14,7 +14,7 @@ class TestImagesHealth(TestCase):
         self.pipeline = ImagesHealthPipeline(
             runtime=self.mock_runtime,
             limit=100,
-            url_markup='slack'
+            url_markup='slack',
         )
 
     def test_generate_art_dash_history_link(self):
@@ -24,7 +24,7 @@ class TestImagesHealth(TestCase):
         self.assertEqual(
             self.pipeline.generate_art_dash_history_link(name),
             f'{ART_BUILD_HISTORY_URL}/search?group=openshift-4.18&name=%5Eironic%24&engine=brew&assembly=stream&'
-            f'outcome=both&art-job-url=&after=2024-11-18'
+            f'outcome=both&art-job-url=&after=2024-11-18',
         )
 
         self.mock_runtime.group_config.name = 'openshift-4.16'
@@ -33,22 +33,22 @@ class TestImagesHealth(TestCase):
         self.assertEqual(
             self.pipeline.generate_art_dash_history_link(name),
             f'{ART_BUILD_HISTORY_URL}/search?group=openshift-4.16&name=%5Eose-installer%24&engine=brew&'
-            f'assembly=stream&outcome=both&art-job-url=&after=2024-6-18'
+            f'assembly=stream&outcome=both&art-job-url=&after=2024-6-18',
         )
 
     def test_url_text(self):
         self.pipeline.url_markup = 'slack'
         self.assertEqual(
             self.pipeline.url_text(url=ART_BUILD_HISTORY_URL, text='url'),
-            f'<{ART_BUILD_HISTORY_URL}|url>'
+            f'<{ART_BUILD_HISTORY_URL}|url>',
         )
 
         self.pipeline.url_markup = 'github'
         self.assertEqual(
             self.pipeline.url_text(url=ART_BUILD_HISTORY_URL, text='url'),
-            f'[url]({ART_BUILD_HISTORY_URL})'
+            f'[url]({ART_BUILD_HISTORY_URL})',
         )
 
         self.pipeline.url_markup = 'invalid'
         with self.assertRaises(IOError):
-            self.pipeline.url_text(url=ART_BUILD_HISTORY_URL, text='url'),
+            (self.pipeline.url_text(url=ART_BUILD_HISTORY_URL, text='url'),)

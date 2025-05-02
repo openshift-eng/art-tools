@@ -6,16 +6,13 @@ from typing import Any, Awaitable, Callable, Optional, Sequence
 from opentelemetry import context, metrics, trace
 from opentelemetry.context import Context
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import (ConsoleMetricExporter,
-                                              PeriodicExportingMetricReader)
+from opentelemetry.sdk.metrics.export import ConsoleMetricExporter, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import (BatchSpanProcessor,
-                                            ConsoleSpanExporter, SpanExporter)
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.semconv.resource import ResourceAttributes
-from opentelemetry.trace.propagation.tracecontext import \
-    TraceContextTextMapPropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from opentelemetry.util.types import Attributes
 
 from pyartcd import __version__
@@ -23,7 +20,7 @@ from artcommonlib import constants
 
 
 def new_tracker_provider(resource: Resource, exporter: SpanExporter):
-    """ Creates and initialize a TracerProvider for Doozer.
+    """Creates and initialize a TracerProvider for Doozer.
     Currently we only export traces to stderr for development purpose.
     """
     processor = BatchSpanProcessor(exporter)
@@ -35,10 +32,12 @@ def new_tracker_provider(resource: Resource, exporter: SpanExporter):
 def initialize_telemetry():
     # Initialize resource attributes;
     # Additional attributes can be specified in OTEL_RESOURCE_ATTRIBUTES env var
-    resource = Resource.create(attributes={
-        ResourceAttributes.SERVICE_NAME: "pyartcd",
-        ResourceAttributes.SERVICE_VERSION: __version__,
-    })
+    resource = Resource.create(
+        attributes={
+            ResourceAttributes.SERVICE_NAME: "pyartcd",
+            ResourceAttributes.SERVICE_VERSION: __version__,
+        }
+    )
 
     otel_exporter_otlp_endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT', constants.OTEL_EXPORTER_OTLP_ENDPOINT)
     otel_exporter_otlp_headers = os.environ.get('OTEL_EXPORTER_OTLP_HEADERS')

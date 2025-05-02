@@ -1,4 +1,3 @@
-
 import os
 import hashlib
 import pathlib
@@ -19,18 +18,29 @@ COVSCAN_WAIVED_FILENAME = 'waived.flag'
 
 
 class CoverityContext(object):
-
-    def __init__(self, image, dg_commit_hash: str, result_archive: str, repo_type: str = 'unsigned',
-                 local_repo_rhel_7: List[str] = [], local_repo_rhel_8: List[str] = [],
-                 local_repo_rhel_9: List[str] = [], force_analysis: bool = False,
-                 ignore_waived: bool = False, https_proxy: str = '', podman_sudo: bool = False,
-                 podman_tmpdir: Optional[str] = None):
+    def __init__(
+        self,
+        image,
+        dg_commit_hash: str,
+        result_archive: str,
+        repo_type: str = 'unsigned',
+        local_repo_rhel_7: List[str] = [],
+        local_repo_rhel_8: List[str] = [],
+        local_repo_rhel_9: List[str] = [],
+        force_analysis: bool = False,
+        ignore_waived: bool = False,
+        https_proxy: str = '',
+        podman_sudo: bool = False,
+        podman_tmpdir: Optional[str] = None,
+    ):
         self.image = image  # ImageMetadata
         self.dg_commit_hash = dg_commit_hash
         self.result_archive_path = pathlib.Path(result_archive)
         self.dg_archive_path = self.result_archive_path.joinpath(image.distgit_key)
         self.dg_archive_path.mkdir(parents=True, exist_ok=True)  # /<archive-dir>/<dg-key>
-        self.archive_commit_results_path = self.dg_archive_path.joinpath(dg_commit_hash)  # /<archive-dir>/<dg-key>/<hash>
+        self.archive_commit_results_path = self.dg_archive_path.joinpath(
+            dg_commit_hash
+        )  # /<archive-dir>/<dg-key>/<hash>
         self.repo_type = repo_type
         self.local_repo_rhel_7 = local_repo_rhel_7
         self.local_repo_rhel_8 = local_repo_rhel_8
@@ -51,7 +61,7 @@ class CoverityContext(object):
             podman_tmpdir_path = pathlib.Path(podman_tmpdir)
             podman_tmpdir_path.mkdir(exist_ok=True)
             self.podman_env = {
-                'TMPDIR': str(podman_tmpdir_path.absolute())
+                'TMPDIR': str(podman_tmpdir_path.absolute()),
             }
 
         # Runtime coverity scanning output directory; each stage will have an entry beneath this.
@@ -70,11 +80,15 @@ class CoverityContext(object):
                 # Check for waived hash for in the commit history. The second check is for legacy style of waiver where we only checked
                 # the first Dockerfile stage.
                 cov_root_path = self.dg_archive_path.joinpath(old_commit)
-                if cov_root_path.joinpath('1', COVSCAN_WAIVED_FILENAME).exists() or cov_root_path.joinpath(COVSCAN_WAIVED_FILENAME):
+                if cov_root_path.joinpath('1', COVSCAN_WAIVED_FILENAME).exists() or cov_root_path.joinpath(
+                    COVSCAN_WAIVED_FILENAME
+                ):
                     return cov_root_path
         return None
 
-    def get_nearest_waived_cov_path(self, nearest_waived_cov_root_path: pathlib.Path, stage_number) -> Optional[pathlib.Path]:
+    def get_nearest_waived_cov_path(
+        self, nearest_waived_cov_root_path: pathlib.Path, stage_number
+    ) -> Optional[pathlib.Path]:
         if not nearest_waived_cov_root_path:
             return None
 
@@ -225,7 +239,9 @@ def _covscan_prepare_parent(cc: CoverityContext, parent_image_name, parent_tag) 
     dg_path = cc.dg_path
     rc, _, _ = exectools.cmd_gather(f'{cc.podman_cmd} inspect {parent_tag}', set_env=cc.podman_env)
     if rc != 0:
-        cc.logger.info(f'Creating parent image derivative with covscan tools installed as {parent_tag} for parent {parent_image_name}')
+        cc.logger.info(
+            f'Creating parent image derivative with covscan tools installed as {parent_tag} for parent {parent_image_name}'
+        )
         df_parent_path = dg_path.joinpath(f'Dockerfile.{parent_tag}')
 
         repo_injection_lines, mount_args = cc.parent_repo_injection_info()
@@ -365,13 +381,18 @@ RUN yum install -y cov-sa csmock csmock-plugin-coverity csdiff
             df_parent_out.write('ENV PATH=/opt/coverity/bin:${PATH}\n')  # Ensure coverity is in the path
 
         # This will have prepared a parent image we can use during the actual covscan Dockerfile build
-        rc, stdout, stderr = exectools.cmd_gather(f'{cc.podman_cmd} build {mount_args} {cc.build_args()} -t {parent_tag} -f {str(df_parent_path)} {str(dg_path)}', set_env=cc.podman_env)
+        rc, stdout, stderr = exectools.cmd_gather(
+            f'{cc.podman_cmd} build {mount_args} {cc.build_args()} -t {parent_tag} -f {str(df_parent_path)} {str(dg_path)}',
+            set_env=cc.podman_env,
+        )
         cc.logger.info(f'''Output from covscan build for {cc.image.distgit_key}
 stdout: {stdout}
 stderr: {stderr}
 ''')
         if rc != 0:
-            cc.logger.error(f'Error preparing builder image derivative {parent_tag} from {parent_image_name} with {str(df_parent_path)}')
+            cc.logger.error(
+                f'Error preparing builder image derivative {parent_tag} from {parent_image_name} with {str(df_parent_path)}'
+            )
             # TODO: log this as a record and make sure the pipeline warns artist
             return False
 
@@ -382,10 +403,8 @@ stderr: {stderr}
 
 
 def run_covscan(cc: CoverityContext) -> bool:
-
     dg_path = cc.dg_path
     with Dir(dg_path):
-
         dockerfile_path = dg_path.joinpath('Dockerfile')
         if not dockerfile_path.exists():
             cc.logger.error('Dockerfile does not exist in distgit; not rebased yet?')
@@ -407,7 +426,6 @@ def run_covscan(cc: CoverityContext) -> bool:
         covscan_df = dg_path.joinpath('Dockerfile.covscan')
 
         with covscan_df.open(mode='w+') as df_out:
-
             df_line = 0
             stage_number = 0
             for entry in dfp.structure:
@@ -512,7 +530,9 @@ RUN chown -R {os.getuid()}:{os.getgid()} {container_stage_cov_dir}
                     # Label these images so we can find a delete them later
                     df_out.write(f'LABEL DOOZER_COVSCAN_RUNNER={cc.runtime.group_config.name}\n')
                     df_out.write(f'LABEL DOOZER_COVSCAN_COMPONENT={cc.image.distgit_key}\n')
-                    df_out.write('ENTRYPOINT []\n')  # Ensure all invocations use /bin/sh -c, the default docker entrypoint
+                    df_out.write(
+                        'ENTRYPOINT []\n'
+                    )  # Ensure all invocations use /bin/sh -c, the default docker entrypoint
                     df_out.write('USER 0\n')  # Just make sure all images are consistent
 
                     # Each stage will have its own cov output directory
@@ -568,16 +588,15 @@ RUN cov-manage-emit --dir={container_stage_cov_dir} reset-host-name; timeout 3h 
         run_tag = f'{cc.image.image_name_short}_{cc.runtime.group_config.name}'
         rc, stdout, stderr = exectools.cmd_gather(
             f'{cc.podman_cmd} build {cc.build_args()} -v {str(cc.cov_root_path)}:/cov:z -v {str(dg_path)}:/covscan-src:z -t {run_tag} -f {str(covscan_df)} {str(dg_path)}',
-            set_env=cc.podman_env)
+            set_env=cc.podman_env,
+        )
         cc.logger.info(f'''Output from covscan build for {cc.image.distgit_key}
 stdout: {stdout}
 stderr: {stderr}
 
 ''')
 
-        _, cleanup_out, cleanup_err = exectools.cmd_gather(
-            f'{cc.podman_cmd} rmi -f {run_tag}',
-            set_env=cc.podman_env)
+        _, cleanup_out, cleanup_err = exectools.cmd_gather(f'{cc.podman_cmd} rmi -f {run_tag}', set_env=cc.podman_env)
         cc.logger.info(f'''Output from image clean up {cc.image.distgit_key}
 stdout: {cleanup_out}
 stderr: {cleanup_err}
@@ -611,22 +630,24 @@ def records_results(cc: CoverityContext, stage_number, waived_cov_path_root=None
         diff_count = len(diff_json.get('issues', []))
         all_count = len(all_json.get('issues', []))
         host_stage_waived_flag_path = cc.get_stage_results_waive_path(stage_number)
-        cc.image.runtime.record_logger.add_record('covscan',
-                                                  distgit=cc.image.qualified_name,
-                                                  distgit_key=cc.image.distgit_key,
-                                                  commit_results_path=str(dest_result_path),
-                                                  all_results_js_path=str(dest_all_js_path),
-                                                  all_results_html_path=str(dest_all_results_html_path),
-                                                  diff_results_js_path=str(dest_diff_js_path),
-                                                  diff_results_html_path=str(dest_diff_results_html_path),
-                                                  diff_count=str(diff_count),
-                                                  all_count=str(all_count),
-                                                  stage_number=str(stage_number),
-                                                  waive_path=str(host_stage_waived_flag_path),
-                                                  waived=str(host_stage_waived_flag_path.exists()).lower(),
-                                                  owners=owners,
-                                                  image=cc.image.config.name,
-                                                  commit_hash=cc.dg_commit_hash)
+        cc.image.runtime.record_logger.add_record(
+            'covscan',
+            distgit=cc.image.qualified_name,
+            distgit_key=cc.image.distgit_key,
+            commit_results_path=str(dest_result_path),
+            all_results_js_path=str(dest_all_js_path),
+            all_results_html_path=str(dest_all_results_html_path),
+            diff_results_js_path=str(dest_diff_js_path),
+            diff_results_html_path=str(dest_diff_results_html_path),
+            diff_count=str(diff_count),
+            all_count=str(all_count),
+            stage_number=str(stage_number),
+            waive_path=str(host_stage_waived_flag_path),
+            waived=str(host_stage_waived_flag_path.exists()).lower(),
+            owners=owners,
+            image=cc.image.config.name,
+            commit_hash=cc.dg_commit_hash,
+        )
 
     if write_only:
         if dest_all_js_path.exists():

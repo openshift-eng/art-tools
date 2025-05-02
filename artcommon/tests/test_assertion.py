@@ -1,6 +1,7 @@
 """
 Test the task related functions for the OpenShift Image/RPM Build Tool
 """
+
 import unittest
 
 from artcommonlib import assertion
@@ -12,6 +13,7 @@ class TestAssert(unittest.TestCase):
 
     Each raises an exception if the asserted test fails.
     """
+
     def test_isdir(self):
         """
         Verify both positive and negative results for directory test
@@ -23,8 +25,7 @@ class TestAssert(unittest.TestCase):
         try:
             assertion.isdir(dir_exists, "dir missing: {}".format(dir_exists))
         except FileNotFoundError as fnf_error:
-            self.fail("asserted real directory does not exist: {}".
-                      format(fnf_error))
+            self.fail("asserted real directory does not exist: {}".format(fnf_error))
 
         with self.assertRaises(FileNotFoundError):
             assertion.isdir(dir_missing, "dir missing: {}".format(dir_missing))
@@ -49,7 +50,7 @@ class TestAssert(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             assertion.isfile(
                 file_missing,
-                "file missing: {}".format(file_missing)
+                "file missing: {}".format(file_missing),
             )
 
         # Should raise IsADirectory

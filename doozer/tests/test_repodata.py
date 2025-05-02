@@ -46,13 +46,15 @@ class TestRpm(TestCase):
         self.assertEqual(rpm.nevra, "foo-1:1.2.3-1.el9.x86_64")
 
     def test_from_dict(self):
-        rpm = Rpm.from_dict({
-            "name": "foo",
-            "epoch": "1",
-            "version": "1.2.3",
-            "release": "1.el9",
-            "arch": "x86_64",
-        })
+        rpm = Rpm.from_dict(
+            {
+                "name": "foo",
+                "epoch": "1",
+                "version": "1.2.3",
+                "release": "1.el9",
+                "arch": "x86_64",
+            }
+        )
         self.assertEqual(rpm.nevra, "foo-1:1.2.3-1.el9.x86_64")
 
     def test_from_metadata(self):
@@ -123,16 +125,15 @@ data:
     arch: x86_64
 """
         repodata = Repodata.from_metadatas(
-            repo_name,
-            ET.fromstring(primary_xml),
-            YAML(typ="safe").load_all(StringIO(modules_yaml)))
+            repo_name, ET.fromstring(primary_xml), YAML(typ="safe").load_all(StringIO(modules_yaml))
+        )
         self.assertEqual(repodata.name, repo_name)
         self.assertEqual(
-            [rpm.nevra for rpm in repodata.primary_rpms],
-            ["foo-1:1.2.3-1.el9.x86_64", "bar-1:2.2.3-1.el9.x86_64"])
+            [rpm.nevra for rpm in repodata.primary_rpms], ["foo-1:1.2.3-1.el9.x86_64", "bar-1:2.2.3-1.el9.x86_64"]
+        )
         self.assertEqual(
-            [m.nsvca for m in repodata.modules],
-            ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64'])
+            [m.nsvca for m in repodata.modules], ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64']
+        )
 
 
 class TestRepodataLoader(IsolatedAsyncioTestCase):
@@ -208,17 +209,24 @@ data:
             if url.endswith("modules.yaml.gz"):
                 return modules_yaml.encode()
             raise ValueError("url")
+
         _fetch_remote_compressed.side_effect = _fake_fetch_remote_compressed
         repodata = await loader.load(repo_name, repo_url)
-        _fetch_remote_compressed.assert_any_await(ANY, "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz")
-        _fetch_remote_compressed.assert_any_await(ANY, "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz")
+        _fetch_remote_compressed.assert_any_await(
+            ANY,
+            "https://example.com/repos/test/x86_64/os/repodata/06ed3172b751202671416050ea432945e54a36ee1ab8ef2cc71307234343f1ef-primary.xml.gz",
+        )
+        _fetch_remote_compressed.assert_any_await(
+            ANY,
+            "https://example.com/repos/test/x86_64/os/repodata/454ea63462df316e80d93b60ce07e4f523bc06dd1989e878cf2df6ee2a762a34-modules.yaml.gz",
+        )
         self.assertEqual(repodata.name, repo_name)
         self.assertEqual(
-            [rpm.nevra for rpm in repodata.primary_rpms],
-            ["foo-1:1.2.3-1.el9.x86_64", "bar-1:2.2.3-1.el9.x86_64"])
+            [rpm.nevra for rpm in repodata.primary_rpms], ["foo-1:1.2.3-1.el9.x86_64", "bar-1:2.2.3-1.el9.x86_64"]
+        )
         self.assertEqual(
-            [m.nsvca for m in repodata.modules],
-            ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64'])
+            [m.nsvca for m in repodata.modules], ['aaa:rhel8:1:deadbeef:x86_64', 'bbb:rhel9:2:beefdead:x86_64']
+        )
 
 
 class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
@@ -237,7 +245,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         actual = finder.find_non_latest_rpms(
             [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
             repodatas,
-            logger
+            logger,
         )
         self.assertEqual(actual, [])
 
@@ -275,12 +283,12 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         actual = finder.find_non_latest_rpms(
             [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
             repodatas,
-            logger
+            logger,
         )
         expected = [
             ('b-0:1.0.0-el8.x86_64', 'b-0:2.0.0-el8.x86_64', 'alfa-x86_64'),
             ('c-0:1.0.0-el8.x86_64', 'c-0:3.0.0-el8.x86_64', 'bravo-x86_64'),
-            ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64')
+            ('d-0:1.0.0-el8.x86_64', 'd-0:2.0.0-el8.x86_64', 'bravo-x86_64'),
         ]
         self.assertEqual(actual, expected)
 
@@ -333,7 +341,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         arch="x86_64",
                         rpms={
                             "e-0:1.0.0-el8.x86_64",
-                        }
+                        },
                     ),
                     RpmModule(
                         name="e",
@@ -343,7 +351,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         arch="x86_64",
                         rpms={
                             "e-0:1.1.0-el8.x86_64",
-                        }
+                        },
                     ),
                     RpmModule(
                         name="e",
@@ -353,7 +361,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         arch="x86_64",
                         rpms={
                             "e-0:3.0.0-el8.x86_64",
-                        }
+                        },
                     ),
                     RpmModule(
                         name="e",
@@ -364,7 +372,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
                         rpms={
                             "e-0:2.0.0-el8.x86_64",
                             "f-0:2.0.0-el8.x86_64",
-                        }
+                        },
                     ),
                 ],
             ),
@@ -373,7 +381,7 @@ class TestOutdatedRPMFinder(IsolatedAsyncioTestCase):
         actual = finder.find_non_latest_rpms(
             [Rpm.from_nevra(nevra).to_dict() for nevra in installed_rpms],
             repodatas,
-            logger
+            logger,
         )
         expected = [
             ('b-0:1.0.0-el8.x86_64', 'b-0:2.0.0-el8.x86_64', 'alfa-x86_64'),

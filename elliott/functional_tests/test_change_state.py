@@ -24,7 +24,9 @@ class ChangeStateTestCase(unittest.TestCase):
             "--advisory=49645",
         ]
         result = subprocess.run(cmd, capture_output=True)
-        self.assertEqual(result.returncode, 0, msg=f"stdout: {result.stdout.decode()}, stderr: {result.stderr.decode()}")
+        self.assertEqual(
+            result.returncode, 0, msg=f"stdout: {result.stdout.decode()}, stderr: {result.stderr.decode()}"
+        )
         self.assertIn("Current state is not NEW_FILES: SHIPPED_LIVE", result.stdout.decode())
 
 

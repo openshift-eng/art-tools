@@ -14,11 +14,13 @@ class TestDistgitPullImage(unittest.TestCase):
     def test_generate_podman_command(self):
         expected_cmd = ["podman", "pull", "my-image"]
 
-        (flexmock(distgit.exectools)
+        (
+            flexmock(distgit.exectools)
             .should_receive("cmd_gather")
             .with_args(expected_cmd)
             .once()
-            .and_return((0, "", "")))
+            .and_return((0, "", ""))
+        )
 
         distgit.pull_image("my-image")
 
@@ -35,11 +37,13 @@ class TestDistgitPullImage(unittest.TestCase):
         flexmock(distgit.time).should_receive("sleep").replace_with(lambda _: None)
 
         # pretending the cmd failed twice and succeeded on the third attempt.
-        (flexmock(distgit.exectools)
+        (
+            flexmock(distgit.exectools)
             .should_receive("cmd_gather")
             .and_return((1, "", ""))
             .and_return((1, "", ""))
-            .and_return((0, "", "")))
+            .and_return((0, "", ""))
+        )
 
         logger = flexmock(distgit.logger)
         logger.should_receive("info").with_args("Pulling image: my-image").once()

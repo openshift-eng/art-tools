@@ -1,6 +1,7 @@
 """
 This file contains constants that are used to manage OCP Image and RPM builds
 """
+
 from artcommonlib.constants import RHCOS_RELEASES_BASE_URL, BREW_HUB, BREW_DOWNLOAD_URL
 
 
@@ -38,12 +39,12 @@ errata_active_advisory_labels = [
     "QE",
     "REL_PREP",
     "PUSH_READY",
-    "IN_PUSH"
+    "IN_PUSH",
 ]
 
 errata_inactive_advisory_labels = [
     "SHIPPED_LIVE",
-    "DROPPED_NO_SHIP"
+    "DROPPED_NO_SHIP",
 ]
 
 errata_states = errata_active_advisory_labels + errata_inactive_advisory_labels

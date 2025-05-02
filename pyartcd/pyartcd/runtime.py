@@ -44,10 +44,13 @@ class Runtime:
             token = os.environ.get("SLACK_BOT_TOKEN")
             if not token and not self.dry_run:
                 raise ValueError("SLACK_BOT_TOKEN environment variable is not set")
-        return SlackClient(token, dry_run=self.dry_run,
-                           job_name=jenkins.get_job_name(),
-                           build_url=jenkins.get_build_url(),
-                           build_id=jenkins.get_build_id())
+        return SlackClient(
+            token,
+            dry_run=self.dry_run,
+            job_name=jenkins.get_job_name(),
+            build_url=jenkins.get_build_url(),
+            build_id=jenkins.get_build_id(),
+        )
 
     def new_mail_client(self):
         return MailService.from_config(self.config)
@@ -71,25 +74,31 @@ class Runtime:
 
 
 class GroupRuntime(runtime.GroupRuntime):
-
     @classmethod
     async def create(cls, *args, **kwargs):
         """Async instantiation that populates group_config"""
         self = cls(*args, **kwargs)
 
-        self._group_config = model.Model(await util.load_group_config(
-            self.group, self.assembly, None,
-            self.doozer_data_path, self.doozer_data_gitref
-        ))
+        self._group_config = model.Model(
+            await util.load_group_config(
+                self.group,
+                self.assembly,
+                None,
+                self.doozer_data_path,
+                self.doozer_data_gitref,
+            )
+        )
         return self
 
     def __init__(
-            self,
-            config: Dict[str, Any], working_dir: Path,
-            group: str, assembly: str = "test",
-            doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
-            doozer_data_gitref: str = ''):
-
+        self,
+        config: Dict[str, Any],
+        working_dir: Path,
+        group: str,
+        assembly: str = "test",
+        doozer_data_path: str = constants.OCP_BUILD_DATA_URL,
+        doozer_data_gitref: str = '',
+    ):
         self.config = config
         self.working_dir = working_dir
         self.group = group

@@ -1,4 +1,3 @@
-
 import json
 import os
 import traceback
@@ -78,13 +77,15 @@ class TagRPMsPipeline:
             raise
 
     async def tag_rpms(self):
-        """ run doozer config:tag-rpms
+        """run doozer config:tag-rpms
         :return: a dict containing which packages have been tagged and untagged
         """
         cmd = [
             "doozer",
-            "--group", self.group,
-            "--assembly", "stream",
+            "--group",
+            self.group,
+            "--assembly",
+            "stream",
             "config:tag-rpms",
             "--json",
         ]
@@ -113,15 +114,25 @@ class TagRPMsPipeline:
 
         # Notify ART
         if fail_count % ART_NOTIFY_FREQUENCY == 0:
-            await self.slack_client.say(f'tag_rpms for {self.group} failed {fail_count} times. '
-                                        f'See <{self.job_run}|job> logs for details"')
+            await self.slack_client.say(
+                f'tag_rpms for {self.group} failed {fail_count} times. See <{self.job_run}|job> logs for details"'
+            )
 
 
 @cli.command("tag-rpms", short_help="Tag and untag rpms for rpm delivery")
-@click.option("--data-path", metavar='BUILD_DATA', default=None,
-              help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}")
-@click.option("-g", "--group", metavar='NAME', required=True,
-              help="The group of components on which to operate. e.g. openshift-4.12")
+@click.option(
+    "--data-path",
+    metavar='BUILD_DATA',
+    default=None,
+    help=f"Git repo or directory containing groups metadata e.g. {constants.OCP_BUILD_DATA_URL}",
+)
+@click.option(
+    "-g",
+    "--group",
+    metavar='NAME',
+    required=True,
+    help="The group of components on which to operate. e.g. openshift-4.12",
+)
 @pass_runtime
 @click_coroutine
 async def tag_rpms_cli(runtime: Runtime, data_path: Optional[str], group: str):

@@ -7,7 +7,6 @@ from tests_functional import DoozerRunnerTestCase
 
 
 class TestBasicRebase(DoozerRunnerTestCase):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -40,17 +39,29 @@ class TestBasicRebase(DoozerRunnerTestCase):
         upstream_commit_ced = '0f7594616f7ea72e28f065ef2c172fa3d852abcf'
         upstream_commit_ced_short = upstream_commit_ced[:7]
         doozer_args = [
-            '--assembly', 'tester',  # This should only have an effect if assemblies=True
-            '--group', f'openshift-4.6@{target_ocp_build_data_commitish}',
-            '-i', 'openshift-enterprise-base',
-            '-i', 'cluster-etcd-operator',
-            '--lock-upstream', 'openshift-enterprise-base', upstream_commit_oeb,
-            '--lock-upstream', 'cluster-etcd-operator', upstream_commit_ced,
-            '--lock-runtime-uuid', uuid,
+            '--assembly',
+            'tester',  # This should only have an effect if assemblies=True
+            '--group',
+            f'openshift-4.6@{target_ocp_build_data_commitish}',
+            '-i',
+            'openshift-enterprise-base',
+            '-i',
+            'cluster-etcd-operator',
+            '--lock-upstream',
+            'openshift-enterprise-base',
+            upstream_commit_oeb,
+            '--lock-upstream',
+            'cluster-etcd-operator',
+            upstream_commit_ced,
+            '--lock-runtime-uuid',
+            uuid,
             'images:rebase',
-            '--version', target_version,
-            '--release', '999.p?',
-            '-m', 'test message'
+            '--version',
+            target_version,
+            '--release',
+            '999.p?',
+            '-m',
+            'test message',
         ]
 
         if assemblies:
@@ -73,22 +84,37 @@ class TestBasicRebase(DoozerRunnerTestCase):
             self.assertEqual(dfp.envs['OS_GIT_PATCH'], '777')
 
         self.assertEqual(oeb_dfp.envs['OS_GIT_COMMIT'], upstream_commit_oeb_short)
-        self.assertEqual(oeb_dfp.envs['OS_GIT_VERSION'], f'{target_version}-{target_release}-{upstream_commit_oeb_short}'.lstrip('v'))
+        self.assertEqual(
+            oeb_dfp.envs['OS_GIT_VERSION'], f'{target_version}-{target_release}-{upstream_commit_oeb_short}'.lstrip('v')
+        )
         self.assertEqual(oeb_dfp.envs['SOURCE_GIT_COMMIT'], upstream_commit_oeb)
         self.assertEqual(oeb_dfp.labels['io.openshift.build.commit.id'], upstream_commit_oeb)
         self.assertEqual(oeb_dfp.labels['io.openshift.build.source-location'], 'https://github.com/openshift/images')
-        self.assertEqual(oeb_dfp.labels['io.openshift.build.commit.url'], f'https://github.com/openshift/images/commit/{upstream_commit_oeb}')
+        self.assertEqual(
+            oeb_dfp.labels['io.openshift.build.commit.url'],
+            f'https://github.com/openshift/images/commit/{upstream_commit_oeb}',
+        )
         self.assertEqual(len(oeb_dfp.parent_images), 1)
         self.assertEqual(oeb_dfp.parent_images[0], 'openshift/ose-base:ubi8')
-        self.assertTrue(f'{target_version}.{uuid}', self.distgit_image_path('openshift-enterprise-base').joinpath('additional-tags').read_text())
+        self.assertTrue(
+            f'{target_version}.{uuid}',
+            self.distgit_image_path('openshift-enterprise-base').joinpath('additional-tags').read_text(),
+        )
 
         self.assertEqual(ced_dfp.envs['OS_GIT_COMMIT'], upstream_commit_ced_short)
-        self.assertEqual(ced_dfp.envs['OS_GIT_VERSION'], f'{target_version}-{target_release}-{upstream_commit_ced_short}'.lstrip('v'))
+        self.assertEqual(
+            ced_dfp.envs['OS_GIT_VERSION'], f'{target_version}-{target_release}-{upstream_commit_ced_short}'.lstrip('v')
+        )
         self.assertEqual(ced_dfp.envs['SOURCE_GIT_COMMIT'], upstream_commit_ced)
         self.assertEqual(ced_dfp.envs['SOURCE_DATE_EPOCH'], '1603368883')
         self.assertEqual(ced_dfp.labels['io.openshift.build.commit.id'], upstream_commit_ced)
-        self.assertEqual(ced_dfp.labels['io.openshift.build.source-location'], 'https://github.com/openshift/cluster-etcd-operator')
-        self.assertEqual(ced_dfp.labels['io.openshift.build.commit.url'], f'https://github.com/openshift/cluster-etcd-operator/commit/{upstream_commit_ced}')
+        self.assertEqual(
+            ced_dfp.labels['io.openshift.build.source-location'], 'https://github.com/openshift/cluster-etcd-operator'
+        )
+        self.assertEqual(
+            ced_dfp.labels['io.openshift.build.commit.url'],
+            f'https://github.com/openshift/cluster-etcd-operator/commit/{upstream_commit_ced}',
+        )
         self.assertEqual(ced_dfp.labels['io.openshift.maintainer.product'], 'OpenShift Container Platform')
         self.assertEqual(ced_dfp.labels['io.openshift.maintainer.component'], 'Etcd')
         self.assertEqual(ced_dfp.labels['com.redhat.component'], 'cluster-etcd-operator-container')
@@ -97,7 +123,10 @@ class TestBasicRebase(DoozerRunnerTestCase):
         self.assertEqual(len(ced_dfp.parent_images), 2)
         self.assertEqual(ced_dfp.parent_images[0], 'openshift/golang-builder:rhel_8_golang_1.15')
         self.assertEqual(ced_dfp.parent_images[1], f'openshift/ose-base:{target_version}.{uuid}')
-        self.assertTrue(f'{target_version}.{uuid}', self.distgit_image_path('cluster-etcd-operator').joinpath('additional-tags').read_text())
+        self.assertTrue(
+            f'{target_version}.{uuid}',
+            self.distgit_image_path('cluster-etcd-operator').joinpath('additional-tags').read_text(),
+        )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
             url="https://git.example.com/repo.git",
             branch="my-branch",
             local_dir="/path/to/repo",
-            logger=None
+            logger=None,
         )
 
     @patch("pathlib.Path.exists", return_value=False)
@@ -23,7 +23,9 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     async def test_clone(self, gather_git: Mock, run_git: Mock):
         await self.repo.clone()
         run_git.assert_any_call(["init", "/path/to/repo"])
-        gather_git.assert_any_call(["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch], check=False)
+        gather_git.assert_any_call(
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch], check=False
+        )
 
     @patch("artcommonlib.git_helper.gather_git_async", return_value=(0, "deadbeef", ""))
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
@@ -48,7 +50,9 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
         await self.repo.ensure_source(upcycle=True)
         rmtree.assert_called_with("/path/to/repo")
         run_git.assert_any_await(["init", "/path/to/repo"])
-        gather_git.assert_any_await(["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch], check=False)
+        gather_git.assert_any_await(
+            ["-C", "/path/to/repo", "fetch", "--depth=1", "origin", self.repo.branch], check=False
+        )
 
     @patch("doozerlib.backend.build_repo.BuildRepo.clone")
     @patch("pathlib.Path.exists", return_value=True)
@@ -64,14 +68,18 @@ class TestBuildRepo(IsolatedAsyncioTestCase):
     async def test_set_remote_url(self, gather_git: AsyncMock, run_git: AsyncMock):
         await self.repo.set_remote_url("https://git.example.com/new-repo.git")
         gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "remote"], stderr=None)
-        run_git.assert_any_await(["-C", "/path/to/repo", "remote", "set-url", "origin", "https://git.example.com/new-repo.git"])
+        run_git.assert_any_await(
+            ["-C", "/path/to/repo", "remote", "set-url", "origin", "https://git.example.com/new-repo.git"]
+        )
 
         gather_git.reset_mock()
         gather_git.reset_mock()
         gather_git.return_value = (0, "other", "")
         await self.repo.set_remote_url("https://git.example.com/new-repo.git")
         gather_git.assert_awaited_once_with(["-C", "/path/to/repo", "remote"], stderr=None)
-        run_git.assert_any_await(["-C", "/path/to/repo", "remote", "add", "origin", "https://git.example.com/new-repo.git"])
+        run_git.assert_any_await(
+            ["-C", "/path/to/repo", "remote", "add", "origin", "https://git.example.com/new-repo.git"]
+        )
 
     @patch("artcommonlib.git_helper.run_git_async", return_value=0)
     async def test_delete_all_files(self, run_git: AsyncMock):

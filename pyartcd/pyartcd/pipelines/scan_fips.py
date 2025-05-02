@@ -2,6 +2,7 @@
 For this command to work, https://github.com/openshift/check-payload binary has to exist in PATH and run as root
 This job is deployed on ART cluster
 """
+
 import json
 import sys
 
@@ -71,7 +72,7 @@ class ScanFips:
                 await self.slack_client.upload_content(
                     content=json.dumps(results),
                     filename="report.json",
-                    thread_ts=slack_thread
+                    thread_ts=slack_thread,
                 )
 
                 # Exit as error so that we see in the PipelineRun
@@ -91,9 +92,10 @@ class ScanFips:
 @pass_runtime
 @click_coroutine
 async def scan_osh(runtime: Runtime, data_path: str, all_images: bool, nvrs: str):
-    pipeline = ScanFips(runtime=runtime,
-                        data_path=data_path,
-                        all_images=all_images,
-                        nvrs=nvrs.split(",") if nvrs else None
-                        )
+    pipeline = ScanFips(
+        runtime=runtime,
+        data_path=data_path,
+        all_images=all_images,
+        nvrs=nvrs.split(",") if nvrs else None,
+    )
     await pipeline.run()

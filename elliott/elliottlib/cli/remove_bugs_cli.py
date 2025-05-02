@@ -12,39 +12,33 @@ LOGGER = logutil.get_logger(__name__)
 
 
 @cli.command("remove-bugs", short_help="Remove provided BUGS from ADVISORY")
-@click.option('--advisory', '-a', 'advisory_id',
-              type=int, metavar='ADVISORY',
-              help='Remove found bugs from ADVISORY')
+@click.option('--advisory', '-a', 'advisory_id', type=int, metavar='ADVISORY', help='Remove found bugs from ADVISORY')
 @use_default_advisory_option
 @click.argument('bug_ids', metavar='<BUGID>', nargs=-1, required=False, default=None)
-@click.option("--all", "remove_all",
-              required=False,
-              default=False, is_flag=True,
-              help="Remove all bugs attached to the Advisory")
-@click.option("--noop", "--dry-run",
-              is_flag=True,
-              default=False,
-              help="Don't change anything")
+@click.option(
+    "--all", "remove_all", required=False, default=False, is_flag=True, help="Remove all bugs attached to the Advisory"
+)
+@click.option("--noop", "--dry-run", is_flag=True, default=False, help="Don't change anything")
 @click.pass_obj
 def remove_bugs_cli(runtime, advisory_id, default_advisory_type, bug_ids, remove_all, noop):
     """Remove given BUGS (JIRA or Bugzilla) from ADVISORY.
 
-    Remove bugs that have been attached an advisory:
+        Remove bugs that have been attached an advisory:
 
-\b
-    $ elliott --group openshift-4.10 remove-bugs OCPBUGS-4 123456 --advisory 1234123
+    \b
+        $ elliott --group openshift-4.10 remove-bugs OCPBUGS-4 123456 --advisory 1234123
 
-    Remove two bugs from default image advisory
+        Remove two bugs from default image advisory
 
-\b
-    $ elliott --group openshift-4.10 --assembly 4.10.19 remove-bugs 123456 3412311 --use-default-advisory image
+    \b
+        $ elliott --group openshift-4.10 --assembly 4.10.19 remove-bugs 123456 3412311 --use-default-advisory image
 
-    Remove all bugs from default image advisory
+        Remove all bugs from default image advisory
 
-\b
-    $ elliott --group openshift-4.10 --assembly 4.10.19 remove-bugs --all --use-default-advisory image
+    \b
+        $ elliott --group openshift-4.10 --assembly 4.10.19 remove-bugs --all --use-default-advisory image
 
-"""
+    """
     if bool(remove_all) == bool(bug_ids):
         raise click.BadParameter("Specify either <BUGID> or --all param")
     if bool(advisory_id) == bool(default_advisory_type):

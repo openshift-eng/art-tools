@@ -1,8 +1,8 @@
 PLASHET_REMOTES = [
     {
         'url': 'https://ocp-artifacts-art--runtime-int.apps.prod-stable-spoke1-dc-iad2.itup.redhat.com/pub/RHOCP/plashets',
-        'host': 'ocp-artifacts'
-    }
+        'host': 'ocp-artifacts',
+    },
 ]
 
 PLASHET_REMOTE_BASE_DIR = "/mnt/data/pub/RHOCP/plashets"

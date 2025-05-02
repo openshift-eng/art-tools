@@ -58,7 +58,16 @@ def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, sou
     :param public_upstream_branch: Git branch of the public upstream source
     :param source_dir: Path to the local Git repository
     """
-    cmd = ["git", "-C", str(source_dir), "merge-base", "--is-ancestor", "--", revision, "public_upstream/" + public_upstream_branch]
+    cmd = [
+        "git",
+        "-C",
+        str(source_dir),
+        "merge-base",
+        "--is-ancestor",
+        "--",
+        revision,
+        "public_upstream/" + public_upstream_branch,
+    ]
     # The command exits with status 0 if true, or with status 1 if not. Errors are signaled by a non-zero status that is not 1.
     # https://git-scm.com/docs/git-merge-base#Documentation/git-merge-base.txt---is-ancestor
     rc, out, err = exectools.cmd_gather(cmd)
@@ -67,12 +76,12 @@ def is_commit_in_public_upstream(revision: str, public_upstream_branch: str, sou
     if rc == 1:
         return False
     raise IOError(
-        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}")
+        f"Couldn't determine if the commit {revision} is in the public upstream source repo. `git merge-base` exited with {rc}, stdout={out}, stderr={err}"
+    )
 
 
 def is_in_directory(path: os.PathLike, directory: os.PathLike):
-    """check whether a path is in another directory
-    """
+    """check whether a path is in another directory"""
     a = Path(path).parent.resolve()
     b = Path(directory).resolve()
     try:
@@ -158,7 +167,7 @@ def analyze_debug_timing(file):
                 for event in events:
                     with_event = list(names)
                     with_event[i] = thread_name + ': ' + event
-                    print_em(f' {interval}', *with_event[:i + 1])
+                    print_em(f' {interval}', *with_event[: i + 1])
 
 
 def what_is_in_master() -> str:
@@ -250,9 +259,9 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
     :return: (major_minor, brew_arch, is_private)
     """
     major_minor = '.'.join(nightly_name.split('.')[:2])
-    nightly_name = nightly_name[nightly_name.find('.nightly') + 1:]  # strip off versioning info (e.g.  4.8.0-0.)
+    nightly_name = nightly_name[nightly_name.find('.nightly') + 1 :]  # strip off versioning info (e.g.  4.8.0-0.)
     components = nightly_name.split('-')
-    is_private = ('priv' in components)
+    is_private = 'priv' in components
     pos = components.index('nightly')
     possible_arch = components[pos + 1]
     if possible_arch not in GO_ARCHES:
@@ -265,7 +274,7 @@ def isolate_nightly_name_components(nightly_name: str) -> (str, str, bool):
 
 # https://code.activestate.com/recipes/577504/
 def total_size(o, handlers=None, verbose=False):
-    """ Returns the approximate memory footprint an object and all of its contents.
+    """Returns the approximate memory footprint an object and all of its contents.
 
     Automatically finds the contents of the following builtin containers and
     their subclasses:  tuple, list, deque, dict, set and frozenset.
@@ -339,10 +348,13 @@ def sort_semver(versions):
     return sorted(versions, key=functools.cmp_to_key(semver.compare), reverse=True)
 
 
-def get_channel_versions(channel, arch,
-                         graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
-                         graph_content_stable=None,
-                         graph_content_candidate=None):
+def get_channel_versions(
+    channel,
+    arch,
+    graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
+    graph_content_stable=None,
+    graph_content_candidate=None,
+):
     """
     Queries Cincinnati and returns a tuple containing:
     1. All of the versions in the specified channel in decending order (e.g. 4.6.26, ... ,4.6.1)
@@ -389,8 +401,12 @@ def get_channel_versions(channel, arch,
     return descending_versions, edges
 
 
-def get_build_suggestions(major, minor, arch,
-                          suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/'):
+def get_build_suggestions(
+    major,
+    minor,
+    arch,
+    suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/',
+):
     """
     Loads suggestions_url/major.minor.yaml and returns minor_min, minor_max,
     minor_block_list, z_min, z_max, and z_block_list
@@ -410,11 +426,14 @@ def get_build_suggestions(major, minor, arch,
         return suggestions['default']
 
 
-def get_release_calc_previous(version, arch,
-                              graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
-                              graph_content_stable=None,
-                              graph_content_candidate=None,
-                              suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/'):
+def get_release_calc_previous(
+    version,
+    arch,
+    graph_url='https://api.openshift.com/api/upgrades_info/v1/graph',
+    graph_content_stable=None,
+    graph_content_candidate=None,
+    suggestions_url='https://raw.githubusercontent.com/openshift/cincinnati-graph-data/master/build-suggestions/',
+):
     major, minor = extract_version_fields(version, at_least=2)[:2]
     arch = go_arch_for_brew_arch(arch)  # Cincinnati is go code, and uses a different arch name than brew
     # Get the names of channels we need to analyze
@@ -422,20 +441,26 @@ def get_release_calc_previous(version, arch,
     prev_candidate_channel = get_cincinnati_channels(major, minor - 1)[0]
 
     upgrade_from = set()
-    prev_versions, prev_edges = get_channel_versions(prev_candidate_channel, arch, graph_url,
-                                                     graph_content_stable, graph_content_candidate)
-    curr_versions, current_edges = get_channel_versions(candidate_channel, arch, graph_url, graph_content_stable,
-                                                        graph_content_candidate)
+    prev_versions, prev_edges = get_channel_versions(
+        prev_candidate_channel, arch, graph_url, graph_content_stable, graph_content_candidate
+    )
+    curr_versions, current_edges = get_channel_versions(
+        candidate_channel, arch, graph_url, graph_content_stable, graph_content_candidate
+    )
     suggestions = get_build_suggestions(major, minor, arch, suggestions_url)
     for v in prev_versions:
-        if (semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['minor_min'])
-                and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['minor_max'])
-                and v not in suggestions['minor_block_list']):
+        if (
+            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['minor_min'])
+            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['minor_max'])
+            and v not in suggestions['minor_block_list']
+        ):
             upgrade_from.add(v)
     for v in curr_versions:
-        if (semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['z_min'])
-                and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['z_max'])
-                and v not in suggestions['z_block_list']):
+        if (
+            semver.VersionInfo.parse(v) >= semver.VersionInfo.parse(suggestions['z_min'])
+            and semver.VersionInfo.parse(v) < semver.VersionInfo.parse(suggestions['z_max'])
+            and v not in suggestions['z_block_list']
+        ):
             upgrade_from.add(v)
 
     candidate_channel_versions, candidate_edges = curr_versions, current_edges
@@ -447,7 +472,9 @@ def get_release_calc_previous(version, arch,
         # ref: https://docs.google.com/document/d/16eGVikCYARd6nUUtAIHFRKXa7R_rU5Exc9jUPcQoG8A/edit
 
         # If a release name in candidate contains 'hotfix', it was promoted as a hotfix for a customer.
-        previous_hotfixes = list(filter(lambda release: 'nightly' in release or 'hotfix' in release, candidate_channel_versions))
+        previous_hotfixes = list(
+            filter(lambda release: 'nightly' in release or 'hotfix' in release, candidate_channel_versions)
+        )
         # For each hotfix that doesn't have 2 outgoing edges, and it as an incoming edge to this release
         for hotfix_version in previous_hotfixes:
             if len(candidate_edges[hotfix_version]) < 2:
@@ -463,8 +490,12 @@ async def find_manifest_list_sha(pullspec):
     return image_data['listDigest']
 
 
-def get_release_name(assembly_type: artcommonlib.assembly.AssemblyTypes, group_name: str, assembly_name: str,
-                     release_offset: Optional[int]):
+def get_release_name(
+    assembly_type: artcommonlib.assembly.AssemblyTypes,
+    group_name: str,
+    assembly_name: str,
+    release_offset: Optional[int],
+):
     major, minor = isolate_major_minor_in_group(group_name)
     if major is None or minor is None:
         raise ValueError(f"Invalid group name: {group_name}")
@@ -486,8 +517,7 @@ def get_release_name(assembly_type: artcommonlib.assembly.AssemblyTypes, group_n
 
 
 def get_release_name_for_assembly(group_name: str, releases_config: Model, assembly_name: str):
-    """ Get release name for an assembly.
-    """
+    """Get release name for an assembly."""
     assembly_type = artcommonlib.assembly.assembly_type(releases_config, assembly_name)
     patch_version = artcommonlib.assembly.assembly_basis(releases_config, assembly_name).get('patch_version')
     if assembly_type is AssemblyTypes.CUSTOM:
@@ -503,16 +533,18 @@ def get_release_name_for_assembly(group_name: str, releases_config: Model, assem
                 break
             current_assembly = parent_assembly
         if patch_version is None:
-            raise ValueError("patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance.")
+            raise ValueError(
+                "patch_version is not set in assembly definition and can't be auto-determined through the chain of inheritance."
+            )
     return get_release_name(assembly_type, group_name, assembly_name, patch_version)
 
 
 def oc_image_info(
-        pullspec: str,
-        *options,
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
@@ -549,13 +581,17 @@ def oc_image_info(
 
     # Store the basic auth info in a temporary temp file to be used with --registry-config
     with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
-        registry_config_file.write(json.dumps({
-            'auths': {
-                pullspec.split('/')[0]: {
-                    'auth': auth,
+        registry_config_file.write(
+            json.dumps(
+                {
+                    'auths': {
+                        pullspec.split('/')[0]: {
+                            'auth': auth,
+                        },
+                    },
                 }
-            }
-        }))
+            )
+        )
         registry_config_file.flush()
         return run_oc(auth_file=registry_config_file.name)
 
@@ -579,29 +615,31 @@ def oc_image_info_for_arch__caching(pullspec: str, go_arch: str = 'amd64') -> Di
 
 
 def oc_image_info_show_multiarch(
-        pullspec: str,
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None) -> Union[Dict, List]:
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
+) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
     For single arch images, it will return a dict representing the supported arch manifest.
     For multi arch images, it will return a list of dictionaries, each of these representing a single arch
     """
     return oc_image_info(
-        pullspec, '--show-multiarch',
+        pullspec,
+        '--show-multiarch',
         registry_config=registry_config,
         registry_username=registry_username,
-        registry_password=registry_password
+        registry_password=registry_password,
     )
 
 
 @lru_cache(maxsize=1000)
 def oc_image_info_show_multiarch__caching(
-        pullspec: str,
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
@@ -612,11 +650,11 @@ def oc_image_info_show_multiarch__caching(
 
 
 async def oc_image_info_async(
-        pullspec: str,
-        *options,
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None,
+    pullspec: str,
+    *options,
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
@@ -658,42 +696,50 @@ async def oc_image_info_async(
 
     # Store the basic auth info in a temporary temp file to be used with --registry-config
     with tempfile.NamedTemporaryFile(mode='w', prefix="_doozer_") as registry_config_file:
-        registry_config_file.write(json.dumps({
-            'auths': {
-                pullspec.split('/')[0]: {
-                    'auth': auth,
+        registry_config_file.write(
+            json.dumps(
+                {
+                    'auths': {
+                        pullspec.split('/')[0]: {
+                            'auth': auth,
+                        },
+                    },
                 }
-            }
-        }))
+            )
+        )
         registry_config_file.flush()
         return await run_oc(auth_file=registry_config_file.name)
 
 
 async def oc_image_info_for_arch_async(
-        pullspec: str,
-        go_arch: str = 'amd64',
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None,
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
 ) -> Dict:
     """
     Runs oc image info with --filter-by-os because images can be multi-arch manifest lists
     (which cause oc image info to throw an error if not filtered).
     Will return a single dictionary repesenting the amd64 arch
     """
-    return await oc_image_info_async(pullspec, f'--filter-by-os={go_arch}',
-                                     registry_config=registry_config,
-                                     registry_username=registry_username,
-                                     registry_password=registry_password)
+    return await oc_image_info_async(
+        pullspec,
+        f'--filter-by-os={go_arch}',
+        registry_config=registry_config,
+        registry_username=registry_username,
+        registry_password=registry_password,
+    )
 
 
 @alru_cache
 async def oc_image_info_for_arch_async__caching(
-        pullspec: str,
-        go_arch: str = 'amd64',
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None) -> Dict:
+    pullspec: str,
+    go_arch: str = 'amd64',
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
+) -> Dict:
     """
     Returns a Dict of the parsed JSON output of `oc image info` for the specified
     pullspec. This will authenticate with the registry using the provided username and password.
@@ -712,28 +758,31 @@ async def oc_image_info_for_arch_async__caching(
 
 
 async def oc_image_info_show_multiarch_async(
-        pullspec: str,
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None,
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
     For single arch images, it will return a dict representing the supported arch manifest.
     For multi arch images, it will return a list of dictionaries, each of these representing a single arch
     """
-    return await oc_image_info_async(pullspec, '--show-multiarch',
-                                     registry_config=registry_config,
-                                     registry_username=registry_username,
-                                     registry_password=registry_password)
+    return await oc_image_info_async(
+        pullspec,
+        '--show-multiarch',
+        registry_config=registry_config,
+        registry_username=registry_username,
+        registry_password=registry_password,
+    )
 
 
 @alru_cache
 async def oc_image_info_show_multiarch_async__caching(
-        pullspec: str,
-        registry_config: Optional[str] = None,
-        registry_username: Optional[str] = None,
-        registry_password: Optional[str] = None,
+    pullspec: str,
+    registry_config: Optional[str] = None,
+    registry_username: Optional[str] = None,
+    registry_password: Optional[str] = None,
 ) -> Union[Dict, List]:
     """
     Runs oc image info with --show-multiarch which can be used with both single and multi arch images.
@@ -744,7 +793,8 @@ async def oc_image_info_show_multiarch_async__caching(
         pullspec=pullspec,
         registry_config=registry_config,
         registry_username=registry_username,
-        registry_password=registry_password)
+        registry_password=registry_password,
+    )
 
 
 def infer_assembly_type(custom, assembly_name):

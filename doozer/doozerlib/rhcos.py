@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import tempfile
@@ -28,7 +27,6 @@ class RHCOSNotFound(Exception):
 
 
 class RHCOSBuildFinder:
-
     def __init__(self, runtime, version: str, brew_arch: str = "x86_64", private: bool = False, custom: bool = False):
         """
         @param runtime  The Runtime object passed in from the CLI
@@ -119,8 +117,9 @@ class RHCOSBuildFinder:
             return False
         for arch in arches_building:
             if not self.meta_has_required_attributes(self.rhcos_build_meta(build_dict["id"], arch=arch)):
-                logger.warning(f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run "
-                               "rhcos release job?")
+                logger.warning(
+                    f"Skipping {build_dict['id']} - {arch} meta.json isn't complete - forget to run rhcos release job?"
+                )
                 return False
         return True
 
@@ -155,13 +154,17 @@ class RHCOSBuildFinder:
         if self.runtime.group_config.rhcos.get("layered_rhcos", False) and pullspec:
             if meta_type == "commitmeta":
                 with tempfile.TemporaryDirectory() as temp_dir:
-                    stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm")
+                    stdout, _ = exectools.cmd_assert(
+                        f"oc image extract {pullspec}[-1] --path /usr/share/openshift/base/meta.json:{temp_dir} --confirm"
+                    )
                     with open(os.path.join(temp_dir, "meta.json"), 'r') as f:
                         meta_data = json.load(f)
                 return {"rpmostree.rpmdb.pkglist": meta_data["rpmdb.pkglist"]}
             elif meta_type == "meta":
                 with tempfile.TemporaryDirectory() as temp_dir:
-                    stdout, _ = exectools.cmd_assert(f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm")
+                    stdout, _ = exectools.cmd_assert(
+                        f"oc image extract {pullspec}[-1] --path /usr/share/rpm-ostree/extensions.json:{temp_dir} --confirm"
+                    )
                     with open(os.path.join(temp_dir, "extensions.json"), 'r') as f:
                         extensions_data = json.load(f)
                 return {"extensions": {"manifest": extensions_data}}
@@ -187,7 +190,9 @@ class RHCOSBuildFinder:
         if self.runtime.group_config.rhcos.get("layered_rhcos", False):
             primary_conf = self.get_primary_container_conf()
             rhcosdata = util.oc_image_info_for_arch(primary_conf.rhcos_index_tag, self.go_arch)
-            build_id = rhcosdata['config']['config']['Labels']["org.opencontainers.image.version"]  # in 4.19, the extension don't have rhcos-id
+            build_id = rhcosdata['config']['config']['Labels'][
+                "org.opencontainers.image.version"
+            ]  # in 4.19, the extension don't have rhcos-id
             if container_conf or container_conf != primary_conf:
                 rhcosdata = util.oc_image_info_for_arch(container_conf.rhcos_index_tag, self.go_arch)
             pullspec = f"{ART_PROD_IMAGE_REPO}@{rhcosdata['digest']}"
@@ -198,13 +203,14 @@ class RHCOSBuildFinder:
                 return None, None
             return build_id, rhcos.get_container_pullspec(
                 self.rhcos_build_meta(build_id),
-                container_conf or self.get_primary_container_conf()
+                container_conf or self.get_primary_container_conf(),
             )
 
 
 class RHCOSBuildInspector:
-
-    def __init__(self, runtime: Runtime, pullspec_for_tag: Dict[str, str], brew_arch: str, build_id: Optional[str] = None):
+    def __init__(
+        self, runtime: Runtime, pullspec_for_tag: Dict[str, str], brew_arch: str, build_id: Optional[str] = None
+    ):
         self.runtime = runtime
         self.brew_arch = brew_arch
         self.pullspec_for_tag = pullspec_for_tag
@@ -215,12 +221,15 @@ class RHCOSBuildInspector:
         # trust the exact pullspec in releases.yml instead of what we find in the RHCOS release
         # browser.
         major, minor = self.runtime.get_major_minor_fields()
-        if not self.runtime.group_config.rhcos.get("layered_rhcos", False):  # in 4.19, the extension don't have rhcos-id
+        if not self.runtime.group_config.rhcos.get(
+            "layered_rhcos", False
+        ):  # in 4.19, the extension don't have rhcos-id
             for tag, pullspec in pullspec_for_tag.items():
                 image_build_id = get_build_id_from_rhcos_pullspec(pullspec)
                 if self.build_id and self.build_id != image_build_id:
-                    raise Exception(f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus'
-                                    f' {self.build_id}')
+                    raise Exception(
+                        f'Found divergent RHCOS build_id for {tag} {pullspec}. {image_build_id} versus {self.build_id}'
+                    )
                 self.build_id = image_build_id
 
             # The first digits of the RHCOS build are the major.minor of the rhcos stream name.
@@ -233,8 +242,12 @@ class RHCOSBuildInspector:
 
         try:
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch)
-            self._build_meta = finder.rhcos_build_meta(self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta')
-            self._os_commitmeta = finder.rhcos_build_meta(self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta')
+            self._build_meta = finder.rhcos_build_meta(
+                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos-extensions", None), meta_type='meta'
+            )
+            self._os_commitmeta = finder.rhcos_build_meta(
+                self.build_id, pullspec=pullspec_for_tag.get("rhel-coreos", None), meta_type='commitmeta'
+            )
         except Exception:
             # Fall back to trying to find a custom build
             finder = RHCOSBuildFinder(runtime, self.stream_version, self.brew_arch, custom=True)
@@ -430,8 +443,12 @@ class RHCOSBuildInspector:
         enabled_repos = enabled_repos.primitive()
         group_repos = self.runtime.repos
         arch = self.brew_arch
-        logger.info("Fetching repodatas for enabled repos %s", ", ".join(f"{repo_name}-{arch}" for repo_name in enabled_repos))
-        repodatas: List[Repodata] = await asyncio.gather(*[group_repos[repo_name].get_repodata_threadsafe(arch) for repo_name in enabled_repos])
+        logger.info(
+            "Fetching repodatas for enabled repos %s", ", ".join(f"{repo_name}-{arch}" for repo_name in enabled_repos)
+        )
+        repodatas: List[Repodata] = await asyncio.gather(
+            *[group_repos[repo_name].get_repodata_threadsafe(arch) for repo_name in enabled_repos]
+        )
 
         # Get all installed rpms
         rpms_to_check = [
@@ -441,8 +458,9 @@ class RHCOSBuildInspector:
                 "version": version,
                 "release": release,
                 "arch": arch,
-                "nvr": f"{name}-{version}-{release}"
-            } for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
+                "nvr": f"{name}-{version}-{release}",
+            }
+            for name, epoch, version, release, arch in self.get_os_metadata_rpm_list()
         ]
 
         logger.info("Determining outdated rpms...")

@@ -8,14 +8,14 @@ class EntityLoggingAdapter(logging.LoggerAdapter):
 
 
 class RedactingFilter(logging.Filter):
-    """ A filter to remove sensitive information like passwords, tokens, and keys from logs
+    """A filter to remove sensitive information like passwords, tokens, and keys from logs
     https://docs.python.org/3/library/logging.html#filter-objects
     """
 
     PATTERNS = {
         'requests_gssapi.gssapi_': [
             (re.compile(r'Authorization header:(.+)', re.IGNORECASE), 'Authorization header: <redacted>'),
-        ]
+        ],
     }
 
     def filter(self, record: logging.LogRecord):
@@ -49,10 +49,12 @@ def setup_logging(log_level: int, debug_log_path: str):
     :return: The root logger
     """
     # set up the root logger to log messages with levels of DEBUG and higher to debug.log
-    logging.basicConfig(level=logging.DEBUG,
-                        format='%(asctime)s %(name)-12s %(levelname)s (%(thread)d) %(message)s',
-                        filename=debug_log_path,
-                        force=True)
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s %(name)-12s %(levelname)s (%(thread)d) %(message)s',
+        filename=debug_log_path,
+        force=True,
+    )
 
     root_logger = logging.getLogger()
 

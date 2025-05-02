@@ -19,9 +19,7 @@ from artcommonlib import constants as artlib_constants
 from artcommonlib import exectools, bigquery
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.exectools import limit_concurrency
-from artcommonlib.konflux.konflux_build_record import (ArtifactType, Engine,
-                                                       KonfluxBuildOutcome,
-                                                       KonfluxBuildRecord)
+from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
 
@@ -45,7 +43,8 @@ class KonfluxImageBuildError(Exception):
 
 @dataclass
 class KonfluxImageBuilderConfig:
-    """ Options for the KonfluxImageBuilder class. """
+    """Options for the KonfluxImageBuilder class."""
+
     base_dir: Path
     group_name: str
     namespace: str
@@ -59,7 +58,7 @@ class KonfluxImageBuilderConfig:
 
 
 class KonfluxImageBuilder:
-    """ This class is responsible for building container images with Konflux. """
+    """This class is responsible for building container images with Konflux."""
 
     def __init__(
         self,
@@ -67,7 +66,7 @@ class KonfluxImageBuilder:
         logger: Optional[logging.Logger] = None,
         record_logger: Optional[RecordLogger] = None,
     ):
-        """ Initialize the KonfluxImageBuilder.
+        """Initialize the KonfluxImageBuilder.
 
         :param config: Options for the KonfluxImageBuilder.
         :param logger: Logger to use for logging. Defaults to the module logger.
@@ -76,7 +75,12 @@ class KonfluxImageBuilder:
         self._config = config
         self._logger = logger or LOGGER
         self._record_logger = record_logger
-        self._konflux_client = KonfluxClient.from_kubeconfig(default_namespace=config.namespace, config_file=config.kubeconfig, context=config.context, dry_run=config.dry_run)
+        self._konflux_client = KonfluxClient.from_kubeconfig(
+            default_namespace=config.namespace,
+            config_file=config.kubeconfig,
+            context=config.context,
+            dry_run=config.dry_run,
+        )
 
         if self._config.image_repo == constants.KONFLUX_DEFAULT_IMAGE_REPO:
             for secret in ["KONFLUX_ART_IMAGES_USERNAME", "KONFLUX_ART_IMAGES_PASSWORD"]:
@@ -90,7 +94,7 @@ class KonfluxImageBuilder:
 
     @limit_concurrency(limit=constants.MAX_KONFLUX_BUILD_QUEUE_SIZE)
     async def build(self, metadata: ImageMetadata):
-        """ Build a container image with Konflux. """
+        """Build a container image with Konflux."""
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         metadata.build_status = False
         dest_dir = self._config.base_dir.joinpath(metadata.qualified_key)
@@ -115,14 +119,23 @@ class KonfluxImageBuilder:
                 source = None
                 if metadata.has_source():
                     logger.info(f"Resolving source for {metadata.qualified_key}")
-                    source = cast(SourceResolution, await exectools.to_thread(metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True))
+                    source = cast(
+                        SourceResolution,
+                        await exectools.to_thread(
+                            metadata.runtime.source_resolver.resolve_source, metadata, no_clone=True
+                        ),
+                    )
                 else:
-                    raise IOError(f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported.")
-                dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map({
-                    "group": metadata.runtime.group,
-                    "assembly_name": metadata.runtime.assembly,
-                    "distgit_key": metadata.distgit_key
-                })
+                    raise IOError(
+                        f"Image {metadata.qualified_key} doesn't have upstream source. This is no longer supported."
+                    )
+                dest_branch = "art-{group}-assembly-{assembly_name}-dgk-{distgit_key}".format_map(
+                    {
+                        "group": metadata.runtime.group,
+                        "assembly_name": metadata.runtime.assembly,
+                        "distgit_key": metadata.distgit_key,
+                    }
+                )
                 build_repo = BuildRepo(url=source.url, branch=dest_branch, local_dir=dest_dir, logger=logger)
                 await build_repo.ensure_source()
 
@@ -132,27 +145,34 @@ class KonfluxImageBuilder:
 
             # Sanity check to make sure a successful NVR build doesn't already exist in DB
             where = {"engine": Engine.KONFLUX.value}
-            build_records = await metadata.runtime.konflux_db.get_build_records_by_nvrs([nvr],
-                                                                                        outcome=KonfluxBuildOutcome.SUCCESS,
-                                                                                        where=where,
-                                                                                        strict=False)
+            build_records = await metadata.runtime.konflux_db.get_build_records_by_nvrs(
+                [nvr], outcome=KonfluxBuildOutcome.SUCCESS, where=where, strict=False
+            )
             build_records = [b for b in build_records if b]
             if build_records:
-                raise ValueError(f"Successful NVR build {nvr} already exists in DB! "
-                                 f"pullspec: {build_records[0].image_pullspec}. "
-                                 "To rebuild, please do another rebase")
+                raise ValueError(
+                    f"Successful NVR build {nvr} already exists in DB! "
+                    f"pullspec: {build_records[0].image_pullspec}. "
+                    "To rebuild, please do another rebase"
+                )
 
             record["nvrs"] = nvr
             output_image = f"{self._config.image_repo}:{uuid_tag}"
             additional_tags = [
-                f"{metadata.image_name_short}-{version}-{release}"
+                f"{metadata.image_name_short}-{version}-{release}",
             ]
 
             # Wait for parent members to be built
             parent_members = await self._wait_for_parent_members(metadata)
-            failed_parents = [parent_member.distgit_key for parent_member in parent_members if parent_member is not None and not parent_member.build_status]
+            failed_parents = [
+                parent_member.distgit_key
+                for parent_member in parent_members
+                if parent_member is not None and not parent_member.build_status
+            ]
             if failed_parents:
-                raise IOError(f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}")
+                raise IOError(
+                    f"Couldn't build {metadata.distgit_key} because the following parent images failed to build: {', '.join(failed_parents)}"
+                )
 
             # Start the build
             logger.info("Starting Konflux image build for %s...", metadata.distgit_key)
@@ -162,23 +182,29 @@ class KonfluxImageBuilder:
             error = None
             for attempt in range(retries):
                 logger.info("Build attempt %s/%s", attempt + 1, retries)
-                pipelinerun = await self._start_build(metadata=metadata,
-                                                      build_repo=build_repo,
-                                                      building_arches=building_arches,
-                                                      output_image=output_image,
-                                                      additional_tags=additional_tags,
-                                                      dest_dir=dest_dir)
+                pipelinerun = await self._start_build(
+                    metadata=metadata,
+                    build_repo=build_repo,
+                    building_arches=building_arches,
+                    output_image=output_image,
+                    additional_tags=additional_tags,
+                    dest_dir=dest_dir,
+                )
                 pipelinerun_name = pipelinerun['metadata']['name']
                 record["task_id"] = pipelinerun_name
                 record["task_url"] = self._konflux_client.build_pipeline_url(pipelinerun)
-                await self.update_konflux_db(metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches)
+                await self.update_konflux_db(
+                    metadata, build_repo, pipelinerun, KonfluxBuildOutcome.PENDING, building_arches
+                )
 
                 logger.info("Waiting for PipelineRun %s to complete...", pipelinerun_name)
                 timeout_timedelta = None
                 if metadata.config.konflux.build_timeout:
                     timeout_timedelta = timedelta(minutes=int(metadata.config.konflux.build_timeout))
 
-                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta)
+                pipelinerun, pod_list = await self._konflux_client.wait_for_pipelinerun(
+                    pipelinerun_name, namespace=self._config.namespace, overall_timeout_timedelta=timeout_timedelta
+                )
                 logger.info("PipelineRun %s completed", pipelinerun_name)
 
                 succeeded_condition = artlib_util.KubeCondition.find_condition(pipelinerun, 'Succeeded')
@@ -190,8 +216,11 @@ class KonfluxImageBuilder:
                     await self.update_konflux_db(metadata, build_repo, pipelinerun, outcome, building_arches, pod_list)
 
                 if outcome is not KonfluxBuildOutcome.SUCCESS:
-                    error = KonfluxImageBuildError(f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
-                                                   pipelinerun_name, pipelinerun)
+                    error = KonfluxImageBuildError(
+                        f"Konflux image build for {metadata.distgit_key} failed with output={outcome}",
+                        pipelinerun_name,
+                        pipelinerun,
+                    )
                 else:
                     metadata.build_status = True
                     record["message"] = "Success"
@@ -207,7 +236,7 @@ class KonfluxImageBuilder:
         return pipelinerun_name, pipelinerun
 
     def _parse_dockerfile(self, distgit_key: str, df_path: Path):
-        """ Parse the Dockerfile and return the UUID tag, version, and release.
+        """Parse the Dockerfile and return the UUID tag, version, and release.
 
         :param distgit_key: The distgit key of the image.
         :param df_path: The path to the Dockerfile.
@@ -217,7 +246,9 @@ class KonfluxImageBuilder:
         df = DockerfileParser(str(df_path))
         uuid_tag = df.envs.get("__doozer_uuid_tag")
         if not uuid_tag:
-            raise ValueError(f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?")
+            raise ValueError(
+                f"[{distgit_key}] Dockerfile must have a '__doozer_uuid_tag' environment variable; Did you forget to run 'doozer beta:images:konflux:rebase' first?"
+            )
         version = df.labels.get("version")
         if not version:
             raise ValueError(f"[{distgit_key}] Dockerfile must have a 'version' label.")
@@ -275,8 +306,9 @@ class KonfluxImageBuilder:
         else:
             # Enable cachi2 based on cachito config
             logger.info("cachi2 override not found. fallback to use cachito config")
-            cachi2_enabled = artlib_util.is_cachito_enabled(metadata=metadata,
-                                                            group_config=metadata.runtime.group_config, logger=logger)
+            cachi2_enabled = artlib_util.is_cachito_enabled(
+                metadata=metadata, group_config=metadata.runtime.group_config, logger=logger
+            )
 
         return cachi2_enabled
 
@@ -335,11 +367,20 @@ class KonfluxImageBuilder:
 
         return prefetch
 
-    async def _start_build(self, metadata: ImageMetadata, build_repo: BuildRepo, building_arches: list[str],
-                           output_image: str, additional_tags: list[str], dest_dir: Optional[Path] = None):
+    async def _start_build(
+        self,
+        metadata: ImageMetadata,
+        build_repo: BuildRepo,
+        building_arches: list[str],
+        output_image: str,
+        additional_tags: list[str],
+        dest_dir: Optional[Path] = None,
+    ):
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not build_repo.commit_hash:
-            raise IOError(f"The build branch {build_repo.branch} doesn't have any commits in the build repository {build_repo.https_url}")
+            raise IOError(
+                f"The build branch {build_repo.branch} doesn't have any commits in the build repository {build_repo.https_url}"
+            )
 
         git_branch = build_repo.branch or build_repo.commit_hash
         git_url = build_repo.https_url
@@ -365,7 +406,7 @@ class KonfluxImageBuilder:
 
         # Start a PipelineRun
         # Check if hermetic builds need to be enabled
-        hermetic = (metadata.get_konflux_network_mode() == "hermetic")
+        hermetic = metadata.get_konflux_network_mode() == "hermetic"
 
         prefetch = self._prefetch(metadata=metadata, dest_dir=dest_dir)
 
@@ -392,7 +433,7 @@ class KonfluxImageBuilder:
             vm_override=metadata.config.get("konflux", {}).get("vm_override"),
             pipelinerun_template_url=self._config.plr_template,
             prefetch=prefetch,
-            sast=sast
+            sast=sast,
         )
 
         logger.info(f"Created PipelineRun: {self._konflux_client.build_pipeline_url(pipelinerun)}")
@@ -416,7 +457,9 @@ class KonfluxImageBuilder:
 
             # Check if the SBOM is valid
             # The SBOM should be a JSON object with a "components" key that is a non-empty list
-            if not ("components" in content and isinstance(content["components"], list) and len(content["components"]) > 0):
+            if not (
+                "components" in content and isinstance(content["components"], list) and len(content["components"]) > 0
+            ):
                 logger.warning("cosign command returned invalid SBOM: %s", content)
                 raise ChildProcessError("cosign command returned invalid SBOM")
 
@@ -430,13 +473,16 @@ class KonfluxImageBuilder:
                 "download",
                 "sbom",
                 image_pullspec,
-                "--platform", f"linux/{go_arch}",
+                "--platform",
+                f"linux/{go_arch}",
             ]
 
             if image_repo_creds:
                 cmd += [
-                    "--registry-username", image_repo_creds.get("username"),
-                    "--registry-password", image_repo_creds.get("password"),
+                    "--registry-username",
+                    image_repo_creds.get("username"),
+                    "--registry-password",
+                    image_repo_creds.get("password"),
                 ]
 
             sbom_contents = await _get_sbom_with_retry(cmd)
@@ -472,7 +518,9 @@ class KonfluxImageBuilder:
             installed_packages.update(srpms)
         return sorted(installed_packages)
 
-    async def update_konflux_db(self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None) -> Optional[KonfluxBuildRecord]:
+    async def update_konflux_db(
+        self, metadata, build_repo, pipelinerun, outcome, building_arches, pod_list: Optional[List[Dict]] = None
+    ) -> Optional[KonfluxBuildRecord]:
         logger = self._logger.getChild(f"[{metadata.distgit_key}]")
         if not metadata.runtime.konflux_db:
             logger.warning('Konflux DB connection is not initialized, not writing build record to the Konflux DB.')
@@ -519,7 +567,7 @@ class KonfluxImageBuilder:
             'art_job_url': os.getenv('BUILD_URL', 'n/a'),
             'build_id': f'{pipelinerun_name}-{pipelinerun_uid}',
             'build_pipeline_url': build_pipeline_url,
-            'pipeline_commit': 'n/a'  # TODO: populate this
+            'pipeline_commit': 'n/a',  # TODO: populate this
         }
 
         if outcome == KonfluxBuildOutcome.SUCCESS:
@@ -533,24 +581,32 @@ class KonfluxImageBuilder:
             image_digest = next((r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_DIGEST'), None)
 
             if not (image_pullspec and image_digest):
-                raise ValueError(f"[{metadata.distgit_key}] Could not find expected results in konflux "
-                                 f"pipelinerun {pipelinerun_name}")
+                raise ValueError(
+                    f"[{metadata.distgit_key}] Could not find expected results in konflux "
+                    f"pipelinerun {pipelinerun_name}"
+                )
 
-            installed_packages = await self.get_installed_packages(image_pullspec, building_arches,
-                                                                   self._config.image_repo_creds,
-                                                                   logger=logger)
+            installed_packages = await self.get_installed_packages(
+                image_pullspec, building_arches, self._config.image_repo_creds, logger=logger
+            )
 
-            build_record_params.update({
-                'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
-                'installed_packages': installed_packages,
-                'image_tag': image_pullspec.split(':')[-1],
-            })
+            build_record_params.update(
+                {
+                    'image_pullspec': f"{image_pullspec.split(':')[0]}@{image_digest}",
+                    'installed_packages': installed_packages,
+                    'image_tag': image_pullspec.split(':')[-1],
+                }
+            )
 
         if pipelinerun.status:
             if pipelinerun.status.startTime:
-                build_record_params['start_time'] = datetime.strptime(pipelinerun.status.startTime, '%Y-%m-%dT%H:%M:%SZ')
+                build_record_params['start_time'] = datetime.strptime(
+                    pipelinerun.status.startTime, '%Y-%m-%dT%H:%M:%SZ'
+                )
             if pipelinerun.status.completionTime:  # Pending will not have a completion time
-                build_record_params['end_time'] = datetime.strptime(pipelinerun.status.completionTime, '%Y-%m-%dT%H:%M:%SZ')
+                build_record_params['end_time'] = datetime.strptime(
+                    pipelinerun.status.completionTime, '%Y-%m-%dT%H:%M:%SZ'
+                )
 
         build_record = KonfluxBuildRecord(**build_record_params)
         metadata.runtime.konflux_db.add_build(build_record)
@@ -575,10 +631,18 @@ class KonfluxImageBuilder:
                     creation_timestamp = extract_datetime_from_pod_time(pod_metadata['creationTimestamp'])
                     pod_name = pod_metadata['name']
                     task_name = pod_metadata['labels']['tekton.dev/pipelineTask']  # e.g. "build-images"
-                    task_run = pod_metadata['labels']['tekton.dev/taskRun']  # e.g. "ose-4-19-pf-status-relay-operator-h5pj5-build-images-1"
-                    task_run_uid = pod_metadata['labels']['tekton.dev/taskRunUID']  # e.g. "58b6cdea-e72e-4c45-aac9-7010aa67fa28"
-                    pipeline_run_name = pod_metadata['labels']['tekton.dev/pipelineRun']  # e.g. "ose-4-19-pf-status-relay-operator-h5pj5"
-                    pipeline_run_uid = pod_metadata['labels']['tekton.dev/pipelineRunUID']  # e.g. "d288cbd8-de96-49d9-8294-b65246eff937"
+                    task_run = pod_metadata['labels'][
+                        'tekton.dev/taskRun'
+                    ]  # e.g. "ose-4-19-pf-status-relay-operator-h5pj5-build-images-1"
+                    task_run_uid = pod_metadata['labels'][
+                        'tekton.dev/taskRunUID'
+                    ]  # e.g. "58b6cdea-e72e-4c45-aac9-7010aa67fa28"
+                    pipeline_run_name = pod_metadata['labels'][
+                        'tekton.dev/pipelineRun'
+                    ]  # e.g. "ose-4-19-pf-status-relay-operator-h5pj5"
+                    pipeline_run_uid = pod_metadata['labels'][
+                        'tekton.dev/pipelineRunUID'
+                    ]  # e.g. "d288cbd8-de96-49d9-8294-b65246eff937"
                     pod_status = pod.get('status')
 
                     pod_start_time = None
@@ -605,7 +669,9 @@ class KonfluxImageBuilder:
 
                         if container_state_obj.get('running'):
                             container_state = 'running'
-                            container_started_time = extract_datetime_from_pod_time(container_state_obj.get('running').get('startedAt'))
+                            container_started_time = extract_datetime_from_pod_time(
+                                container_state_obj.get('running').get('startedAt')
+                            )
                             state_reason = container_state_obj.get('running', {}).get('reason')
 
                         if container_state_obj.get('terminated'):
@@ -634,7 +700,7 @@ class KonfluxImageBuilder:
                             # The caller should capture logs they are interested
                             # in and stuff it into the associated containerStatus
                             # entry.
-                            'log_output': container_status.get('log_output')
+                            'log_output': container_status.get('log_output'),
                         }
                         containers_info.append(container_info)
 
@@ -651,12 +717,18 @@ class KonfluxImageBuilder:
                         'task_run_uid': task_run_uid,
                         'pipeline_run': pipeline_run_name,
                         'pod_phase': pod_status.get('phase', 'Unknown'),
-                        'scheduled_time': pod_scheduled_condition.last_transition_time.isoformat() if pod_scheduled_condition and pod_scheduled_condition.is_status_true() else None,
-                        'initialized_time': pod_initialized_condition.last_transition_time.isoformat() if pod_initialized_condition and pod_initialized_condition.is_status_true() else None,
+                        'scheduled_time': pod_scheduled_condition.last_transition_time.isoformat()
+                        if pod_scheduled_condition and pod_scheduled_condition.is_status_true()
+                        else None,
+                        'initialized_time': pod_initialized_condition.last_transition_time.isoformat()
+                        if pod_initialized_condition and pod_initialized_condition.is_status_true()
+                        else None,
                         'start_time': pod_start_time.isoformat() if pod_start_time else None,
                         'containers': containers_info,
                         'capture_time': datetime.now(tz=timezone.utc).isoformat(),
-                        'max_finished_time': max_finished_time.isoformat() if max_finished_time and all_containers_finished else None,
+                        'max_finished_time': max_finished_time.isoformat()
+                        if max_finished_time and all_containers_finished
+                        else None,
                         'build_id': build_record.build_id,
                         'pod_name': pod_name,
                         'pipeline_run_uid': pipeline_run_uid,
@@ -665,7 +737,10 @@ class KonfluxImageBuilder:
                     rows.append(taskrun_record)
 
                 try:
-                    taskrun_db_client.client.insert_rows_json(f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}', rows)
+                    taskrun_db_client.client.insert_rows_json(
+                        f'{artlib_constants.GOOGLE_CLOUD_PROJECT}.{artlib_constants.DATASET_ID}.{artlib_constants.TASKRUN_TABLE_ID}',
+                        rows,
+                    )
                 except:
                     logger.warning('Error inserting taskrun information in bigquery')
                     pprint.pprint(rows)

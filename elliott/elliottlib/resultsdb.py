@@ -18,7 +18,7 @@ class ResultsDBAPI:
         await self._session.close()
 
     async def get_latest_results(self, test_cases: Iterable[str], items: Iterable[str], batch_size: int = 50):
-        """ Get latest test results from ResultsDB
+        """Get latest test results from ResultsDB
         It takes filter parameters, and returns the most recent result for all the relevant Testcases. Only Testcases with at least one Result that meet the filter are present
         https://resultsdb20.docs.apiary.io/#reference/0/results/get-a-list-of-latest-results-for-a-specified-filter
 

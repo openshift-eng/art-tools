@@ -40,7 +40,7 @@ class ImagesHealthPipeline:
             "assembly": "stream",
             "outcome": "both",
             "art-job-url": "",
-            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}'
+            "after": f'{self.start_search.year}-{self.start_search.month}-{self.start_search.day}',
         }
 
         query_string = urllib.parse.urlencode(params)
@@ -49,13 +49,17 @@ class ImagesHealthPipeline:
     async def run(self):
         # Gather concerns for all images in both Brew and Konflux build systems
         tasks = [
-            self.get_concerns(image_meta, 'brew') for image_meta in self.runtime.image_metas()
+            self.get_concerns(image_meta, 'brew')
+            for image_meta in self.runtime.image_metas()
             if not image_meta.mode == 'disabled'
         ]
-        tasks.extend([
-            self.get_concerns(image_meta, 'konflux') for image_meta in self.runtime.image_metas()
-            if not image_meta.config.konflux.mode == 'disabled'
-        ])
+        tasks.extend(
+            [
+                self.get_concerns(image_meta, 'konflux')
+                for image_meta in self.runtime.image_metas()
+                if not image_meta.config.konflux.mode == 'disabled'
+            ]
+        )
         await asyncio.gather(*tasks)
 
         # We should now have a dict of qualified_key => [concern, ...]
@@ -74,8 +78,9 @@ class ImagesHealthPipeline:
         key = image_meta.distgit_key
         builds = await self.query(image_meta, engine)
         if not builds:
-            self.logger.info('Image build for %s has never been attempted during last %s days',
-                             image_meta.distgit_key, DELTA_DAYS)
+            self.logger.info(
+                'Image build for %s has never been attempted during last %s days', image_meta.distgit_key, DELTA_DAYS
+            )
             return
 
         latest_success_idx = -1
@@ -94,16 +99,19 @@ class ImagesHealthPipeline:
         oldest_attempt_bi_dt = builds[-1].start_time
 
         if latest_success_idx != 0:
-            msg = (f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} '
-                   f'({self.url_text(latest_attempt_build_url, "jenkins job")}); ')
+            msg = (
+                f'Latest attempt {self.url_text(latest_attempt_task_url, "failed")} '
+                f'({self.url_text(latest_attempt_build_url, "jenkins job")}); '
+            )
 
             # The latest attempt was a failure
             if latest_success_idx == -1:
                 # No success record was found
                 msg += f'Failing for at least the last {len(builds)} attempts / {oldest_attempt_bi_dt}'
             elif latest_success_idx > 1:
-                msg += (f'Last {self.url_text(latest_success_bi_task_url, "success")} '
-                        f'was {latest_success_idx} attempts ago')
+                msg += (
+                    f'Last {self.url_text(latest_success_bi_task_url, "success")} was {latest_success_idx} attempts ago'
+                )
             elif latest_success_idx == 1:
                 # Do nothing
                 return  # skipping notifications when only latest attempt failed
@@ -114,8 +122,10 @@ class ImagesHealthPipeline:
 
         else:
             if latest_success_bi_dt < datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=14):
-                msg = (f'Last build {latest_attempt_task_url} for {image_meta.distgit_key} '
-                       f'(jenkins job {latest_attempt_build_url} was over two weeks ago.')
+                msg = (
+                    f'Last build {latest_attempt_task_url} for {image_meta.distgit_key} '
+                    f'(jenkins job {latest_attempt_build_url} was over two weeks ago.'
+                )
                 self.logger.warning(msg)
 
     def add_concern(self, image_dgk, engine, msg):
@@ -128,17 +138,20 @@ class ImagesHealthPipeline:
         """
         For 'stream' assembly only, query 'builds' table  for component 'name' from BigQuery
         """
-        results = [build async for build in self.runtime.konflux_db.search_builds_by_fields(
-            start_search=self.start_search,
-            where={
-                'name': image_meta.distgit_key,
-                'group': self.runtime.group_config.name,
-                'engine': engine,
-                'assembly': 'stream'
-            },
-            order_by='start_time',
-            limit=self.limit
-        )]
+        results = [
+            build
+            async for build in self.runtime.konflux_db.search_builds_by_fields(
+                start_search=self.start_search,
+                where={
+                    'name': image_meta.distgit_key,
+                    'group': self.runtime.group_config.name,
+                    'engine': engine,
+                    'assembly': 'stream',
+                },
+                order_by='start_time',
+                limit=self.limit,
+            )
+        ]
         return results
 
 

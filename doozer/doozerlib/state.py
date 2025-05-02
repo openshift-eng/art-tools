@@ -4,7 +4,7 @@ STATE_FAIL = 'failed'
 
 TEMPLATE_BASE_STATE = {
     'status': STATE_PASS,
-    'msg': 'Complete'
+    'msg': 'Complete',
 }
 
 TEMPLATE_IMAGE = {
@@ -19,6 +19,7 @@ TEMPLATE_IMAGE = {
 
 class DoozerStateError(Exception):
     """A broad exception for errors during Brew CRUD operations"""
+
     pass
 
 

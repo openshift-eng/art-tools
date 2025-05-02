@@ -59,7 +59,6 @@ with urllib.request.urlopen(AWS_IP_RANGES_URL) as f:
 
 ranges_by_region: Dict[str, List[Tuple[int, int]]] = {}
 for cb in cidrs:
-
     service = cb['service']
     if service.lower() != "ec2":
         continue

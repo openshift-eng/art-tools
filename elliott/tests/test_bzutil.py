@@ -43,8 +43,8 @@ class TestBugTracker(unittest.TestCase):
             {10: [flaw_a.id, flaw_b.id], 11: [flaw_b.id]},
             {
                 flaw_a.id: {'bug': flaw_a, 'trackers': [tracker_bugs[0]]},
-                flaw_b.id: {'bug': flaw_b, 'trackers': [tracker_bugs[0], tracker_bugs[1]]}
-            }
+                flaw_b.id: {'bug': flaw_b, 'trackers': [tracker_bugs[0], tracker_bugs[1]]},
+            },
         )
         brew_api = flexmock()
         brew_api.should_receive("getPackageID").and_return(True)
@@ -71,7 +71,12 @@ class TestBugTracker(unittest.TestCase):
         brew_api.should_receive("getPackageID").and_return(True)
         self.assertRaises(
             exceptions.ElliottFatalError,
-            BugTracker.get_corresponding_flaw_bugs, tracker_bugs, BugzillaBugTracker({}), brew_api, strict=True)
+            BugTracker.get_corresponding_flaw_bugs,
+            tracker_bugs,
+            BugzillaBugTracker({}),
+            brew_api,
+            strict=True,
+        )
 
 
 class TestJIRABugTracker(unittest.TestCase):
@@ -79,7 +84,7 @@ class TestJIRABugTracker(unittest.TestCase):
         config = {'foo': 1, 'jira_config': {'bar': 2}}
         runtime = flexmock(
             gitdata=flexmock(load_data=flexmock(data=config)),
-            get_major_minor=lambda: (4, 9)
+            get_major_minor=lambda: (4, 9),
         )
         actual = JIRABugTracker.get_config(runtime)
         expected = {'foo': 1, 'bar': 2}
@@ -91,7 +96,7 @@ class TestBugzillaBugTracker(unittest.TestCase):
         config = {'foo': 1, 'bugzilla_config': {'bar': 2}}
         runtime = flexmock(
             gitdata=flexmock(load_data=flexmock(data=config)),
-            get_major_minor=lambda: (4, 9)
+            get_major_minor=lambda: (4, 9),
         )
         actual = BugzillaBugTracker.get_config(runtime)
         expected = {'foo': 1, 'bar': 2}
@@ -105,18 +110,15 @@ class TestJIRABug(unittest.TestCase):
         self.assertEqual(JIRABug(bug).depends_on, ['foo'])
 
     def test_is_placeholder_bug(self):
-        bug1 = flexmock(key='OCPBUGS-1',
-                        fields=flexmock(
-                            summary='Placeholder',
-                            components=[flexmock(name='Release')],
-                            labels=['Automation']))
+        bug1 = flexmock(
+            key='OCPBUGS-1',
+            fields=flexmock(summary='Placeholder', components=[flexmock(name='Release')], labels=['Automation']),
+        )
         self.assertEqual(JIRABug(bug1).is_placeholder_bug(), True)
 
-        bug2 = flexmock(key='OCPBUGS-2',
-                        fields=flexmock(
-                            summary='Placeholder',
-                            components=[flexmock(name='Foo')],
-                            labels=['Bar']))
+        bug2 = flexmock(
+            key='OCPBUGS-2', fields=flexmock(summary='Placeholder', components=[flexmock(name='Foo')], labels=['Bar'])
+        )
         self.assertEqual(JIRABug(bug2).is_placeholder_bug(), False)
 
     def test_is_ocp_bug(self):
@@ -134,7 +136,11 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')))
+            fields=flexmock(
+                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'],
+                issuetype=flexmock(name='Bug'),
+            ),
+        )
         expected = True
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -142,7 +148,10 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug_missing_keywords(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')))
+            fields=flexmock(
+                labels=['somethingelse', 'pscomponent:my-image', 'flaw:bz#123'], issuetype=flexmock(name='Bug')
+            ),
+        )
         expected = False
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -150,7 +159,10 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug_missing_pscomponent(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'flaw:bz#123'], issuetype=flexmock(name='Bug')))
+            fields=flexmock(
+                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'flaw:bz#123'], issuetype=flexmock(name='Bug')
+            ),
+        )
         expected = False
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -158,33 +170,34 @@ class TestJIRABug(unittest.TestCase):
     def test_is_tracker_bug_missing_flaw(self):
         bug = flexmock(
             key='OCPBUGS1',
-            fields=flexmock(labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image'], issuetype=flexmock(name='Bug')))
+            fields=flexmock(
+                labels=constants.TRACKER_BUG_KEYWORDS + ['somethingelse', 'pscomponent:my-image'],
+                issuetype=flexmock(name='Bug'),
+            ),
+        )
         expected = False
         actual = JIRABug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
 
     def test_component_sub_component(self):
-        bug = JIRABug(flexmock(
-            key="OCPBUGS-43",
-            fields=flexmock(components=[flexmock(name="foo / bar")]))
+        bug = JIRABug(
+            flexmock(key="OCPBUGS-43", fields=flexmock(components=[flexmock(name="foo / bar")])),
         )
         actual = (bug.component, bug.sub_component)
         expected = ("foo", "bar")
         self.assertEqual(actual, expected)
 
     def test_component_sub_component_no_whitespace(self):
-        bug = JIRABug(flexmock(
-            key="OCPBUGS-43",
-            fields=flexmock(components=[flexmock(name="foo/bar")]))
+        bug = JIRABug(
+            flexmock(key="OCPBUGS-43", fields=flexmock(components=[flexmock(name="foo/bar")])),
         )
         actual = (bug.component, bug.sub_component)
         expected = ("foo", "bar")
         self.assertEqual(actual, expected)
 
     def test_corresponding_flaw_bug_ids(self):
-        bug = JIRABug(flexmock(
-            key="OCPBUGS-43",
-            fields=flexmock(labels=["foo", "flaw:123", "flaw:bz#456"]))
+        bug = JIRABug(
+            flexmock(key="OCPBUGS-43", fields=flexmock(labels=["foo", "flaw:123", "flaw:bz#456"])),
         )
         actual = bug.corresponding_flaw_bug_ids
         expected = [456]
@@ -198,17 +211,16 @@ class TestJIRABug(unittest.TestCase):
         self.assertIsNone(bug.whiteboard_component)
 
         for expected in ["something", "openvswitch2.15", "trailing_blank 	"]:
-            bug = JIRABug(flexmock(key=1, fields=flexmock(labels=[f"pscomponent: {expected}"], issuetype=flexmock(name='Bug'))))
+            bug = JIRABug(
+                flexmock(key=1, fields=flexmock(labels=[f"pscomponent: {expected}"], issuetype=flexmock(name='Bug')))
+            )
             actual = bug.whiteboard_component
             self.assertEqual(actual, expected.strip())
 
 
 class TestBugzillaBug(unittest.TestCase):
     def test_is_tracker_bug(self):
-        bug = flexmock(
-            id='1',
-            keywords=constants.TRACKER_BUG_KEYWORDS,
-            whiteboard_component='my-image')
+        bug = flexmock(id='1', keywords=constants.TRACKER_BUG_KEYWORDS, whiteboard_component='my-image')
         expected = True
         actual = BugzillaBug(bug).is_tracker_bug()
         self.assertEqual(expected, actual)
@@ -267,14 +279,14 @@ class TestBugzillaBug(unittest.TestCase):
                             "changes": [
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T23:59:59"),
                             "changes": [
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
-                            ]
+                            ],
                         },
                     ],
                 },
@@ -287,7 +299,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "NEW", "added": "MODIFIED"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T23:59:59"),
@@ -295,7 +307,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "MODIFIED", "added": "ON_QA"},
-                            ]
+                            ],
                         },
                     ],
                 },
@@ -308,7 +320,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "NEW", "added": "ASSIGNED"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T23:59:59"),
@@ -316,7 +328,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "ASSIGNED", "added": "ON_QA"},
-                            ]
+                            ],
                         },
                     ],
                 },
@@ -329,7 +341,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "NEW", "added": "MODIFIED"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T23:59:59"),
@@ -337,7 +349,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "MODIFIED", "added": "ON_QA"},
-                            ]
+                            ],
                         },
                     ],
                 },
@@ -350,7 +362,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "NEW", "added": "MODIFIED"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T13:00:00"),
@@ -358,7 +370,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "MODIFIED", "added": "ON_QA"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T23:59:59"),
@@ -366,7 +378,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "ON_QA", "added": "VERIFIED"},
-                            ]
+                            ],
                         },
                     ],
                 },
@@ -379,7 +391,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "NEW", "added": "MODIFIED"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T13:00:00"),
@@ -387,7 +399,7 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "MODIFIED", "added": "ON_QA"},
-                            ]
+                            ],
                         },
                         {
                             "when": xmlrpc.client.DateTime("20210630T23:59:59"),
@@ -395,11 +407,11 @@ class TestBugzillaBug(unittest.TestCase):
                                 {"field_name": "irelevant1", "removed": "foo", "added": "bar"},
                                 {"field_name": "irelevant2", "removed": "bar", "added": "foo"},
                                 {"field_name": "status", "removed": "ON_QA", "added": "ASSIGNED"},
-                            ]
+                            ],
                         },
                     ],
                 },
-            ]
+            ],
         }
         actual = bug_tracker.filter_bugs_by_cutoff_event(bugs, desired_statuses, sweep_cutoff_timestamp)
         self.assertListEqual([1, 2, 4, 5, 7, 8], [bug.id for bug in actual])
@@ -452,7 +464,7 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
             flexmock(alias=['CVE-2022-9'], severity='urgent'),
             flexmock(alias=['CVE-2022-10'], severity='urgent'),
             flexmock(alias=['CVE-2021-789'], severity='medium'),
-            flexmock(alias=['CVE-2021-100'], severity='medium')
+            flexmock(alias=['CVE-2021-100'], severity='medium'),
         ]
         sort_list = [b.alias[0] for b in bzutil.sort_cve_bugs(flaw_bugs)]
 
@@ -471,16 +483,19 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
         # should raise error when no tracker bugs are found
         tr = '4.8.0'
         self.assertRaisesRegex(
-            ValueError,
-            r'does not seem to have trackers',
-            bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [], tr)
+            ValueError, r'does not seem to have trackers', bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [], tr
+        )
 
         # should raise error when flaw alias isn't present
         tr = '4.8.0'
         self.assertRaisesRegex(
             ValueError,
             r'does not have a CVE alias',
-            bzutil.is_first_fix_any, BugzillaBug(flexmock(id=1)), [JIRABug(flexmock(key="OCPBUGS-foo"))], tr)
+            bzutil.is_first_fix_any,
+            BugzillaBug(flexmock(id=1)),
+            [JIRABug(flexmock(key="OCPBUGS-foo"))],
+            tr,
+        )
 
     def test_is_first_fix_any(self):
         hydra_data = {
@@ -488,33 +503,33 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
                 {
                     'product_name': "Red Hat Advanced Cluster Management for Kubernetes 2",
                     'fix_state': "Affected",
-                    'package_name': "rhacm2/agent-service-rhel8"
+                    'package_name': "rhacm2/agent-service-rhel8",
                 },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 4",
                     'fix_state': "Affected",
-                    'package_name': "openshift-clients"
+                    'package_name': "openshift-clients",
                 },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 4",
                     'fix_state': "Some other status",
-                    'package_name': "openshift4/some-image"
+                    'package_name': "openshift4/some-image",
                 },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 3",
                     'fix_state': "Affected",
-                    'package_name': "openshift3/some-image"
-                }
-            ]
+                    'package_name': "openshift3/some-image",
+                },
+            ],
         }
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(
+            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
+        ).ordered()
 
         pyxis_data = {'data': [{'brew': {'package': 'some-image'}}]}
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(status_code=200, json=lambda: pyxis_data))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(
+            flexmock(status_code=200, json=lambda: pyxis_data)
+        ).ordered()
 
         tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
@@ -525,9 +540,9 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
 
     def test_is_first_fix_any_missing_package_state(self):
         hydra_data = {}
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))\
-
+        flexmock(requests).should_receive('get').and_return(
+            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
+        )
         tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
         tracker_bugs = [flexmock(id=2, whiteboard_component='openshift-clients')]
@@ -541,33 +556,33 @@ class TestBZUtil(unittest.IsolatedAsyncioTestCase):
                 {
                     'product_name': "Red Hat Advanced Cluster Management for Kubernetes 2",
                     'fix_state': "Affected",
-                    'package_name': "rhacm2/agent-service-rhel8"
+                    'package_name': "rhacm2/agent-service-rhel8",
                 },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 4",
                     'fix_state': "Affected",
-                    'package_name': "openshift-clients"
+                    'package_name': "openshift-clients",
                 },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 4",
                     'fix_state': "Some other status",
-                    'package_name': "openshift4/some-image"
+                    'package_name': "openshift4/some-image",
                 },
                 {
                     'product_name': "Red Hat OpenShift Container Platform 3",
                     'fix_state': "Affected",
-                    'package_name': "openshift3/some-image"
-                }
-            ]
+                    'package_name': "openshift3/some-image",
+                },
+            ],
         }
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(json=lambda: hydra_data, raise_for_status=lambda: None))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(
+            flexmock(json=lambda: hydra_data, raise_for_status=lambda: None)
+        ).ordered()
 
         pyxis_data = {'data': [{'brew': {'package': 'some-image'}}]}
-        flexmock(requests).should_receive('get')\
-            .and_return(flexmock(status_code=200, json=lambda: pyxis_data))\
-            .ordered()
+        flexmock(requests).should_receive('get').and_return(
+            flexmock(status_code=200, json=lambda: pyxis_data)
+        ).ordered()
 
         tr = '4.8.0'
         flaw_bug = BugzillaBug(flexmock(id=1, alias=['CVE-123']))
@@ -597,11 +612,11 @@ class TestGetHigestImpact(unittest.TestCase):
         logging.disable(logging.NOTSET)
 
     def test_lowest_to_highest_impact(self):
-        trackers = [flexmock(id=index, severity=severity)
-                    for index, severity in enumerate(constants.BUG_SEVERITY_NUMBER_MAP.keys())]
-        tracker_flaws_map = {
-            tracker.id: [] for tracker in trackers
-        }
+        trackers = [
+            flexmock(id=index, severity=severity)
+            for index, severity in enumerate(constants.BUG_SEVERITY_NUMBER_MAP.keys())
+        ]
+        tracker_flaws_map = {tracker.id: [] for tracker in trackers}
         impact = bzutil.get_highest_impact(trackers, tracker_flaws_map)
         self.assertEqual(impact, constants.SECURITY_IMPACT[4])
 

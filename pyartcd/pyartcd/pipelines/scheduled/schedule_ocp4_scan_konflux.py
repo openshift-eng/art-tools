@@ -23,7 +23,9 @@ async def run_for(version: str, runtime: Runtime, lock_manager: LockManager):
         return
 
     # Skip if frozen
-    if not await util.is_build_permitted(version, doozer_working=str(runtime.working_dir / "doozer_working-" / version)):
+    if not await util.is_build_permitted(
+        version, doozer_working=str(runtime.working_dir / "doozer_working-" / version)
+    ):
         runtime.logger.info('[%s] Not permitted, skipping', version)
         return
 

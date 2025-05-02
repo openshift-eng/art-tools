@@ -18,8 +18,7 @@ def start_as_current_span_async(
     set_status_on_exception: bool = True,
     end_on_exit: bool = True,
 ):
-    """ A decorator like tracer.start_as_current_span, but works for async functions
-    """
+    """A decorator like tracer.start_as_current_span, but works for async functions"""
 
     def decorator(function: Callable[..., Awaitable[Any]]):
         @wraps(function)

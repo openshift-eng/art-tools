@@ -1,6 +1,7 @@
 """
 For this command to work, https://github.com/openshift/check-payload binary has to exist in PATH and run as root
 """
+
 import asyncio
 import json
 import os
@@ -89,7 +90,11 @@ class ScanFipsCli:
 
     def get_all_latest_builds(self):
         # Setup brew tags
-        brew_tags = self.runtime.gitdata.load_data(key='erratatool', replace_vars=self.runtime.group_config.vars).data.get('brew_tag_product_version_mapping', {}).keys()
+        brew_tags = (
+            self.runtime.gitdata.load_data(key='erratatool', replace_vars=self.runtime.group_config.vars)
+            .data.get('brew_tag_product_version_mapping', {})
+            .keys()
+        )
         self.runtime.logger.info(f"Retrieved candidate tags: {brew_tags}")
 
         builds = []
@@ -121,7 +126,9 @@ class ScanFipsCli:
         image_pullspec_mapping = []
 
         # Package names of base images
-        base_images_package_names = [meta.config.distgit.component for meta in self.runtime.image_metas() if meta.base_only]
+        base_images_package_names = [
+            meta.config.distgit.component for meta in self.runtime.image_metas() if meta.base_only
+        ]
 
         for nvr in self.nvrs:
             # Skip CI builds since it won't be shipped
@@ -151,7 +158,9 @@ class ScanFipsCli:
             try:
                 pull_spec = build_info["extra"]["image"]["index"]["pull"][0]
             except KeyError:
-                self.runtime.logger.warning(f"Skipping {nvr} since it doesn't have an image pull spec, probably cause its an RPM")
+                self.runtime.logger.warning(
+                    f"Skipping {nvr} since it doesn't have an image pull spec, probably cause its an RPM"
+                )
                 continue
             image_pullspec_mapping.append((nvr, pull_spec))
 
@@ -178,9 +187,10 @@ class ScanFipsCli:
 @pass_runtime
 @click_coroutine
 async def scan_fips(runtime: Runtime, nvrs: str, all_images: bool, clean: bool):
-    fips_pipeline = ScanFipsCli(runtime=runtime,
-                                nvrs=nvrs.split(",") if nvrs else None,
-                                all_images=all_images,
-                                clean=clean
-                                )
+    fips_pipeline = ScanFipsCli(
+        runtime=runtime,
+        nvrs=nvrs.split(",") if nvrs else None,
+        all_images=all_images,
+        clean=clean,
+    )
     await fips_pipeline.run()

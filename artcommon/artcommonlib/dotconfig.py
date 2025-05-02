@@ -11,15 +11,24 @@ import shutil
 VALID_EXT = [
     'yaml',
     'yml',
-    'json'
+    'json',
 ]
 
 
 class Config(object):
-    def __init__(self, app=None, name=None, base_dir='~/.config/',
-                 template_file=None, template=None, envvars={},
-                 defaults={}, cli_args={}, path_override=None,
-                 file_override=None):
+    def __init__(
+        self,
+        app=None,
+        name=None,
+        base_dir='~/.config/',
+        template_file=None,
+        template=None,
+        envvars={},
+        defaults={},
+        cli_args={},
+        path_override=None,
+        file_override=None,
+    ):
         """
         Automatically load an app config with environment variable and
         default overrides.
