@@ -221,7 +221,9 @@ class KonfluxImageBuilder:
                             os.environ['KONFLUX_ART_IMAGES_PASSWORD'],
                         )
                     except Exception as e:
-                        logger.error(f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}")
+                        logger.error(
+                            f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                        )
                         outcome = KonfluxBuildOutcome.FAILURE
 
                 if self._config.dry_run:
