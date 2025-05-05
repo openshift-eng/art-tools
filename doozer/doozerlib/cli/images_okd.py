@@ -70,6 +70,7 @@ def resolve_okd_from_image_meta(runtime, image_meta, okd_version):
     Given an ImageMeta, return the OKD pullspec that represents
     the image in the CI registry.
     """
+    ci_alignment_config = image_meta.config.content.source.ci_alignment
     okd_alignment_config = image_meta.config.content.source.okd_alignment
     if okd_alignment_config.resolve_as:
         resolve_as = image_meta.config.content.source.okd_alignment.resolve_as
@@ -85,6 +86,8 @@ def resolve_okd_from_image_meta(runtime, image_meta, okd_version):
 
     if okd_alignment_config.tag_name:
         ci_payload_tag_name = okd_alignment_config.tag_name
+    elif ci_alignment_config.upstream_image:
+        return ci_alignment_config.upstream_image
     else:
         name = image_meta.config.payload_name or image_meta.config.name
         image_name = name.split('/')[-1]
@@ -212,6 +215,7 @@ class CiOperatorImageConfig:
         self.dockerfile_path = 'Dockerfile'
         self.context_dir: Optional[str] = None
         self.raw_steps = list()
+        self.resources = dict()
 
         self.payload_tag = get_okd_payload_tag_name(image_meta)
 
@@ -246,6 +250,9 @@ class CiOperatorImageConfig:
         ]
         if image_meta.config.content.source.okd_alignment.build_args:
             build_args.extend(image_meta.config.content.source.okd_alignment.build_args.primitive())
+
+        if image_meta.config.content.source.okd_alignment.resources:
+            self.resources.update(image_meta.config.content.source.okd_alignment.resources)
 
         if image_meta.config.content.source.okd_alignment.inject_rpm_repositories:
             intermediate_tag = f'pre-repo-{self.payload_tag}'
@@ -350,6 +357,7 @@ class CiOperatorConfig:
                 },
             ],
         }
+        self.tests = None
         self.build_root = None
         self.releases = dict()
         self.complete = False  # There are stages to preparing a ci-operator config. If it is not completed successfully, don't write it to openshift/release.
@@ -367,6 +375,9 @@ class CiOperatorConfig:
     def set_build_root(self, build_root: ImageCoordinate):
         self.build_root = build_root.as_dict()
 
+    def set_tests(self, tests: List):
+        self.tests = tests
+
     def get_ci_operator_config_path(self, release_clone_dir: Path):
         return release_clone_dir.joinpath(
             'ci-operator', 'config', self.org, self.repo, f'{self.org}-{self.repo}-{self.branch_name}__okd-scos.yaml'
@@ -378,6 +389,9 @@ class CiOperatorConfig:
         if not self.complete:
             print(f'Refusing to write: {output_path} as reconciliation did not complete')
             return
+
+        # Default resources, which can be adjusted by okd_alignment stanzas
+        resources = {'*': {'requests': {'cpu': '100m', 'memory': '200Mi'}}}
 
         ci_operator_image_names: Dict[ImageCoordinate, str] = dict()
         base_image_defs: OrderedDict[ImageCoordinate, True] = OrderedDict()
@@ -405,6 +419,9 @@ class CiOperatorConfig:
             images.append(image_obj)
             if raw_step:
                 raw_steps.append(raw_step)
+            if image_config.resources:
+                # If an image has a resource request, include it in the overall request
+                resources.update(image_config.resources)
 
         base_images: Dict[str, Any] = dict()
         for coordinate, _ in base_image_defs.items():
@@ -413,15 +430,11 @@ class CiOperatorConfig:
         config = {
             'images': images,
             'promotion': self.promotion,
-            'resources': {
-                '*': {
-                    'requests': {
-                        'cpu': '100m',
-                        'memory': '200Mi',
-                    },
-                },
-            },
+            'resources': resources,
         }
+
+        if self.tests:
+            config['tests'] = self.tests
         if raw_steps:
             config['raw_steps'] = raw_steps
         if base_images:
@@ -653,6 +666,7 @@ async def images_okd_prs(
         logger = image_meta.logger
         logger.info(f'Analyzing image: {dgk}')
 
+        ci_alignment_config = image_meta.config.content.source.ci_alignment
         okd_alignment_config = image_meta.config.content.source.okd_alignment
 
         if okd_alignment_config and okd_alignment_config.enabled is not Missing and not okd_alignment_config.enabled:
@@ -702,6 +716,16 @@ async def images_okd_prs(
         if okd_alignment_config.ci_build_root is not Missing:
             desired_ci_build_root_image = resolve_okd_from_entry(
                 runtime, image_meta, okd_alignment_config.ci_build_root, okd_version=okd_version
+            )
+
+            # Split the pullspec into an openshift namespace, imagestream, and tag.
+            # e.g. registry.openshift.org:999/ocp/release:golang-1.16 => tag=golang-1.16, namespace=ocp, imagestream=release
+            # https://docs.ci.openshift.org/docs/architecture/ci-operator/#build-root-image
+            desired_ci_build_root_coordinate = convert_to_imagestream_coordinate(desired_ci_build_root_image)
+            logger.info(f'Found desired build_root state of: {desired_ci_build_root_coordinate}')
+        elif ci_alignment_config.streams_prs.ci_build_root is not Missing:
+            desired_ci_build_root_image = resolve_okd_from_entry(
+                runtime, image_meta, ci_alignment_config.streams_prs.ci_build_root, okd_version=okd_version
             )
 
             # Split the pullspec into an openshift namespace, imagestream, and tag.
@@ -835,13 +859,7 @@ async def images_okd_prs(
         ci_operator_image_config = ci_operator_config.get_image_config(image_meta)
         ci_operator_config.add_release(
             'latest',
-            {
-                'integration': {
-                    # 'include_built_images': True,
-                    'namespace': 'origin',
-                    'name': f'scos-{okd_version}',
-                },
-            },
+            {'integration': {'include_built_images': True, 'namespace': 'origin', 'name': f'scos-{okd_version}'}},
         )
 
         stage_names = extract_stage_names(dfp)
@@ -866,11 +884,37 @@ async def images_okd_prs(
         if desired_ci_build_root_coordinate:
             ci_operator_config.set_build_root(desired_ci_build_root_coordinate)
 
+        test_on_change = {  # Set a default for all projects
+            "skip_if_only_changed": "^docs/|\\.md$|^(?:.*/)?(?:\\.gitignore|OWNERS|PROJECT|LICENSE)$"
+        }
+        # Override if okd_alignment metadata asks us to.
+        if image_meta.config.content.source.okd_alignment.run_if_changed:
+            test_on_change = {"run_if_changed": image_meta.config.content.source.okd_alignment.run_if_changed}
+        elif image_meta.config.content.source.okd_alignment.skip_if_only_changed:
+            test_on_change = {
+                "skip_if_only_changed": image_meta.config.content.source.okd_alignment.skip_if_only_changed
+            }
+
+        ci_operator_config.set_tests(
+            [
+                {
+                    "always_run": False,
+                    "as": "e2e-aws-ovn",
+                    "optional": True,
+                    **test_on_change,
+                    "steps": {"cluster_profile": "aws", "workflow": "openshift-e2e-aws"},
+                }
+            ]
+        )
+
         # We made it through everything, so assume the config is safe to write out.
         ci_operator_config.complete = True
 
     ci_operator_configs.write_configs(release_clone_dir)
-    print('It is necessary to run "make ci-operator-configs" and then "make jobs" on the generated release repository')
+    print(
+        'It is necessary to run "make ci-operator-config", "make jobs", "make openshift-image-mirror-mappings" on the generated release repository'
+    )
+    print('Push for PR with "git push --set-upstream fork HEAD:okd_updates --force"')
 
 
 @prs.command(

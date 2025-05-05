@@ -232,6 +232,21 @@
               "type": "string",
               "minLength": 1
             },
+            "run_if_changed": {
+              "description": "Used when generating ci-operator configuration. Overrides the default skip_if_only_changed.",
+              "type": "string",
+              "minLength": 1
+            },
+            "skip_if_only_changed": {
+              "description": "Used when generating ci-operator configuration. Overrides the default skip_if_only_changed.",
+              "type": "string",
+              "minLength": 1
+            },
+            "resources": {
+              "description": "Used when generating ci-operator configuration. Dict will merge directly with resources.",
+              "type": "object",
+              "additionalProperties": true
+            },
             "dockerfile": {
               "description": "Used when generating ci-operator configuration. Overrides the dockerfile used by OKD builds.",
               "type": "string",
