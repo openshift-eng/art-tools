@@ -12,9 +12,10 @@ from urllib import parse
 
 import aiohttp
 from ruamel.yaml import YAML
-from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import before_sleep_log, retry, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_fixed
 
 from artcommonlib import logutil
+from artcommonlib.exectools import cmd_gather_async
 from artcommonlib.rpm_utils import parse_nvr, label_compare
 
 LOGGER = logutil.get_logger(__name__)
@@ -176,6 +177,7 @@ class RepodataLoader:
         else:
             raise IOError(f'Unknown compression for: {url}')
 
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
     async def load(self, repo_name: str, repo_url: str):
         if not repo_url.endswith("/"):
             repo_url += "/"
@@ -185,9 +187,16 @@ class RepodataLoader:
         async with aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=32, force_close=True), timeout=timeout
         ) as session:
-            async with session.get(repomd_url) as resp:
-                resp.raise_for_status()
-                repomd_xml = ET.fromstring(await resp.text())
+            try:
+                async with session.get(repomd_url) as resp:
+                    resp.raise_for_status()
+                    repomd_xml = ET.fromstring(await resp.text())
+            except Exception as e:
+                LOGGER.warning('Failed fetching %s: %s', repomd_url, e)
+                curl_cmd = ['curl', '-v', repomd_url]
+                _, _, err = await cmd_gather_async(curl_cmd)
+                LOGGER.info('curl command stderr: %s', err)
+                raise
 
             primary_data_element = repomd_xml.find('repo:data[@type="primary"]', NAMESPACES)
             if primary_data_element is None:
