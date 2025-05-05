@@ -73,6 +73,8 @@ class ConfigScanSources:
         self.latest_rpm_build_records_map: typing.Dict[str, typing.Dict[str, KonfluxBuildRecord]] = {}
         self.image_tree = {}
         self.changing_rpms = set()
+        self.art_images_username = os.environ['KONFLUX_ART_IMAGES_USERNAME']
+        self.art_images_password = os.environ['KONFLUX_ART_IMAGES_PASSWORD']
 
     async def run(self):
         # Try to rebase into openshift-priv to reduce upstream merge -> downstream build time
@@ -395,7 +397,7 @@ class ConfigScanSources:
         await self.scan_arch_changes(image_meta)
 
         # Check for changes in the network mode
-        await self.scan_network_mode_changes(image_meta)
+        await self.scan_network_mode_changes()
 
         # Check if there's already a build from upstream latest commit
         await self.scan_for_upstream_changes(image_meta)
@@ -454,11 +456,10 @@ class ConfigScanSources:
         network_mode = image_meta.get_konflux_network_mode()
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-
         attestation = await artcommonlib.util.get_konflux_slsa_attestation(
-            build_record.image_pullspec,
-            os.environ['KONFLUX_ART_IMAGES_USERNAME'],
-            os.environ['KONFLUX_ART_IMAGES_PASSWORD'],
+            pull_spec=build_record.image_pullspec,
+            registry_username=self.art_images_username,
+            registry_password=self.art_images_password,
         )
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
