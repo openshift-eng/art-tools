@@ -456,11 +456,17 @@ class ConfigScanSources:
         network_mode = image_meta.get_konflux_network_mode()
         self.logger.debug(f"Network mode of {image_meta.name} in config is {network_mode}")
         build_record = self.latest_image_build_records_map[image_meta.distgit_key]
-        attestation = await artcommonlib.util.get_konflux_slsa_attestation(
+        rc, attestation, err = await artcommonlib.util.get_konflux_slsa_attestation(
             pull_spec=build_record.image_pullspec,
             registry_username=self.art_images_username,
             registry_password=self.art_images_password,
         )
+
+        if rc != 0:
+            self.logger.error(
+                f"Failed to get SLA attestation from konflux for image {build_record.image_pullspec}. Error: {err}"
+            )
+
         try:
             # Equivalent bash code: jq -r ' .payload | @base64d | fromjson | .predicate.invocation.parameters.hermetic'
             payload_json = json.loads(base64.b64decode(json.loads(attestation)["payload"]).decode("utf-8"))

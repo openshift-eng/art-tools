@@ -213,16 +213,15 @@ class KonfluxImageBuilder:
                     image_pullspec = next(
                         (r['value'] for r in pipelinerun.status.results if r['name'] == 'IMAGE_URL'), None
                     )
-                    try:
-                        # Get SLA attestation from konflux. The command will error out if it cannot find it.
-                        await artlib_util.get_konflux_slsa_attestation(
-                            pull_spec=image_pullspec,
-                            registry_username=self._config.image_repo_creds["username"],
-                            registry_password=self._config.image_repo_creds["password"],
-                        )
-                    except Exception as e:
+                    # Get SLA attestation from konflux. The command will error out if it cannot find it.
+                    rc, _, err = await artlib_util.get_konflux_slsa_attestation(
+                        pull_spec=image_pullspec,
+                        registry_username=self._config.image_repo_creds["username"],
+                        registry_password=self._config.image_repo_creds["password"],
+                    )
+                    if rc != 0:
                         logger.error(
-                            f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {e}"
+                            f"Failed to get SLA attestation from konflux for image {image_pullspec}, marking build as {KonfluxBuildOutcome.FAILURE}. Error: {err}"
                         )
                         outcome = KonfluxBuildOutcome.FAILURE
 
