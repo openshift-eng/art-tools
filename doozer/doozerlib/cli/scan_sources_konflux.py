@@ -414,7 +414,7 @@ class ConfigScanSources:
         await self.scan_extra_packages(image_meta)
 
         # Check for changes in the network mode
-        await self.scan_network_mode_changes(image_meta)
+        # await self.scan_network_mode_changes(image_meta)
 
     def find_upstream_commit_hash(self, meta: Metadata):
         """
