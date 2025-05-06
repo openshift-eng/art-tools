@@ -1,28 +1,23 @@
 import asyncio
 import json
 import logging
-import pprint
 import os
+import pprint
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Optional, cast, List, Union
+from typing import Dict, List, Optional, Union, cast
 
-from dockerfile_parse import DockerfileParser
-from kubernetes.dynamic import resource
-from packageurl import PackageURL
-from tenacity import retry, stop_after_attempt, wait_fixed
-
-from artcommonlib import util as artlib_util
+from artcommonlib import bigquery, exectools
 from artcommonlib import constants as artlib_constants
-from artcommonlib import exectools, bigquery
+from artcommonlib import util as artlib_util
 from artcommonlib.arch_util import go_arch_for_brew_arch
 from artcommonlib.exectools import limit_concurrency
 from artcommonlib.konflux.konflux_build_record import ArtifactType, Engine, KonfluxBuildOutcome, KonfluxBuildRecord
 from artcommonlib.model import Missing
 from artcommonlib.release_util import isolate_el_version_in_release
-
+from dockerfile_parse import DockerfileParser
 from doozerlib import constants
 from doozerlib.backend.build_repo import BuildRepo
 from doozerlib.backend.konflux_client import KonfluxClient
@@ -30,6 +25,9 @@ from doozerlib.build_visibility import is_release_embargoed
 from doozerlib.image import ImageMetadata
 from doozerlib.record_logger import RecordLogger
 from doozerlib.source_resolver import SourceResolution
+from kubernetes.dynamic import resource
+from packageurl import PackageURL
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 LOGGER = logging.getLogger(__name__)
 
