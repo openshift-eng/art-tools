@@ -176,6 +176,7 @@ async def find_builds_cli(
         records = await find_builds_konflux(runtime, payload)
         for record in records:
             print(record.nvr)
+        return
 
     replace_vars = runtime.group_config.vars.primitive() if runtime.group_config.vars else {}
     et_data = runtime.get_errata_config(replace_vars=replace_vars)
